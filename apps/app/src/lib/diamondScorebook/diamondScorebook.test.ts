@@ -20,6 +20,7 @@ import {
   replayEffectiveDiamondEventStates,
   sha256Hex,
   validateDiamondState,
+  validateDiamondPlayerIdentityOwnership,
   verifyDiamondLedger,
   type DiamondCommand,
   type DiamondBattingRole,
@@ -38,6 +39,17 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it('rejects injected identity history before returning ownership evidence', () => {
+    const game = harness();
+    setBasicLineups(game);
+    const corrupted = JSON.parse(JSON.stringify(game.ledger)) as DiamondLedger;
+    (corrupted.state.lineups.home.battingOrder[0].substitutions as string[]).push('injected-player');
+    expect(() => validateDiamondState(corrupted.state)).not.toThrow();
+    expect(() => getDiamondPlayerIdentityIdsBySide(corrupted)).toThrow();
+    expect(() => validateDiamondPlayerIdentityOwnership(corrupted)).toThrow();
+    expect(validateDiamondPlayerIdentityOwnership(game.ledger)).toBe(true);
+    expect(getDiamondPlayerIdentityIdsBySide(game.ledger).home).not.toContain('injected-player');
+  });
   it.each(['state', 'event', 'metadata'] as const)('rejects corrupt %s before minting a checkpoint', (kind) => {
     const game = harness();
     setBasicLineups(game);
