@@ -418,6 +418,11 @@ function validateBatterCauseResult(result, destination, cause) {
     if (!compatible)
         throw new contracts_1.DiamondDomainError('batter-cause-result-mismatch', 'The batter advance cause contradicts the plate-appearance result.');
 }
+function validateAdvanceProfile(state, cause) {
+    if (cause === 'balk' && (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion).sport !== 'baseball') {
+        throw new contracts_1.DiamondDomainError('invalid-advance-cause', 'Balk advances are only valid for baseball profiles.');
+    }
+}
 function validatePlateAppearanceRunnerAdvance(state, result, advance) {
     const contact = [
         'single',
@@ -724,7 +729,18 @@ function validateDiamondMergedFieldingOutCredit(fieldings, actualOutRunnerIds) {
 function deriveDiamondPutoutCredits(fieldings, actualOutRunnerIds) {
     return resolveDiamondPutoutCredits(fieldings, actualOutRunnerIds);
 }
-function validateDiamondPitchCauseEvidence(advances, fieldings, result) {
+function validateDiamondPitchCauseEvidence(advances, fieldings, result, pitchContext) {
+    if (result === 'interference' &&
+        pitchContext?.lastPitchResult === 'catcher_interference' &&
+        fieldings.some((fielding) => fielding.putoutBy ||
+            fielding.putouts?.length ||
+            fielding.assists?.length ||
+            fielding.passedBallBy ||
+            fielding.doublePlay ||
+            fielding.triplePlay ||
+            (fielding.battedBall && fielding.battedBall !== 'unknown') ||
+            fielding.errors?.some((error) => error.playerId !== pitchContext.catcherId)))
+        throw new contracts_1.DiamondDomainError('fielding-result-mismatch', 'Catcher interference permits only an error charged to the recorded catcher.');
     const hasFieldingCredit = fieldings.some((fielding) => fielding.putoutBy ||
         fielding.putouts?.length ||
         fielding.assists?.length ||
@@ -2162,6 +2178,7 @@ function reduceDiamondEvent(state, action) {
                 throw new contracts_1.DiamondDomainError('batter-on-base', 'The current batter is already recorded as a base runner.');
             }
             validateBatterAdvanceShape(action.payload.batterAdvance);
+            validateAdvanceProfile(state, action.payload.batterAdvance.cause);
             const result = action.payload.result;
             const pitch = state.inning.lastPitchResult;
             if ((state.inning.balls >= 4 && result !== 'walk' && result !== 'intentional_walk') ||
@@ -2204,6 +2221,7 @@ function reduceDiamondEvent(state, action) {
             validateInlineResponsiblePitcher(state, action.payload.batterAdvance.responsiblePitcherId, action.payload.pitcherId, 'The batter advance');
             const runnerMoves = action.payload.runnerAdvances.map((advance) => {
                 validateAdvanceShape(advance);
+                validateAdvanceProfile(state, advance.cause);
                 validatePlateAppearanceRunnerAdvance(state, result, advance);
                 const placement = state.bases[requireMember(advance.from, BASES, 'runner source')];
                 validateInlineResponsiblePitcher(state, advance.responsiblePitcherId, placement?.chargedToPitcherId ?? null, `The advance for ${advance.runnerId}`);
@@ -2219,7 +2237,7 @@ function reduceDiamondEvent(state, action) {
             });
             const moves = [batterMove, ...runnerMoves];
             retainPitchAdvanceCause(state, [action.payload.batterAdvance, ...action.payload.runnerAdvances], action.payload.fielding);
-            validateDiamondPitchCauseEvidence([action.payload.batterAdvance, ...action.payload.runnerAdvances], action.payload.fielding ? [action.payload.fielding] : [], result);
+            validateDiamondPitchCauseEvidence([action.payload.batterAdvance, ...action.payload.runnerAdvances], action.payload.fielding ? [action.payload.fielding] : [], result, { lastPitchResult: state.inning.lastPitchResult, catcherId: state.lineups[side === 'home' ? 'away' : 'home'].defense.C ?? null });
             const scoringAdvances = [action.payload.batterAdvance, ...action.payload.runnerAdvances].filter((advance) => advance.to === 'home' && advance.countsRun !== false);
             const profile = (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion);
             if (side === 'home' &&
@@ -2292,6 +2310,7 @@ function reduceDiamondEvent(state, action) {
                 throw new contracts_1.DiamondDomainError(pendingAwardCode, 'The runner must receive its exact mandatory one-base pitch-infraction award.');
             }
             validateAdvanceShape(action.payload, { standalone: true });
+            validateAdvanceProfile(state, action.payload.cause);
             if (action.payload.cause === 'pickoff' || action.payload.cause === 'balk') {
                 next = { ...next, inning: { ...next.inning, lastPitchResult: null, lastPitchAdvanceCause: null } };
             }
