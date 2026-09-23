@@ -869,6 +869,13 @@ export function validateDiamondPitchCauseEvidence(
   pitchContext?: Readonly<{ lastPitchResult: DiamondGameState['inning']['lastPitchResult']; catcherId: string | null }>
 ) {
   if (
+    pitchContext?.lastPitchResult === 'illegal_pitch' &&
+    (advances.some((advance) => advance.cause === 'wild_pitch' || advance.cause === 'passed_ball') ||
+      fieldings.some((fielding) => Boolean(fielding.passedBallBy)))
+  ) {
+    throw new DiamondDomainError('pitch-cause-fielding-mismatch', 'An illegal pitch cannot also receive wild-pitch or passed-ball credit.');
+  }
+  if (
     result === 'interference' &&
     pitchContext?.lastPitchResult === 'catcher_interference' &&
     fieldings.some(
@@ -2820,7 +2827,10 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         next = { ...next, inning: { ...next.inning, lastPitchResult: null, lastPitchAdvanceCause: null } };
       }
       next = retainPitchAdvanceCause(next, [action.payload], action.payload.fielding);
-      validateDiamondPitchCauseEvidence([action.payload], action.payload.fielding ? [action.payload.fielding] : []);
+      validateDiamondPitchCauseEvidence([action.payload], action.payload.fielding ? [action.payload.fielding] : [], undefined, {
+        lastPitchResult: state.inning.lastPitchResult,
+        catcherId: state.lineups[oppositeSide(getBattingSide(state))].defense.C ?? null
+      });
       const runnerId = requireId(action.payload.runnerId, 'runnerId');
       const placement = state.bases[action.payload.from];
       if (!placement || placement.runnerId !== runnerId) {
