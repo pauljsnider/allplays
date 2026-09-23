@@ -1058,7 +1058,7 @@ test("compiled runner causes and interference outcomes require compatible destin
     assert.equal(attempt.result.outcome, "rejected");
     assert.equal(
       attempt.result.rejection?.code,
-      "advance-cause-destination-mismatch",
+      cause === "force_out" ? "standalone-plate-appearance-cause" : "advance-cause-destination-mismatch",
     );
     assert.strictEqual(game.ledger, before);
   }
@@ -1156,7 +1156,7 @@ test("compiled runner causes and interference outcomes require compatible destin
     assert.equal(attempt.result.outcome, "rejected");
     assert.equal(
       attempt.result.rejection?.code,
-      "advance-cause-out-kind-mismatch",
+      cause === "force_out" ? "standalone-plate-appearance-cause" : "advance-cause-out-kind-mismatch",
     );
     assert.strictEqual(game.ledger, before);
   }
