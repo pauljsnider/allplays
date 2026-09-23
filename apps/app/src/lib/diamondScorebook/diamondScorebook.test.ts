@@ -158,6 +158,52 @@ describe('Diamond security boundary regressions', () => {
 });
 
 describe('Diamond substitution and immutable-profile regressions', () => {
+  it.each(['in_play', 'hit_by_pitch', 'catcher_interference', 'walk', 'strikeout'] as const)(
+    'preserves the terminal-pitch batter for %s until the plate appearance is recorded',
+    (terminal) => {
+      for (const type of ['substitute', 're_enter'] as const) {
+        const game = harness();
+        setBasicLineups(game);
+        if (type === 're_enter')
+          game.submit('substitute', { side: 'away', battingSlot: 1, outgoingPlayerId: 'away-1', incomingPlayerId: 'pinch-hitter' });
+        const batterId = currentMatchup(game).batterId;
+        const pitch = terminal === 'walk' ? 'ball' : terminal === 'strikeout' ? 'called_strike' : terminal;
+        const count = terminal === 'walk' ? 4 : terminal === 'strikeout' ? 3 : 1;
+        for (let i = 0; i < count; i += 1) game.submit('record_pitch', { batterId, pitcherId: 'home-1', result: pitch });
+        const payload =
+          type === 'substitute'
+            ? { side: 'away' as const, battingSlot: 1, outgoingPlayerId: batterId, incomingPlayerId: 'new-batter' }
+            : { side: 'away' as const, battingSlot: 1, starterPlayerId: 'away-1', replacedPlayerId: batterId };
+        const command = game.command(type, payload);
+        const context = { actorUid: SCORER, eventId: 'terminal-batter-switch', serverTimestampMs: 1700000001000 };
+        const checkpoint = createDiamondCheckpoint(game.ledger);
+        const full = executeDiamondCommand(game.ledger, command, context);
+        const bounded = executeDiamondCommandFromCheckpoint(checkpoint, command, context);
+        expect(full.result.rejection?.code).toBe('terminal-pitch-batter-change');
+        expect(bounded.result.rejection?.code).toBe('terminal-pitch-batter-change');
+        expect(full.ledger).toBe(game.ledger);
+        expect(bounded.checkpoint).toBe(checkpoint);
+        game.submit('record_plate_appearance', {
+          batterId,
+          pitcherId: 'home-1',
+          result: terminal === 'in_play' ? 'single' : terminal === 'catcher_interference' ? 'interference' : terminal,
+          batterAdvance: terminal === 'strikeout' ? { to: 'out', outKind: 'strikeout' } : { to: 'first' },
+          runnerAdvances: [],
+          outsOnPlay: terminal === 'strikeout' ? 1 : 0
+        });
+        game.submit(type, payload);
+        expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+      }
+    }
+  );
+  it('permits a legal pinch hitter before the pitch count is terminal', () => {
+    const game = harness();
+    setBasicLineups(game);
+    game.submit('record_pitch', { batterId: 'away-1', pitcherId: 'home-1', result: 'ball' });
+    game.submit('substitute', { side: 'away', battingSlot: 1, outgoingPlayerId: 'away-1', incomingPlayerId: 'pinch-hitter' });
+    expect(currentMatchup(game).batterId).toBe('pinch-hitter');
+    expect(game.ledger.state.inning.balls).toBe(1);
+  });
   it.each(['substitute', 'set_defensive_alignment', 're_enter'] as const)(
     'rejects mid-PA pitching changes through %s atomically',
     (type) => {
