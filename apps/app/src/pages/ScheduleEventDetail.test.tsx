@@ -478,6 +478,7 @@ describe('ScheduleEventDetail deferred game hub loaders', () => {
 
     expect(source).toMatch(/eventRef\.current = event;/);
     expect(source).toMatch(/loadAutoFilledLineupDraftPreviewForApp\(currentEvent, auth\.user, formationId\)/);
+    expect(source).toMatch(/useEffect\(\(\) => \{\s*setLiveEvents\(Array\.isArray\(event\.liveEvents\) \? event\.liveEvents : \[\]\);\s*\}, \[event\.eventKey, event\.liveEvents\]\);/);
     expect(source).toMatch(/\[auth\.user, event\.teamId, event\.id, event\.eventKey, event\.gamePlan, event\.isCancelled, event\.isDbGame, event\.isTeamStaff, event\.type, formationId\]/);
   });
 
@@ -4304,7 +4305,7 @@ describe('ScheduleEventDetail assignments', () => {
       expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
     });
     fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
-    fireEvent.click(screen.getByRole('button', { name: 'Live substitutions' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Live substitutions' }));
 
     await waitFor(() => {
       expect(screen.getByTestId('game-day-substitution-panel')).toBeTruthy();
@@ -4314,6 +4315,10 @@ describe('ScheduleEventDetail assignments', () => {
     });
     expect(screen.getByText('#6 Finley Ray for #2 Blake Jones at sg')).toBeTruthy();
 
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Execute sub' })).toBeEnabled();
+      expect(within(screen.getByLabelText('In')).getByRole('option', { name: '#6 Finley Ray' })).toBeTruthy();
+    });
     fireEvent.change(screen.getByLabelText('Out'), { target: { value: 'p2' } });
     fireEvent.change(screen.getByLabelText('In'), { target: { value: 'p6' } });
     fireEvent.click(screen.getByRole('button', { name: 'Execute sub' }));
