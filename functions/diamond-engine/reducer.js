@@ -725,20 +725,19 @@ function deriveDiamondPutoutCredits(fieldings, actualOutRunnerIds) {
     return resolveDiamondPutoutCredits(fieldings, actualOutRunnerIds);
 }
 function validateDiamondPitchCauseEvidence(advances, fieldings, result) {
-    if (result === 'hit_by_pitch' &&
-        fieldings.some((fielding) => fielding.putoutBy ||
-            fielding.putouts?.length ||
-            fielding.assists?.length ||
-            fielding.errors?.length ||
-            fielding.passedBallBy ||
-            fielding.doublePlay ||
-            fielding.triplePlay ||
-            (fielding.battedBall && fielding.battedBall !== 'unknown'))) {
+    const hasFieldingCredit = fieldings.some((fielding) => fielding.putoutBy ||
+        fielding.putouts?.length ||
+        fielding.assists?.length ||
+        fielding.errors?.length ||
+        fielding.passedBallBy ||
+        fielding.doublePlay ||
+        fielding.triplePlay ||
+        (fielding.battedBall && fielding.battedBall !== 'unknown'));
+    if (result === 'hit_by_pitch' && hasFieldingCredit) {
         throw new contracts_1.DiamondDomainError('fielding-result-mismatch', 'A hit-by-pitch award cannot carry fielding or batted-ball credits.');
     }
-    if (advances.some((advance) => ['balk', 'illegal_pitch', 'hit_by_pitch'].includes(advance.cause ?? '')) &&
-        fieldings.some((fielding) => Boolean(fielding.passedBallBy))) {
-        throw new contracts_1.DiamondDomainError('pitch-cause-fielding-mismatch', 'A dead-ball runner award cannot also carry passed-ball credit.');
+    if (advances.some((advance) => ['balk', 'illegal_pitch', 'hit_by_pitch'].includes(advance.cause ?? '')) && hasFieldingCredit) {
+        throw new contracts_1.DiamondDomainError('pitch-cause-fielding-mismatch', 'A dead-ball runner award cannot carry fielding or batted-ball credits.');
     }
     if (result &&
         [
@@ -2069,6 +2068,10 @@ function reduceDiamondEvent(state, action) {
                 throw new contracts_1.DiamondDomainError('half-inning-complete', 'Advance the half inning first.');
             validateBatterAndPitcher(state, action.payload.batterId, action.payload.pitcherId);
             requireMember(action.payload.result, PITCH_RESULTS, 'pitch result');
+            if (action.payload.result === 'balk' &&
+                (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion).sport !== 'baseball') {
+                throw new contracts_1.DiamondDomainError('invalid-pitch-result', 'Balk results are only valid for baseball profiles.');
+            }
             if (state.inning.balls >= 4 || state.inning.strikes >= 3 || isDiamondTerminalPitchResult(state.inning.lastPitchResult)) {
                 throw new contracts_1.DiamondDomainError('plate-appearance-pending', 'Resolve the plate appearance before recording another pitch.');
             }
