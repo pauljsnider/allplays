@@ -2092,6 +2092,9 @@ function reduceDiamondEvent(state, action) {
             if (state.inning.balls >= 4 || state.inning.strikes >= 3 || isDiamondTerminalPitchResult(state.inning.lastPitchResult)) {
                 throw new contracts_1.DiamondDomainError('plate-appearance-pending', 'Resolve the plate appearance before recording another pitch.');
             }
+            if (action.payload.result === 'balk' && BASES.every((base) => state.bases[base] === null)) {
+                throw new contracts_1.DiamondDomainError('balk-without-runner', 'A balk requires a runner aboard; record the applicable illegal pitch instead.');
+            }
             let balls = state.inning.balls;
             let strikes = state.inning.strikes;
             const deliveredPitch = isDiamondDeliveredPitch(action.payload.result);
@@ -2223,6 +2226,8 @@ function reduceDiamondEvent(state, action) {
             const runnerMoves = action.payload.runnerAdvances.map((advance) => {
                 validateAdvanceShape(advance);
                 validateAdvanceProfile(state, advance.cause);
+                if (advance.cause === 'illegal_pitch')
+                    throw new contracts_1.DiamondDomainError('illegal-pitch-award-required', 'Record the illegal pitch and complete its runner awards before the plate appearance.');
                 if (advance.cause === 'balk')
                     throw new contracts_1.DiamondDomainError('balk-award-required', 'Record the balk and complete its runner awards before the plate appearance.');
                 validatePlateAppearanceRunnerAdvance(state, result, advance);
@@ -2314,6 +2319,9 @@ function reduceDiamondEvent(state, action) {
             }
             validateAdvanceShape(action.payload, { standalone: true });
             validateAdvanceProfile(state, action.payload.cause);
+            if (action.payload.cause === 'illegal_pitch' && !state.pendingIllegalPitchAwards?.length) {
+                throw new contracts_1.DiamondDomainError('illegal-pitch-award-required', 'The runner must have a pending recorded illegal-pitch award.');
+            }
             if (action.payload.cause === 'balk' && !state.pendingBalkAwards?.length) {
                 throw new contracts_1.DiamondDomainError('balk-award-required', 'Record the balk before completing its mandatory runner awards.');
             }
