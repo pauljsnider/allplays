@@ -650,9 +650,36 @@ function verifyEventChain(events) {
         previousHash = event.hash;
     });
 }
+const LEDGER_METADATA_KEYS = ['teamId', 'gameId', 'rulesProfileId', 'rulesProfileVersion', 'captureMode'];
+function requireMatchingLedgerMetadata(expected, actual) {
+    if (LEDGER_METADATA_KEYS.some((key) => expected[key] !== actual[key])) {
+        throw new contracts_1.DiamondDomainError('ledger-metadata-mismatch', 'Ledger resources, pinned rules and capture mode must agree.');
+    }
+}
+function verifyReplayOrigin(initialState, events) {
+    (0, reducer_1.validateDiamondState)(initialState);
+    const pristine = (0, reducer_1.createInitialDiamondState)(initialState);
+    if ((0, canonical_1.canonicalDiamondJson)(initialState) !== (0, canonical_1.canonicalDiamondJson)(pristine)) {
+        throw new contracts_1.DiamondDomainError('initial-state-mismatch', 'The ledger must begin at its pristine constructor state.');
+    }
+    if (events.length && (0, canonical_1.canonicalDiamondJson)(initialState) !== (0, canonical_1.canonicalDiamondJson)(events[0].before)) {
+        throw new contracts_1.DiamondDomainError('initial-state-mismatch', 'The initial state must match the first hash-covered snapshot.');
+    }
+    events.forEach((event) => {
+        requireMatchingLedgerMetadata(initialState, event.before);
+        requireMatchingLedgerMetadata(initialState, event.after);
+        for (const key of ['schemaVersion', 'rulesProfileId', 'rulesProfileVersion', 'reducerVersion', 'statCatalogVersion']) {
+            if (event[key] !== initialState[key] || event.before[key] !== initialState[key] || event.after[key] !== initialState[key]) {
+                throw new contracts_1.DiamondDomainError('ledger-metadata-mismatch', 'Every event and snapshot must retain the pinned ledger versions.');
+            }
+        }
+    });
+}
 function replayDiamondEvents(initialState, events, options = {}) {
-    if (options.verifyHashes !== false)
+    if (options.verifyHashes !== false) {
         verifyEventChain(events);
+        verifyReplayOrigin(initialState, events);
+    }
     const replay = replayCanonicalDiamondEvents(initialState, events);
     let { state } = replay;
     const { effectiveEvents, effectiveEventStates } = replay;
@@ -668,6 +695,8 @@ function replayDiamondEvents(initialState, events, options = {}) {
     });
 }
 function replayDiamondLedger(ledger, options = {}) {
+    requireMatchingLedgerMetadata(ledger, ledger.initialState);
+    requireMatchingLedgerMetadata(ledger, ledger.state);
     const replay = replayDiamondEvents(ledger.initialState, ledger.events, options);
     if (options.verifyHashes !== false && (0, canonical_1.canonicalDiamondJson)(replay.state) !== (0, canonical_1.canonicalDiamondJson)(ledger.state)) {
         throw new contracts_1.DiamondDomainError('checkpoint-state-mismatch', 'Replay state does not match the ledger checkpoint.');

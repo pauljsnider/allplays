@@ -815,12 +815,43 @@ export type DiamondReplayResult = Readonly<{
   complete: true;
 }>;
 
+const LEDGER_METADATA_KEYS = ['teamId', 'gameId', 'rulesProfileId', 'rulesProfileVersion', 'captureMode'] as const;
+
+function requireMatchingLedgerMetadata(expected: DiamondLedgerConfig, actual: DiamondLedgerConfig) {
+  if (LEDGER_METADATA_KEYS.some((key) => expected[key] !== actual[key])) {
+    throw new DiamondDomainError('ledger-metadata-mismatch', 'Ledger resources, pinned rules and capture mode must agree.');
+  }
+}
+
+function verifyReplayOrigin(initialState: DiamondGameState, events: readonly DiamondEvent[]) {
+  validateDiamondState(initialState);
+  const pristine = createInitialDiamondState(initialState);
+  if (canonicalDiamondJson(initialState) !== canonicalDiamondJson(pristine)) {
+    throw new DiamondDomainError('initial-state-mismatch', 'The ledger must begin at its pristine constructor state.');
+  }
+  if (events.length && canonicalDiamondJson(initialState) !== canonicalDiamondJson(events[0].before)) {
+    throw new DiamondDomainError('initial-state-mismatch', 'The initial state must match the first hash-covered snapshot.');
+  }
+  events.forEach((event) => {
+    requireMatchingLedgerMetadata(initialState, event.before);
+    requireMatchingLedgerMetadata(initialState, event.after);
+    for (const key of ['schemaVersion', 'rulesProfileId', 'rulesProfileVersion', 'reducerVersion', 'statCatalogVersion'] as const) {
+      if (event[key] !== initialState[key] || event.before[key] !== initialState[key] || event.after[key] !== initialState[key]) {
+        throw new DiamondDomainError('ledger-metadata-mismatch', 'Every event and snapshot must retain the pinned ledger versions.');
+      }
+    }
+  });
+}
+
 export function replayDiamondEvents(
   initialState: DiamondGameState,
   events: readonly DiamondEvent[],
   options: Readonly<{ verifyHashes?: boolean }> = {}
 ): DiamondReplayResult {
-  if (options.verifyHashes !== false) verifyEventChain(events);
+  if (options.verifyHashes !== false) {
+    verifyEventChain(events);
+    verifyReplayOrigin(initialState, events);
+  }
   const replay = replayCanonicalDiamondEvents(initialState, events);
   let { state } = replay;
   const { effectiveEvents, effectiveEventStates } = replay;
@@ -838,6 +869,8 @@ export function replayDiamondEvents(
 }
 
 export function replayDiamondLedger(ledger: DiamondLedger, options: Readonly<{ verifyHashes?: boolean }> = {}): DiamondReplayResult {
+  requireMatchingLedgerMetadata(ledger, ledger.initialState);
+  requireMatchingLedgerMetadata(ledger, ledger.state);
   const replay = replayDiamondEvents(ledger.initialState, ledger.events, options);
   if (options.verifyHashes !== false && canonicalDiamondJson(replay.state) !== canonicalDiamondJson(ledger.state)) {
     throw new DiamondDomainError('checkpoint-state-mismatch', 'Replay state does not match the ledger checkpoint.');
