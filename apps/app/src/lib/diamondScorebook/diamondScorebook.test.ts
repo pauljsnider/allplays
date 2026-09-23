@@ -39,6 +39,63 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['fastpitch-nfhs', 'fastpitch-youth'] as const)('rejects standalone and bundled balk causes in %s', (profile) => {
+    const game = harness(profile);
+    setBasicLineups(game);
+    recordPitch(game, 'away-1', 'home-1');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    const advance = { runnerId: 'away-1', from: 'first' as const, to: 'second' as const, cause: 'balk' as const };
+    for (const command of [
+      game.command('advance_runner', advance),
+      game.command('record_plate_appearance', {
+        ...currentMatchup(game),
+        result: 'intentional_walk',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [advance],
+        outsOnPlay: 0
+      })
+    ]) {
+      expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('invalid-advance-cause');
+      expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+        'invalid-advance-cause'
+      );
+    }
+  });
+  it.each([false, true])('binds catcher-interference fielding to the original catcher, attached=%s', (attached) => {
+    for (const fielding of [{ errors: [{ playerId: 'home-3' }] }, { assists: ['home-2'] }, { battedBall: 'ground' as const }]) {
+      const game = harness();
+      setBasicLineups(game);
+      game.submit('record_pitch', { ...currentMatchup(game), result: 'catcher_interference' });
+      const payload: DiamondCommandPayloadMap['record_plate_appearance'] = {
+        ...currentMatchup(game),
+        result: 'interference',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      };
+      const play = attached ? game.submit('record_plate_appearance', payload) : null;
+      if (attached) game.submit('record_pitch', { ...currentMatchup(game), result: 'ball' });
+      const command = attached
+        ? game.command('record_fielding', { playEventId: play!.event!.eventId, fielding })
+        : game.command('record_plate_appearance', { ...payload, fielding });
+      expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('fielding-result-mismatch');
+      if (!attached)
+        expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+          'fielding-result-mismatch'
+        );
+      const valid = { errors: [{ playerId: 'home-2' }] };
+      if (attached) game.submit('record_fielding', { playEventId: play!.event!.eventId, fielding: valid });
+      else game.submit('record_plate_appearance', { ...payload, fielding: valid });
+      expect(projectDiamondStats(game.ledger).players['home-2'].raw.fielding.E).toBe(1);
+      expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+    }
+  });
   it.each(['fastpitch-nfhs', 'fastpitch-youth'] as const)('rejects baseball balk results in %s', (profile) => {
     const game = harness(profile);
     setBasicLineups(game);

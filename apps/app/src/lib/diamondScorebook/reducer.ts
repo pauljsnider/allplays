@@ -485,6 +485,12 @@ function validateBatterCauseResult(
     throw new DiamondDomainError('batter-cause-result-mismatch', 'The batter advance cause contradicts the plate-appearance result.');
 }
 
+function validateAdvanceProfile(state: DiamondGameState, cause: DiamondRunnerAdvanceCause | undefined) {
+  if (cause === 'balk' && requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion).sport !== 'baseball') {
+    throw new DiamondDomainError('invalid-advance-cause', 'Balk advances are only valid for baseball profiles.');
+  }
+}
+
 function validatePlateAppearanceRunnerAdvance(
   state: DiamondGameState,
   result: DiamondCommandPayloadMap['record_plate_appearance']['result'],
@@ -859,8 +865,25 @@ export function deriveDiamondPutoutCredits(
 export function validateDiamondPitchCauseEvidence(
   advances: readonly Readonly<{ cause?: DiamondRunnerAdvanceCause }>[],
   fieldings: readonly DiamondFieldingChain[],
-  result?: DiamondCommandPayloadMap['record_plate_appearance']['result']
+  result?: DiamondCommandPayloadMap['record_plate_appearance']['result'],
+  pitchContext?: Readonly<{ lastPitchResult: DiamondGameState['inning']['lastPitchResult']; catcherId: string | null }>
 ) {
+  if (
+    result === 'interference' &&
+    pitchContext?.lastPitchResult === 'catcher_interference' &&
+    fieldings.some(
+      (fielding) =>
+        fielding.putoutBy ||
+        fielding.putouts?.length ||
+        fielding.assists?.length ||
+        fielding.passedBallBy ||
+        fielding.doublePlay ||
+        fielding.triplePlay ||
+        (fielding.battedBall && fielding.battedBall !== 'unknown') ||
+        fielding.errors?.some((error) => error.playerId !== pitchContext.catcherId)
+    )
+  )
+    throw new DiamondDomainError('fielding-result-mismatch', 'Catcher interference permits only an error charged to the recorded catcher.');
   const hasFieldingCredit = fieldings.some(
     (fielding) =>
       fielding.putoutBy ||
@@ -2593,6 +2616,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         throw new DiamondDomainError('batter-on-base', 'The current batter is already recorded as a base runner.');
       }
       validateBatterAdvanceShape(action.payload.batterAdvance);
+      validateAdvanceProfile(state, action.payload.batterAdvance.cause);
       const result = action.payload.result;
       const pitch = state.inning.lastPitchResult;
       if (
@@ -2646,6 +2670,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       );
       const runnerMoves: Move[] = action.payload.runnerAdvances.map((advance: DiamondRunnerAdvance) => {
         validateAdvanceShape(advance);
+        validateAdvanceProfile(state, advance.cause);
         validatePlateAppearanceRunnerAdvance(state, result, advance);
         const placement = state.bases[requireMember(advance.from, BASES, 'runner source')];
         validateInlineResponsiblePitcher(
@@ -2669,7 +2694,8 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       validateDiamondPitchCauseEvidence(
         [action.payload.batterAdvance, ...action.payload.runnerAdvances],
         action.payload.fielding ? [action.payload.fielding] : [],
-        result
+        result,
+        { lastPitchResult: state.inning.lastPitchResult, catcherId: state.lineups[side === 'home' ? 'away' : 'home'].defense.C ?? null }
       );
       const scoringAdvances = [action.payload.batterAdvance, ...action.payload.runnerAdvances].filter(
         (advance) => advance.to === 'home' && advance.countsRun !== false
@@ -2764,6 +2790,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         throw new DiamondDomainError(pendingAwardCode, 'The runner must receive its exact mandatory one-base pitch-infraction award.');
       }
       validateAdvanceShape(action.payload, { standalone: true });
+      validateAdvanceProfile(state, action.payload.cause);
       if (action.payload.cause === 'pickoff' || action.payload.cause === 'balk') {
         next = { ...next, inning: { ...next.inning, lastPitchResult: null, lastPitchAdvanceCause: null } };
       }
