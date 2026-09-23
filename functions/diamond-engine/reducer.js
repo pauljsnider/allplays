@@ -767,6 +767,9 @@ function deriveDiamondCoverageFromEventStates(initialState, eventStates) {
         if (event.type === 'advance_runner') {
             const payload = event.payload;
             coverage = withPartialCoverage(coverage, payload.omissions);
+            if (requiresMissingPitchCoverage(before, payload.cause)) {
+                coverage = { ...coverage, pitches: 'partial', situational: 'partial' };
+            }
             if (payload.fielding && coverage.fielding === 'not_collected')
                 coverage = { ...coverage, fielding: 'partial' };
             const fieldingChains = fieldingChainsForPlay(event, fieldingByPlay, payload.fielding);
@@ -1121,6 +1124,11 @@ function validateNamedMultiOutResult(state, result, moves, outsOnPlay) {
     if (state.inning.outs + requiredOuts > 3) {
         throw new contracts_1.DiamondDomainError('result-outs-exceed-inning', `${result} cannot record more outs than remain in the inning.`);
     }
+}
+function requiresMissingPitchCoverage(state, cause) {
+    return (state.captureMode === 'full' &&
+        (cause === 'wild_pitch' || cause === 'passed_ball') &&
+        (state.inning.pitchesInPlateAppearance === 0 || !state.inning.lastPitchResult || !isDiamondDeliveredPitch(state.inning.lastPitchResult)));
 }
 function applyMoves(state, side, moves, outsOnPlay, reachedOnEventId) {
     requireInteger(outsOnPlay, 'outsOnPlay', 0, 3);
@@ -2037,6 +2045,14 @@ function reduceDiamondEvent(state, action) {
             });
             const moves = [batterMove, ...runnerMoves];
             const scoringAdvances = [action.payload.batterAdvance, ...action.payload.runnerAdvances].filter((advance) => advance.to === 'home' && advance.countsRun !== false);
+            const profile = (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion);
+            if (side === 'home' &&
+                state.inning.half === 'bottom' &&
+                state.inning.number >= profile.scheduledInnings &&
+                action.payload.result !== 'home_run' &&
+                scoringAdvances.length > Math.max(0, state.score.away - state.score.home + 1)) {
+                throw new contracts_1.DiamondDomainError('excess-walkoff-runs', 'A non-home-run walkoff may count only the runs needed to win.');
+            }
             validateHomeRunRbiEvidence(action.payload.result, scoringAdvances, action.payload.runsBattedIn);
             validateCompleteExtraBaseHitRunnerResolution(state, action.payload.result, runnerMoves);
             validateSacrificeEvidence(state, action.payload.result, runnerMoves);
@@ -2126,6 +2142,8 @@ function reduceDiamondEvent(state, action) {
             ], action.payload.to === 'out' ? 1 : 0, action.eventId ?? placement.reachedOnEventId);
             if (pendingAwards.length)
                 next = { ...next, pendingIllegalPitchAwards: pendingAwards.filter((award) => award.runnerId !== runnerId) };
+            if (requiresMissingPitchCoverage(state, action.payload.cause))
+                next = markPartial(next, ['pitches', 'situational']);
             if (action.payload.fielding)
                 next = markFieldingObserved(next);
             next = markPartial(next, action.payload.omissions);
