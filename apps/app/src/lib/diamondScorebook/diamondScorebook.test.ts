@@ -247,7 +247,13 @@ describe('Diamond substitution and immutable-profile regressions', () => {
     expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
       'courtesy-runner-role-conflict'
     );
-    game.submit('add_courtesy_runner', { ...command.payload, runnerId: 'catcher-runner' });
+    game.submit('add_courtesy_runner', {
+      side: 'away',
+      forPlayerId: 'away-2',
+      runnerId: 'catcher-runner',
+      base: 'first',
+      forRole: 'catcher'
+    });
     game.submit('advance_runner', { runnerId: 'catcher-runner', from: 'first', to: 'out', cause: 'pickoff', outKind: 'tag' });
     advanceToHalf(game, 2, 'top');
     expect(currentMatchup(game).batterId).toBe('away-1');
