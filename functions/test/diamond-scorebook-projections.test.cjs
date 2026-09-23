@@ -3625,7 +3625,7 @@ test("compiled runner-cause fielding completeness matches full replay for every 
         type = "record_plate_appearance";
         payload = {
           ...currentMatchup(game),
-          result: "dropped_third_strike",
+          result: fixture.cause === "obstruction" ? "fielders_choice" : "dropped_third_strike",
           batterAdvance: { to: "first", cause: fixture.cause },
           runnerAdvances: [],
           outsOnPlay: 0,
