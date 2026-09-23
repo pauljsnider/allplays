@@ -456,7 +456,7 @@ function validateAdvanceShape(value, options = {}) {
     const to = requireMember(advance.to, DESTINATIONS, 'runner destination');
     validateRunnerDestination(from, to);
     const cause = requireMember(advance.cause, ADVANCE_CAUSES, 'runner advance cause');
-    if (options.standalone && ['walk', 'hit_by_pitch', 'batted_ball'].includes(cause)) {
+    if (options.standalone && ['walk', 'hit_by_pitch', 'batted_ball', 'force_out'].includes(cause)) {
         throw new contracts_1.DiamondDomainError('standalone-plate-appearance-cause', 'This runner advance cause requires a recorded plate appearance.');
     }
     validateAdvanceCauseDestination(cause, to);
