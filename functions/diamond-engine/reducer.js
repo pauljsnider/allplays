@@ -725,6 +725,17 @@ function deriveDiamondPutoutCredits(fieldings, actualOutRunnerIds) {
     return resolveDiamondPutoutCredits(fieldings, actualOutRunnerIds);
 }
 function validateDiamondPitchCauseEvidence(advances, fieldings, result) {
+    if (result === 'hit_by_pitch' &&
+        fieldings.some((fielding) => fielding.putoutBy ||
+            fielding.putouts?.length ||
+            fielding.assists?.length ||
+            fielding.errors?.length ||
+            fielding.passedBallBy ||
+            fielding.doublePlay ||
+            fielding.triplePlay ||
+            (fielding.battedBall && fielding.battedBall !== 'unknown'))) {
+        throw new contracts_1.DiamondDomainError('fielding-result-mismatch', 'A hit-by-pitch award cannot carry fielding or batted-ball credits.');
+    }
     if (advances.some((advance) => ['balk', 'illegal_pitch', 'hit_by_pitch'].includes(advance.cause ?? '')) &&
         fieldings.some((fielding) => Boolean(fielding.passedBallBy))) {
         throw new contracts_1.DiamondDomainError('pitch-cause-fielding-mismatch', 'A dead-ball runner award cannot also carry passed-ball credit.');
