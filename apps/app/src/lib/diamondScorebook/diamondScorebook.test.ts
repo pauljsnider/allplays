@@ -39,6 +39,43 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['baseball-nfhs', 'fastpitch-nfhs', 'fastpitch-youth'] as const)('requires a pending illegal-pitch award in %s', (profile) => {
+    const game = harness(profile);
+    setBasicLineups(game);
+    recordPitch(game, 'away-1', 'home-1');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    const advance = { runnerId: 'away-1', from: 'first' as const, to: 'second' as const, cause: 'illegal_pitch' as const };
+    for (const command of [
+      game.command('advance_runner', advance),
+      game.command('record_plate_appearance', {
+        ...currentMatchup(game),
+        result: 'intentional_walk',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [advance],
+        outsOnPlay: 0
+      })
+    ]) {
+      expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('illegal-pitch-award-required');
+      expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+        'illegal-pitch-award-required'
+      );
+    }
+  });
+  it.each(['baseball-nfhs', 'baseball-obr', 'baseball-youth'] as const)('rejects bases-empty balks in %s', (profile) => {
+    const game = harness(profile);
+    setBasicLineups(game);
+    const command = game.command('record_pitch', { ...currentMatchup(game), result: 'balk' });
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('balk-without-runner');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'balk-without-runner'
+    );
+  });
   it('rejects unrecorded standalone and bundled baseball balk awards', () => {
     const game = twoRunnersBeforePitch();
     const advance = { runnerId: 'away-2', from: 'first' as const, to: 'second' as const, cause: 'balk' as const };
@@ -6709,7 +6746,6 @@ describe('Diamond stat-integrity evidence', () => {
 
     const complete = harness('baseball-nfhs', 'full');
     setBasicLineups(complete);
-    complete.submit('record_pitch', { batterId: 'away-1', pitcherId: 'home-1', result: 'balk' });
     complete.submit('record_pitch', { batterId: 'away-1', pitcherId: 'home-1', result: 'pickoff_attempt' });
     expect(complete.ledger.state.inning).toMatchObject({ pitchesInPlateAppearance: 0, lastPitchResult: null });
     for (let index = 0; index < 4; index += 1) {
@@ -6723,6 +6759,8 @@ describe('Diamond stat-integrity evidence', () => {
       runnerAdvances: [],
       outsOnPlay: 0
     });
+    complete.submit('record_pitch', { batterId: 'away-2', pitcherId: 'home-1', result: 'balk' });
+    complete.submit('advance_runner', { runnerId: 'away-1', from: 'first', to: 'second', cause: 'balk' });
     const projection = projectDiamondStats(complete.ledger);
     expect(complete.ledger.state.coverage.pitches).toBe('complete');
     expect(projection.players['home-1'].raw.pitching).toMatchObject({ pitches: 4, strikes: 0, balkIllegalPitch: 1 });
@@ -7348,7 +7386,6 @@ describe('Diamond stat-integrity evidence', () => {
 
       game.submit('record_pitch', { batterId: 'away-3', pitcherId: 'home-1', result: 'illegal_pitch' });
       interrupt();
-      game.submit('advance_runner', { runnerId: 'away-2', from: 'third', to: 'stay', cause: 'illegal_pitch' });
       game.submit('advance_runner', { runnerId: 'away-2', from: 'third', to: 'stay', cause: 'other' });
       interrupt();
       game.submit('record_pitch', { batterId: 'away-3', pitcherId: 'home-1', result: 'balk' });
