@@ -38,15 +38,66 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['substitute', 're_enter', 'set_defensive_alignment'] as const)('freezes in-play defense against %s', (type) => {
+    const game = harness('baseball-nfhs', 'quick');
+    setBasicLineups(game);
+    if (type === 're_enter')
+      game.submit('substitute', {
+        side: 'home',
+        battingSlot: 2,
+        outgoingPlayerId: 'home-2',
+        incomingPlayerId: 'bench-catcher',
+        defensivePosition: 'C'
+      });
+    game.submit('record_pitch', { ...currentMatchup(game), result: 'in_play' });
+    const command =
+      type === 'substitute'
+        ? game.command(type, {
+            side: 'home',
+            battingSlot: 2,
+            outgoingPlayerId: 'home-2',
+            incomingPlayerId: 'bench-catcher',
+            defensivePosition: 'C'
+          })
+        : type === 're_enter'
+          ? game.command(type, {
+              side: 'home',
+              battingSlot: 2,
+              replacedPlayerId: 'bench-catcher',
+              starterPlayerId: 'home-2',
+              defensivePosition: 'C'
+            })
+          : game.command(type, {
+              side: 'home',
+              assignments: [
+                { playerId: 'home-1', position: 'P' },
+                { playerId: 'home-2', position: 'SS' },
+                { playerId: 'home-3', position: 'C' }
+              ]
+            });
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('terminal-pitch-defense-change');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'terminal-pitch-defense-change'
+    );
+    recordQuickOut(game);
+    game.submit(command.type, command.payload);
+  });
   it('finishes the ball-four PA after a mandatory illegal-pitch award scores the walkoff', () => {
     const game = harness('fastpitch-nfhs', 'quick');
     setBasicLineups(game);
     advanceToHalf(game, 7, 'bottom');
     game.submit('record_plate_appearance', {
       ...currentMatchup(game),
-      result: 'triple',
-      batterAdvance: { to: 'third' },
+      result: 'single',
+      batterAdvance: { to: 'first' },
       runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'double',
+      batterAdvance: { to: 'second' },
+      runnerAdvances: [{ runnerId: 'home-1', from: 'first', to: 'third', cause: 'batted_ball' }],
       outsOnPlay: 0
     });
     for (let i = 0; i < 3; i += 1) game.submit('record_pitch', { ...currentMatchup(game), result: 'ball' });
@@ -59,6 +110,7 @@ describe('Diamond security boundary regressions', () => {
       earned: true,
       rbi: false
     });
+    game.submit('advance_runner', { runnerId: 'home-2', from: 'second', to: 'third', cause: 'illegal_pitch' });
     const payload = {
       ...currentMatchup(game),
       result: 'walk' as const,
@@ -67,6 +119,26 @@ describe('Diamond security boundary regressions', () => {
       outsOnPlay: 0
     };
     const command = game.command('record_plate_appearance', payload);
+    for (const extra of [
+      {
+        runnerAdvances: [
+          { runnerId: 'home-2', from: 'third' as const, to: 'home' as const, cause: 'walk' as const, earned: true, rbi: false }
+        ]
+      },
+      {
+        runnerAdvances: [
+          { runnerId: 'home-2', from: 'third' as const, to: 'out' as const, cause: 'pickoff' as const, outKind: 'tag' as const }
+        ],
+        outsOnPlay: 1
+      },
+      { fielding: { errors: [{ playerId: 'away-3' }] } }
+    ]) {
+      const invalid = game.command('record_plate_appearance', { ...payload, ...extra });
+      expect(executeDiamondCommand(game.ledger, invalid, context).result.rejection?.code).toBe('invalid-walkoff-completion');
+      expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), invalid, context).result.rejection?.code).toBe(
+        'invalid-walkoff-completion'
+      );
+    }
     expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.outcome).toBe('accepted');
     game.submit('record_plate_appearance', payload);
     expect(
