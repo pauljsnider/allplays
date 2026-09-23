@@ -30,6 +30,7 @@ import {
   deriveDiamondCoverageFromEventStates,
   getBattingSide,
   getDiamondFinalizationReason,
+  isDiamondDeliveredPitch,
   reduceDiamondEvent,
   setDiamondStateRevision,
   validateDiamondFieldingOutCredit,
@@ -401,12 +402,15 @@ export function getEffectiveDiamondEvents(events: readonly DiamondEvent[]): read
   return deepFreeze(effective);
 }
 
+type PhysicalPitchContext = { cause: 'wild_pitch' | 'passed_ball' | null };
+
 type HistoricalPlayContext = Readonly<{
   battingSide: DiamondSide;
   defensiveSide: DiamondSide;
   activeDefenders: ReadonlySet<string>;
   catcherId: string | null;
   advances: readonly Readonly<{ cause?: DiamondRunnerAdvanceCause }>[];
+  physicalPitch: PhysicalPitchContext | null;
   participants: ReadonlySet<string>;
   scoringRunners: ReadonlySet<string>;
   requiresHomeRunRbi: boolean;
@@ -417,6 +421,7 @@ type HistoricalPlayContext = Readonly<{
 }>;
 
 type ParticipantReplayTracker = {
+  physicalPitch: PhysicalPitchContext | null;
   plays: Map<string, HistoricalPlayContext>;
   pitcherAppearances: Record<DiamondSide, Set<string>>;
   pitcherDecisions: Partial<Record<PitcherDecision['decision'], PitcherDecision>>;
@@ -426,6 +431,7 @@ type PitcherDecision = NonNullable<DiamondCommandPayloadMap['record_scoring_judg
 
 function createParticipantReplayTracker(): ParticipantReplayTracker {
   return {
+    physicalPitch: null,
     plays: new Map<string, HistoricalPlayContext>(),
     pitcherAppearances: { home: new Set<string>(), away: new Set<string>() },
     pitcherDecisions: {}
@@ -571,7 +577,10 @@ function validatePitcherDecisionsForFinalization(state: DiamondGameState, tracke
 function validateAttachmentAgainstHistoricalPlay(event: Pick<DiamondEffectiveEvent, 'type' | 'payload'>, context: HistoricalPlayContext) {
   if (event.type === 'record_fielding') {
     const fielding = (event.payload as DiamondCommandPayloadMap['record_fielding']).fielding;
-    validateDiamondPitchCauseEvidence(context.advances, [fielding]);
+    validateDiamondPitchCauseEvidence(
+      [...context.advances, ...(context.physicalPitch?.cause ? [{ cause: context.physicalPitch.cause }] : [])],
+      [fielding]
+    );
     validateDiamondFieldingOutCredit(fielding, context.actualOutCount);
     validateDiamondMergedFieldingOutCredit([fielding], context.actualOutRunnerIds);
     const invalidFielder = fieldingParticipantIds(fielding).find(
@@ -589,6 +598,7 @@ function validateAttachmentAgainstHistoricalPlay(event: Pick<DiamondEffectiveEve
         'A passed-ball attachment must name the catcher recorded when the cited play occurred.'
       );
     }
+    if (fielding.passedBallBy && context.physicalPitch) context.physicalPitch.cause = 'passed_ball';
     return;
   }
   if (event.type !== 'record_scoring_judgment') return;
@@ -642,6 +652,9 @@ function validateAttachmentAgainstHistoricalPlay(event: Pick<DiamondEffectiveEve
 }
 
 function observeEffectiveEventParticipants(state: DiamondGameState, event: DiamondEffectiveEvent, tracker: ParticipantReplayTracker) {
+  if (event.type === 'record_pitch' && isDiamondDeliveredPitch((event.payload as DiamondCommandPayloadMap['record_pitch']).result)) {
+    tracker.physicalPitch = { cause: null };
+  }
   if (PITCHER_APPEARANCE_TYPES.has(event.type)) {
     const battingSide = getBattingSide(state);
     const defensiveSide = otherSide(battingSide);
@@ -668,6 +681,7 @@ function observeEffectiveEventParticipants(state: DiamondGameState, event: Diamo
         Object.values(state.lineups[defensiveSide].defense).filter((playerId): playerId is string => Boolean(playerId))
       ),
       catcherId: state.lineups[defensiveSide].defense.C ?? null,
+      physicalPitch: tracker.physicalPitch,
       advances:
         event.type === 'advance_runner'
           ? [event.payload as DiamondCommandPayloadMap['advance_runner']]
@@ -688,6 +702,20 @@ function observeEffectiveEventParticipants(state: DiamondGameState, event: Diamo
         away: new Set(tracker.pitcherAppearances.away)
       }
     };
+    const fielding =
+      event.type === 'record_plate_appearance'
+        ? (event.payload as DiamondCommandPayloadMap['record_plate_appearance']).fielding
+        : event.type === 'advance_runner'
+          ? (event.payload as DiamondCommandPayloadMap['advance_runner']).fielding
+          : undefined;
+    validateDiamondPitchCauseEvidence(
+      [...context.advances, ...(context.physicalPitch?.cause ? [{ cause: context.physicalPitch.cause }] : [])],
+      fielding ? [fielding] : []
+    );
+    const cause = fielding?.passedBallBy
+      ? 'passed_ball'
+      : context.advances.find((advance) => advance.cause === 'wild_pitch' || advance.cause === 'passed_ball')?.cause;
+    if (context.physicalPitch && (cause === 'wild_pitch' || cause === 'passed_ball')) context.physicalPitch.cause = cause;
     tracker.plays.set(event.eventId, context);
     tracker.plays.set(event.sourceEventId, context);
     return;
@@ -785,7 +813,10 @@ function replayCanonicalDiamondEvents(initialState: DiamondGameState, events: re
       observeEffectiveEventParticipants(state, effectiveEvent, participantTracker);
       const reduced = reduceDiamondEvent(state, asReducerAction(effectiveEvent.type, effectiveEvent.payload, effectiveEvent.eventId));
       if (effectiveEvent.type === 'finalize') validatePitcherDecisionsForFinalization(state, participantTracker);
-      state = reduced;
+      if (reduced.inning.lastPitchResult === null) participantTracker.physicalPitch = null;
+      state = participantTracker.physicalPitch
+        ? { ...reduced, inning: { ...reduced.inning, lastPitchAdvanceCause: participantTracker.physicalPitch.cause } }
+        : reduced;
       effectiveEvents.push(effectiveEvent);
       replayedEvent = { event: effectiveEvent, before };
     }
@@ -1371,6 +1402,7 @@ export function executeDiamondCommand(ledger: DiamondLedger, command: DiamondCom
       const coverageReplay = replayCanonicalDiamondEvents(ledger.initialState, provisionalEvents);
       after = {
         ...after,
+        inning: { ...after.inning, lastPitchAdvanceCause: coverageReplay.state.inning.lastPitchAdvanceCause },
         coverage: deriveDiamondCoverageFromEventStates(ledger.initialState, coverageReplay.effectiveEventStates)
       };
     }
