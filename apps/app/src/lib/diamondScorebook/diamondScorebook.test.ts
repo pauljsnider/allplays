@@ -39,6 +39,77 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it('keeps unforced runners in place on accepted catcher interference', () => {
+    const game = harness();
+    setBasicLineups(game);
+    recordPitch(game, 'away-1', 'home-1');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'triple',
+      batterAdvance: { to: 'third' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    game.submit('record_pitch', { ...currentMatchup(game), result: 'catcher_interference' });
+    const payload = {
+      ...currentMatchup(game),
+      result: 'interference' as const,
+      batterAdvance: { to: 'first' as const },
+      runnerAdvances: [
+        { runnerId: 'away-1', from: 'third' as const, to: 'home' as const, cause: 'wild_pitch' as const, earned: true, rbi: false }
+      ],
+      outsOnPlay: 0
+    };
+    const command = game.command('record_plate_appearance', payload);
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('runner-cause-result-mismatch');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'runner-cause-result-mismatch'
+    );
+    game.submit('record_plate_appearance', {
+      ...payload,
+      runnerAdvances: [{ runnerId: 'away-1', from: 'third', to: 'stay', cause: 'obstruction' }]
+    });
+    expect(game.ledger.state.score.away).toBe(0);
+  });
+  it.each(['inline', 'attachment', 'correction'] as const)('rejects double WP/PB classification through %s', (path) => {
+    const game = harness();
+    setBasicLineups(game);
+    recordPitch(game, 'away-1', 'home-1');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    recordPitch(game, 'away-2', 'home-1', 'ball');
+    const advance = { runnerId: 'away-1', from: 'first' as const, to: 'second' as const, cause: 'wild_pitch' as const };
+    if (path === 'inline') {
+      const command = game.command('advance_runner', { ...advance, fielding: { passedBallBy: 'home-2' } });
+      expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('pitch-cause-fielding-mismatch');
+      expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+        'pitch-cause-fielding-mismatch'
+      );
+      return;
+    }
+    const play = game.submit('advance_runner', { ...advance, cause: path === 'correction' ? 'passed_ball' : 'wild_pitch' });
+    const attachment = { playEventId: play.event!.eventId, fielding: { passedBallBy: 'home-2' } };
+    if (path === 'attachment') {
+      expect(executeDiamondCommand(game.ledger, game.command('record_fielding', attachment), context).result.rejection?.code).toBe(
+        'pitch-cause-fielding-mismatch'
+      );
+    } else {
+      game.submit('record_fielding', attachment);
+      const command = game.command('supersede_event', {
+        targetEventId: play.event!.eventId,
+        reason: 'Reclassify as WP',
+        replacement: { type: 'advance_runner', payload: advance }
+      });
+      expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('pitch-cause-fielding-mismatch');
+      expect(projectDiamondStats(game.ledger).players['home-2'].raw.fielding.PB).toBe(1);
+    }
+    expect(projectDiamondStats(game.ledger).players['home-1'].raw.pitching.WP).toBe(path === 'attachment' ? 1 : 0);
+  });
   it('does not advance an unforced runner on a hit-by-pitch award', () => {
     const game = harness('baseball-nfhs', 'quick');
     setBasicLineups(game);
