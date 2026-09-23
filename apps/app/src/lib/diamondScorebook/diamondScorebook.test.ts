@@ -39,6 +39,66 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  function twoRunnersBeforePitch() {
+    const game = harness();
+    setBasicLineups(game);
+    recordPitch(game, 'away-1', 'home-1');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    recordPitch(game, 'away-2', 'home-1');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'second', cause: 'batted_ball' }],
+      outsOnPlay: 0
+    });
+    recordPitch(game, 'away-3', 'home-1', 'ball');
+    return game;
+  }
+  it.each([false, true])('rejects late cross-event pitch attachments with attachment-first=%s', (attachmentFirst) => {
+    const game = twoRunnersBeforePitch();
+    const first = game.submit('advance_runner', { runnerId: 'away-1', from: 'second', to: 'third', cause: 'other' });
+    const attachment = { playEventId: first.event!.eventId, fielding: { passedBallBy: 'home-2' } };
+    const advance = { runnerId: 'away-2', from: 'first' as const, to: 'second' as const, cause: 'wild_pitch' as const };
+    if (attachmentFirst) {
+      game.submit('record_fielding', attachment);
+      const command = game.command('advance_runner', advance);
+      expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('pitch-cause-fielding-mismatch');
+      expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+        'pitch-cause-fielding-mismatch'
+      );
+      game.submit('advance_runner', { ...advance, cause: 'passed_ball', fielding: { passedBallBy: 'home-2' } });
+      expect(projectDiamondStats(game.ledger).players['home-2'].raw.fielding.PB).toBe(1);
+    } else {
+      game.submit('advance_runner', advance);
+      expect(executeDiamondCommand(game.ledger, game.command('record_fielding', attachment), context).result.rejection?.code).toBe(
+        'pitch-cause-fielding-mismatch'
+      );
+    }
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+  });
+  it.each(['wild_pitch', 'passed_ball'] as const)('deduplicates anchored %s at PA completion', (cause) => {
+    const game = twoRunnersBeforePitch();
+    const fielding = cause === 'passed_ball' ? { fielding: { passedBallBy: 'home-2' } } : {};
+    game.submit('advance_runner', { runnerId: 'away-1', from: 'second', to: 'third', cause, ...fielding });
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'intentional_walk',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [{ runnerId: 'away-2', from: 'first', to: 'second', cause }],
+      outsOnPlay: 0,
+      ...fielding
+    });
+    const projected = projectDiamondStats(game.ledger);
+    expect(projected.players['home-1'].raw.pitching.WP).toBe(cause === 'wild_pitch' ? 1 : 0);
+    expect(projected.players['home-2'].raw.fielding.PB).toBe(cause === 'passed_ball' ? 1 : 0);
+  });
   it.each(['wild_pitch', 'passed_ball'] as const)('preserves anchored %s classification across runner commands', (cause) => {
     const game = harness();
     setBasicLineups(game);
