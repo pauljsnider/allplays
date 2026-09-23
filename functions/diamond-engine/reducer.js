@@ -9,6 +9,7 @@ exports.getDiamondFinalizationReason = getDiamondFinalizationReason;
 exports.createInitialDiamondState = createInitialDiamondState;
 exports.validateDiamondMergedFieldingOutCredit = validateDiamondMergedFieldingOutCredit;
 exports.deriveDiamondPutoutCredits = deriveDiamondPutoutCredits;
+exports.validateDiamondPitchCauseEvidence = validateDiamondPitchCauseEvidence;
 exports.deriveDiamondAggregateRbiInference = deriveDiamondAggregateRbiInference;
 exports.deriveDiamondCoverageFromEventStates = deriveDiamondCoverageFromEventStates;
 exports.deriveDiamondCoverageFromEvents = deriveDiamondCoverageFromEvents;
@@ -435,6 +436,7 @@ function validatePlateAppearanceRunnerAdvance(state, result, advance) {
     const next = advance.from === 'first' ? 'second' : advance.from === 'second' ? 'third' : 'home';
     const awardDestination = forced ? advance.to === next : advance.to === 'stay';
     const contradictory = (result === 'hit_by_pitch' && (!awardDestination || !['hit_by_pitch', 'other'].includes(advance.cause))) ||
+        (result === 'interference' && (!awardDestination || !['obstruction', 'other'].includes(advance.cause))) ||
         (advance.cause === 'hit_by_pitch' && result !== 'hit_by_pitch') ||
         (advance.cause === 'walk' && (!walk || !awardDestination)) ||
         (advance.cause === 'batted_ball' && !contact) ||
@@ -709,6 +711,12 @@ function validateDiamondMergedFieldingOutCredit(fieldings, actualOutRunnerIds) {
 }
 function deriveDiamondPutoutCredits(fieldings, actualOutRunnerIds) {
     return resolveDiamondPutoutCredits(fieldings, actualOutRunnerIds);
+}
+function validateDiamondPitchCauseEvidence(advances, fieldings) {
+    if (advances.some((advance) => advance.cause === 'wild_pitch') &&
+        (advances.some((advance) => advance.cause === 'passed_ball') || fieldings.some((fielding) => Boolean(fielding.passedBallBy)))) {
+        throw new contracts_1.DiamondDomainError('pitch-cause-fielding-mismatch', 'One physical pitch cannot be classified as both a wild pitch and a passed ball.');
+    }
 }
 function hasCompletePutoutEvidence(fieldings, actualOutRunnerIds) {
     const creditedOuts = Array.from(deriveDiamondPutoutCredits(fieldings, actualOutRunnerIds).values()).reduce((total, count) => total + count, 0);
@@ -2104,6 +2112,7 @@ function reduceDiamondEvent(state, action) {
                 };
             });
             const moves = [batterMove, ...runnerMoves];
+            validateDiamondPitchCauseEvidence([action.payload.batterAdvance, ...action.payload.runnerAdvances], action.payload.fielding ? [action.payload.fielding] : []);
             const scoringAdvances = [action.payload.batterAdvance, ...action.payload.runnerAdvances].filter((advance) => advance.to === 'home' && advance.countsRun !== false);
             const profile = (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion);
             if (side === 'home' &&
@@ -2176,6 +2185,7 @@ function reduceDiamondEvent(state, action) {
                 throw new contracts_1.DiamondDomainError('illegal-pitch-award-pending', 'The runner must receive its exact mandatory one-base illegal-pitch award.');
             }
             validateAdvanceShape(action.payload, { standalone: true });
+            validateDiamondPitchCauseEvidence([action.payload], action.payload.fielding ? [action.payload.fielding] : []);
             const runnerId = requireId(action.payload.runnerId, 'runnerId');
             const placement = state.bases[action.payload.from];
             if (!placement || placement.runnerId !== runnerId) {
