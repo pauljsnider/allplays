@@ -39,6 +39,39 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['fastpitch-nfhs', 'fastpitch-youth'] as const)('rejects baseball balk results in %s', (profile) => {
+    const game = harness(profile);
+    setBasicLineups(game);
+    const command = game.command('record_pitch', { ...currentMatchup(game), result: 'balk' });
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('invalid-pitch-result');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'invalid-pitch-result'
+    );
+  });
+  it.each(['balk', 'illegal_pitch'] as const)('rejects inline and attached fielding credits on %s awards', (cause) => {
+    for (const fielding of [{ errors: [{ playerId: 'home-3' }] }, { assists: ['home-3'] }, { battedBall: 'ground' as const }]) {
+      const game = harness(cause === 'balk' ? 'baseball-nfhs' : 'fastpitch-nfhs');
+      setBasicLineups(game);
+      recordPitch(game, 'away-1', 'home-1');
+      game.submit('record_plate_appearance', {
+        ...currentMatchup(game),
+        result: 'single',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      });
+      game.submit('record_pitch', { ...currentMatchup(game), result: cause });
+      const payload: DiamondCommandPayloadMap['advance_runner'] = { runnerId: 'away-1', from: 'first', to: 'second', cause };
+      const command = game.command('advance_runner', { ...payload, fielding });
+      expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('pitch-cause-fielding-mismatch');
+      expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+        'pitch-cause-fielding-mismatch'
+      );
+      const play = game.submit('advance_runner', payload);
+      const attachment = game.command('record_fielding', { playEventId: play.event!.eventId, fielding });
+      expect(executeDiamondCommand(game.ledger, attachment, context).result.rejection?.code).toBe('pitch-cause-fielding-mismatch');
+    }
+  });
   it.each(['baseball-nfhs', 'baseball-obr', 'baseball-youth'] as const)(
     'requires recorded balk awards before further %s play',
     (profile) => {
