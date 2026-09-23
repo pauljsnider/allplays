@@ -1943,6 +1943,19 @@ function reduceDiamondEvent(state, action) {
                 state.pendingIllegalPitchAwards?.length === 0 &&
                 (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion).illegalPitchPolicy === 'ball_and_advance';
             requireOpenHalfForPlay(state, { completingAwardWalk });
+            if (completingAwardWalk &&
+                automaticDiamondFinalizationReason(state)?.kind === 'walkoff' &&
+                (action.payload.result !== 'walk' ||
+                    action.payload.batterAdvance?.to !== 'first' ||
+                    Object.keys(action.payload.batterAdvance).some((key) => key !== 'to' && key !== 'cause') ||
+                    (action.payload.batterAdvance.cause !== undefined && action.payload.batterAdvance.cause !== 'walk') ||
+                    action.payload.runnerAdvances?.length !== 0 ||
+                    action.payload.outsOnPlay !== 0 ||
+                    action.payload.fielding !== undefined ||
+                    (action.payload.runsBattedIn !== undefined && action.payload.runsBattedIn !== 0) ||
+                    (action.payload.omissions?.length ?? 0) !== 0)) {
+                throw new contracts_1.DiamondDomainError('invalid-walkoff-completion', 'After the award-created walkoff, record only the outstanding walk to first without other play effects.');
+            }
             if (state.inning.outs >= 3)
                 throw new contracts_1.DiamondDomainError('half-inning-complete', 'Advance the half inning first.');
             const side = validateBatterAndPitcher(state, action.payload.batterId, action.payload.pitcherId);
@@ -2468,6 +2481,13 @@ function reduceDiamondEvent(state, action) {
         }
         if (state.inning.strikes >= 2 && expectedBatter(state).activePlayerId !== expectedBatter(next).activePlayerId) {
             throw new contracts_1.DiamondDomainError('inherited-count-batter-change', 'Finish the current plate appearance before replacing a two-strike batter; inherited strikeout attribution is not supported.');
+        }
+    }
+    if (state.inning.lastPitchResult === 'in_play' &&
+        (action.type === 'substitute' || action.type === 're_enter' || action.type === 'set_defensive_alignment')) {
+        const fieldingSide = oppositeSide(getBattingSide(state));
+        if (FIELDING_POSITIONS.some((position) => state.lineups[fieldingSide].defense[position] !== next.lineups[fieldingSide].defense[position])) {
+            throw new contracts_1.DiamondDomainError('terminal-pitch-defense-change', 'Resolve the in-play plate appearance before changing its defense.');
         }
     }
     return deepFreeze(validateDiamondState(next));
