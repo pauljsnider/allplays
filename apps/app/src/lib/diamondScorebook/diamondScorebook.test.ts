@@ -38,6 +38,31 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['private-to-public', 'public-to-private'] as const)('requires the scorer for a %s correction', (direction) => {
+    const game = harness();
+    setBasicLineups(game);
+    const target =
+      direction === 'private-to-public'
+        ? game.submit('private_note', { text: 'Private target' })
+        : game.submit('record_pitch', { ...currentMatchup(game), result: 'ball' });
+    const command = game.command('supersede_event', {
+      targetEventId: target.event!.eventId,
+      reason: 'Cross-type correction',
+      replacement:
+        direction === 'private-to-public'
+          ? { type: 'record_pitch', payload: { ...currentMatchup(game), result: 'ball' } }
+          : { type: 'private_note', payload: { text: 'Private replacement' } }
+    });
+    const nonScorer = { ...context, actorUid: 'note-writer' };
+    const full = executeDiamondCommand(game.ledger, command, nonScorer);
+    expect(full.result.rejection?.code).toBe('scorer-lease-lost');
+    expect(full.ledger).toBe(game.ledger);
+    const checkpoint = createDiamondCheckpoint(game.ledger);
+    const bounded = executeDiamondCommandFromCheckpoint(checkpoint, command, nonScorer, null, direction === 'private-to-public');
+    expect(bounded.result.rejection?.code).toBe('scorer-lease-lost');
+    expect(bounded.checkpoint).toBe(checkpoint);
+    expect(executeDiamondCommand(game.ledger, command, context).result.outcome).toBe('accepted');
+  });
   it.each(['start', 'advance_half_inning', 'resume'] as const)('requires a root payload object for %s', (type) => {
     const game = harness('baseball-nfhs', 'quick');
     setBasicLineups(game, { start: type !== 'start' });
@@ -2367,7 +2392,7 @@ describe('Diamond command ledger', () => {
         reason: 'Move this entry to the private record.',
         replacement: { type: 'private_note', payload: { text: 'Private replacement' } }
       },
-      { actorUid: privateAuthor }
+      { actorUid: 'scorer-2' }
     );
     const voidTarget = game.submit('private_note', { text: 'Void target' }, { actorUid: privateAuthor });
     const privateVoid = game.submit(
@@ -2451,7 +2476,7 @@ describe('Diamond command ledger', () => {
         },
         { commandId: uuid(913) }
       ),
-      privateAuthor,
+      SCORER,
       'private-hash-replacement'
     );
     expect(replacementHashes[0]).toBe(replacementHashes[1]);
