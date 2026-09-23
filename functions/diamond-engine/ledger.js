@@ -461,6 +461,7 @@ function validatePitcherDecisionsForFinalization(state, tracker) {
 function validateAttachmentAgainstHistoricalPlay(event, context) {
     if (event.type === 'record_fielding') {
         const fielding = event.payload.fielding;
+        (0, reducer_1.validateDiamondPitchCauseEvidence)(context.advances, [fielding]);
         (0, reducer_1.validateDiamondFieldingOutCredit)(fielding, context.actualOutCount);
         (0, reducer_1.validateDiamondMergedFieldingOutCredit)([fielding], context.actualOutRunnerIds);
         const invalidFielder = fieldingParticipantIds(fielding).find((playerId) => !context.activeDefenders.has(playerId) || !playerRoleIsUnambiguous(context, context.defensiveSide, playerId));
@@ -531,6 +532,14 @@ function observeEffectiveEventParticipants(state, event, tracker) {
             defensiveSide,
             activeDefenders: new Set(Object.values(state.lineups[defensiveSide].defense).filter((playerId) => Boolean(playerId))),
             catcherId: state.lineups[defensiveSide].defense.C ?? null,
+            advances: event.type === 'advance_runner'
+                ? [event.payload]
+                : event.type === 'record_plate_appearance'
+                    ? [
+                        event.payload.batterAdvance,
+                        ...event.payload.runnerAdvances
+                    ]
+                    : [],
             participants,
             scoringRunners,
             requiresHomeRunRbi,
