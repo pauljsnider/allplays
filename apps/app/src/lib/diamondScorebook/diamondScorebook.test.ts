@@ -38,6 +38,96 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it('finishes the ball-four PA after a mandatory illegal-pitch award scores the walkoff', () => {
+    const game = harness('fastpitch-nfhs', 'quick');
+    setBasicLineups(game);
+    advanceToHalf(game, 7, 'bottom');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'triple',
+      batterAdvance: { to: 'third' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    for (let i = 0; i < 3; i += 1) game.submit('record_pitch', { ...currentMatchup(game), result: 'ball' });
+    game.submit('record_pitch', { ...currentMatchup(game), result: 'illegal_pitch' });
+    const scoring = game.submit('advance_runner', {
+      runnerId: 'home-1',
+      from: 'third',
+      to: 'home',
+      cause: 'illegal_pitch',
+      earned: true,
+      rbi: false
+    });
+    const payload = {
+      ...currentMatchup(game),
+      result: 'walk' as const,
+      batterAdvance: { to: 'first' as const },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    };
+    const command = game.command('record_plate_appearance', payload);
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.outcome).toBe('accepted');
+    game.submit('record_plate_appearance', payload);
+    expect(
+      game.submit(
+        'record_plate_appearance',
+        { ...currentMatchup(game), result: 'single', batterAdvance: { to: 'first' }, runnerAdvances: [], outsOnPlay: 0 },
+        { accept: false }
+      ).result.rejection?.code
+    ).toBe('game-ending-condition-met');
+    game.submit('record_scoring_judgment', {
+      playEventId: scoring.event!.eventId,
+      pitcherOfRecord: { side: 'home', playerId: 'home-1', decision: 'win' }
+    });
+    game.submit('record_scoring_judgment', {
+      playEventId: scoring.event!.eventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-1', decision: 'loss' }
+    });
+    game.submit('finalize', { confirmed: true });
+    expect(game.ledger.state.lifecycle).toBe('final');
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
+  it.each(['substitute', 're_enter', 'add_courtesy_runner'] as const)('freezes in-play runner identity against %s', (type) => {
+    const game = harness('baseball-nfhs', 'quick');
+    setBasicLineups(game);
+    if (type === 're_enter')
+      game.submit('substitute', {
+        side: 'away',
+        battingSlot: 1,
+        outgoingPlayerId: 'away-1',
+        incomingPlayerId: 'bench-runner',
+        defensivePosition: 'P'
+      });
+    const runnerId = currentMatchup(game).batterId;
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    game.submit('record_pitch', { ...currentMatchup(game), result: 'in_play' });
+    const command =
+      type === 'substitute'
+        ? game.command(type, { side: 'away', battingSlot: 1, outgoingPlayerId: runnerId, incomingPlayerId: 'pinch-runner' })
+        : type === 're_enter'
+          ? game.command(type, { side: 'away', battingSlot: 1, starterPlayerId: 'away-1', replacedPlayerId: runnerId })
+          : game.command(type, { side: 'away', forPlayerId: runnerId, runnerId: 'courtesy-runner', base: 'first', forRole: 'pitcher' });
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('terminal-pitch-runner-change');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'terminal-pitch-runner-change'
+    );
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'ground_out',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [],
+      outsOnPlay: 1
+    });
+    game.submit(command.type, command.payload);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
   it.each(['hit_by_pitch', 'catcher_interference', 'ball', 'called_strike', 'in_play'] as const)(
     'rejects PA outcomes contradicting terminal %s evidence',
     (pitch) => {
