@@ -476,7 +476,8 @@ function currentHalfReachedRunLimit(state) {
     return profile.inningRunLimit !== null && currentHalfRuns(state) >= profile.inningRunLimit;
 }
 function requireOpenHalfForPlay(state, options = {}) {
-    if (!(options.completingAwardWalk && !state.gameEndDecision && automaticDiamondFinalizationReason(state)?.kind === 'walkoff')) {
+    const ending = automaticDiamondFinalizationReason(state)?.kind;
+    if (!(options.completingAwardWalk && !state.gameEndDecision && (ending === 'walkoff' || ending === 'run-ahead'))) {
         requireNoGameEndingCondition(state, 'adding another play');
     }
     if (state.inning.outs >= 3 || state.halfInningEnd) {
@@ -1955,7 +1956,7 @@ function reduceDiamondEvent(state, action) {
                 (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion).illegalPitchPolicy === 'ball_and_advance';
             requireOpenHalfForPlay(state, { completingAwardWalk });
             if (completingAwardWalk &&
-                automaticDiamondFinalizationReason(state)?.kind === 'walkoff' &&
+                ['walkoff', 'run-ahead'].includes(automaticDiamondFinalizationReason(state)?.kind ?? '') &&
                 (action.payload.result !== 'walk' ||
                     action.payload.batterAdvance?.to !== 'first' ||
                     Object.keys(action.payload.batterAdvance).some((key) => key !== 'to' && key !== 'cause') ||
@@ -1965,7 +1966,7 @@ function reduceDiamondEvent(state, action) {
                     action.payload.fielding !== undefined ||
                     (action.payload.runsBattedIn !== undefined && action.payload.runsBattedIn !== 0) ||
                     (action.payload.omissions?.length ?? 0) !== 0)) {
-                throw new contracts_1.DiamondDomainError('invalid-walkoff-completion', 'After the award-created walkoff, record only the outstanding walk to first without other play effects.');
+                throw new contracts_1.DiamondDomainError('invalid-walkoff-completion', 'After the award-created ending, record only the outstanding walk to first without other play effects.');
             }
             if (state.inning.outs >= 3)
                 throw new contracts_1.DiamondDomainError('half-inning-complete', 'Advance the half inning first.');
