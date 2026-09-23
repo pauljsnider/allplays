@@ -471,7 +471,7 @@ function validateAttachmentAgainstHistoricalPlay(event, context) {
         if (fielding.passedBallBy && fielding.passedBallBy !== context.catcherId) {
             throw new contracts_1.DiamondDomainError('invalid-fielding-participant', 'A passed-ball attachment must name the catcher recorded when the cited play occurred.');
         }
-        (0, reducer_1.validateDiamondPitchCauseEvidence)([...context.advances, ...(context.physicalPitch?.cause ? [{ cause: context.physicalPitch.cause }] : [])], [fielding], context.plateAppearanceResult);
+        (0, reducer_1.validateDiamondPitchCauseEvidence)([...context.advances, ...(context.physicalPitch?.cause ? [{ cause: context.physicalPitch.cause }] : [])], [fielding], context.plateAppearanceResult, context);
         if (fielding.passedBallBy && context.physicalPitch)
             context.physicalPitch.cause = 'passed_ball';
         return;
@@ -545,6 +545,7 @@ function observeEffectiveEventParticipants(state, event, tracker) {
             defensiveSide,
             activeDefenders: new Set(Object.values(state.lineups[defensiveSide].defense).filter((playerId) => Boolean(playerId))),
             catcherId: state.lineups[defensiveSide].defense.C ?? null,
+            lastPitchResult: state.inning.lastPitchResult,
             physicalPitch: tracker.physicalPitch,
             plateAppearanceResult: event.type === 'record_plate_appearance'
                 ? event.payload.result
@@ -573,7 +574,7 @@ function observeEffectiveEventParticipants(state, event, tracker) {
             : event.type === 'advance_runner'
                 ? event.payload.fielding
                 : undefined;
-        (0, reducer_1.validateDiamondPitchCauseEvidence)([...context.advances, ...(context.physicalPitch?.cause ? [{ cause: context.physicalPitch.cause }] : [])], fielding ? [fielding] : [], context.plateAppearanceResult);
+        (0, reducer_1.validateDiamondPitchCauseEvidence)([...context.advances, ...(context.physicalPitch?.cause ? [{ cause: context.physicalPitch.cause }] : [])], fielding ? [fielding] : [], context.plateAppearanceResult, context);
         const cause = fielding?.passedBallBy
             ? 'passed_ball'
             : context.advances.find((advance) => advance.cause === 'wild_pitch' || advance.cause === 'passed_ball')?.cause;
