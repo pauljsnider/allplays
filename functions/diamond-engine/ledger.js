@@ -462,7 +462,6 @@ function validatePitcherDecisionsForFinalization(state, tracker) {
 function validateAttachmentAgainstHistoricalPlay(event, context) {
     if (event.type === 'record_fielding') {
         const fielding = event.payload.fielding;
-        (0, reducer_1.validateDiamondPitchCauseEvidence)([...context.advances, ...(context.physicalPitch?.cause ? [{ cause: context.physicalPitch.cause }] : [])], [fielding]);
         (0, reducer_1.validateDiamondFieldingOutCredit)(fielding, context.actualOutCount);
         (0, reducer_1.validateDiamondMergedFieldingOutCredit)([fielding], context.actualOutRunnerIds);
         const invalidFielder = fieldingParticipantIds(fielding).find((playerId) => !context.activeDefenders.has(playerId) || !playerRoleIsUnambiguous(context, context.defensiveSide, playerId));
@@ -472,6 +471,7 @@ function validateAttachmentAgainstHistoricalPlay(event, context) {
         if (fielding.passedBallBy && fielding.passedBallBy !== context.catcherId) {
             throw new contracts_1.DiamondDomainError('invalid-fielding-participant', 'A passed-ball attachment must name the catcher recorded when the cited play occurred.');
         }
+        (0, reducer_1.validateDiamondPitchCauseEvidence)([...context.advances, ...(context.physicalPitch?.cause ? [{ cause: context.physicalPitch.cause }] : [])], [fielding], context.plateAppearanceResult);
         if (fielding.passedBallBy && context.physicalPitch)
             context.physicalPitch.cause = 'passed_ball';
         return;
@@ -539,6 +539,9 @@ function observeEffectiveEventParticipants(state, event, tracker) {
             activeDefenders: new Set(Object.values(state.lineups[defensiveSide].defense).filter((playerId) => Boolean(playerId))),
             catcherId: state.lineups[defensiveSide].defense.C ?? null,
             physicalPitch: tracker.physicalPitch,
+            plateAppearanceResult: event.type === 'record_plate_appearance'
+                ? event.payload.result
+                : undefined,
             advances: event.type === 'advance_runner'
                 ? [event.payload]
                 : event.type === 'record_plate_appearance'
@@ -563,7 +566,7 @@ function observeEffectiveEventParticipants(state, event, tracker) {
             : event.type === 'advance_runner'
                 ? event.payload.fielding
                 : undefined;
-        (0, reducer_1.validateDiamondPitchCauseEvidence)([...context.advances, ...(context.physicalPitch?.cause ? [{ cause: context.physicalPitch.cause }] : [])], fielding ? [fielding] : []);
+        (0, reducer_1.validateDiamondPitchCauseEvidence)([...context.advances, ...(context.physicalPitch?.cause ? [{ cause: context.physicalPitch.cause }] : [])], fielding ? [fielding] : [], context.plateAppearanceResult);
         const cause = fielding?.passedBallBy
             ? 'passed_ball'
             : context.advances.find((advance) => advance.cause === 'wild_pitch' || advance.cause === 'passed_ball')?.cause;
