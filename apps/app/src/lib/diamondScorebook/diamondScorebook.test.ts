@@ -39,6 +39,71 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['walk', 'intentional_walk'] as const)('rejects a force out instead of a mandatory %s run', (result) => {
+    const game = harness();
+    setBasicLineups(game, { start: false });
+    game.submit('set_lineup', { side: 'away', entries: [1, 2, 3, 4].map((slot) => ({ slot, playerId: `away-${slot}` })) });
+    game.submit('start', {});
+    for (let i = 0; i < 3; i += 1)
+      game.submit('record_plate_appearance', {
+        ...currentMatchup(game),
+        result: 'intentional_walk',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [
+          ...(i > 0
+            ? [
+                {
+                  runnerId: 'away-1',
+                  from: i === 1 ? ('first' as const) : ('second' as const),
+                  to: i === 1 ? ('second' as const) : ('third' as const),
+                  cause: 'walk' as const
+                }
+              ]
+            : []),
+          ...(i > 1 ? [{ runnerId: 'away-2', from: 'first' as const, to: 'second' as const, cause: 'walk' as const }] : [])
+        ],
+        outsOnPlay: 0
+      });
+    if (result === 'walk') for (let i = 0; i < 4; i += 1) game.submit('record_pitch', { ...currentMatchup(game), result: 'ball' });
+    const command = game.command('record_plate_appearance', {
+      ...currentMatchup(game),
+      result,
+      batterAdvance: { to: 'first', cause: 'walk' },
+      runnerAdvances: [
+        { runnerId: 'away-1', from: 'third', to: 'out', cause: 'force_out', outKind: 'force' },
+        { runnerId: 'away-2', from: 'second', to: 'third', cause: 'walk' },
+        { runnerId: 'away-3', from: 'first', to: 'second', cause: 'walk' }
+      ],
+      outsOnPlay: 1
+    });
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('runner-cause-result-mismatch');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'runner-cause-result-mismatch'
+    );
+  });
+  it.each([
+    ['pickoff_attempt', 'wild_pitch'],
+    ['pickoff_attempt', 'passed_ball'],
+    ['balk', 'wild_pitch'],
+    ['balk', 'passed_ball']
+  ] as const)('ends delivered-pitch evidence at %s before %s', (result, cause) => {
+    const game = twoRunnersBeforePitch();
+    game.submit('record_pitch', { ...currentMatchup(game), result });
+    const fielding = cause === 'passed_ball' ? { fielding: { passedBallBy: 'home-2' } } : {};
+    const payload: DiamondCommandPayloadMap['advance_runner'] = { runnerId: 'away-1', from: 'second', to: 'third', cause, ...fielding };
+    const bounded = executeDiamondCommandFromCheckpoint(
+      createDiamondCheckpoint(game.ledger),
+      game.command('advance_runner', payload),
+      context
+    );
+    expect(bounded.checkpoint.state.coverage.pitches).toBe('partial');
+    game.submit('advance_runner', payload);
+    game.submit('advance_runner', { runnerId: 'away-2', from: 'first', to: 'second', cause, ...fielding });
+    expect(game.ledger.state.coverage).toMatchObject({ pitches: 'partial', situational: 'partial' });
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+    const stats = projectDiamondStats(game.ledger);
+    expect(cause === 'wild_pitch' ? stats.players['home-1'].raw.pitching.WP : stats.players['home-2'].raw.fielding.PB).toBe(2);
+  });
   it.each(['batter', 'runner', 'uncounted'] as const)('rejects non-scoring %s RBI evidence', (target) => {
     const game = harness();
     setBasicLineups(game);
