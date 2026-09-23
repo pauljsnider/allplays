@@ -2408,12 +2408,15 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
     setRotationPlan(nextPlan);
     setRotationActual(event.rotationActual || {});
     setCoachingNotes(Array.isArray(event.coachingNotes) ? event.coachingNotes : []);
-    setLiveEvents(Array.isArray(event.liveEvents) ? event.liveEvents : []);
     setPeriod('');
     setOutPlayerId('');
     setInPlayerId('');
     setStatus(null);
   }, [legacyHelpersModule, event.eventKey, event.gamePlan, event.rotationPlan, event.rotationActual, event.coachingNotes, event.liveEvents]);
+
+  useEffect(() => {
+    setLiveEvents(Array.isArray(event.liveEvents) ? event.liveEvents : []);
+  }, [event.eventKey, event.liveEvents]);
 
   useEffect(() => {
     const currentEvent = eventRef.current;
