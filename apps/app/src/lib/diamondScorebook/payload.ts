@@ -1,5 +1,50 @@
 import { DiamondDomainError, type DiamondCommandType } from './contracts';
 
+/** Reject unknown/accessor envelope fields before any canonical traversal. */
+export function validateDiamondCommandEnvelope(command: unknown): void {
+  const required = [
+    'schemaVersion',
+    'commandId',
+    'teamId',
+    'gameId',
+    'expectedRevision',
+    'rulesProfileId',
+    'rulesProfileVersion',
+    'type',
+    'payload'
+  ];
+  const allowed = [...required, 'leaseId', 'appBuild', 'expectedInstanceId'];
+  const invalid = (): never => {
+    throw new DiamondDomainError('invalid-command-envelope', 'Command envelope exceeds its closed bounded contract.');
+  };
+  if (
+    !command ||
+    typeof command !== 'object' ||
+    Array.isArray(command) ||
+    ![Object.prototype, null].includes(Object.getPrototypeOf(command))
+  )
+    invalid();
+  const value = command as Record<string, unknown>;
+  const keys = Reflect.ownKeys(value);
+  if (keys.length > allowed.length || required.some((key) => !Object.prototype.hasOwnProperty.call(value, key))) invalid();
+  for (const key of keys) {
+    if (typeof key !== 'string' || !allowed.includes(key)) invalid();
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) invalid();
+    if (key === 'payload') continue;
+    const field = descriptor!.value;
+    if (
+      typeof field === 'string'
+        ? field.length > 128
+        : typeof field === 'number'
+          ? !Number.isSafeInteger(field) || field < 0
+          : !(key === 'leaseId' && field === null)
+    )
+      invalid();
+  }
+  validateDiamondCommandPayload(value.type as DiamondCommandType, value.payload);
+}
+
 type Shape = true | 'replacement' | readonly [Shape] | { readonly [key: string]: Shape };
 const scalarKeys = (...keys: string[]): Record<string, Shape> => Object.fromEntries(keys.map((key) => [key, true]));
 const owns = (object: object, key: PropertyKey) => Object.prototype.hasOwnProperty.call(object, key);
