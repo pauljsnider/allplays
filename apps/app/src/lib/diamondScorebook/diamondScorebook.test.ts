@@ -38,6 +38,49 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['single', 'strikeout'] as const)('marks situational stats partial for %s without pitch history', (result) => {
+    const game = harness();
+    setBasicLineups(game);
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result,
+      batterAdvance: result === 'single' ? { to: 'first' } : { to: 'out', outKind: 'strikeout' },
+      runnerAdvances: [],
+      outsOnPlay: result === 'single' ? 0 : 1,
+      ...(result === 'strikeout' ? { fielding: { putoutBy: 'home-2' } } : {})
+    });
+    expect(game.ledger.state.coverage).toMatchObject({ pitches: 'partial', situational: 'partial' });
+    expect(projectDiamondStats(game.ledger).coverage.situational).toBe('partial');
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
+  it.each([undefined, 'unknown', 'ground', 'line'] as const)('tracks GIDP completeness with %s batted-ball evidence', (battedBall) => {
+    const game = harness();
+    setBasicLineups(game);
+    recordPitch(game, 'away-1', 'home-1');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    recordPitch(game, 'away-2', 'home-1');
+    const play = game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'double_play',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }],
+      outsOnPlay: 2,
+      fielding: { putoutBy: 'home-2', doublePlay: true, battedBall }
+    });
+    const known = battedBall === 'ground' || battedBall === 'line';
+    expect(game.ledger.state.coverage.batting).toBe(known ? 'complete' : 'partial');
+    expect(projectDiamondStats(game.ledger).coverage.batting).toBe(known ? 'complete' : 'partial');
+    game.submit('record_fielding', { playEventId: play.event!.eventId, fielding: { battedBall: 'ground' } });
+    const projected = projectDiamondStats(game.ledger);
+    expect(projected.coverage.batting).toBe(battedBall === 'line' ? 'partial' : 'complete');
+    expect(projected.players['away-2'].raw.batting.GIDP).toBe(battedBall === 'line' ? 0 : 1);
+  });
   it.each(['recorded', 'empty'] as const)('rejects a modified %s initial snapshot', (kind) => {
     const game = harness();
     if (kind === 'recorded') setBasicLineups(game);
