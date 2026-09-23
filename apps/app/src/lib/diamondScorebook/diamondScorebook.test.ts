@@ -1266,7 +1266,11 @@ describe('Diamond security boundary regressions', () => {
       'substitution-history-limit'
     );
   });
-  it.each(['substitute', 're_enter', 'set_defensive_alignment'] as const)('freezes in-play defense against %s', (type) => {
+  it.each(
+    (['substitute', 're_enter', 'set_defensive_alignment'] as const).flatMap((type) =>
+      (['in_play', 'ball', 'called_strike'] as const).map((pitch) => [type, pitch] as const)
+    )
+  )('freezes pitch catcher against %s after %s', (type, pitch) => {
     const game = harness('baseball-nfhs', 'quick');
     setBasicLineups(game);
     if (type === 're_enter')
@@ -1277,7 +1281,7 @@ describe('Diamond security boundary regressions', () => {
         incomingPlayerId: 'bench-catcher',
         defensivePosition: 'C'
       });
-    game.submit('record_pitch', { ...currentMatchup(game), result: 'in_play' });
+    game.submit('record_pitch', { ...currentMatchup(game), result: pitch });
     const command =
       type === 'substitute'
         ? game.command(type, {
@@ -1303,10 +1307,9 @@ describe('Diamond security boundary regressions', () => {
                 { playerId: 'home-3', position: 'C' }
               ]
             });
-    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('terminal-pitch-defense-change');
-    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
-      'terminal-pitch-defense-change'
-    );
+    const code = pitch === 'in_play' ? 'terminal-pitch-defense-change' : 'pitch-catcher-change';
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe(code);
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(code);
     recordQuickOut(game);
     game.submit(command.type, command.payload);
   });
