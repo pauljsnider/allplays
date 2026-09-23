@@ -39,6 +39,85 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it('rejects extra non-home-run walkoff runs but preserves home-run scoring', () => {
+    const game = harness('baseball-nfhs', 'quick');
+    setBasicLineups(game);
+    advanceToHalf(game, 7, 'bottom');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'double',
+      batterAdvance: { to: 'second' },
+      runnerAdvances: [{ runnerId: 'home-1', from: 'first', to: 'third', cause: 'batted_ball' }],
+      outsOnPlay: 0
+    });
+    const runnerAdvances = [
+      { runnerId: 'home-1', from: 'third' as const, to: 'home' as const, cause: 'batted_ball' as const, earned: true, rbi: true },
+      { runnerId: 'home-2', from: 'second' as const, to: 'home' as const, cause: 'batted_ball' as const, earned: true, rbi: true }
+    ];
+    const payload = {
+      ...currentMatchup(game),
+      result: 'single' as const,
+      batterAdvance: { to: 'first' as const },
+      runnerAdvances,
+      outsOnPlay: 0
+    };
+    const command = game.command('record_plate_appearance', payload);
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('excess-walkoff-runs');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'excess-walkoff-runs'
+    );
+    const homer = executeDiamondCommand(
+      game.ledger,
+      game.command('record_plate_appearance', { ...payload, result: 'home_run', batterAdvance: { to: 'home', earned: true, rbi: true } }),
+      context
+    );
+    expect(homer.result.outcome).toBe('accepted');
+    expect(homer.ledger.state.score.home).toBe(3);
+    game.submit('record_plate_appearance', {
+      ...payload,
+      runnerAdvances: [runnerAdvances[0], { ...runnerAdvances[1], to: 'third', rbi: false }]
+    });
+    expect(game.ledger.state.score.home).toBe(1);
+    const projected = projectDiamondStats(game.ledger);
+    expect(projected.players['home-2'].raw.batting.R).toBe(0);
+    expect(projected.players['home-3'].raw.batting.RBI).toBe(1);
+    expect(projected.players['away-1'].raw.pitching).toMatchObject({ R: 1, ER: 1 });
+  });
+  it.each(['wild_pitch', 'passed_ball'] as const)('marks unrecorded %s pitch evidence partial', (cause) => {
+    for (const anchored of [false, true]) {
+      const game = harness();
+      setBasicLineups(game);
+      recordPitch(game, 'away-1', 'home-1');
+      game.submit('record_plate_appearance', {
+        ...currentMatchup(game),
+        result: 'single',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      });
+      if (anchored) game.submit('record_pitch', { ...currentMatchup(game), result: 'ball' });
+      const payload = {
+        runnerId: 'away-1',
+        from: 'first' as const,
+        to: 'second' as const,
+        cause,
+        ...(cause === 'passed_ball' ? { fielding: { passedBallBy: 'home-2' } } : {})
+      };
+      const command = game.command('advance_runner', payload);
+      const bounded = executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context);
+      expect(bounded.result.outcome).toBe('accepted');
+      expect(bounded.checkpoint.state.coverage.pitches).toBe(anchored ? 'complete' : 'partial');
+      game.submit('advance_runner', payload);
+      expect(projectDiamondStats(game.ledger).coverage.pitches).toBe(anchored ? 'complete' : 'partial');
+    }
+  });
   it('rejects injected identity history before returning ownership evidence', () => {
     const game = harness();
     setBasicLineups(game);
@@ -1579,6 +1658,7 @@ function buildGoldenGame() {
     fielding: { putoutBy: 'home-2', assists: ['home-3'], battedBall: 'ground' }
   });
 
+  recordPitch(game, 'away-1', 'home-1', 'ball');
   game.submit('advance_runner', {
     runnerId: 'away-2',
     from: 'third',
@@ -1589,7 +1669,7 @@ function buildGoldenGame() {
     rbi: false
   });
 
-  for (let ball = 0; ball < 4; ball += 1) recordPitch(game, 'away-1', 'home-1', 'ball');
+  for (let ball = 0; ball < 3; ball += 1) recordPitch(game, 'away-1', 'home-1', 'ball');
   game.submit('record_plate_appearance', {
     batterId: 'away-1',
     pitcherId: 'home-1',
