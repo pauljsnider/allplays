@@ -5939,7 +5939,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     game,
     root,
     nowMs,
-    privateMaterialCommand = false,
+    targetPrivateMaterial = false,
   }) {
     if (!isActiveTeam(team)) {
       throw makeError(
@@ -5957,7 +5957,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       }),
       "Diamond scoring is disabled.",
     );
-    if (!privateMaterialCommand) {
+    if (!isStateNeutralPrivateNoteCommand(command, targetPrivateMaterial)) {
       requireAllowed(
         core.decideDiamondScorerLease({
           operation: "score",
@@ -5969,6 +5969,12 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         "Acquire the current scorer lease before submitting this command.",
       );
     }
+  }
+
+  function isStateNeutralPrivateNoteCommand(command, targetPrivateMaterial) {
+    return command.type === "private_note" ||
+      (targetPrivateMaterial && (command.type === "void_event" ||
+        (command.type === "supersede_event" && command.payload.replacement.type === "private_note")));
   }
 
   function privateMaterialClassification({
@@ -6230,7 +6236,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
               game: loaded.game,
               root,
               nowMs,
-              privateMaterialCommand: privacy.privateMaterialCommand,
+              targetPrivateMaterial: privacy.targetPrivateMaterial,
             });
             if (checkpoint.sequence !== command.expectedRevision) {
               return Object.freeze({
@@ -6451,7 +6457,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
             game: loaded.game,
             root,
             nowMs: responseNowMs,
-            privateMaterialCommand,
+            targetPrivateMaterial,
           });
           requireCurrentCommandHistoryReceipt({
             root,
@@ -6536,7 +6542,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         ? normalizeNow(clock, makeError)
         : getWriteNowMs();
       let nextScorerLease = null;
-      if (privateMaterialCommand) {
+      if (isStateNeutralPrivateNoteCommand(command, targetPrivateMaterial)) {
         nextScorerLease = root.scorerLease;
       } else if (command.type !== "cancel") {
         const leaseOperation =
