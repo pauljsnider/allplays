@@ -833,7 +833,7 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
           physicalCauseCluster.pitcherId === (currentPitcherId ?? null) &&
           (physicalCauseCluster.cause === null || physicalCauseCluster.cause === physicalCause)
         );
-        if (!physicalCause && !physicalCauseCluster?.anchoredByPitch) {
+        if (payload.cause === 'pickoff' || (!physicalCause && !physicalCauseCluster?.anchoredByPitch)) {
           physicalCauseCluster = null;
         } else if (physicalCause && !sharesAnchoredPitch) {
           physicalCauseCluster = {
