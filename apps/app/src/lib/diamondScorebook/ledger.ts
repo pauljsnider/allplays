@@ -900,6 +900,7 @@ export function createDiamondCheckpoint(ledger: DiamondLedger): DiamondCheckpoin
   if (ledger.state.checkpointHash !== previousHash) {
     throw new DiamondDomainError('checkpoint-hash-mismatch', 'Ledger state and event chain checkpoint hashes do not match.');
   }
+  verifyDiamondLedger(ledger);
   return deepFreeze({
     teamId: ledger.teamId,
     gameId: ledger.gameId,
