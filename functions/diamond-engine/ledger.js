@@ -724,6 +724,7 @@ function createDiamondCheckpoint(ledger) {
     if (ledger.state.checkpointHash !== previousHash) {
         throw new contracts_1.DiamondDomainError('checkpoint-hash-mismatch', 'Ledger state and event chain checkpoint hashes do not match.');
     }
+    verifyDiamondLedger(ledger);
     return deepFreeze({
         teamId: ledger.teamId,
         gameId: ledger.gameId,
