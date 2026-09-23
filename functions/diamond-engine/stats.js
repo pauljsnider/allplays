@@ -360,8 +360,11 @@ function projectDiamondStats(ledger) {
     };
     simulated.forEach(({ event, before, after }) => {
         const eventId = event.eventId;
-        if (event.type !== 'advance_runner' && event.type !== 'record_plate_appearance')
+        // Administrative interruptions do not create another physical play or erase
+        // the infraction credit already recorded by its pitch.
+        if (!['advance_runner', 'record_plate_appearance', 'suspend', 'resume', 'scorer_handoff', 'private_note'].includes(event.type)) {
             physicalCauseCluster = null;
+        }
         switch (event.type) {
             case 'start': {
                 ['home', 'away'].forEach((side) => {
