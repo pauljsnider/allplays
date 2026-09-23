@@ -248,6 +248,9 @@ function validateScoringCredit(value, label) {
     requireOptionalBoolean(value.countsRun, `${label}.countsRun`);
     requireOptionalBoolean(value.earned, `${label}.earned`);
     requireOptionalBoolean(value.rbi, `${label}.rbi`);
+    if (value.rbi === true && (value.to !== 'home' || value.countsRun === false)) {
+        throw new contracts_1.DiamondDomainError('invalid-rbi', 'Positive RBI credit requires an advance that records a counted run.');
+    }
     if (value.responsiblePitcherId !== undefined) {
         requireId(value.responsiblePitcherId, `${label}.responsiblePitcherId`);
     }
@@ -453,6 +456,9 @@ function validateAdvanceShape(value, options = {}) {
     const to = requireMember(advance.to, DESTINATIONS, 'runner destination');
     validateRunnerDestination(from, to);
     const cause = requireMember(advance.cause, ADVANCE_CAUSES, 'runner advance cause');
+    if (options.standalone && ['walk', 'hit_by_pitch', 'batted_ball'].includes(cause)) {
+        throw new contracts_1.DiamondDomainError('standalone-plate-appearance-cause', 'This runner advance cause requires a recorded plate appearance.');
+    }
     validateAdvanceCauseDestination(cause, to);
     const outKind = advance.outKind === undefined ? undefined : requireMember(advance.outKind, OUT_KINDS, 'out kind');
     validateScoringCredit(advance, 'runner advance');
