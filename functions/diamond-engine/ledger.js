@@ -337,6 +337,7 @@ function getEffectiveDiamondEvents(events) {
 }
 function createParticipantReplayTracker() {
     return {
+        physicalPitch: null,
         plays: new Map(),
         pitcherAppearances: { home: new Set(), away: new Set() },
         pitcherDecisions: {}
@@ -461,7 +462,7 @@ function validatePitcherDecisionsForFinalization(state, tracker) {
 function validateAttachmentAgainstHistoricalPlay(event, context) {
     if (event.type === 'record_fielding') {
         const fielding = event.payload.fielding;
-        (0, reducer_1.validateDiamondPitchCauseEvidence)(context.advances, [fielding]);
+        (0, reducer_1.validateDiamondPitchCauseEvidence)([...context.advances, ...(context.physicalPitch?.cause ? [{ cause: context.physicalPitch.cause }] : [])], [fielding]);
         (0, reducer_1.validateDiamondFieldingOutCredit)(fielding, context.actualOutCount);
         (0, reducer_1.validateDiamondMergedFieldingOutCredit)([fielding], context.actualOutRunnerIds);
         const invalidFielder = fieldingParticipantIds(fielding).find((playerId) => !context.activeDefenders.has(playerId) || !playerRoleIsUnambiguous(context, context.defensiveSide, playerId));
@@ -471,6 +472,8 @@ function validateAttachmentAgainstHistoricalPlay(event, context) {
         if (fielding.passedBallBy && fielding.passedBallBy !== context.catcherId) {
             throw new contracts_1.DiamondDomainError('invalid-fielding-participant', 'A passed-ball attachment must name the catcher recorded when the cited play occurred.');
         }
+        if (fielding.passedBallBy && context.physicalPitch)
+            context.physicalPitch.cause = 'passed_ball';
         return;
     }
     if (event.type !== 'record_scoring_judgment')
@@ -508,6 +511,9 @@ function validateAttachmentAgainstHistoricalPlay(event, context) {
     }
 }
 function observeEffectiveEventParticipants(state, event, tracker) {
+    if (event.type === 'record_pitch' && (0, reducer_1.isDiamondDeliveredPitch)(event.payload.result)) {
+        tracker.physicalPitch = { cause: null };
+    }
     if (PITCHER_APPEARANCE_TYPES.has(event.type)) {
         const battingSide = (0, reducer_1.getBattingSide)(state);
         const defensiveSide = otherSide(battingSide);
@@ -532,6 +538,7 @@ function observeEffectiveEventParticipants(state, event, tracker) {
             defensiveSide,
             activeDefenders: new Set(Object.values(state.lineups[defensiveSide].defense).filter((playerId) => Boolean(playerId))),
             catcherId: state.lineups[defensiveSide].defense.C ?? null,
+            physicalPitch: tracker.physicalPitch,
             advances: event.type === 'advance_runner'
                 ? [event.payload]
                 : event.type === 'record_plate_appearance'
@@ -551,6 +558,17 @@ function observeEffectiveEventParticipants(state, event, tracker) {
                 away: new Set(tracker.pitcherAppearances.away)
             }
         };
+        const fielding = event.type === 'record_plate_appearance'
+            ? event.payload.fielding
+            : event.type === 'advance_runner'
+                ? event.payload.fielding
+                : undefined;
+        (0, reducer_1.validateDiamondPitchCauseEvidence)([...context.advances, ...(context.physicalPitch?.cause ? [{ cause: context.physicalPitch.cause }] : [])], fielding ? [fielding] : []);
+        const cause = fielding?.passedBallBy
+            ? 'passed_ball'
+            : context.advances.find((advance) => advance.cause === 'wild_pitch' || advance.cause === 'passed_ball')?.cause;
+        if (context.physicalPitch && (cause === 'wild_pitch' || cause === 'passed_ball'))
+            context.physicalPitch.cause = cause;
         tracker.plays.set(event.eventId, context);
         tracker.plays.set(event.sourceEventId, context);
         return;
@@ -629,7 +647,11 @@ function replayCanonicalDiamondEvents(initialState, events) {
             const reduced = (0, reducer_1.reduceDiamondEvent)(state, asReducerAction(effectiveEvent.type, effectiveEvent.payload, effectiveEvent.eventId));
             if (effectiveEvent.type === 'finalize')
                 validatePitcherDecisionsForFinalization(state, participantTracker);
-            state = reduced;
+            if (reduced.inning.lastPitchResult === null)
+                participantTracker.physicalPitch = null;
+            state = participantTracker.physicalPitch
+                ? { ...reduced, inning: { ...reduced.inning, lastPitchAdvanceCause: participantTracker.physicalPitch.cause } }
+                : reduced;
             effectiveEvents.push(effectiveEvent);
             replayedEvent = { event: effectiveEvent, before };
         }
@@ -1134,6 +1156,7 @@ function executeDiamondCommand(ledger, command, context) {
             const coverageReplay = replayCanonicalDiamondEvents(ledger.initialState, provisionalEvents);
             after = {
                 ...after,
+                inning: { ...after.inning, lastPitchAdvanceCause: coverageReplay.state.inning.lastPitchAdvanceCause },
                 coverage: (0, reducer_1.deriveDiamondCoverageFromEventStates)(ledger.initialState, coverageReplay.effectiveEventStates)
             };
         }
