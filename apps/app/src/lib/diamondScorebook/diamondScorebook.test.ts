@@ -38,6 +38,85 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['event', 'checkpoint'] as const)('rejects corrupt %s before a new command or duplicate', (kind) => {
+    const game = harness();
+    setBasicLineups(game);
+    const command = game.command('record_pitch', { ...currentMatchup(game), result: 'ball' });
+    const accepted = executeDiamondCommand(game.ledger, command, context);
+    expect(accepted.result.outcome).toBe('accepted');
+    const corrupted = JSON.parse(JSON.stringify(accepted.ledger)) as DiamondLedger;
+    if (kind === 'event') (corrupted.events[0] as unknown as { serverTimestampMs: number }).serverTimestampMs += 1;
+    else (corrupted.state.inning as unknown as { balls: number }).balls = 2;
+    for (const request of [command, { ...command, commandId: uuid(90001), expectedRevision: corrupted.state.revision }]) {
+      const result = executeDiamondCommand(corrupted, request, { ...context, eventId: 'after-corruption' });
+      expect(result.result.outcome).toBe('rejected');
+      expect(result.ledger).toBe(corrupted);
+    }
+  });
+  it.each(['extra', 'oversized', 'accessor'] as const)('rejects an unbounded %s envelope before traversing it', (kind) => {
+    const game = harness();
+    setBasicLineups(game);
+    const command = { ...game.command('record_pitch', { ...currentMatchup(game), result: 'ball' }) };
+    let read = false;
+    if (kind === 'extra') Object.assign(command, { junk: { deeply: { nested: 'x'.repeat(100000) } } });
+    else if (kind === 'oversized') Object.assign(command, { leaseId: 'x'.repeat(100000) });
+    else
+      Object.defineProperty(command, 'junk', {
+        enumerable: true,
+        get() {
+          read = true;
+          return 'private';
+        }
+      });
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('invalid-command-envelope');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'invalid-command-envelope'
+    );
+    expect(read).toBe(false);
+  });
+  it.each(['batting', 'dh', 'flex'] as const)('rejects oversized %s retained substitution evidence', (kind) => {
+    const game = harness(kind === 'flex' ? 'fastpitch-nfhs' : 'baseball-nfhs', 'quick');
+    setBasicLineups(game, { start: false, homeFirstBattingRole: kind === 'dh' ? 'dh' : kind === 'flex' ? 'dp' : 'regular' });
+    if (kind === 'flex')
+      game.submit('set_dp_flex', {
+        side: 'home',
+        dpPlayerId: 'home-1',
+        flexPlayerId: 'home-flex',
+        dpBattingSlot: 1,
+        flexDefensivePosition: 'RF'
+      });
+    const state = JSON.parse(JSON.stringify(game.ledger.state)) as DiamondGameState;
+    const lineup = state.lineups.home as unknown as Record<string, unknown>;
+    const slot = { ...state.lineups.home.battingOrder[0], substitutions: Array.from({ length: 129 }, (_, i) => `used-${i}`) };
+    if (kind === 'batting') lineup.battingOrder = [slot, ...state.lineups.home.battingOrder.slice(1)];
+    else if (kind === 'dh') {
+      lineup.dhDefense = { ...slot, activePlayerId: 'dh-pitcher', starterPlayerId: 'dh-pitcher' };
+      lineup.defense = { ...state.lineups.home.defense, P: 'dh-pitcher' };
+    } else lineup.flexDefense = { ...slot, activePlayerId: 'home-flex', starterPlayerId: 'home-flex' };
+    expect(() => validateDiamondState(state)).toThrowError(expect.objectContaining({ code: 'substitution-history-limit' }));
+    const history = (kind === 'batting'
+      ? state.lineups.home.battingOrder[0]
+      : kind === 'dh'
+        ? state.lineups.home.dhDefense
+        : state.lineups.home.flexDefense)! as unknown as { substitutions: string[] };
+    history.substitutions = history.substitutions.slice(0, 128);
+    const active = { ...state, lifecycle: 'active' as const };
+    expect(validateDiamondState(active)).toBe(active);
+    const payload = {
+      side: 'home' as const,
+      battingSlot: 1,
+      outgoingPlayerId: kind === 'dh' ? 'dh-pitcher' : kind === 'flex' ? 'home-flex' : 'home-1',
+      incomingPlayerId: 'one-too-many',
+      defensivePosition: kind === 'flex' ? ('RF' as const) : ('P' as const)
+    };
+    expect(() => reduceDiamondEvent(active, { type: 'substitute', payload })).toThrowError(
+      expect.objectContaining({ code: 'substitution-history-limit' })
+    );
+    const checkpoint = { ...createDiamondCheckpoint(game.ledger), state: active };
+    expect(executeDiamondCommandFromCheckpoint(checkpoint, game.command('substitute', payload), context).result.rejection?.code).toBe(
+      'substitution-history-limit'
+    );
+  });
   it.each(['substitute', 're_enter', 'set_defensive_alignment'] as const)('freezes in-play defense against %s', (type) => {
     const game = harness('baseball-nfhs', 'quick');
     setBasicLineups(game);
@@ -2766,7 +2845,7 @@ describe('Diamond command ledger', () => {
     game.submit('activate', { initialScorerUid: SCORER, captureMode: 'full' });
     const before = game.ledger;
     const direct = game.submit('private_note', { text: 'synthetic-private', rawText: 'synthetic-private' } as never, { accept: false });
-    expect(direct.result.rejection?.code).toBe('invalid-private-payload');
+    expect(direct.result.rejection?.code).toBe('invalid-object');
     expect(direct.ledger).toBe(before);
     const note = game.submit('private_note', { text: 'synthetic-private' });
     const replacement = game.submit(
@@ -2778,7 +2857,7 @@ describe('Diamond command ledger', () => {
       } as never,
       { accept: false }
     );
-    expect(replacement.result.rejection?.code).toBe('invalid-private-payload');
+    expect(replacement.result.rejection?.code).toBe('invalid-object');
     expect(replacement.ledger).toBe(game.ledger);
     expect(JSON.stringify(game.ledger)).not.toContain('synthetic-private');
   });
