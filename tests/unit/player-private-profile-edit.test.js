@@ -367,6 +367,9 @@ describe('player profile private doc writes', () => {
             'currentCanEditRosterProfile = false;',
             'currentCanEditPlayerProfile = false;'
         ]) expect(clearSource).toContain(reset);
+        const containerListStart = source.indexOf('const PLAYER_AUTH_SCOPED_CONTAINER_IDS = [');
+        const containerListSource = source.slice(containerListStart, source.indexOf('];', containerListStart));
+        expect(containerListStart).toBeGreaterThan(-1);
         for (const id of [
             'team-nav-banner',
             'player-header',
@@ -377,7 +380,9 @@ describe('player profile private doc writes', () => {
             'player-events',
             'content-clips',
             'player-game-insights-body'
-        ]) expect(clearSource).toContain(`'${id}'`);
+        ]) expect(containerListSource).toContain(`'${id}'`);
+        expect(clearSource).toContain('PLAYER_AUTH_SCOPED_CONTAINER_IDS.forEach((id) => {');
+        expect(clearSource).toContain("container.innerHTML = playerAuthScopedInitialMarkup.get(id) ?? '';");
         expect(clearSource).toContain("exportButton.onclick = null;");
         expect(clearSource).toContain("editButton.onclick = null;");
         expect(clearSource).toContain("closePlayerEditModal({ invalidateRequest: false });");
