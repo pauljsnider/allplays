@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
   createDelegatedTeamContextHandler,
+  getRecordedReplayPaywallSetting,
   resolveDelegatedAccess,
   serializeDelegatedTeamContext
 } = require('../delegated-team-context-core.cjs');
@@ -174,6 +175,41 @@ test('fails closed for unsigned, revoked, cross-team, stale-email, and unrelated
   await assert.rejects(handler({ teamId: 'team-1' }, context('unrelated-1')), { code: 'permission-denied' });
 });
 
+test('canonical owner IDs are exact and malformed values never reopen legacy email ownership', () => {
+  const base = {
+    ownerEmail: 'manager@example.test',
+    ownerEmailLower: 'manager@example.test',
+    adminEmails: []
+  };
+  for (const ownerId of [
+    `${'manager.uid'}${'x'.repeat(130)}`,
+    ' manager.uid ',
+    { uid: 'manager.uid' },
+    0,
+    null
+  ]) {
+    const access = resolveDelegatedAccess({
+      uid: 'manager.uid',
+      email: 'manager@example.test',
+      user: {},
+      teamId: 'team-1',
+      team: { ...base, ownerId },
+      game: {},
+      rsvp: null
+    });
+    assert.equal(access.full, false, JSON.stringify(ownerId));
+  }
+  assert.equal(resolveDelegatedAccess({
+    uid: 'manager.uid',
+    email: 'manager@example.test',
+    user: {},
+    teamId: 'team-1',
+    team: { ...base, ownerId: '' },
+    game: {},
+    rsvp: null
+  }).full, true);
+});
+
 test('requires a current game and RSVP for all-confirmed capability modes', async () => {
   const team = productionTeam({
     teamPermissions: {
@@ -291,6 +327,35 @@ test('returns a bounded private-team projection for a current parent', async () 
     });
     assertNoProhibitedFields(result);
   }
+});
+
+test('projects only the effective recorded-replay gate for every authorized viewer path', async () => {
+  const team = productionTeam({
+    teamPassConfig: {
+      recordedReplayPaywallEnabled: true,
+      checkoutUrl: 'https://private.example.test/bearer'
+    }
+  });
+  const handler = createHarness({
+    teams: { 'team-1': team },
+    users: { 'parent-1': { parentTeamIds: ['team-1'] } }
+  });
+
+  for (const [uid, email] of [
+    ['parent-1', undefined],
+    ['videographer-1', undefined],
+    ['owner-1', 'owner@example.com']
+  ]) {
+    const result = await handler({ teamId: 'team-1' }, context(uid, email));
+    assert.equal(result.item.recordedReplayPaywallEnabled, true);
+    assert.equal(JSON.stringify(result).includes('checkoutUrl'), false);
+    assert.equal(JSON.stringify(result).includes('bearer'), false);
+  }
+
+  assert.equal(getRecordedReplayPaywallSetting({
+    teamPassConfig: { recordedReplayPaywallEnabled: false },
+    recordedReplayTeamPassRequired: true
+  }), false);
 });
 
 test('marks owner and admin projections with server-authoritative full access', async () => {

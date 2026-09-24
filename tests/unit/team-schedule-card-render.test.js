@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { getGameReplayLifecycle } from '../../js/game-replay-video.js';
+import { hasReplayVideoEvidence } from '../../js/schedule-watch-cta.js';
 
 function readTeamPage() {
     return readFileSync(new URL('../../team.html', import.meta.url), 'utf8');
@@ -20,11 +22,13 @@ function buildRenderDbGame(overrides = {}) {
         formatTime: () => '6:00 PM',
         escapeHtml: (value) => String(value ?? ''),
         mapLink: () => '',
+        getGameReplayLifecycle,
+        hasReplayVideoEvidence,
         ...overrides
     };
 
     const createRenderer = new Function('deps', `
-        const { currentTeamId, formatDate, formatTime, escapeHtml, mapLink } = deps;
+        const { currentTeamId, formatDate, formatTime, escapeHtml, mapLink, getGameReplayLifecycle, hasReplayVideoEvidence } = deps;
         return function(game) {
 ${body}
         };
@@ -105,8 +109,11 @@ describe('team page schedule card rendering', () => {
 
     it('renders completed replay CTAs only when live playback exists', () => {
         const { renderDbGame } = buildRenderDbGame();
+        expect(readTeamPage()).toContain('hasReplayVideo: hasReplayVideoEvidence(game)');
 
         const replayHtml = renderDbGame({
+            // getAllEvents uses `type: 'db'` as its source discriminator.
+            type: 'db',
             id: 'game-completed-replay',
             opponent: 'Bears',
             location: 'Arena',
@@ -122,6 +129,7 @@ describe('team page schedule card rendering', () => {
         expect(replayHtml).toContain('Replay');
         expect(replayHtml).toContain('live-game.html?teamId=team-1&gameId=game-completed-replay&replay=true');
         expect(replayHtml).not.toContain('View Live');
+        expect(readTeamPage()).toContain("type: isPractice ? 'practice' : 'game'");
 
         const reportOnlyHtml = renderDbGame({
             id: 'game-completed-report-only',
@@ -137,6 +145,57 @@ describe('team page schedule card rendering', () => {
         expect(reportOnlyHtml).toContain('View Report');
         expect(reportOnlyHtml).toContain('Share Report');
         expect(reportOnlyHtml).not.toContain('Replay');
+
+        const linkedStatsheetReplayHtml = renderDbGame({
+            id: 'game-completed-statsheet-replay',
+            opponent: 'Owls',
+            location: 'Arena',
+            date: '2024-03-10T18:00:00.000Z',
+            status: 'completed',
+            liveStatus: 'scheduled',
+            homeScore: 62,
+            awayScore: 57,
+            replayVideo: {
+                provider: 'youtube',
+                publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+            }
+        });
+
+        expect(linkedStatsheetReplayHtml).toContain('Replay');
+        expect(linkedStatsheetReplayHtml).toContain('gameId=game-completed-statsheet-replay&replay=true');
+
+        const stringContainerHtml = renderDbGame({
+            id: 'game-string-container',
+            opponent: 'Foxes',
+            location: 'Arena',
+            date: '2024-03-10T18:00:00.000Z',
+            status: 'completed',
+            liveStatus: 'scheduled',
+            replayVideo: 'legacy-recording'
+        });
+        expect(stringContainerHtml).not.toContain('>Replay</a>');
+
+        const flatAliasHtml = renderDbGame({
+            id: 'game-flat-alias',
+            opponent: 'Eagles',
+            location: 'Arena',
+            date: '2024-03-10T18:00:00.000Z',
+            status: 'completed',
+            liveStatus: 'scheduled',
+            replayVideoPublicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+        });
+        expect(flatAliasHtml).toContain('gameId=game-flat-alias&replay=true');
+
+        const mappedEvidenceHtml = renderDbGame({
+            id: 'game-mapped-evidence',
+            opponent: 'Lynx',
+            location: 'Arena',
+            date: '2024-03-10T18:00:00.000Z',
+            status: 'completed',
+            liveStatus: 'scheduled',
+            hasReplayVideo: true
+        });
+        expect(mappedEvidenceHtml).toContain('gameId=game-mapped-evidence&replay=true');
     });
 
     it('renders tied completed games with the tie badge', () => {

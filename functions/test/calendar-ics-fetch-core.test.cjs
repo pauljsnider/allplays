@@ -356,7 +356,7 @@ test('fetchCalendarIcsWithCache does not serve stale cache during forceRefresh f
 });
 
 test('createCalendarIcsCache evicts expired and oldest entries when maxEntries is reached', async () => {
-  const cache = createCalendarIcsCache({ ttlMs: 1, maxEntries: 2 });
+  const cache = createCalendarIcsCache({ ttlMs: 60_000, maxEntries: 2 });
 
   await fetchCalendarIcsWithCache({
     cache,
@@ -366,7 +366,7 @@ test('createCalendarIcsCache evicts expired and oldest entries when maxEntries i
       icsText: 'BEGIN:VCALENDAR\nX-SEQ:1\nEND:VCALENDAR'
     })
   });
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  cache.entries.get('https://example.com/calendar-1.ics').expiresAt = 0;
   await fetchCalendarIcsWithCache({
     cache,
     cacheKey: 'https://example.com/calendar-2.ics',
@@ -383,12 +383,21 @@ test('createCalendarIcsCache evicts expired and oldest entries when maxEntries i
       icsText: 'BEGIN:VCALENDAR\nX-SEQ:3\nEND:VCALENDAR'
     })
   });
+  await fetchCalendarIcsWithCache({
+    cache,
+    cacheKey: 'https://example.com/calendar-4.ics',
+    fetchIcs: async () => ({
+      fetchedAt: '2026-06-04T16:53:04.000Z',
+      icsText: 'BEGIN:VCALENDAR\nX-SEQ:4\nEND:VCALENDAR'
+    })
+  });
 
   assert.strictEqual(DEFAULT_MAX_ENTRIES > cache.maxEntries, true);
   assert.strictEqual(cache.entries.size, 2);
   assert.strictEqual(cache.entries.has('https://example.com/calendar-1.ics'), false);
-  assert.strictEqual(cache.entries.has('https://example.com/calendar-2.ics'), true);
+  assert.strictEqual(cache.entries.has('https://example.com/calendar-2.ics'), false);
   assert.strictEqual(cache.entries.has('https://example.com/calendar-3.ics'), true);
+  assert.strictEqual(cache.entries.has('https://example.com/calendar-4.ics'), true);
 });
 
 test('calendar handler rate limits before normalization or outbound fetch and resets after the window', async () => {

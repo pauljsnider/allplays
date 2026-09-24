@@ -139,6 +139,10 @@ const Blob = deps.Blob;
             /import \{ fetchLegacyCalendarFeed \} from '\.\/js\/calendar-feed-loading\.js\?v=\d+';/,
             'const { fetchLegacyCalendarFeed } = deps.calendarFeed;'
         )
+        .replace(
+            /import \{ functions, httpsCallable \} from '\.\/js\/firebase\.js\?v=\d+';/,
+            'const { functions, httpsCallable } = deps.firebase;'
+        )
         .replace(/\binit\(\);\s*$/, 'await init();');
 }
 
@@ -453,6 +457,12 @@ function createDeps(submitRecorder, overrides = {}) {
         calendarFeed: {
             async fetchLegacyCalendarFeed(_calendarUrl, fetchCalendar) {
                 return fetchCalendar();
+            }
+        },
+        firebase: {
+            functions: {},
+            httpsCallable() {
+                throw new Error('Unexpected private calendar token request');
             }
         },
         eventDate,

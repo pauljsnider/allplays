@@ -207,6 +207,42 @@ async function mockMessagesModules(page, options = {}) {
         });
     });
 
+    await page.route(/\/src\/lib\/opportunityService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function listPublicOpportunities() {
+                    return { items: [], nextCursor: null };
+                }
+
+                export async function getPublicOpportunity() { return null; }
+                export async function createPublicOpportunity() { throw new Error('Not used in this fixture.'); }
+                export async function updatePublicOpportunity() { throw new Error('Not used in this fixture.'); }
+                export async function closePublicOpportunity() { throw new Error('Not used in this fixture.'); }
+                export async function renewPublicOpportunity() { throw new Error('Not used in this fixture.'); }
+                export async function listMyPublicOpportunities() { return []; }
+                export async function listManagedPublicOpportunityTeams() { return []; }
+                export async function reportPublicOpportunity() { throw new Error('Not used in this fixture.'); }
+                export async function createOpportunityInquiry() { throw new Error('Not used in this fixture.'); }
+                export async function listOpportunityInquiries() {
+                    return { items: [], nextCursor: null };
+                }
+
+                export async function getOpportunityInquiry() {
+                    throw new Error('No opportunity inquiry is selected in this fixture.');
+                }
+
+                export async function replyToOpportunityInquiry() {
+                    throw new Error('No opportunity inquiry is selected in this fixture.');
+                }
+
+                export async function listPublicOpportunityReports() { return []; }
+                export async function moderatePublicOpportunity() { throw new Error('Not used in this fixture.'); }
+            `
+        });
+    });
+
     await page.route(/\/src\/lib\/notificationInboxService\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
             status: 200,
@@ -497,6 +533,10 @@ test('@visual messages inbox and team chat exercise real migrated chat UX', asyn
     await page.goto(url, { waitUntil: 'domcontentloaded' });
 
     await waitForMessagesRoute(page, page.getByRole('heading', { name: 'Conversations', exact: true }));
+    await expect(page.getByText('internal', { exact: true })).toBeHidden();
+    const brandLogo = page.getByRole('button', { name: 'Go to home' }).locator('img');
+    await expect(brandLogo).toBeVisible();
+    await expect.poll(() => brandLogo.evaluate((image) => image.complete && image.naturalWidth > 1)).toBe(true);
     await expect(page.getByRole('link', { name: /Bears/ }).first()).toBeVisible();
     await expect(page.getByText('Coach Jamie: Practice packet is posted.')).toBeVisible();
     await expectVisualSnapshot(page, 'messages-inbox-mobile.png', {

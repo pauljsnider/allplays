@@ -1,4 +1,4 @@
-import { auth, functions, httpsCallable } from './firebase.js?v=27';
+import { auth, functions, httpsCallable } from './firebase.js?v=33';
 import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
 import { filterTeamsByActive } from './team-visibility.js?v=2';
 

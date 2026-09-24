@@ -170,8 +170,8 @@ import {
   addRosterPlayerForApp,
   buildTeamAnalytics,
   buildTeamDetailModel,
-  createTeamPassCheckoutForApp,
   createStatTrackerConfigForApp,
+  isEligiblePrivateCalendarSubscriberForApp,
   loadParentTeamDetail,
   loadParentTeamDetailBootstrap,
   loadTeamDetailInsights,
@@ -306,48 +306,6 @@ beforeEach(() => {
     Array.isArray(options.players) ? options.players : dbMocks.getPlayers(_teamId, options)
   ));
   dbMocks.getPlayerPrivateProfile.mockResolvedValue(null);
-});
-
-describe('createTeamPassCheckoutForApp', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    nativeRuntimeState.isNative = false;
-  });
-
-  it('creates a web checkout for the exact team and current season', async () => {
-    const callable = vi.fn().mockResolvedValue({ data: { checkoutUrl: 'https://checkout.stripe.com/c/pay/team-pass' } });
-    firebaseMocks.httpsCallable.mockReturnValue(callable);
-
-    await expect(createTeamPassCheckoutForApp('team-1', 'summer-2100')).resolves.toBe('https://checkout.stripe.com/c/pay/team-pass');
-    expect(firebaseMocks.httpsCallable).toHaveBeenCalledWith(firebaseMocks.functions, 'createStripeTeamPassCheckout');
-    expect(callable).toHaveBeenCalledWith({ teamId: 'team-1', seasonId: 'summer-2100', tier: 'team-pass' });
-  });
-
-  it('uses the authenticated native callable transport', async () => {
-    nativeRuntimeState.isNative = true;
-    nativeCallableMocks.callNativeFirebaseFunction.mockResolvedValue({ checkoutUrl: 'https://checkout.stripe.com/c/pay/native-team-pass' });
-
-    await expect(createTeamPassCheckoutForApp('team-1', 'summer-2100')).resolves.toBe('https://checkout.stripe.com/c/pay/native-team-pass');
-    expect(nativeCallableMocks.callNativeFirebaseFunction).toHaveBeenCalledWith(
-      'createStripeTeamPassCheckout',
-      { teamId: 'team-1', seasonId: 'summer-2100', tier: 'team-pass' },
-      { errorLabel: 'Team Pass checkout' }
-    );
-  });
-
-  it.each([
-    '',
-    ' https://checkout.stripe.com/c/pay/space',
-    'http://checkout.stripe.com/c/pay/insecure',
-    'https://checkout.stripe.com.attacker.example/c/pay/lookalike',
-    'https://user:password@checkout.stripe.com/c/pay/credentialed',
-    'https://checkout.stripe.com:8443/c/pay/port',
-    'https://checkout.stripe.com/'
-  ])('rejects an untrusted fresh checkout destination %j', async (checkoutUrl) => {
-    firebaseMocks.httpsCallable.mockReturnValue(vi.fn().mockResolvedValue({ data: { checkoutUrl } }));
-
-    await expect(createTeamPassCheckoutForApp('team-1', 'summer-2100')).rejects.toThrow('invalid checkout destination');
-  });
 });
 
 describe('createStatTrackerConfigForApp', () => {
@@ -1580,19 +1538,34 @@ describe('buildTeamDetailModel registration provider', () => {
 
   it.each([
     ['canonical owner', { uid: 'owner-1', email: 'owner@example.com' }, { ownerId: 'owner-1' }, true],
-    ['current-email team admin', { uid: 'admin-1', email: 'ADMIN@example.com' }, { ownerId: 'owner-1', adminEmails: ['admin@example.com'] }, true],
+    ['verified current-email team admin', { uid: 'admin-1', email: 'ADMIN@example.com', emailVerified: true }, { ownerId: 'owner-1', adminEmails: ['admin@example.com'] }, true],
+    ['unverified current-email team admin', { uid: 'admin-1', email: 'admin@example.com', emailVerified: false }, { ownerId: 'owner-1', adminEmails: ['admin@example.com'] }, false],
     ['confirmed parent', { uid: 'parent-1', email: 'parent@example.com', parentTeamIds: ['team-1'] }, { ownerId: 'owner-1' }, true],
     ['platform-admin-only user', { uid: 'platform-1', email: 'platform@example.com', isAdmin: true }, { ownerId: 'owner-1' }, false],
-    ['legacy email-only owner', { uid: 'legacy-1', email: 'legacy@example.com' }, { ownerEmail: 'legacy@example.com' }, false],
+    ['verified legacy email-only owner', { uid: 'legacy-1', email: 'legacy@example.com', emailVerified: true }, { ownerEmail: 'legacy@example.com' }, true],
+    ['unverified legacy email-only owner', { uid: 'legacy-1', email: 'legacy@example.com', emailVerified: false }, { ownerEmail: 'legacy@example.com' }, false],
+    ['conflicting legacy owner aliases', { uid: 'legacy-1', email: 'legacy@example.com', emailVerified: true }, { ownerEmail: 'legacy@example.com', ownerEmailLower: 'other@example.com' }, false],
+    ['stale legacy alias behind a canonical owner', { uid: 'legacy-1', email: 'legacy@example.com', emailVerified: true }, { ownerId: 'owner-1', ownerEmail: 'legacy@example.com' }, false],
+    ['parent behind a malformed canonical owner', { uid: 'parent-1', email: 'parent@example.com', parentTeamIds: ['team-1'] }, { ownerId: ' owner-1 ' }, false],
+    ['coach-only delegate', { uid: 'coach-1', email: 'coach@example.com', coachOf: ['team-1'] }, { ownerId: 'owner-1' }, false],
+    ['linked-player-only user', { uid: 'member-1', email: 'member@example.com', parentOf: [{ teamId: 'team-1' }], parentPlayerKeys: ['team-1:player-1'] }, { ownerId: 'owner-1' }, false],
+    ['scorekeeper delegate', { uid: 'scorekeeper-1', email: 'score@example.com', scorekeeperTeamIds: ['team-1'] }, { ownerId: 'owner-1' }, false],
+    ['stream delegate', { uid: 'stream-1', email: 'stream@example.com', streamTeamIds: ['team-1'] }, { ownerId: 'owner-1' }, false],
+    ['media and video delegate', { uid: 'media-1', email: 'media@example.com', teamMediaUploadTeamIds: ['team-1'], mediaUploadTeamIds: ['team-1'], videographerTeamIds: ['team-1'] }, { ownerId: 'owner-1' }, false],
     ['wrong-team parent', { uid: 'parent-1', email: 'parent@example.com', parentTeamIds: ['team-2'] }, { ownerId: 'owner-1' }, false]
-  ])('projects Team Pass eligibility for a %s', (_label, user, team, expected) => {
+  ])('projects private calendar eligibility for a %s', (_label, user, team, expected) => {
+    expect(isEligiblePrivateCalendarSubscriberForApp(
+      user as any,
+      'team-1',
+      { id: 'team-1', name: 'Bears', ...team }
+    )).toBe(expected);
+
     const built = buildTeamDetailModel({
       teamId: 'team-1',
-      team: { id: 'team-1', name: 'Bears', currentSeasonId: 'summer-2026', ...team },
+      team: { id: 'team-1', name: 'Bears', ...team },
       user: user as any
     });
-
-    expect(built.canPurchaseTeamPass).toBe(expected);
+    expect(built.canUsePrivateCalendarSync).toBe(expected);
   });
 
   it('returns no registration provider rows when the team has no registration source', () => {

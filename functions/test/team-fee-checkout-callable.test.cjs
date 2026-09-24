@@ -304,7 +304,8 @@ function loadCallable({ seed, retrieve, create, expire, firestoreOptions, webhoo
     const exports = require('../index.js');
     return {
         callable: exports.createStripeTeamFeeCheckout,
-        teamPassCallable: exports.createStripeTeamPassCheckout,
+        teamPassCallable: exports._internal.createStripeTeamPassCheckoutLegacyForTest,
+        teamPassProductionCallable: exports.createStripeTeamPassCheckout,
         publicTeamPassStatus: exports.getPublicTeamPassStatus,
         teamPassWebhook: exports.stripeTeamPassWebhook,
         firestore,
@@ -354,6 +355,19 @@ after(() => {
     Module._load = originalModuleLoad;
     if (originalPaymentsEnabled === undefined) delete process.env.PAYMENTS_ENABLED;
     else process.env.PAYMENTS_ENABLED = originalPaymentsEnabled;
+});
+
+test('rejects new Team Pass sales before auth, Firestore, or Stripe', async () => {
+    const loaded = loadCallable();
+
+    await assert.rejects(
+        loaded.teamPassProductionCallable({ teamId: 'team-1', seasonId: '2026', tier: 'team-pass' }, context),
+        (error) => error?.code === 'failed-precondition'
+            && error?.message === 'Team Pass sales are not available.'
+    );
+    assert.equal(loaded.metrics.createCalls.length, 0);
+    assert.equal(loaded.metrics.transactionCalls, 0);
+    assert.equal(loaded.metrics.writes.length, 0);
 });
 
 test('reuses a valid current Stripe team-fee session without writing or creating', async () => {

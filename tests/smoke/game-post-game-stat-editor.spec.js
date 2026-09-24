@@ -65,7 +65,7 @@ function createScenario() {
     };
 }
 
-async function installMocks(page, scenario, { delayedAuth = false } = {}) {
+async function installMocks(page, scenario, { delayedAuth = false, accessLevel = 'full', directAccess = true } = {}) {
     await page.addInitScript(({ storeKey, value }) => {
         localStorage.setItem(storeKey, JSON.stringify(value));
     }, { storeKey: STORE_KEY, value: scenario });
@@ -92,11 +92,30 @@ async function installMocks(page, scenario, { delayedAuth = false } = {}) {
         }
 
         export async function getTeam() {
-            return clone(loadStore().team);
+            const team = clone(loadStore().team);
+            if (!${JSON.stringify(directAccess)}) team.__denyTestAccess = true;
+            return team;
+        }
+
+        export async function getDelegatedTeamContext() {
+            const store = loadStore();
+            return clone(store.delegatedTeam || store.team);
         }
 
         export async function getGame() {
-            return clone(loadStore().game);
+            const game = clone(loadStore().game);
+            const linkedAt = game?.replayVideo?.linkedAt;
+            if (typeof linkedAt === 'string' && !Number.isNaN(Date.parse(linkedAt))) {
+                const millis = Date.parse(linkedAt);
+                game.replayVideo.linkedAt = {
+                    seconds: Math.floor(millis / 1000),
+                    nanoseconds: (millis % 1000) * 1000000,
+                    toDate() {
+                        return new Date(millis);
+                    }
+                };
+            }
+            return game;
         }
 
         export async function getPlayers() {
@@ -143,6 +162,7 @@ async function installMocks(page, scenario, { delayedAuth = false } = {}) {
 
     const firebaseModule = `
         const STORE_KEY = ${JSON.stringify(STORE_KEY)};
+        const DELETE_FIELD_SENTINEL = { __deleteField: true };
 
         function loadStore() {
             return JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
@@ -150,6 +170,10 @@ async function installMocks(page, scenario, { delayedAuth = false } = {}) {
 
         function clone(value) {
             return JSON.parse(JSON.stringify(value));
+        }
+
+        function saveStore(store) {
+            localStorage.setItem(STORE_KEY, JSON.stringify(store));
         }
 
         function createSnapshot(entries) {
@@ -209,6 +233,10 @@ async function installMocks(page, scenario, { delayedAuth = false } = {}) {
 
         export const db = {};
 
+        export function doc(_db, ...segments) {
+            return { path: segments.join('/') };
+        }
+
         export function collection(_db, path) {
             return { path };
         }
@@ -221,8 +249,52 @@ async function installMocks(page, scenario, { delayedAuth = false } = {}) {
             return null;
         }
 
+        export function deleteField() {
+            return DELETE_FIELD_SENTINEL;
+        }
+
         export async function getDocs(ref) {
             return buildSnapshot(ref.path);
+        }
+
+        export async function runTransaction(_db, callback) {
+            const transaction = {
+                async get() {
+                    const game = clone(loadStore().game);
+                    const linkedAt = game?.replayVideo?.linkedAt;
+                    if (typeof linkedAt === 'string' && !Number.isNaN(Date.parse(linkedAt))) {
+                        const millis = Date.parse(linkedAt);
+                        game.replayVideo.linkedAt = {
+                            seconds: Math.floor(millis / 1000),
+                            nanoseconds: (millis % 1000) * 1000000,
+                            toDate() {
+                                return new Date(millis);
+                            }
+                        };
+                    }
+                    return {
+                        exists() {
+                            return Boolean(game);
+                        },
+                        data() {
+                            return game;
+                        }
+                    };
+                },
+                update(_ref, patch) {
+                    const store = loadStore();
+                    store.game = { ...(store.game || {}) };
+                    Object.entries(patch).forEach(([key, value]) => {
+                        if (value?.__deleteField === true) {
+                            delete store.game[key];
+                        } else {
+                            store.game[key] = clone(value);
+                        }
+                    });
+                    saveStore(store);
+                }
+            };
+            return callback(transaction);
         }
     `;
 
@@ -283,8 +355,11 @@ async function installMocks(page, scenario, { delayedAuth = false } = {}) {
             if (container) container.innerHTML = '<div data-testid="team-banner"></div>';
         }
 
-        export function getTeamAccessInfo() {
-            return { hasAccess: true, accessLevel: 'full', exitUrl: 'team.html#teamId=team-1' };
+        export function getTeamAccessInfo(_user, team) {
+            if (team?.__denyTestAccess) {
+                return { hasAccess: false, accessLevel: null, exitUrl: 'index.html' };
+            }
+            return { hasAccess: true, accessLevel: ${JSON.stringify(accessLevel)}, exitUrl: 'team.html#teamId=team-1' };
         }
     `;
 
@@ -309,9 +384,36 @@ async function installMocks(page, scenario, { delayedAuth = false } = {}) {
             return [];
         }
 
-        export function resolveReplayVideoOptions() {
-            return { hasVideo: false, replayState: { status: 'unavailable', title: 'Replay unavailable' } };
+        export function resolveReplayVideoOptions({ game } = {}) {
+            const replay = game?.replayVideo;
+            if (replay?.provider === 'youtube' && replay?.status === 'ready' && replay?.videoId) {
+                return {
+                    mode: 'embed',
+                    isRecordedReplay: true,
+                    hasVideo: true,
+                    sourceUrl: replay.embedUrl,
+                    publicUrl: replay.publicUrl,
+                    replayState: null
+                };
+            }
+            const attachedClip = Array.isArray(game?.highlightClips)
+                ? game.highlightClips.find((clip) => clip?.type === 'score-linked' && clip?.mediaUrl)
+                : null;
+            if (attachedClip) {
+                return {
+                    mode: 'recorded',
+                    isRecordedReplay: false,
+                    isAttachedClip: true,
+                    hasVideo: true,
+                    sourceUrl: attachedClip.mediaUrl,
+                    publicUrl: attachedClip.mediaUrl,
+                    replayState: null
+                };
+            }
+            return { mode: 'none', hasVideo: false, replayState: { status: 'unavailable', title: 'Replay unavailable' } };
         }
+
+        export function hasCompletedReplayLifecycle() { return true; }
     `;
 
     await page.route(/\/js\/db\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: dbModule }));
@@ -334,6 +436,7 @@ test('completed-game stat editor saves corrections and DNP state through real co
     await installMocks(page, createScenario());
 
     await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => pageErrors).toEqual([]);
 
     await page.locator('#share-report-btn').click();
     await expect.poll(() => page.evaluate(() => window.__GAME_SHARE_PAYLOADS__?.[0]?.url)).toBe(
@@ -422,6 +525,7 @@ test('late authentication refreshes manager controls and private edit data witho
     await installMocks(page, createScenario(), { delayedAuth: true });
 
     await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => pageErrors).toEqual([]);
 
     const publicRows = page.locator('#stats-body tr');
     await expect(publicRows).toHaveCount(2, { timeout: 5000 });
@@ -457,4 +561,244 @@ test('late authentication refreshes manager controls and private edit data witho
         opponentRows: document.querySelectorAll('#opponent-stats-body tr').length
     }))).toEqual(publicShape);
     expect(pageErrors).toEqual([]);
+});
+
+test('completed-game manager links, replaces, and removes a YouTube replay', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    page.on('dialog', async (dialog) => dialog.accept());
+    await page.setViewportSize({ width: 390, height: 844 });
+    const scenario = createScenario();
+    scenario.game.liveStatus = 'scheduled';
+    scenario.game.recordedVideo = { url: 'https://cdn.example/older-replay.mp4' };
+    scenario.game.replayVideoPublicUrl = 'https://video.example/older-replay';
+    scenario.game.videoUrl = 'https://youtu.be/PK1HyC37doc';
+    await installMocks(page, scenario);
+
+    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => pageErrors).toEqual([]);
+
+    const replayAdmin = page.locator('#replay-video-admin');
+    const replayAction = page.locator('#replay-report-action');
+    await expect(replayAdmin).toBeVisible();
+    await expect(page.locator('#replay-video-current')).toContainText('A non-YouTube replay is attached');
+    await expect(replayAction).toContainText('Replay Unavailable');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    await page.locator('#replay-video-url').fill('https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ');
+    await page.locator('#replay-video-save').click();
+    await expect(page.locator('#replay-video-status')).toContainText('Paste a valid YouTube video link');
+
+    await page.locator('#replay-video-url').fill('https://www.youtube.com/watch?v=0IuY8Oryi1k&t=90');
+    await page.locator('#replay-video-title').fill('Vipers vs Captains replay');
+    await page.locator('#replay-video-save').click();
+    await expect(page.locator('#replay-video-status')).toContainText('Replay linked');
+    await expect(replayAction.getByRole('link', { name: 'Watch Replay' })).toBeVisible();
+
+    let store = await readStore(page);
+    expect(store.game.replayVideo).toMatchObject({
+        provider: 'youtube',
+        videoId: '0IuY8Oryi1k',
+        embedUrl: 'https://www.youtube.com/embed/0IuY8Oryi1k',
+        publicUrl: 'https://www.youtube.com/watch?v=0IuY8Oryi1k',
+        title: 'Vipers vs Captains replay',
+        status: 'ready',
+        linkedBy: 'coach-1'
+    });
+    expect(store.game.recordedVideo).toBeUndefined();
+    expect(store.game.replayVideoPublicUrl).toBeUndefined();
+    expect(store.game.videoUrl).toBe('https://youtu.be/PK1HyC37doc');
+
+    await page.locator('#replay-video-url').fill('https://youtu.be/dQw4w9WgXcQ?si=replacement');
+    await page.locator('#replay-video-title').fill('Replacement replay');
+    await page.locator('#replay-video-save').click();
+    await expect(page.locator('#replay-video-status')).toContainText('Replay linked');
+
+    store = await readStore(page);
+    expect(store.game.replayVideo).toMatchObject({
+        provider: 'youtube',
+        videoId: 'dQw4w9WgXcQ',
+        publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        title: 'Replacement replay',
+        status: 'ready'
+    });
+
+    await page.locator('#replay-video-remove').click();
+    await expect(page.locator('#replay-video-status')).toContainText('Replay removed');
+    await expect(replayAction).toContainText('Replay Unavailable');
+
+    store = await readStore(page);
+    expect(store.game.replayVideo).toBeNull();
+    expect(store.game.recordedVideo).toBeUndefined();
+    expect(store.game.replayVideoPublicUrl).toBeUndefined();
+    expect(store.game.videoUrl).toBe('https://youtu.be/PK1HyC37doc');
+    expect(store.game.replayVideoFallbackDisabled).toBe(true);
+
+    // A second write without refreshing must use the retained videoUrl and
+    // tombstone in its CAS state, then clear only the tombstone on relink.
+    await page.locator('#replay-video-url').fill('https://youtu.be/PK1HyC37doc');
+    await page.locator('#replay-video-title').fill('Relinked replay');
+    await page.locator('#replay-video-save').click();
+    await expect(page.locator('#replay-video-status')).toContainText('Replay linked');
+    store = await readStore(page);
+    expect(store.game.replayVideo).toMatchObject({
+        videoId: 'PK1HyC37doc',
+        title: 'Relinked replay',
+        status: 'ready'
+    });
+    expect(store.game.videoUrl).toBe('https://youtu.be/PK1HyC37doc');
+    expect(store.game.replayVideoFallbackDisabled).toBeUndefined();
+    expect(pageErrors).toEqual([]);
+});
+
+test('completed statsheet game with only an attached clip does not advertise a full replay', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const scenario = createScenario();
+    scenario.game.liveStatus = 'scheduled';
+    scenario.game.highlightClips = [{
+        type: 'score-linked',
+        title: 'Putback clip',
+        mediaUrl: 'https://cdn.example.com/putback.mp4'
+    }];
+    await installMocks(page, scenario);
+
+    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => pageErrors).toEqual([]);
+
+    const replayAction = page.locator('#replay-report-action');
+    await expect(replayAction.getByRole('link', { name: 'Watch Replay' })).toHaveCount(0);
+    await expect(replayAction).toContainText('Replay Unavailable');
+    expect(pageErrors).toEqual([]);
+});
+
+test('manager can remove an existing replay after a final game is corrected to non-final', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    page.on('dialog', async (dialog) => dialog.accept());
+    const scenario = createScenario();
+    scenario.game.status = 'scheduled';
+    scenario.game.liveStatus = 'scheduled';
+    scenario.game.replayVideo = {
+        provider: 'youtube',
+        videoId: '0IuY8Oryi1k',
+        embedUrl: 'https://www.youtube.com/embed/0IuY8Oryi1k',
+        publicUrl: 'https://www.youtube.com/watch?v=0IuY8Oryi1k',
+        title: 'Correction cleanup replay',
+        status: 'ready',
+        linkedBy: 'coach-1',
+        linkedAt: '2026-09-01T12:00:00.000Z'
+    };
+    await installMocks(page, scenario);
+
+    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => pageErrors).toEqual([]);
+
+    await expect(page.locator('#replay-video-admin')).toBeVisible();
+    await expect(page.locator('#replay-video-link-fields')).toBeHidden();
+    await expect(page.locator('#replay-video-save')).toBeHidden();
+    await expect(page.locator('#replay-video-remove')).toBeVisible();
+    await expect(page.locator('#replay-video-help')).toContainText('no longer final');
+
+    await page.locator('#replay-video-remove').click();
+    await expect(page.locator('#replay-video-status')).toContainText('Replay removed');
+    await expect(page.locator('#replay-video-admin')).toBeVisible();
+    await expect(page.locator('#replay-video-status')).toBeVisible();
+    await expect(page.locator('#replay-video-heading')).toBeFocused();
+
+    const store = await readStore(page);
+    expect(store.game.replayVideo).toBeNull();
+    expect(pageErrors).toEqual([]);
+});
+
+test('delegated full manager can remove a stale replay when direct team access is unavailable', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    page.on('dialog', async (dialog) => dialog.accept());
+    const scenario = createScenario();
+    scenario.game.status = 'scheduled';
+    scenario.game.liveStatus = 'scheduled';
+    scenario.game.replayVideo = {
+        provider: 'youtube',
+        videoId: '0IuY8Oryi1k',
+        embedUrl: 'https://www.youtube.com/embed/0IuY8Oryi1k',
+        publicUrl: 'https://www.youtube.com/watch?v=0IuY8Oryi1k',
+        status: 'ready',
+        linkedBy: 'coach-1',
+        linkedAt: '2026-09-01T12:00:00.000Z'
+    };
+    scenario.delegatedTeam = {
+        id: 'team-1',
+        name: 'Comets',
+        isDelegatedTeamContext: true,
+        delegatedAccess: { full: true },
+        teamPermissions: {
+            videography: { mode: 'selected', memberIds: ['coach-1'] }
+        }
+    };
+    await installMocks(page, scenario, { accessLevel: 'videographer', directAccess: false });
+
+    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => pageErrors).toEqual([]);
+    await expect(page.locator('#replay-video-remove')).toBeVisible();
+
+    await page.locator('#replay-video-remove').click();
+    await expect(page.locator('#replay-video-status')).toContainText('Replay removed');
+
+    const store = await readStore(page);
+    expect(store.game.replayVideo).toBeNull();
+    expect(pageErrors).toEqual([]);
+});
+
+test('replay transaction rejects a game that became a shared-schedule mirror after load', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await installMocks(page, createScenario());
+
+    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => pageErrors).toEqual([]);
+    await expect(page.locator('#replay-video-admin')).toBeVisible();
+
+    await page.evaluate((storeKey) => {
+        const store = JSON.parse(localStorage.getItem(storeKey) || '{}');
+        store.game.sharedScheduleId = 'shared_team-1_game-1';
+        store.game.sharedScheduleOpponentTeamId = 'team-2';
+        store.game.sharedScheduleOpponentGameId = 'game-2';
+        localStorage.setItem(storeKey, JSON.stringify(store));
+    }, STORE_KEY);
+
+    await page.locator('#replay-video-url').fill('https://youtu.be/0IuY8Oryi1k');
+    await page.locator('#replay-video-save').click();
+    await expect(page.locator('#replay-video-status')).toContainText('now part of a shared schedule');
+
+    const store = await readStore(page);
+    expect(store.game.replayVideo).toBeUndefined();
+    expect(pageErrors).toEqual([]);
+});
+
+test('legacy replay controls fail closed for a retained videographer ID when the mode is disabled', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const scenario = createScenario();
+    scenario.team.teamPermissions = {
+        videography: { mode: 'disabled', memberIds: ['coach-1'] }
+    };
+    await installMocks(page, scenario, { accessLevel: 'videographer' });
+
+    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => pageErrors).toEqual([]);
+    await expect(page.locator('#replay-video-admin')).toBeHidden();
+});
+
+test('legacy replay controls do not offer a write for noncanonical uppercase lifecycle values', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const scenario = createScenario();
+    scenario.game.status = 'FINAL';
+    scenario.game.liveStatus = 'FINAL';
+    await installMocks(page, scenario);
+
+    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => pageErrors).toEqual([]);
+    await expect(page.locator('#replay-video-admin')).toBeHidden();
 });

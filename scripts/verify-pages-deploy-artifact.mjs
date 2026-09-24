@@ -3,10 +3,14 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { assertNoUnpublishableRootDevelopmentArtifacts } from './public-site-artifact-policy.mjs';
-import { isAppCheckEnforcementReady } from './stage-pages-bundle.mjs';
+import {
+    isAppCheckEnforcementReady,
+    isMobileAssociationPublishingEnabled,
+    validateMobileAssociationFiles
+} from './stage-pages-bundle.mjs';
 
 const runtimeConfigRelativePath = path.join('.well-known', 'allplays-runtime-config.json');
-const unpublishedMobileAssociationRelativePaths = [
+const mobileAssociationRelativePaths = [
     path.join('.well-known', 'apple-app-site-association'),
     path.join('.well-known', 'assetlinks.json')
 ];
@@ -21,6 +25,9 @@ export function verifyPagesDeployArtifact(
         expectedSiteKey = process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY,
         expectedEnforcementReady = isAppCheckEnforcementReady(
             process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY
+        ),
+        expectedMobileAssociations = isMobileAssociationPublishingEnabled(
+            process.env.ALLPLAYS_PUBLISH_MOBILE_ASSOCIATIONS
         )
     } = {}
 ) {
@@ -35,12 +42,16 @@ export function verifyPagesDeployArtifact(
     }
     assertNoUnpublishableRootDevelopmentArtifacts(resolvedArtifactDir, 'Pages deployment artifact');
 
-    for (const relativePath of unpublishedMobileAssociationRelativePaths) {
-        const associationPath = path.join(resolvedArtifactDir, relativePath);
-        if (fs.existsSync(associationPath)) {
-            throw new Error(
-                `Pages deployment artifact must not publish ${relativePath} until real mobile app association identifiers are configured.`
-            );
+    if (isMobileAssociationPublishingEnabled(expectedMobileAssociations)) {
+        validateMobileAssociationFiles(resolvedArtifactDir);
+    } else {
+        for (const relativePath of mobileAssociationRelativePaths) {
+            const associationPath = path.join(resolvedArtifactDir, relativePath);
+            if (fs.existsSync(associationPath)) {
+                throw new Error(
+                    `Pages deployment artifact must not publish ${relativePath} without explicit production mobile-association opt-in.`
+                );
+            }
         }
     }
 

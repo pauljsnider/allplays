@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { getGameReplayLifecycle } from '../../js/game-replay-video.js';
+import { hasReplayVideoEvidence } from '../../js/schedule-watch-cta.js';
 import { JSDOM } from 'jsdom';
 
 function readEditSchedule() {
@@ -111,6 +113,44 @@ function buildTrackChoiceDomHarness({ allConfigs, currentTeam, gamesCache, curre
         currentTeamId,
         gamesCache,
         getGoalSportProfile: goalSportProfileStub
+    });
+}
+
+function buildRenderDbGame() {
+    const source = readEditSchedule();
+    const match = source.match(/function renderDbGame\(game\) \{([\s\S]*?)\n        \}\n\n        function startEditGame/);
+    expect(match, 'renderDbGame should exist').toBeTruthy();
+    const gamesCache = {};
+    const createRenderer = new Function('deps', `
+        const {
+            currentTeamId,
+            escapeHtml,
+            formatDate,
+            formatTime,
+            gamesCache,
+            getGameReplayLifecycle,
+            hasReplayVideoEvidence,
+            isCancelledGame,
+            mapLink,
+            renderOfficiatingSummary,
+            renderTournamentSummary
+        } = deps;
+        return function(game) {
+${match[1]}
+        };
+    `);
+    return createRenderer({
+        currentTeamId: 'team-123',
+        escapeHtml: (value) => String(value ?? ''),
+        formatDate: () => 'Tue, Mar 10',
+        formatTime: () => '6:00 PM',
+        gamesCache,
+        getGameReplayLifecycle,
+        hasReplayVideoEvidence,
+        isCancelledGame: (game) => String(game?.status || '').toLowerCase() === 'cancelled',
+        mapLink: () => '',
+        renderOfficiatingSummary: () => '',
+        renderTournamentSummary: () => ''
     });
 }
 
@@ -244,8 +284,39 @@ describe('edit schedule basketball tracker routing', () => {
     it('renders completed schedule games with Report instead of Track', () => {
         const source = readEditSchedule();
 
-        expect(source).toContain("const isCompleted = game.status === 'completed';");
+        expect(source).toContain('const isCompleted = hasReplayLifecycle;');
+        expect(source).toContain('const hasReplayPlayback = hasReplayLifecycle');
         expect(source).toContain('${!isCompleted && !isCancelled ? `<button data-game-id="${game.id}" class="track-game-btn');
         expect(source).toContain('${isCompleted ? `<a href="game.html#teamId=${currentTeamId}&gameId=${game.id}"');
+        expect(source).toContain('${hasReplayPlayback ? `<a href="live-game.html?teamId=${currentTeamId}&gameId=${game.id}&replay=true"');
+    });
+
+    it('renders replay actions only for playable object or flat URL evidence', () => {
+        const renderDbGame = buildRenderDbGame();
+        const baseGame = {
+            opponent: 'Tigers',
+            location: 'Arena',
+            date: '2024-03-10T18:00:00.000Z',
+            status: 'completed',
+            liveStatus: 'scheduled',
+            homeScore: 5,
+            awayScore: 3
+        };
+
+        expect(renderDbGame({
+            ...baseGame,
+            id: 'string-container',
+            replayVideo: 'legacy-recording'
+        })).not.toContain('Watch Replay');
+        expect(renderDbGame({
+            ...baseGame,
+            id: 'object-container',
+            replayVideo: { publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }
+        })).toContain('gameId=object-container&replay=true');
+        expect(renderDbGame({
+            ...baseGame,
+            id: 'flat-alias',
+            replayVideoPublicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+        })).toContain('gameId=flat-alias&replay=true');
     });
 });

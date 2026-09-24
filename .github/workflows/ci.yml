@@ -97,6 +97,9 @@ jobs:
       - name: Run team email functions coverage
         run: npm run test:functions:team-email
 
+      - name: Run Functions security boundary coverage
+        run: npm run test:functions:security-boundaries
+
   app-quality:
     runs-on: ubuntu-latest
     permissions:

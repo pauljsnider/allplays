@@ -1,4 +1,4 @@
-import { readPremiumAccessConfig } from './premium-access.js?v=5';
+import { readPremiumAccessConfig } from './premium-access.js?v=7';
 import { resolvePremiumAccess } from './premium-access-core.js?v=1';
 import {
     TEAM_PASS_TIER,
@@ -22,7 +22,7 @@ export {
 
 async function loadFirebase(deps = {}) {
     if (deps.firebase) return deps.firebase;
-    return import('./firebase.js?v=27');
+    return import('./firebase.js?v=33');
 }
 
 export async function getTeamEntitlementStatus({

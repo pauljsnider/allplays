@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, CalendarDays, Loader2, MapPin, RefreshCw, ShieldCheck, Trophy, Users } from 'lucide-react';
+import { AlertCircle, CalendarDays, Loader2, MapPin, PlayCircle, Radio, RefreshCw, ShieldCheck, Trophy, Users } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { formatShortDate, formatTimeOfDay } from '../lib/datetime';
 import { getScheduleLocationLabel } from '../lib/scheduleLogic';
 import {
   FamilyShareTokenError,
+  isFamilyShareCompletedGame,
   loadFamilyShareView,
+  resolveFamilyShareWatchCta,
   type FamilyShareEvent,
   type FamilyShareViewModel
 } from '../lib/familyShareViewerService';
@@ -186,8 +188,11 @@ function Metric({ label, value, icon: Icon }: { label: string; value: string | n
 
 function FamilyEventRow({ event, compact = false }: { event: FamilyShareEvent; compact?: boolean }) {
   const title = getFamilyEventTitle(event);
-  const score = event.homeScore !== null || event.awayScore !== null ? `${event.homeScore ?? '-'}-${event.awayScore ?? '-'}` : '';
+  const score = isFamilyShareCompletedGame(event) && (event.homeScore !== null || event.awayScore !== null)
+    ? `${event.homeScore ?? '-'}-${event.awayScore ?? '-'}`
+    : '';
   const childNames = event.childNames.join(', ');
+  const watchCta = resolveFamilyShareWatchCta(event);
 
   return (
     <article className="rounded-xl border border-gray-200 p-3">
@@ -211,6 +216,22 @@ function FamilyEventRow({ event, compact = false }: { event: FamilyShareEvent; c
           <span className="inline-flex items-center gap-1"><MapPin className="h-3.5 w-3.5" aria-hidden="true" />{getScheduleLocationLabel(event)}</span>
           {event.sourceLabel ? <span>{event.sourceLabel}</span> : null}
         </div>
+      ) : null}
+      {watchCta ? (
+        <a
+          href={watchCta.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`${watchCta.label}: ${title}`}
+          className={`mt-3 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-black transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${watchCta.kind === 'live'
+            ? 'bg-rose-50 text-rose-700 hover:bg-rose-100 focus-visible:outline-rose-600'
+            : 'bg-teal-50 text-teal-700 hover:bg-teal-100 focus-visible:outline-teal-600'}`}
+        >
+          {watchCta.kind === 'live'
+            ? <Radio className="h-4 w-4" aria-hidden="true" />
+            : <PlayCircle className="h-4 w-4" aria-hidden="true" />}
+          {watchCta.label}
+        </a>
       ) : null}
     </article>
   );

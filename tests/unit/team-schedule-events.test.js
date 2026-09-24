@@ -33,6 +33,7 @@ function buildGetAllEvents(overrides = {}) {
         buildAvailabilityNoteRows: () => [],
         getRsvps: async () => [],
         canManageTeamAvailability: () => false,
+        hasReplayVideoEvidence: () => false,
         currentTeamAccessInfo: null,
         currentUser: null,
         ...overrides
@@ -50,6 +51,7 @@ function buildGetAllEvents(overrides = {}) {
             buildAvailabilityNoteRows,
             getRsvps,
             canManageTeamAvailability,
+            hasReplayVideoEvidence,
             currentTeamAccessInfo,
             currentUser
         } = deps;

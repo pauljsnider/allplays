@@ -159,6 +159,10 @@ jobs:
         if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: npm run test:functions:team-email
 
+      - name: Run Functions security boundary coverage
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
+        run: npm run test:functions:security-boundaries
+
       - name: Validate changed product specifications
         if: ${{ needs.change-impact.outputs.lane == 'spec-only' }}
         env:

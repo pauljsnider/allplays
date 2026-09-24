@@ -10,6 +10,7 @@ import {
 } from './adapters/legacyScheduleHelpers';
 import { isCalendarOccurrenceTracked } from './calendarOccurrence';
 import { getCalendarLocationDetail } from './scheduleLogic';
+import { isActiveGameForLive, isCompletedGameForReplay } from './youtubeReplay';
 
 export type FamilyShareTokenErrorReason = 'missing' | 'invalid' | 'revoked' | 'expired' | 'throttled' | 'load-failed';
 
@@ -52,14 +53,23 @@ export type FamilyShareEvent = {
   location: string;
   locationDetail?: string | null;
   status: string;
+  liveStatus: string | null;
   isCancelled: boolean;
   isDbGame: boolean;
+  hasReplayVideo: boolean;
+  canOpenPublicViewer: boolean;
   childIds: string[];
   childNames: string[];
   homeScore: number | null;
   awayScore: number | null;
   notes?: string | null;
   sourceLabel?: string | null;
+};
+
+export type FamilyShareWatchCta = {
+  kind: 'live' | 'replay';
+  label: 'Watch Live' | 'Watch Replay';
+  href: string;
 };
 
 export type FamilyShareViewModel = {
@@ -226,8 +236,11 @@ function normalizeProjectedFamilyEvents(value: unknown): FamilyShareEvent[] {
       location: compactString(event.location) || 'TBD',
       locationDetail: compactString(event.locationDetail) || null,
       status: compactString(event.status) || 'scheduled',
+      liveStatus: compactString(event.liveStatus) || null,
       isCancelled: event.isCancelled === true,
       isDbGame: false,
+      hasReplayVideo: false,
+      canOpenPublicViewer: false,
       childIds: uniqueStrings(Array.isArray(event.childIds) ? event.childIds : []),
       childNames: uniqueStrings(Array.isArray(event.childNames) ? event.childNames : []),
       homeScore: null,
@@ -409,9 +422,14 @@ function buildDbGameEvents(teamId: string, teamName: string, children: FamilySha
         title: compactString(source.title) || 'Practice',
         opponent: '',
         location: compactString(source.location || game.location) || 'TBD',
-        status: compactString(game.status) || 'scheduled',
-        isCancelled: game.status === 'cancelled',
+        status: compactString(game.status),
+        liveStatus: compactString(game.liveStatus) || null,
+        isCancelled: game.isCancelled === true
+          || ['cancelled', 'canceled'].includes(compactString(game.status).toLowerCase())
+          || ['cancelled', 'canceled'].includes(compactString(game.liveStatus).toLowerCase()),
         isDbGame: true,
+        hasReplayVideo: game.hasReplayVideo === true,
+        canOpenPublicViewer: game.canOpenPublicViewer === true,
         children,
         notes: compactString(source.notes || game.notes) || null
       });
@@ -430,9 +448,14 @@ function buildDbGameEvents(teamId: string, teamName: string, children: FamilySha
     title: compactString(game.title) || (type === 'practice' ? 'Practice' : ''),
     opponent: type === 'game' ? compactString(game.opponent) || 'TBD' : '',
     location: compactString(game.location) || 'TBD',
-    status: compactString(game.status) || 'scheduled',
-    isCancelled: game.status === 'cancelled',
+    status: compactString(game.status),
+    liveStatus: compactString(game.liveStatus) || null,
+    isCancelled: game.isCancelled === true
+      || ['cancelled', 'canceled'].includes(compactString(game.status).toLowerCase())
+      || ['cancelled', 'canceled'].includes(compactString(game.liveStatus).toLowerCase()),
     isDbGame: true,
+    hasReplayVideo: game.hasReplayVideo === true,
+    canOpenPublicViewer: game.canOpenPublicViewer === true,
     children,
     homeScore: toScore(game.homeScore),
     awayScore: toScore(game.awayScore),
@@ -496,8 +519,11 @@ function buildCalendarEvent(
     location: compactString(calendarEvent.location) || 'TBD',
     locationDetail: getCalendarLocationDetail(calendarEvent.description),
     status: compactString(calendarEvent.status) || 'scheduled',
+    liveStatus: null,
     isCancelled: compactString(calendarEvent.status).toUpperCase() === 'CANCELLED' || /\[CANCELED\]/i.test(compactString(calendarEvent.summary)),
     isDbGame: false,
+    hasReplayVideo: false,
+    canOpenPublicViewer: false,
     children,
     sourceLabel
   });
@@ -514,8 +540,11 @@ function buildFamilyEvent(input: {
   location: string;
   locationDetail?: string | null;
   status: string;
+  liveStatus?: string | null;
   isCancelled: boolean;
   isDbGame: boolean;
+  hasReplayVideo?: boolean;
+  canOpenPublicViewer?: boolean;
   children: FamilyShareChild[];
   homeScore?: number | null;
   awayScore?: number | null;
@@ -535,9 +564,12 @@ function buildFamilyEvent(input: {
     opponent: compactString(input.opponent),
     location: compactString(input.location) || 'TBD',
     locationDetail: compactString(input.locationDetail) || null,
-    status: compactString(input.status) || 'scheduled',
+    status: compactString(input.status),
+    liveStatus: compactString(input.liveStatus) || null,
     isCancelled: input.isCancelled,
     isDbGame: input.isDbGame,
+    hasReplayVideo: input.hasReplayVideo === true,
+    canOpenPublicViewer: input.canOpenPublicViewer === true,
     childIds,
     childNames,
     homeScore: input.homeScore ?? null,
@@ -547,6 +579,51 @@ function buildFamilyEvent(input: {
   };
   event.eventKey = getFamilyEventKey(event);
   return event;
+}
+
+export function resolveFamilyShareWatchCta(event: FamilyShareEvent): FamilyShareWatchCta | null {
+  if (!event || event.type !== 'game' || !event.isDbGame || event.isCancelled || !event.canOpenPublicViewer) {
+    return null;
+  }
+
+  const href = buildPublicLiveGameHref(event.teamId, event.id);
+  if (!href) return null;
+
+  const lifecycle = {
+    type: event.type,
+    status: event.status,
+    liveStatus: event.liveStatus,
+    isCancelled: event.isCancelled
+  };
+  const hasTimelineReplay = event.liveStatus === 'completed' || event.liveStatus === 'final';
+  if (isFamilyShareCompletedGame(event) && (event.hasReplayVideo || hasTimelineReplay)) {
+    const replayUrl = new URL(href);
+    replayUrl.searchParams.set('replay', 'true');
+    return {
+      kind: 'replay',
+      label: 'Watch Replay',
+      href: replayUrl.toString()
+    };
+  }
+
+  if (isActiveGameForLive(lifecycle)) {
+    return {
+      kind: 'live',
+      label: 'Watch Live',
+      href
+    };
+  }
+
+  return null;
+}
+
+export function isFamilyShareCompletedGame(event: FamilyShareEvent) {
+  return isCompletedGameForReplay({
+    type: event.type,
+    status: event.status,
+    liveStatus: event.liveStatus,
+    isCancelled: event.isCancelled
+  });
 }
 
 function mergeFamilyEvents(events: FamilyShareEvent[]) {
@@ -581,7 +658,11 @@ function getRecentResults(events: FamilyShareEvent[]) {
 
 function isPastResult(event: FamilyShareEvent) {
   const status = event.status.toLowerCase();
-  return ['final', 'finished', 'complete', 'completed'].includes(status)
+  const lifecycleStatuses = [status, (event.liveStatus || '').toLowerCase()];
+  if (event.isCancelled || lifecycleStatuses.some((value) => ['cancelled', 'canceled'].includes(value))) return false;
+  if (lifecycleStatuses.some((value) => ['live', 'in_progress', 'in-progress'].includes(value))) return false;
+  return isFamilyShareCompletedGame(event)
+    || ['finished', 'complete'].includes(status)
     || event.homeScore !== null
     || event.awayScore !== null
     || event.date.getTime() < Date.now() - upcomingCutoffMs;
@@ -652,6 +733,16 @@ function asRecord(value: unknown): Record<string, any> {
 
 function compactString(value: unknown) {
   return String(value || '').trim();
+}
+
+function buildPublicLiveGameHref(teamIdValue: unknown, gameIdValue: unknown) {
+  const teamId = compactString(teamIdValue);
+  const gameId = compactString(gameIdValue);
+  if (!teamId || !gameId) return null;
+  const url = new URL('/live-game.html', 'https://allplays.ai');
+  url.searchParams.set('teamId', teamId);
+  url.searchParams.set('gameId', gameId);
+  return url.toString();
 }
 
 function getCalendarFailureLabel(url: string, fallback = 'External calendar') {

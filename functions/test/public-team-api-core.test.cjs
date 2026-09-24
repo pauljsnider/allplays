@@ -20,6 +20,16 @@ const {
 } = require('../public-team-api-core.cjs');
 const { isFamilyShareCalendarEventTracked } = require('../family-share-view-core.cjs');
 
+function canonicalReplay(videoId = 'PK1HyC37doc') {
+  return {
+    provider: 'youtube',
+    videoId,
+    embedUrl: `https://www.youtube.com/embed/${videoId}`,
+    publicUrl: `https://www.youtube.com/watch?v=${videoId}`,
+    status: 'ready'
+  };
+}
+
 test('paginates more than 500 tracked calendar documents with a stable cursor', async () => {
   const trackedDocuments = Array.from({ length: 501 }, (_, index) => ({
     calendarEventUid: `tracked-${String(index).padStart(3, '0')}`,
@@ -99,6 +109,7 @@ test('only tracked events represented by public games suppress calendar projecti
   assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game', isPrivate: true }), false);
   assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game', private: true }), false);
   assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game', deleted: true }), false);
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game', isDeleted: true }), false);
   assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game', status: 'DELETED' }), false);
   assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game', liveStatus: 'deleted' }), false);
 });
@@ -156,6 +167,7 @@ test('public team profile preserves public page features through a bounded allow
     ownerEmail: 'private@example.test',
     adminEmails: ['private@example.test'],
     teamPermissions: { chat: { enabled: true } },
+    teamPassConfig: { recordedReplayPaywallEnabled: true, privatePlan: 'gold' },
     availabilityPreferences: { noteVisibility: 'team' },
     registrationSource: { externalTeamId: 'private-registration-id' }
   });
@@ -173,6 +185,7 @@ test('public team profile preserves public page features through a bounded allow
     webAccess: true,
     isPublic: true,
     active: true,
+    recordedReplayPaywallEnabled: true,
     leagueUrl: 'https://league.example.test/standings',
     twitchChannel: 'allplays_live',
     streamEmbedUrl: 'https://www.youtube.com/embed/abcdefghijk',
@@ -207,6 +220,8 @@ test('public team profile preserves public page features through a bounded allow
     'ownerEmail',
     'adminEmails',
     'teamPermissions',
+    'teamPassConfig',
+    'privatePlan',
     'availabilityPreferences',
     'registrationSource',
     'finalizedBy',
@@ -481,6 +496,523 @@ test('game results require completed status and both scores', () => {
     homeScore: 4,
     awayScore: 1
   }).result, 'loss');
+});
+
+test('public game projection exposes only a canonical replay for a consistent final lifecycle', () => {
+  const withPublicReplay = serializePublicGame({
+    id: 'public-replay',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    status: 'completed',
+    liveStatus: 'final',
+    replayVideo: {
+      ...canonicalReplay(),
+      url: 'https://private.example.test/replay.mp4?token=private-capability',
+    }
+  });
+  assert.equal(withPublicReplay.videoUrl, 'https://www.youtube.com/watch?v=PK1HyC37doc');
+  assert.equal(JSON.stringify(withPublicReplay).includes('private-capability'), false);
+
+  const statsheetReplay = serializePublicGame({
+    id: 'statsheet-replay',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    status: 'completed',
+    liveStatus: 'scheduled',
+    replayVideo: canonicalReplay()
+  });
+  assert.equal(statsheetReplay.videoUrl, 'https://www.youtube.com/watch?v=PK1HyC37doc');
+  assert.equal(statsheetReplay.liveStatus, 'scheduled');
+
+  const withoutPublicReplay = serializePublicGame({
+    id: 'private-replay',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    status: 'completed',
+    replayVideo: {
+      url: 'https://private.example.test/replay.mp4?token=private-capability'
+    }
+  });
+  assert.equal(withoutPublicReplay.videoUrl, null);
+  assert.equal(JSON.stringify(withoutPublicReplay).includes('private-capability'), false);
+
+  for (const lifecycle of [
+    { status: 'scheduled' },
+    { status: 'cancelled' },
+    { status: 'completed', liveStatus: 'live' },
+    { status: 'completed', liveStatus: 'cancelled' },
+    { status: 'scheduled', liveStatus: 'completed' },
+    { status: 'completed', liveStatus: {} },
+    { status: [], liveStatus: 'completed' },
+    { status: 'completed', liveStatus: [] },
+    { status: 'completed', liveStatus: true },
+    { status: 1, liveStatus: 'completed' }
+  ]) {
+    assert.equal(serializePublicGame({
+      id: 'unsafe-lifecycle',
+      type: 'game',
+      date: '2026-08-01T15:00:00Z',
+      replayVideo: canonicalReplay(),
+      ...lifecycle
+    }).videoUrl, null);
+  }
+});
+
+test('public game projection preserves ordered live lifecycle state for downstream viewers', () => {
+  const project = (lifecycle) => serializePublicGame({
+    id: 'lifecycle-projection',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    replayVideo: canonicalReplay(),
+    ...lifecycle
+  });
+
+  assert.deepEqual(
+    [
+      project({ status: 'completed', liveStatus: 'scheduled' }),
+      project({ status: 'scheduled', liveStatus: 'completed' }),
+      project({ status: 'completed', liveStatus: 'live' }),
+      project({ status: 'completed', liveStatus: 'cancelled' }),
+      project({ status: 'scheduled', liveStatus: 'live' })
+    ].map(({ status, sourceStatus, liveStatus, videoLifecycle, videoUrl }) => ({
+      status,
+      sourceStatus,
+      liveStatus,
+      videoLifecycle,
+      videoUrl
+    })),
+    [
+      { status: 'completed', sourceStatus: 'completed', liveStatus: 'scheduled', videoLifecycle: 'completed', videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc' },
+      { status: 'completed', sourceStatus: 'scheduled', liveStatus: 'completed', videoLifecycle: 'inactive', videoUrl: null },
+      { status: 'completed', sourceStatus: 'completed', liveStatus: 'live', videoLifecycle: 'inactive', videoUrl: null },
+      { status: 'cancelled', sourceStatus: 'completed', liveStatus: 'cancelled', videoLifecycle: 'inactive', videoUrl: null },
+      { status: 'live', sourceStatus: 'scheduled', liveStatus: 'live', videoLifecycle: 'live', videoUrl: null }
+    ]
+  );
+
+  const invalidLifecycle = project({
+    status: 'SENTINEL_PRIVATE_STATUS',
+    liveStatus: 'SENTINEL_PRIVATE_LIVE_STATUS'
+  });
+  assert.equal(invalidLifecycle.sourceStatus, 'invalid');
+  assert.equal(invalidLifecycle.liveStatus, 'invalid');
+  assert.equal(invalidLifecycle.videoLifecycle, 'invalid');
+  assert.equal(invalidLifecycle.videoUrl, null);
+  assert.equal(JSON.stringify(invalidLifecycle).includes('SENTINEL_PRIVATE'), false);
+
+  const liveUrl = 'https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ';
+  const projectLive = (lifecycle) => serializePublicGame({
+    id: 'live-lifecycle-projection',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    videoUrl: liveUrl,
+    ...lifecycle
+  });
+  assert.equal(projectLive({ status: 'scheduled', liveStatus: 'live' }).videoUrl, liveUrl);
+  assert.equal(projectLive({ liveStatus: 'live' }).videoUrl, liveUrl);
+  for (const status of ['completed', 'cancelled', 'postponed', 'SENTINEL_PRIVATE_STATUS']) {
+    assert.equal(projectLive({ status, liveStatus: 'live' }).videoUrl, null);
+  }
+});
+
+test('public video projection trusts only exact raw lifecycle tuples', () => {
+  const replayUrl = 'https://www.youtube.com/watch?v=PK1HyC37doc';
+  const liveUrl = 'https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ';
+  const projectReplay = (lifecycle) => serializePublicGame({
+    id: 'exact-replay-lifecycle',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    replayVideo: canonicalReplay(),
+    ...lifecycle
+  });
+  const projectLive = (lifecycle) => serializePublicGame({
+    id: 'exact-live-lifecycle',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    videoUrl: liveUrl,
+    ...lifecycle
+  });
+
+  for (const lifecycle of [
+    { status: 'completed', liveStatus: 'scheduled' },
+    { status: 'completed' },
+    { status: 'final' },
+    { status: 'completed', liveStatus: 'final' },
+    { status: 'final', liveStatus: 'completed' },
+    { status: 'completed', liveStatus: null },
+    { status: null, liveStatus: 'completed' },
+    { status: 'complete', liveStatus: 'scheduled' },
+    { status: 'finished', liveStatus: 'scheduled' },
+    { status: 'completed', liveStatus: 'complete' },
+    { status: 'completed', liveStatus: 'finished' }
+  ]) {
+    const projection = projectReplay(lifecycle);
+    assert.equal(projection.videoLifecycle, 'completed');
+    assert.equal(projection.videoUrl, replayUrl);
+  }
+  const legacyLiveStatusOnly = serializePublicGame({
+    id: 'legacy-live-status-only',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    liveStatus: 'completed',
+    replayVideo: canonicalReplay()
+  });
+  assert.equal(legacyLiveStatusOnly.videoLifecycle, 'completed');
+  assert.equal(legacyLiveStatusOnly.videoUrl, replayUrl);
+
+  for (const lifecycle of [
+    { status: 'scheduled', liveStatus: 'live' },
+    { liveStatus: 'live' },
+    { status: 'live' },
+    { status: 'in_progress', liveStatus: 'scheduled' },
+    { status: 'scheduled', liveStatus: 'in-progress' }
+  ]) {
+    const projection = projectLive(lifecycle);
+    assert.equal(projection.videoLifecycle, 'live');
+    assert.equal(projection.videoUrl, liveUrl);
+  }
+
+  for (const lifecycle of [
+    { status: 'scheduled', liveStatus: 'completed' },
+    { status: 'completed', liveStatus: 'live' },
+    { status: 'completed', liveStatus: 'cancelled' },
+    { status: 'cancelled', liveStatus: 'completed' },
+    { status: 'completed', liveStatus: 'canceled' },
+    { status: 'canceled', liveStatus: 'completed' }
+  ]) {
+    const projection = projectReplay(lifecycle);
+    assert.equal(projection.videoLifecycle, 'inactive');
+    assert.equal(projection.videoUrl, null);
+  }
+
+  for (const lifecycle of [
+    { type: 'Game', status: 'completed', liveStatus: 'scheduled' },
+    { type: ' game ', status: 'completed', liveStatus: 'scheduled' },
+    { type: '', status: 'completed', liveStatus: 'scheduled' },
+    { type: null, status: 'completed', liveStatus: 'scheduled' },
+    { status: ' completed', liveStatus: 'scheduled' },
+    { status: 'completed ', liveStatus: 'scheduled' },
+    { status: 'COMPLETED', liveStatus: 'scheduled' },
+    { status: {}, liveStatus: 'scheduled' },
+    { status: 'completed', liveStatus: ' scheduled' },
+    { status: 'completed', liveStatus: 'SCHEDULED' },
+    { status: 'completed', liveStatus: 1 }
+  ]) {
+    const projection = projectReplay(lifecycle);
+    assert.equal(projection.videoLifecycle, 'invalid');
+    assert.equal(projection.videoUrl, null);
+    assert.equal(['completed', 'final', 'cancelled', 'live', 'in_progress', 'in-progress', 'scheduled', 'postponed', 'delayed', 'invalid', null].includes(projection.sourceStatus), true);
+    assert.equal(['completed', 'final', 'cancelled', 'live', 'in_progress', 'in-progress', 'scheduled', 'postponed', 'delayed', 'invalid', null].includes(projection.liveStatus), true);
+  }
+  assert.equal(projectReplay({ type: 1, status: 'completed', liveStatus: 'scheduled' }), null);
+
+  for (const lifecycle of [
+    { type: 'Game', status: 'scheduled', liveStatus: 'live' },
+    { status: ' scheduled', liveStatus: 'live' },
+    { status: 'scheduled', liveStatus: 'LIVE' },
+    { status: 'scheduled', liveStatus: [] }
+  ]) {
+    const projection = projectLive(lifecycle);
+    assert.equal(projection.videoLifecycle, 'invalid');
+    assert.equal(projection.videoUrl, null);
+  }
+});
+
+test('completed public games prioritize their canonical replay and never fall back to a channel', () => {
+  const finalGame = {
+    id: 'final-video',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    status: 'final',
+    videoUrl: 'https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ'
+  };
+  assert.equal(serializePublicGame({
+    ...finalGame,
+    replayVideo: canonicalReplay()
+  }).videoUrl, 'https://www.youtube.com/watch?v=PK1HyC37doc');
+  assert.equal(serializePublicGame({
+    ...finalGame,
+    recordedVideo: { publicUrl: 'https://youtu.be/PK1HyC37doc' }
+  }).videoUrl, 'https://www.youtube.com/watch?v=PK1HyC37doc');
+  assert.equal(serializePublicGame(finalGame).videoUrl, null);
+});
+
+test('public game projection preserves historical YouTube replay aliases as canonical watch URLs', () => {
+  const historicalReplays = [
+    {
+      replayVideo: {
+        publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc&si=private-share-token'
+      }
+    },
+    {
+      recordedVideo: {
+        publicUrl: 'https://youtu.be/PK1HyC37doc?t=42',
+        status: 'available'
+      }
+    },
+    {
+      videoReplay: {
+        provider: 'youtube',
+        videoId: 'PK1HyC37doc',
+        publicUrl: 'https://www.youtube.com/live/PK1HyC37doc?feature=share',
+        status: 'completed'
+      }
+    },
+    {
+      replayVideoPublicUrl: 'https://www.youtube-nocookie.com/embed/PK1HyC37doc?autoplay=1',
+      replayStatus: 'published'
+    },
+    {
+      videoUrl: 'https://www.youtube.com/shorts/PK1HyC37doc?si=tracking-token'
+    },
+    {
+      recordedVideo: { url: 'https://www.youtube.com/embed/PK1HyC37doc' }
+    },
+    {
+      archivedVideoUrl: 'https://youtu.be/PK1HyC37doc'
+    },
+    {
+      recordedVideo: { videoId: 'PK1HyC37doc' }
+    },
+    {
+      videoReplay: { provider: 'youtube', videoId: 'PK1HyC37doc' }
+    },
+    {
+      recordedVideo: {
+        url: 'https://private.example.test/replay.mp4?token=private-capability',
+        publicUrl: 'https://youtu.be/PK1HyC37doc?si=private-share-token'
+      }
+    }
+  ];
+
+  historicalReplays.forEach((replayFields, index) => {
+    const projection = serializePublicGame({
+      id: `historical-replay-${index}`,
+      type: 'game',
+      date: '2026-08-01T15:00:00Z',
+      status: 'completed',
+      liveStatus: 'scheduled',
+      ...replayFields
+    });
+    assert.equal(projection.videoUrl, 'https://www.youtube.com/watch?v=PK1HyC37doc');
+    assert.equal(JSON.stringify(projection).includes('private-share-token'), false);
+    assert.equal(JSON.stringify(projection).includes('tracking-token'), false);
+  });
+});
+
+test('historical public replay projection fails closed for ambiguous or unsafe archive evidence', () => {
+  const unsafeReplayFields = [
+    { replayVideoPublicUrl: 'http://www.youtube.com/watch?v=PK1HyC37doc' },
+    { recordedVideo: { publicUrl: 'https://youtu.be/PK1HyC37doc', videoId: 'bad' } },
+    { videoReplay: { publicUrl: 'https://youtu.be/PK1HyC37doc', embedUrl: 'https://youtube.example/embed/PK1HyC37doc' } },
+    { replayVideoPublicUrl: 'https://viewer:secret@www.youtube.com/watch?v=PK1HyC37doc' },
+    { replayVideoPublicUrl: 'https://www.youtube.com:443/watch?v=PK1HyC37doc' },
+    { replayVideoPublicUrl: 'https://www%2eyoutube%2ecom/watch?v=PK1HyC37doc' },
+    { replayVideoPublicUrl: 'https://www.youtube.com/channel/UCa9ghvbup6VQmnDOdqwYpqQ' },
+    { replayVideoPublicUrl: 'https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ' },
+    { replayVideoPublicUrl: 'https://www.youtube.com/playlist?list=PL-private' },
+    { replayVideoPublicUrl: 'https://cdn.example.test/private-replay.mp4?token=capability' },
+    { replayVideoPublicUrl: 'https://firebasestorage.googleapis.com/v0/b/project/o/private.mp4?token=capability' },
+    {
+      recordedVideo: { publicUrl: 'https://youtu.be/PK1HyC37doc' },
+      replayVideoPublicUrl: 'https://youtu.be/dQw4w9WgXcQ'
+    },
+    {
+      replayVideo: {
+        provider: 'youtube',
+        videoId: 'dQw4w9WgXcQ',
+        publicUrl: 'https://youtu.be/PK1HyC37doc'
+      }
+    },
+    {
+      recordedVideo: { url: 'https://private.example/replay.mp4?token=capability' },
+      videoUrl: 'https://youtu.be/PK1HyC37doc'
+    },
+    {
+      recordedVideoUrl: 'https://private.example/replay.mp4?token=capability',
+      videoUrl: 'https://youtu.be/PK1HyC37doc'
+    }
+  ];
+
+  unsafeReplayFields.forEach((replayFields, index) => {
+    const projection = serializePublicGame({
+      id: `unsafe-historical-replay-${index}`,
+      type: 'game',
+      date: '2026-08-01T15:00:00Z',
+      status: 'completed',
+      ...replayFields
+    });
+    assert.equal(projection.videoUrl, null);
+    assert.equal(JSON.stringify(projection).includes('capability'), false);
+  });
+});
+
+test('blank replay aliases do not suppress the exact completed video fallback', () => {
+  assert.equal(serializePublicGame({
+    id: 'blank-alias-fallback',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    status: 'completed',
+    liveStatus: 'scheduled',
+    replayVideoPublicUrl: '   ',
+    recordedVideo: { publicUrl: '\n\t' },
+    videoUrl: 'https://youtu.be/PK1HyC37doc?si=share-token'
+}).videoUrl, 'https://www.youtube.com/watch?v=PK1HyC37doc');
+});
+
+test('an explicit replay-removal tombstone suppresses historical video fallbacks', () => {
+  const removed = serializePublicGame({
+    id: 'removed-replay',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    status: 'completed',
+    liveStatus: 'scheduled',
+    replayVideo: null,
+    replayVideoFallbackDisabled: true,
+    videoUrl: 'https://youtu.be/PK1HyC37doc'
+  });
+  assert.equal(removed.videoUrl, null);
+  assert.equal(JSON.stringify(removed).includes('replayVideoFallbackDisabled'), false);
+});
+
+test('canonical public replay wins over stale historical aliases but malformed canonical evidence fails closed', () => {
+  assert.equal(serializePublicGame({
+    id: 'canonical-wins',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    status: 'final',
+    replayVideo: canonicalReplay(),
+    replayVideoPublicUrl: 'https://youtu.be/dQw4w9WgXcQ',
+    videoUrl: 'https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ'
+  }).videoUrl, 'https://www.youtube.com/watch?v=PK1HyC37doc');
+
+  assert.equal(serializePublicGame({
+    id: 'malformed-canonical',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    status: 'final',
+    replayVideo: {
+      ...canonicalReplay(),
+      videoId: 'dQw4w9WgXcQ'
+    },
+    replayVideoPublicUrl: 'https://youtu.be/PK1HyC37doc'
+  }).videoUrl, null);
+});
+
+test('historical public replay projection honors availability, lifecycle, sharing, and Team Pass boundaries', () => {
+  const replayFields = {
+    recordedVideo: { publicUrl: 'https://youtu.be/PK1HyC37doc' }
+  };
+  for (const replayStatus of ['processing', 'pending', 'failed', 'error', 'unknown']) {
+    assert.equal(serializePublicGame({
+      id: `blocked-status-${replayStatus}`,
+      type: 'game',
+      date: '2026-08-01T15:00:00Z',
+      status: 'completed',
+      replayStatus,
+      ...replayFields
+    }).videoUrl, null);
+  }
+
+  for (const lifecycle of [
+    { status: 'scheduled' },
+    { status: 'scheduled', liveStatus: 'completed' },
+    { status: 'completed', liveStatus: 'live' },
+    { status: 'completed', liveStatus: 'cancelled' },
+    { status: 'cancelled', liveStatus: 'completed' }
+  ]) {
+    assert.equal(serializePublicGame({
+      id: 'blocked-lifecycle',
+      type: 'game',
+      date: '2026-08-01T15:00:00Z',
+      ...replayFields,
+      ...lifecycle
+    }).videoUrl, null);
+  }
+
+  const completedReplay = {
+    id: 'historical-boundaries',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    status: 'completed',
+    liveStatus: 'scheduled',
+    ...replayFields
+  };
+  assert.equal(serializePublicGame({ ...completedReplay, isPrivate: true }), null);
+  for (const teamPassConfig of [
+    { teamPassConfig: { recordedReplayPaywallEnabled: true } },
+    { teamPass: { recordedReplayPaywallEnabled: true } },
+    { premiumFeatures: { recordedReplayPaywallEnabled: true } },
+    { recordedReplayPaywallEnabled: true },
+    { recordedReplayTeamPassRequired: true }
+  ]) {
+    assert.equal(serializePublicGame(completedReplay, { team: teamPassConfig }).videoUrl, null);
+    assert.equal(serializePublicGame({ ...completedReplay, ...teamPassConfig }).videoUrl, null);
+  }
+});
+
+test('public game projection withholds recorded URLs when the replay paywall is enabled', () => {
+  const completedGame = {
+    id: 'gated-replay',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    status: 'completed',
+    videoUrl: 'https://www.youtube.com/watch?v=directReplay1',
+    replayVideo: canonicalReplay()
+  };
+
+  assert.equal(serializePublicGame(completedGame, {
+    team: { teamPassConfig: { recordedReplayPaywallEnabled: true } }
+  }).videoUrl, null);
+  assert.equal(serializePublicGame({
+    ...completedGame,
+    teamPassConfig: { recordedReplayPaywallEnabled: true },
+    videoUrl: null
+  }).videoUrl, null);
+  assert.equal(serializePublicGame({
+    ...completedGame,
+    teamPassConfig: { recordedReplayPaywallEnabled: false }
+  }, {
+    team: { teamPassConfig: { recordedReplayPaywallEnabled: true } }
+  }).videoUrl, 'https://www.youtube.com/watch?v=PK1HyC37doc');
+});
+
+test('public game projection preserves an active live URL when only archived replay is paywalled', () => {
+  const projection = serializePublicGame({
+    id: 'gated-live',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    liveStatus: 'live',
+    videoUrl: 'https://www.youtube.com/live/liveFeed123',
+    replayVideo: { publicUrl: 'https://cdn.example.test/private-after-final.mp4' }
+  }, {
+    team: { recordedReplayTeamPassRequired: true }
+  });
+
+  assert.equal(projection.videoUrl, 'https://www.youtube.com/live/liveFeed123');
+  assert.equal(JSON.stringify(projection).includes('private-after-final'), false);
+});
+
+test('public game projection exposes only a valid reset boundary timestamp', () => {
+  const projection = serializePublicGame({
+    id: 'reset-replay',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    liveResetAt: new Date('2026-08-01T15:30:00Z'),
+    liveResetEventId: 'reset-public-1'
+  });
+  const invalidProjection = serializePublicGame({
+    id: 'invalid-reset',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    liveResetAt: 'not-a-date',
+    liveResetEventId: 'x'.repeat(129)
+  });
+
+  assert.equal(projection.liveResetAt, '2026-08-01T15:30:00.000Z');
+  assert.equal(projection.liveResetEventId, 'reset-public-1');
+  assert.equal(Object.hasOwn(invalidProjection, 'liveResetAt'), false);
+  assert.equal(invalidProjection.liveResetEventId, 'x'.repeat(128));
 });
 
 test('shared game projections retain their encoded document path identity', () => {
