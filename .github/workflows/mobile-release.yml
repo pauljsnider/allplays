@@ -237,6 +237,8 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             PROVISIONING_PROFILE_SPECIFIER="$IOS_PROFILE_NAME" \
             archive
+      - name: Verify iOS release privacy dependencies
+        run: node scripts/verify-ios-release-privacy.mjs "$RUNNER_TEMP/ALLPLAYS.xcarchive"
       - name: Export IPA
         env:
           TEAM_ID: ${{ secrets.IOS_TEAM_ID }}

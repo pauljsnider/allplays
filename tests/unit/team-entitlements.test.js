@@ -71,7 +71,7 @@ describe('team entitlement helpers', () => {
         expect(html).toContain('id="recorded-replay-video"');
         expect(html).toMatch(/id="recorded-replay-video"[\s\S]*?class="hidden /);
         expect(html).toMatch(/id="video-paywall" class="hidden /);
-        expect(html).toContain('Team Pass required');
+        expect(html).toContain('Replay access required');
     });
 
     it('classifies YouTube archives for the replay paywall without classifying active live embeds', () => {

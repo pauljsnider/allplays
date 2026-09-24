@@ -6,7 +6,6 @@ const teamFeeCoreSource = readFileSync(new URL('../../functions/team-fees-core.c
 const teamFeesPageSource = readFileSync(new URL('../../apps/app/src/pages/TeamFees.tsx', import.meta.url), 'utf8');
 const teamFeesServiceSource = readFileSync(new URL('../../apps/app/src/lib/teamFeesService.ts', import.meta.url), 'utf8');
 const agentGuidance = readFileSync(new URL('../../AGENTS.md', import.meta.url), 'utf8');
-const pullRequestTemplate = readFileSync(new URL('../../.github/pull_request_template.md', import.meta.url), 'utf8');
 
 function exportBlock(name, nextName) {
     const start = functionsSource.indexOf(`exports.${name} =`);
@@ -17,48 +16,37 @@ function exportBlock(name, nextName) {
 }
 
 describe('Stripe Checkout durability contract', () => {
-    it('keeps every checkout creation call idempotent and validates provider destinations', () => {
-        const teamPass = exportBlock('createStripeTeamPassCheckout', 'createStripeTeamFeeCheckout');
+    it('keeps enabled checkout creation idempotent and validates provider destinations', () => {
         const teamFee = exportBlock('createStripeTeamFeeCheckout', 'refundStripeTeamFeePayment');
         const registration = exportBlock('createStripeRegistrationCheckout', 'cancelStripeRegistrationCheckout');
 
-        expect(teamPass).toContain('stripe.checkout.sessions.create(checkoutCreationRequest.stripeParams');
-        expect(teamPass).toContain('idempotencyKey: checkoutCreationRequest.idempotencyKey');
         expect(teamFee).toContain('stripe.checkout.sessions.create(checkoutCreationRequest.stripeParams');
         expect(teamFee).toContain('idempotencyKey: checkoutCreationRequest.idempotencyKey');
         expect(registration).toContain('stripe.checkout.sessions.create(checkoutCreationRequest.stripeParams');
         expect(registration).toContain('idempotencyKey: checkoutCreationRequest.idempotencyKey');
-        expect(functionsSource).toMatch(
-            /function isExpectedTeamPassCheckoutSession[\s\S]*isCanonicalStripeCheckoutUrl/
-        );
         expect(teamFee).toContain('getNewTeamFeeCheckoutSessionFailure');
         expect(teamFeeCoreSource).toContain('function getNewTeamFeeCheckoutSessionFailure');
         expect(teamFeeCoreSource).toContain('isCanonicalStripeCheckoutUrl(session.url)');
         expect(registration).toContain('isCanonicalStripeCheckoutUrl');
     });
 
-    it('persists and reuses the exact team-pass Stripe request across uncertain retries', () => {
+    it('keeps the deployed Team Pass callable as an unconditional rejection', () => {
         const teamPass = exportBlock('createStripeTeamPassCheckout', 'createStripeTeamFeeCheckout');
 
-        expect(teamPass.indexOf('reserveTeamPassCheckoutCreation')).toBeLessThan(
-            teamPass.indexOf('stripe.checkout.sessions.create(checkoutCreationRequest.stripeParams')
-        );
-        expect(functionsSource).toContain('checkoutCreationRequest: attempt.checkoutCreationRequest');
-        expect(functionsSource).toContain('isReusableTeamPassCheckoutCreationRequest');
-        expect(teamPass).toContain('isUncertainStripeCheckoutCreationError(error)');
-        expect(teamPass).toContain('clearTeamPassCheckoutCreationReservation');
-        expect(teamPass).toContain('isExpectedTeamPassCheckoutSession');
-        expect(teamPass).toContain('if (!recorded)');
-        expect(teamPass).toContain('getTeamPassCheckoutPersistenceState');
-        expect(teamPass).toContain("persistenceState === 'committed'");
-        expect(teamPass).toContain("expireStripeCheckoutSessionForRollback(stripe, session, 'team-pass-persistence')");
+        expect(teamPass).toContain("'Team Pass sales are not available.'");
+        expect(teamPass).toContain("'failed-precondition'");
+        expect(teamPass).not.toContain('assertPaymentsEnabled');
+        expect(teamPass).not.toContain('context.auth');
+        expect(teamPass).not.toContain('firestore');
+        expect(teamPass).not.toContain('stripe.checkout.sessions.create');
     });
 
-    it('serializes a shared team-pass entitlement without disclosing one purchaser checkout to another', () => {
-        expect(functionsSource).toContain('reservedPurchaserUid !== purchaserUid');
-        expect(functionsSource).toContain('Another purchaser already has a team-pass checkout in progress.');
-        expect(agentGuidance).toContain('cross-principal retries fail closed');
-        expect(pullRequestTemplate).toContain('same-principal and different-principal concurrency');
+    it('keeps legacy Team Pass reconciliation private instead of deploying it as a callable', () => {
+        const teamPass = exportBlock('createStripeTeamPassCheckout', 'createStripeTeamFeeCheckout');
+
+        expect(functionsSource).toContain('async function createStripeTeamPassCheckoutLegacyForTest');
+        expect(functionsSource).toContain('createStripeTeamPassCheckoutLegacyForTest,');
+        expect(teamPass).not.toContain('createStripeTeamPassCheckoutLegacyForTest(');
     });
 
     it('never shares a manager-owned team-fee provider session with a family', () => {

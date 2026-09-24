@@ -2,14 +2,11 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import {
-    bindTeamPassCheckoutButton,
     buildTeamPassMarkup,
-    getCanonicalStripeCheckoutUrl,
     getTeamPassAccess,
     normalizeTeamPassStatus,
     readTeamPassStatus,
-    selectTeamPassRecord,
-    shouldShowTeamPassCheckout
+    selectTeamPassRecord
 } from '../../js/team-pass.js';
 
 const TEAM = {
@@ -33,26 +30,7 @@ function mockFirebaseForDocs(docs) {
 const premiumClosed = async () => ({ state: 'ready', openToAll: false, reason: 'entitlement-required' });
 const premiumOpen = async () => ({ state: 'ready', openToAll: true, reason: 'global-open' });
 
-function createDeferred() {
-    let resolve;
-    let reject;
-    const promise = new Promise((resolvePromise, rejectPromise) => {
-        resolve = resolvePromise;
-        reject = rejectPromise;
-    });
-    return { promise, resolve, reject };
-}
-
 describe('team pass UI helpers', () => {
-    it('accepts only canonical Stripe Checkout destinations before navigation', () => {
-        expect(getCanonicalStripeCheckoutUrl('https://checkout.stripe.com/c/pay/team-pass')).toBe('https://checkout.stripe.com/c/pay/team-pass');
-        expect(getCanonicalStripeCheckoutUrl('http://checkout.stripe.com/c/pay/insecure')).toBe('');
-        expect(getCanonicalStripeCheckoutUrl('https://checkout.stripe.com.attacker.example/c/pay/lookalike')).toBe('');
-        expect(getCanonicalStripeCheckoutUrl('https://user:password@checkout.stripe.com/c/pay/credentialed')).toBe('');
-        expect(getCanonicalStripeCheckoutUrl('https://checkout.stripe.com:8443/c/pay/port')).toBe('');
-        expect(getCanonicalStripeCheckoutUrl('https://checkout.stripe.com/')).toBe('');
-    });
-
     it('treats coaches and admins as staff for the management panel', () => {
         expect(getTeamPassAccess({ uid: 'coach-1', coachOf: ['team-1'] }, TEAM)).toMatchObject({
             isStaff: true,
@@ -63,19 +41,16 @@ describe('team pass UI helpers', () => {
 
         expect(getTeamPassAccess({ uid: 'admin-1', email: 'admin@example.com' }, TEAM)).toMatchObject({
             isStaff: true,
-            canPurchase: true,
             canReadStatus: true,
             label: 'Coach/Admin access',
             mode: 'staff'
         });
-
-        expect(getTeamPassAccess({ uid: 'owner-1' }, TEAM).canPurchase).toBe(true);
+        expect(getTeamPassAccess({ uid: 'owner-1' }, TEAM).isStaff).toBe(true);
     });
 
-    it('keeps confirmed parents non-staff while allowing Team Pass purchase', () => {
+    it('keeps confirmed parents non-staff while allowing entitlement status reads', () => {
         expect(getTeamPassAccess({ uid: 'parent-1', parentOf: [{ teamId: 'team-1', playerId: 'p1' }] }, TEAM)).toMatchObject({
             isStaff: false,
-            canPurchase: true,
             canReadStatus: true,
             label: 'Team member access',
             mode: 'readonly'
@@ -83,39 +58,24 @@ describe('team pass UI helpers', () => {
 
         expect(getTeamPassAccess({ uid: 'fan-1', email: 'fan@example.com' }, TEAM)).toMatchObject({
             isStaff: false,
-            canPurchase: false,
             canReadStatus: false,
             label: 'Read-only preview',
             mode: 'readonly'
         });
     });
 
-    it('shows the inactive-pass CTA only for a confirmed parent associated with the team', () => {
-        const eligibleParentAccess = getTeamPassAccess({ uid: 'parent-1', parentTeamIds: ['team-1'] }, TEAM);
-        const unrelatedParentAccess = getTeamPassAccess({ uid: 'parent-2', parentTeamIds: ['team-2'] }, TEAM);
-        const fanAccess = getTeamPassAccess({ uid: 'fan-1', email: 'fan@example.com' }, TEAM);
-        const inactivePass = { status: 'missing' };
-
-        expect(eligibleParentAccess).toMatchObject({ isStaff: false, canPurchase: true, canReadStatus: true });
-        expect(shouldShowTeamPassCheckout({ access: eligibleParentAccess, pass: inactivePass })).toBe(true);
-        expect(buildTeamPassMarkup({ team: TEAM, access: eligibleParentAccess, pass: inactivePass })).toContain('Buy Team Pass');
-
-        expect(unrelatedParentAccess.canPurchase).toBe(false);
-        expect(shouldShowTeamPassCheckout({ access: unrelatedParentAccess, pass: inactivePass })).toBe(false);
-        expect(fanAccess.canPurchase).toBe(false);
-        expect(shouldShowTeamPassCheckout({ access: fanAccess, pass: inactivePass })).toBe(false);
-    });
-
     it.each([
-        ['owner', { uid: 'owner-1' }, true],
-        ['admin', { uid: 'admin-1', email: 'admin@example.com' }, true],
-        ['active pass', { uid: 'owner-1' }, false],
-        ['global open', { uid: 'owner-1' }, false],
-        ['ineligible user', { uid: 'fan-1', email: 'fan@example.com' }, false]
-    ])('shows checkout only for an eligible %s without an active pass', (_name, user, expected) => {
+        ['owner', { uid: 'owner-1' }, { status: 'missing', label: 'Missing' }],
+        ['admin', { uid: 'admin-1', email: 'admin@example.com' }, { status: 'expired', label: 'Expired' }],
+        ['parent', { uid: 'parent-1', parentTeamIds: ['team-1'] }, { status: 'revoked', label: 'Revoked' }],
+        ['ineligible user', { uid: 'fan-1', email: 'fan@example.com' }, { status: 'missing', label: 'Missing' }]
+    ])('never exposes a sales action for an eligible or ineligible %s', (_name, user, pass) => {
         const access = getTeamPassAccess(user, TEAM);
-        const pass = _name === 'active pass' ? { status: 'active' } : _name === 'global open' ? { status: 'open' } : { status: 'missing' };
-        expect(shouldShowTeamPassCheckout({ access, pass })).toBe(expected);
+        const markup = buildTeamPassMarkup({ team: TEAM, access, pass });
+
+        expect(markup).not.toContain('Buy Team Pass');
+        expect(markup).not.toContain('data-team-pass-checkout');
+        expect(markup).not.toContain('checkout.stripe.com');
     });
 
     it('normalizes active, expired, revoked, and missing team pass states', () => {
@@ -195,10 +155,10 @@ describe('team pass UI helpers', () => {
         expect(markup).not.toContain('Checkout is not available yet');
     });
 
-    it('renders staff status metadata and missing checkout callout without checkout controls', () => {
+    it('renders staff status metadata and existing-access guidance without checkout controls', () => {
         const markup = buildTeamPassMarkup({
             team: TEAM,
-            access: { isStaff: true, canPurchase: false, label: 'Coach/Admin access' },
+            access: { isStaff: true, label: 'Coach/Admin access' },
             pass: { status: 'missing', label: 'Missing', expiresAt: null, updatedAt: null }
         });
 
@@ -209,112 +169,8 @@ describe('team pass UI helpers', () => {
         expect(markup).toContain('Blue Jays');
         expect(markup).toContain('Expiration');
         expect(markup).toContain('Last updated');
-        expect(markup).toContain('Checkout is not available yet');
+        expect(markup).toContain('Existing premium access remains visible here');
         expect(markup).not.toContain('Buy Team Pass');
-    });
-
-    it('disables the checkout CTA and exposes loading state while creation is pending', async () => {
-        document.body.innerHTML = buildTeamPassMarkup({
-            team: TEAM,
-            access: { isStaff: true, canPurchase: true },
-            pass: { status: 'missing', label: 'Missing' }
-        });
-        const deferred = createDeferred();
-        const redirect = vi.fn(() => deferred.promise);
-        const container = document.querySelector('#team-pass');
-        const button = container.querySelector('[data-team-pass-checkout]');
-        const feedback = container.querySelector('[data-team-pass-checkout-feedback]');
-        bindTeamPassCheckoutButton(container, { team: TEAM, deps: { redirectToTeamPassCheckout: redirect } });
-
-        button.click();
-
-        expect(button.disabled).toBe(true);
-        expect(button.getAttribute('aria-busy')).toBe('true');
-        expect(button.textContent).toBe('Starting checkout...');
-        expect(feedback.textContent).toBe('');
-        await vi.waitFor(() => expect(redirect).toHaveBeenCalledWith({ teamId: 'team-1', seasonId: '2026' }));
-
-        button.dispatchEvent(new MouseEvent('click'));
-        expect(redirect).toHaveBeenCalledTimes(1);
-
-        deferred.resolve({ checkoutUrl: 'https://checkout.stripe.com/c/pay/session' });
-        await deferred.promise;
-    });
-
-    it('shows a retryable checkout error and restores the CTA after creation fails', async () => {
-        document.body.innerHTML = buildTeamPassMarkup({
-            team: TEAM,
-            access: { isStaff: true, canPurchase: true },
-            pass: { status: 'missing', label: 'Missing' }
-        });
-        const redirect = vi.fn().mockRejectedValue(new Error('Stripe is temporarily unavailable.'));
-        const container = document.querySelector('#team-pass');
-        const button = container.querySelector('[data-team-pass-checkout]');
-        const feedback = container.querySelector('[data-team-pass-checkout-feedback]');
-        bindTeamPassCheckoutButton(container, { team: TEAM, deps: { redirectToTeamPassCheckout: redirect } });
-
-        button.click();
-
-        await vi.waitFor(() => expect(button.disabled).toBe(false));
-        expect(button.hasAttribute('aria-busy')).toBe(false);
-        expect(button.textContent).toBe('Buy Team Pass');
-        expect(feedback.textContent).toBe('Stripe is temporarily unavailable. Please try again.');
-    });
-
-    it('clears stale errors and invokes validated checkout creation again on retry', async () => {
-        document.body.innerHTML = buildTeamPassMarkup({
-            team: TEAM,
-            access: { isStaff: true, canPurchase: true },
-            pass: { status: 'missing', label: 'Missing' }
-        });
-        const retryDeferred = createDeferred();
-        const redirect = vi.fn()
-            .mockRejectedValueOnce(new Error('Checkout creation failed.'))
-            .mockImplementationOnce(() => retryDeferred.promise);
-        const container = document.querySelector('#team-pass');
-        const button = container.querySelector('[data-team-pass-checkout]');
-        const feedback = container.querySelector('[data-team-pass-checkout-feedback]');
-        bindTeamPassCheckoutButton(container, { team: TEAM, deps: { redirectToTeamPassCheckout: redirect } });
-
-        button.click();
-        await vi.waitFor(() => expect(button.disabled).toBe(false));
-        expect(feedback.textContent).toContain('Checkout creation failed.');
-
-        button.click();
-
-        expect(button.disabled).toBe(true);
-        expect(button.getAttribute('aria-busy')).toBe('true');
-        expect(feedback.textContent).toBe('');
-        expect(redirect).toHaveBeenCalledTimes(2);
-        expect(redirect).toHaveBeenNthCalledWith(1, { teamId: 'team-1', seasonId: '2026' });
-        expect(redirect).toHaveBeenNthCalledWith(2, { teamId: 'team-1', seasonId: '2026' });
-
-        retryDeferred.resolve({ checkoutUrl: 'https://checkout.stripe.com/c/pay/retry-session' });
-        await retryDeferred.promise;
-    });
-
-    it('recovers for another retry when canonical destination validation fails', async () => {
-        document.body.innerHTML = buildTeamPassMarkup({
-            team: TEAM,
-            access: { isStaff: true, canPurchase: true },
-            pass: { status: 'missing', label: 'Missing' }
-        });
-        const redirect = vi.fn()
-            .mockRejectedValueOnce(new Error('Checkout creation failed.'))
-            .mockRejectedValueOnce(new Error('Stripe returned an invalid checkout destination.'));
-        const container = document.querySelector('#team-pass');
-        const button = container.querySelector('[data-team-pass-checkout]');
-        const feedback = container.querySelector('[data-team-pass-checkout-feedback]');
-        bindTeamPassCheckoutButton(container, { team: TEAM, deps: { redirectToTeamPassCheckout: redirect } });
-
-        button.click();
-        await vi.waitFor(() => expect(button.disabled).toBe(false));
-        button.click();
-
-        await vi.waitFor(() => expect(redirect).toHaveBeenCalledTimes(2));
-        await vi.waitFor(() => expect(button.disabled).toBe(false));
-        expect(button.hasAttribute('aria-busy')).toBe(false);
-        expect(feedback.textContent).toBe('Stripe returned an invalid checkout destination. Please try again.');
     });
 
     it('renders read-only team access without staff metadata controls', () => {
@@ -328,6 +184,6 @@ describe('team pass UI helpers', () => {
         expect(markup).toContain('Team Pass access is managed by team staff');
         expect(markup).not.toContain('Expiration');
         expect(markup).not.toContain('Last updated');
-        expect(markup).not.toContain('Checkout is not available yet');
+        expect(markup).not.toContain('Existing premium access remains visible here');
     });
 });

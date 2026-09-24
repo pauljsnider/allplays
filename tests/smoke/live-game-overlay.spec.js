@@ -1441,7 +1441,7 @@ for (const accessState of ['locked', 'unavailable', 'unlocked']) {
         } else {
             await expect(page.locator('#replay-access-gate')).toBeVisible();
             await expect(page.locator('#replay-access-gate')).toContainText(
-                accessState === 'locked' ? 'Team Pass required' : 'Replay access could not be verified'
+                accessState === 'locked' ? 'Replay access required' : 'Replay access could not be verified'
             );
             await expect(page.locator('#overlay-recorded-video')).not.toHaveAttribute('src', /.+/);
             await expect(page.locator('#open-stream')).toBeHidden();
@@ -1480,7 +1480,7 @@ test('completed game gates its recorded video without requiring replay query mod
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
     await expect.poll(() => page.evaluate(() => window.__OVERLAY_ENTITLEMENT_READS__ || 0)).toBe(1);
     await expect(page.locator('#replay-access-gate')).toBeVisible();
-    await expect(page.locator('#replay-access-gate')).toContainText('Team Pass required');
+    await expect(page.locator('#replay-access-gate')).toContainText('Replay access required');
     await expect(page.locator('#overlay-recorded-video')).not.toHaveAttribute('src', /.+/);
     await expect(page.locator('#open-stream')).toBeHidden();
     await expect(page.locator('#watch-replay')).toBeVisible();

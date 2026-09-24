@@ -35,11 +35,11 @@ import { useAppAsyncOperation } from '../lib/useAsyncOperation';
 import { getEventDetailPath } from '../lib/homeLogic';
 import { createStaffRsvpReminderPreviewLoader, loadParentSchedule, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
-import { createTeamPassCheckoutForApp, loadParentTeamDetail, loadParentTeamDetailBootstrap, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, loadTeamTrackingAdmin, type TeamDetailEvent, type TeamDetailModel, type TeamRosterParentInviteSummary, type TeamTrackingAdminItem } from '../lib/teamDetailService';
+import { loadParentTeamDetail, loadParentTeamDetailBootstrap, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, loadTeamTrackingAdmin, type TeamDetailEvent, type TeamDetailModel, type TeamRosterParentInviteSummary, type TeamTrackingAdminItem } from '../lib/teamDetailService';
 import { useViewLoadTimer } from '../lib/viewLoadTiming';
 import { buildTeamDetailNavigation, type TeamNavigationItem, type TeamNavigationSection } from '../lib/teamNavigation';
 import type { AuthState } from '../lib/types';
-import { PREMIUM_FEATURES, PREMIUM_SCOPES, type PremiumAccessResult } from '../lib/premiumAccessService';
+import { PREMIUM_FEATURES, PREMIUM_SCOPES } from '../lib/premiumAccessService';
 import { usePremiumFeatureAccess } from '../lib/usePremiumFeatureAccess';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import { loadInsightsTab } from './team-detail/insightsTabLoader';
@@ -106,7 +106,6 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const authUserId = auth.user?.uid || '';
   const [model, setModel] = useState<TeamDetailModel | null>(null);
   const [premiumRefreshVersion, setPremiumRefreshVersion] = useState(0);
-  const teamPassCheckoutReturnArmedRef = useRef(false);
   const parentTeamIds = [auth.user?.parentTeamIds, auth.profile?.parentTeamIds]
     .flatMap((values) => Array.isArray(values) ? values : []);
   const hasLoadedTeamAccess = model?.team.id === teamId && Boolean(
@@ -124,8 +123,6 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     refreshVersion: premiumRefreshVersion
   });
   useRefreshOnResume(() => {
-    if (!teamPassCheckoutReturnArmedRef.current) return;
-    teamPassCheckoutReturnArmedRef.current = false;
     setPremiumRefreshVersion((current) => current + 1);
   }, { enabled: Boolean(auth.user?.uid && teamId), staleAfterMs: 0 });
   const [loading, setLoading] = useState(true);
@@ -711,13 +708,6 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
           nextEvent={authoritativeNextEvent ?? null}
           scheduleLoading={authoritativeSchedulePending}
           scheduleError={authoritativeScheduleError}
-          premiumAccess={teamPremiumAccess}
-          onTeamPassCheckoutOpening={() => {
-            teamPassCheckoutReturnArmedRef.current = true;
-          }}
-          onTeamPassCheckoutOpenFailed={() => {
-            teamPassCheckoutReturnArmedRef.current = false;
-          }}
         />
       ) : null}
       {activeTab === 'schedule' ? (
@@ -803,18 +793,12 @@ function OverviewTab({
   model,
   nextEvent,
   scheduleLoading,
-  scheduleError,
-  premiumAccess,
-  onTeamPassCheckoutOpening,
-  onTeamPassCheckoutOpenFailed
+  scheduleError
 }: {
   model: TeamDetailModel;
   nextEvent: TeamDetailEvent | null;
   scheduleLoading: boolean;
   scheduleError: string;
-  premiumAccess: PremiumAccessResult;
-  onTeamPassCheckoutOpening: () => void;
-  onTeamPassCheckoutOpenFailed: () => void;
 }) {
   const nextEventValue = nextEvent
     ? formatEventDate(nextEvent.date)
@@ -862,9 +846,11 @@ function OverviewTab({
             Team chat
           </Link>
         </div>
+        <button type="button" className="ghost-button mt-3 !min-h-9 text-xs" onClick={() => void openPublicUrl(model.team.websiteUrl)}>
+          Open website team page
+          <ExternalLink className="h-4 w-4" aria-hidden="true" />
+        </button>
       </section>
-
-      <TeamPassCard model={model} premiumAccess={premiumAccess} onCheckoutOpening={onTeamPassCheckoutOpening} onCheckoutOpenFailed={onTeamPassCheckoutOpenFailed} />
     </div>
   );
 }
@@ -1243,90 +1229,6 @@ function InlineDeferredError({ title, message }: { title: string; message: strin
       <div className="text-sm font-black text-gray-950">{title}</div>
       <div className="mt-1 text-xs font-semibold text-rose-700">{message}</div>
     </div>
-  );
-}
-
-function TeamPassCard({ model, premiumAccess, onCheckoutOpening, onCheckoutOpenFailed }: { model: TeamDetailModel; premiumAccess: PremiumAccessResult; onCheckoutOpening: () => void; onCheckoutOpenFailed: () => void }) {
-  const [checkoutPending, setCheckoutPending] = useState(false);
-  const [checkoutError, setCheckoutError] = useState('');
-  const checkoutPendingRef = useRef(false);
-  const checkoutScope = `${model.team.id}:${model.team.currentSeasonId}`;
-  const checkoutScopeRef = useRef(checkoutScope);
-  const canPurchase = model.canPurchaseTeamPass === true
-    && Boolean(model.team.currentSeasonId)
-    && premiumAccess.state === 'locked';
-  useEffect(() => {
-    checkoutScopeRef.current = checkoutScope;
-    checkoutPendingRef.current = false;
-    setCheckoutPending(false);
-    setCheckoutError('');
-    return () => {
-      checkoutScopeRef.current = '';
-      checkoutPendingRef.current = false;
-    };
-  }, [checkoutScope]);
-
-  async function startCheckout() {
-    if (!canPurchase || checkoutPendingRef.current) return;
-    checkoutPendingRef.current = true;
-    setCheckoutPending(true);
-    setCheckoutError('');
-    try {
-      const checkoutUrl = await createTeamPassCheckoutForApp(model.team.id, model.team.currentSeasonId);
-      if (checkoutScopeRef.current !== checkoutScope) return;
-      onCheckoutOpening();
-      try {
-        await openPublicUrl(checkoutUrl);
-      } catch (error) {
-        onCheckoutOpenFailed();
-        throw error;
-      }
-    } catch (error: any) {
-      if (checkoutScopeRef.current === checkoutScope) {
-        setCheckoutError(error?.message || 'Unable to start Team Pass checkout. Please try again.');
-      }
-    } finally {
-      if (checkoutScopeRef.current === checkoutScope) {
-        checkoutPendingRef.current = false;
-        setCheckoutPending(false);
-      }
-    }
-  }
-
-  const copy = premiumAccess.state === 'unlocked' && ['global-open', 'default-open'].includes(premiumAccess.reason)
-    ? 'Premium features are open to everyone. No Team Pass purchase is needed while global access is enabled.'
-    : premiumAccess.state === 'unlocked'
-      ? 'This team has active premium access for the current season.'
-      : premiumAccess.state === 'loading'
-        ? 'Checking Team Pass access for this team.'
-        : premiumAccess.state === 'unavailable'
-          ? 'Team Pass access could not be verified right now. Try again later.'
-          : 'An active Team Pass is required for team analytics and archived replay when the team enables that gate.';
-  return (
-    <section className="app-card p-4">
-      <div className="flex items-start gap-3">
-        <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
-          <Ticket className="h-5 w-5" aria-hidden="true" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-black text-gray-950">Team Pass</div>
-          <div className="mt-1 text-sm font-semibold leading-6 text-gray-600">
-            {copy}
-          </div>
-          {canPurchase ? (
-            <button type="button" className="primary-button mt-3 !min-h-10 text-sm" onClick={() => void startCheckout()} disabled={checkoutPending}>
-              {checkoutPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Ticket className="h-4 w-4" aria-hidden="true" />}
-              {checkoutPending ? 'Opening checkout…' : 'Buy Team Pass'}
-            </button>
-          ) : null}
-          {checkoutError ? <div className="mt-2 text-sm font-semibold text-rose-700" role="alert">{checkoutError}</div> : null}
-          <button type="button" className="ghost-button mt-3 !min-h-9 text-xs" onClick={() => openPublicUrl(model.team.websiteUrl)}>
-            Open website team page
-            <ExternalLink className="h-4 w-4" aria-hidden="true" />
-          </button>
-        </div>
-      </div>
-    </section>
   );
 }
 

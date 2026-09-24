@@ -295,7 +295,9 @@ describe('Capacitor native config', () => {
         expect(rootPackage.scripts['app:build']).not.toContain('native-debug');
         expect(rootPackage.scripts['app:build']).not.toContain('app:build:native');
         expect(rootPackage.scripts['app:build:native']).toContain('build:native');
-        expect(rootPackage.scripts['mobile:sync']).toBe('npm run app:build:native && npx cap sync');
+        expect(rootPackage.scripts['mobile:sync']).toBe(
+            'npm run prepare:ios-auth-spm && npm run app:build:native && npx cap sync'
+        );
         expect(rootPackage.scripts['mobile:sync']).not.toContain('native-debug');
     });
 
@@ -376,7 +378,10 @@ describe('Capacitor native config', () => {
         expect(appCss).toContain('--app-search-keyboard-inset');
         expect(androidManifest).toContain('android:autoVerify="true"');
         expect(androidManifest).toContain('android:host="allplays.ai"');
-        expect(androidManifest).toContain('android:pathPrefix="/app"');
+        expect(androidManifest).toContain('android:path="/app"');
+        expect(androidManifest).toContain('android:pathPrefix="/app/"');
+        expect(androidManifest).not.toContain('android:pathPrefix="/app" />');
+        expect(androidManifest).not.toContain('android:path="/app.html"');
         expect(androidManifest).toContain('android:scheme="allplays"');
         expect(androidManifest).toContain('android:windowSoftInputMode="adjustResize"');
         expect(iosInfo).toContain('<string>allplays</string>');

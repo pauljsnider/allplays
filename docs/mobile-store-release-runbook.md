@@ -98,7 +98,10 @@ release blocker.
 
 ### iOS
 
-Replace `REPLACE_WITH_APPLE_TEAM_ID` in `.well-known/apple-app-site-association` with the real Team ID. Deploy it and verify:
+The checked-in `.well-known/apple-app-site-association` is bound to Apple Team
+ID `4CSFFZLL37` and app ID `ai.allplays.lite`. The production deploy validates
+that exact binding and publishes the file only when the trusted production
+workflow opts in. Deploy it and verify:
 
 ```sh
 curl -i https://allplays.ai/.well-known/apple-app-site-association
@@ -107,12 +110,15 @@ curl -i https://allplays.ai/.well-known/apple-app-site-association
 The response must be HTTPS, return `200`, not redirect, and contain:
 
 ```text
-APPLE_TEAM_ID.ai.allplays.lite
+4CSFFZLL37.ai.allplays.lite
 ```
 
 ### Android
 
-Copy the SHA-256 fingerprint for the Google Play App Signing certificate—not only the upload certificate—into `.well-known/assetlinks.json`. Deploy and verify:
+The checked-in `.well-known/assetlinks.json` uses the Google Play App Signing
+certificate for `ai.allplays.lite` (not the upload certificate). The production
+deploy validates the package and fingerprint before publishing it. Deploy and
+verify:
 
 ```sh
 curl -i https://allplays.ai/.well-known/assetlinks.json
