@@ -80,6 +80,14 @@ test('canonical ownership overrides stale legacy owner emails while legacy-only 
     uid: 'legacy-1',
     email: 'LEGACY@example.com'
   }), true);
+
+  for (const ownerId of [0, null, {}, ' owner-1 ', `${'owner-1'}${'x'.repeat(130)}`]) {
+    assert.equal(hasTeamAdminAccess({
+      team: { ownerId, ownerEmail: 'legacy@example.com' },
+      uid: 'legacy-1',
+      email: 'legacy@example.com'
+    }), false, JSON.stringify(ownerId));
+  }
 });
 
 test('authorized detail preserves required team UI fields without exposing server-only or unknown fields', () => {

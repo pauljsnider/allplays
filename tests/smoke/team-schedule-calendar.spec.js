@@ -295,6 +295,15 @@ export function listSeasonLabels(games) {
 
 const FIREBASE_STUB = `
 export const db = {};
+export const functions = {};
+
+export function httpsCallable(_functions, name) {
+    return async (data) => {
+        window.__privateCalendarCallableCalls ||= [];
+        window.__privateCalendarCallableCalls.push({ name, data });
+        return { data: { token: 'private-calendar-token' } };
+    };
+}
 
 export function collection() {
     return {};
@@ -439,7 +448,7 @@ async function mockTeamPageModules(page, scenario) {
         contentType: 'application/javascript',
         body: AUTH_STUB
     }));
-    await page.route('**/js/firebase.js?v=*', (route) => route.fulfill({
+    await page.route(/\/js\/firebase\.js(?:\?.*)?$/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: FIREBASE_STUB
@@ -515,6 +524,8 @@ async function gotoCalendarMonth(page, fromDate, targetDate) {
 }
 
 test('team schedule calendar shows only practices in the dedicated practice filter and modal', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
     const now = new Date();
     const sharedDate = addDays(now, 7, 18);
     const scenario = {
@@ -547,7 +558,9 @@ test('team schedule calendar shows only practices in the dedicated practice filt
 
     await mockTeamPageModules(page, scenario);
     await page.goto(buildUrl(baseURL, '/team.html#teamId=team-a'), { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('load');
 
+    expect(pageErrors).toEqual([]);
     await expect(page.locator('#team-header')).toContainText('Team A');
 
     await page.locator('#schedule-view-calendar').click();
@@ -566,7 +579,48 @@ test('team schedule calendar shows only practices in the dedicated practice filt
     await expect(page.locator('#schedule-day-modal-content')).not.toContainText('Rivals FC');
 });
 
+test('team private sync provisions before enabling popup-safe provider actions', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await page.addInitScript(() => {
+        window.__ALLPLAYS_CONFIG__ = {
+            teamCalendarFeedFunctionUrl: 'https://functions.example.test/teamCalendarFeed'
+        };
+        window.__calendarProviderUrls = [];
+        window.open = (url) => {
+            window.__calendarProviderUrls.push(String(url));
+            return null;
+        };
+    });
+    await mockTeamPageModules(page, {
+        team: { name: 'Team A', sport: 'Soccer' },
+        games: [],
+        trackedUids: [],
+        calendarEvents: []
+    });
+    await page.goto(buildUrl(baseURL, '/team.html#teamId=team-a'), { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('load');
+
+    expect(pageErrors).toEqual([]);
+    await expect(page.locator('#team-header')).toContainText('Team A');
+    await page.locator('#sync-calendar').click();
+    await expect(page.locator('#sync-calendar-feedback')).toContainText('Choose where to subscribe');
+    await expect(page.locator('#sync-calendar-google')).toBeEnabled();
+    await expect.poll(() => page.evaluate(() => window.__privateCalendarCallableCalls)).toEqual([{
+        name: 'getPrivateTeamCalendarFeedToken',
+        data: { teamId: 'team-a' }
+    }]);
+
+    await page.locator('#sync-calendar-google').click();
+    await expect.poll(() => page.evaluate(() => window.__calendarProviderUrls)).toEqual([
+        'https://calendar.google.com/calendar/render?cid=https%3A%2F%2Ffunctions.example.test%2FteamCalendarFeed%3FteamId%3Dteam-a%26token%3Dprivate-calendar-token'
+    ]);
+    await expect.poll(() => page.evaluate(() => window.__privateCalendarCallableCalls)).toHaveLength(1);
+});
+
 test('public team schedule uses projected calendar events without a browser-visible feed URL', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
     const now = new Date();
     const practiceDate = addDays(now, 7, 18);
     const scenario = {
@@ -592,7 +646,9 @@ test('public team schedule uses projected calendar events without a browser-visi
 
     await mockTeamPageModules(page, scenario);
     await page.goto(buildUrl(baseURL, '/team.html#teamId=team-a'), { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('load');
 
+    expect(pageErrors).toEqual([]);
     await expect(page.locator('#team-header')).toContainText('Public Team');
     await page.locator('#schedule-view-calendar').click();
     await page.locator('#schedule-filter-upcoming-practices').click();
@@ -605,6 +661,8 @@ test('public team schedule uses projected calendar events without a browser-visi
 });
 
 test('team schedule print uses the selected range and black-and-white layout', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
     const now = new Date();
     const inRangeGameDate = addDays(now, 7, 18);
     const inRangePracticeDate = addDays(now, 10, 17);
@@ -653,7 +711,9 @@ test('team schedule print uses the selected range and black-and-white layout', a
     });
     await mockTeamPageModules(page, scenario);
     await page.goto(buildUrl(baseURL, '/team.html#teamId=team-a'), { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('load');
 
+    expect(pageErrors).toEqual([]);
     await expect(page.locator('#team-header')).toContainText('Team A');
     await page.locator('#show-practices').check();
     await page.locator('#schedule-filter-all-upcoming').click();
@@ -685,6 +745,8 @@ test('team schedule print uses the selected range and black-and-white layout', a
 });
 
 test('team schedule keeps tracked duplicates and cancelled items out of the wrong filter buckets', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
     const now = new Date();
     const completedDate = addDays(now, -5, 18);
     const upcomingDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 10, 18, 0, 0, 0));
@@ -735,7 +797,9 @@ test('team schedule keeps tracked duplicates and cancelled items out of the wron
 
     await mockTeamPageModules(page, scenario);
     await page.goto(buildUrl(baseURL, '/team.html#teamId=team-a'), { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('load');
 
+    expect(pageErrors).toEqual([]);
     await page.locator('#schedule-filter-recent-results').click();
     await expect(page.locator('#schedule-list')).toContainText('Falcons');
     await expect(page.locator('#schedule-list')).not.toContainText('Meteors');

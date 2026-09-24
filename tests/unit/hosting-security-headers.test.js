@@ -69,4 +69,12 @@ describe('Firebase Hosting security headers', () => {
         expect(runtimeHeaders.get('Strict-Transport-Security')).toBe('max-age=31536000');
         expect(runtimeHeaders.get('X-Content-Type-Options')).toBe('nosniff');
     });
+
+    it('serves mobile association files as short-lived JSON', () => {
+        const associationHeaders = headerMapFor('/.well-known/@(apple-app-site-association|assetlinks.json)');
+
+        expect(associationHeaders.get('Content-Type')).toBe('application/json');
+        expect(associationHeaders.get('Cache-Control')).toBe('public, max-age=3600');
+        expect(associationHeaders.get('X-Content-Type-Options')).toBe('nosniff');
+    });
 });

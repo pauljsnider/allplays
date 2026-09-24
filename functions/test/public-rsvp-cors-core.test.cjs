@@ -1,6 +1,9 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { isAllowedPublicRsvpOrigin } = require('../public-rsvp-cors-core.cjs');
+const {
+  isAllowedPublicRsvpAdminOrigin,
+  isAllowedPublicRsvpOrigin
+} = require('../public-rsvp-cors-core.cjs');
 
 test('public RSVP CORS allows production origins', () => {
   assert.equal(isAllowedPublicRsvpOrigin('https://allplays.ai'), true);
@@ -26,12 +29,28 @@ test('public RSVP CORS allows Firebase preview channel origins', () => {
   assert.equal(isAllowedPublicRsvpOrigin('https://game-flow-c6311--feature-x.web.app'), true);
 });
 
+test('staff RSVP CORS allows only the exact native app origins', () => {
+  assert.equal(isAllowedPublicRsvpAdminOrigin('https://localhost'), true);
+  assert.equal(isAllowedPublicRsvpAdminOrigin('capacitor://localhost'), true);
+
+  assert.equal(isAllowedPublicRsvpOrigin('https://localhost'), false);
+  assert.equal(isAllowedPublicRsvpOrigin('capacitor://localhost'), false);
+  assert.equal(isAllowedPublicRsvpAdminOrigin('https://localhost:443'), false);
+  assert.equal(isAllowedPublicRsvpAdminOrigin('https://localhost:5174'), false);
+  assert.equal(isAllowedPublicRsvpAdminOrigin('https://127.0.0.1'), false);
+  assert.equal(isAllowedPublicRsvpAdminOrigin('https://localhost.evil.example'), false);
+  assert.equal(isAllowedPublicRsvpAdminOrigin('capacitor://localhost.evil.example'), false);
+  assert.equal(isAllowedPublicRsvpAdminOrigin('capacitor://localhost:443'), false);
+});
+
 test('public RSVP CORS rejects everything else', () => {
   assert.equal(isAllowedPublicRsvpOrigin('*'), false);
   assert.equal(isAllowedPublicRsvpOrigin('https://evil.example'), false);
   assert.equal(isAllowedPublicRsvpOrigin('https://game-flow-c6311--x.web.app.evil.com'), false);
   assert.equal(isAllowedPublicRsvpOrigin('http://allplays.ai'), false);
+  assert.equal(isAllowedPublicRsvpOrigin('https://localhost'), false);
   assert.equal(isAllowedPublicRsvpOrigin('https://localhost:5174'), false);
+  assert.equal(isAllowedPublicRsvpOrigin('capacitor://localhost'), false);
   assert.equal(isAllowedPublicRsvpOrigin('http://localhost:5174.evil.com'), false);
   assert.equal(isAllowedPublicRsvpOrigin('http://localhost'), false);
   assert.equal(isAllowedPublicRsvpOrigin('https://game-flow-c6311--.web.app'), false);

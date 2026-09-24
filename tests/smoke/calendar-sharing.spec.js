@@ -8,6 +8,18 @@ function buildUrl(baseURL, path) {
 
 const PUBLIC_FEED_URL = 'https://functions.example.test/publicTeamGamesIcs';
 
+const FIREBASE_STUB = `
+export const functions = {};
+
+export function httpsCallable(_functions, name) {
+    return async (data) => {
+        window.__privateCalendarCallableCalls ||= [];
+        window.__privateCalendarCallableCalls.push({ name, data });
+        return { data: { token: 'private-calendar-token' } };
+    };
+}
+`;
+
 const DB_STUB = `
 const teams = [
     { id: 'public-team', name: 'Comets', isPublic: true, active: true, adminEmails: ['coach@example.com'] },
@@ -199,7 +211,10 @@ async function mockCalendarModules(page) {
         }
 
         window.Date = FixedDate;
-        window.__ALLPLAYS_CONFIG__ = { publicTeamGamesIcsFunctionUrl: publicFeedUrl };
+        window.__ALLPLAYS_CONFIG__ = {
+            publicTeamGamesIcsFunctionUrl: publicFeedUrl,
+            teamCalendarFeedFunctionUrl: 'https://functions.example.test/teamCalendarFeed'
+        };
         window.__fanFeedSmoke = { alerts: [], copied: [] };
         window.alert = (message) => {
             window.__fanFeedSmoke.alerts.push(String(message));
@@ -250,6 +265,11 @@ async function mockCalendarModules(page) {
         contentType: 'application/javascript',
         body: AUTH_STUB
     }));
+    await page.route(/\/js\/firebase\.js(?:\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: FIREBASE_STUB
+    }));
     await page.route('**/js/calendar-rsvp.js?v=*', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
@@ -273,12 +293,16 @@ async function mockCalendarModules(page) {
 }
 
 test('calendar Fan Feed only copies for selected teams with public games', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
     await mockCalendarModules(page);
     await page.goto(buildUrl(baseURL, '/calendar.html'), { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('load');
 
     const teamFilter = page.locator('#team-filter');
     const fanFeedButton = page.locator('#public-games-feed');
 
+    expect(pageErrors).toEqual([]);
     await expect(teamFilter).toContainText('Comets');
     await expect(teamFilter).toContainText('Private Squad');
     await expect(fanFeedButton).toBeHidden();
@@ -303,4 +327,35 @@ test('calendar Fan Feed only copies for selected teams with public games', async
         ],
         copied: [`${PUBLIC_FEED_URL}?teamId=public-team`]
     });
+});
+
+test('calendar private sync provisions before enabling popup-safe provider actions', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await page.addInitScript(() => {
+        window.__calendarProviderUrls = [];
+        window.open = (url) => {
+            window.__calendarProviderUrls.push(String(url));
+            return null;
+        };
+    });
+    await mockCalendarModules(page);
+    await page.goto(buildUrl(baseURL, '/calendar.html'), { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('load');
+
+    expect(pageErrors).toEqual([]);
+    await page.locator('#team-filter').selectOption('public-team');
+    await page.locator('#sync-calendar').click();
+    await expect(page.locator('#sync-calendar-feedback')).toContainText('Choose where to subscribe');
+    await expect(page.locator('#sync-calendar-google')).toBeEnabled();
+    await expect.poll(() => page.evaluate(() => window.__privateCalendarCallableCalls)).toEqual([{
+        name: 'getPrivateTeamCalendarFeedToken',
+        data: { teamId: 'public-team' }
+    }]);
+
+    await page.locator('#sync-calendar-google').click();
+    await expect.poll(() => page.evaluate(() => window.__calendarProviderUrls)).toEqual([
+        'https://calendar.google.com/calendar/render?cid=https%3A%2F%2Ffunctions.example.test%2FteamCalendarFeed%3FteamId%3Dpublic-team%26token%3Dprivate-calendar-token'
+    ]);
+    await expect.poll(() => page.evaluate(() => window.__privateCalendarCallableCalls)).toHaveLength(1);
 });

@@ -50,7 +50,8 @@ describe('scorekeeping access wiring', () => {
         const rules = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
 
         expect(rules).toContain('function canScorekeepGame(teamId, gameId)');
-        expect(rules).toMatch(/allow update: if !isBroadcastSessionOnlyUpdate\(\) &&\s+\(isTeamOwnerOrAdmin\(teamId\) \|\|\s+\(isOfficialForGame\(\) && isOfficialGameUpdate\(\)\) \|\|\s+isScorekeepingGameUpdate\(teamId, gameId\) \|\|\s+isVideographyGameUpdate\(teamId, gameId\)\);/);
+        expect(rules).toMatch(/allow update: if !isBroadcastSessionOnlyUpdate\(\) &&\s+!isReplayArchiveMutation\(\) &&\s+\(isTeamOwnerOrAdmin\(teamId\) \|\|\s+\(isOfficialForGame\(\) && isOfficialGameUpdate\(\)\) \|\|\s+isScorekeepingGameUpdate\(teamId, gameId\) \|\|\s+isVideographyGameUpdate\(teamId, gameId\)\);/);
+        expect(rules).toContain('allow update: if isReplayArchiveOnlyUpdate() &&');
         expect(rules).toContain('allow update: if isStreamingGameUpdate(teamId, gameId);');
         expect(rules).toContain('allow create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);');
         const privatePlayerStatsRule = rules.match(/match \/privatePlayerStats\/\{statId\} \{[\s\S]*?\n        \}/)?.[0] || '';

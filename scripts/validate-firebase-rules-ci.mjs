@@ -265,6 +265,10 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
 }
 
 export function validateProductionDeployCommand(deployProd) {
+    const deployProdWithoutReplayCleanupTargets = deployProd.replace(
+        'retry_enabled_function_targets="functions:cleanupPrivateReplayArchiveOnGameDelete,functions:cleanupPrivateReplayArchiveOnSharedGameDelete,',
+        'retry_enabled_function_targets="'
+    );
     assertMatches(
         deployProd,
         /on:\s*\n\s+push:\s*\n\s+branches:\s*\n\s+- master\s*\n\s+workflow_dispatch:\s*(?:\n|$)/,
@@ -304,7 +308,7 @@ export function validateProductionDeployCommand(deployProd) {
         'Production retry-enabled cleanup compatibility allowlist'
     );
     assertIncludes(
-        deployProd,
+        deployProdWithoutReplayCleanupTargets,
         'retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:reconcileLegacyTeamOwnership,functions:syncLegacyTeamOwnershipOnAuthCreate,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate,functions:notifyConversationChatMessageCreated,functions:notifyFeeAssigned,functions:notifyFeeMarkedPaid,functions:notifyGameCreated,functions:notifyGameUpdated,functions:notifyInviteRedeemed,functions:notifyLiveEventCreated,functions:notifyOfficiatingNotificationCreated,functions:notifyOpenOfficiatingSlots,functions:notifyParentMembershipRequestCreated,functions:notifyParentMembershipRequestUpdated,functions:notifyPracticePacketAssigned,functions:notifyPracticePacketCompleted,functions:notifyPublishedCertificateAward,functions:notifyRegistrationStatusChanged,functions:notifyRegistrationSubmitted,functions:notifyRideClaimCreated,functions:notifyRideClaimUpdated,functions:notifyRideOfferCancelled,functions:notifyRideOfferCreated,functions:notifyScheduleImportBatchCompleted,functions:notifyTeamChatMessageCreated,functions:syncTeamNotificationTargetsOnDeviceWrite,functions:syncTeamNotificationTargetsOnPreferenceWrite,functions:processPasswordResetEmailRequest,functions:sweepIneligiblePublicUserProfiles,functions:dispatchDueTeamMediaNotificationBatches,functions:dispatchDuePreEventReminders,functions:queueDueRegistrationFailedPaymentReminders,functions:sendPracticePacketDueTomorrowReminders,functions:sendFeeUnpaidDueReminders"',
         'Production retry-enabled function allowlist'
     );
@@ -1047,6 +1051,11 @@ export function validateFirebaseRulesCi() {
     assertIncludes(firestoreRules, 'isNestedChatMessageCreateValid(', 'Nested chat create rules');
 
     validateProductionDeployCommand(deployProd);
+    assertIncludes(
+        deployProd,
+        'retry_enabled_function_targets="functions:cleanupPrivateReplayArchiveOnGameDelete,functions:cleanupPrivateReplayArchiveOnSharedGameDelete,',
+        'Production replay cleanup trigger deployment'
+    );
     assertIncludes(
         deployProd,
         'cp _migration/firebase-admin-credential.mjs',

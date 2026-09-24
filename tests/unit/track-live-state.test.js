@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, resolveTrackLiveClockResume, buildTrackLiveResumeState } from '../../js/track-live-state.js';
+import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, createTrackLiveResetEventId, resolveTrackLiveClockResume, buildTrackLiveResumeState } from '../../js/track-live-state.js';
 
 describe('track live state helpers', () => {
   it('summarizes when persisted data exists', () => {
@@ -45,7 +45,8 @@ describe('track live state helpers', () => {
         onCourt: ['p1'],
         bench: ['p2', 'p3']
       },
-      liveResetAt: 1700000000000
+      liveResetAt: 1700000000000,
+      liveResetEventId: 'reset-game-1'
     });
 
     expect(payload).toEqual({
@@ -60,12 +61,24 @@ describe('track live state helpers', () => {
       liveStatus: 'scheduled',
       liveHasData: false,
       liveResetAt: 1700000000000,
+      liveResetEventId: 'reset-game-1',
       servingTeam: 'home',
       opponent: 'Lions',
       opponentTeamId: 'opp-team-1',
       opponentTeamName: 'Lions Academy',
       opponentTeamPhoto: 'https://example.com/lions.png'
     });
+  });
+
+  it('creates bounded reset identities from secure browser randomness only', () => {
+    expect(createTrackLiveResetEventId({ randomUUID: () => '1234-5678' })).toBe('reset-1234-5678');
+    expect(createTrackLiveResetEventId({
+      getRandomValues: (bytes) => {
+        bytes.fill(15);
+        return bytes;
+      }
+    })).toBe(`reset-${'0f'.repeat(16)}`);
+    expect(createTrackLiveResetEventId({})).toBe('');
   });
 
   it('normalizes reset payload defaults and clones lineup arrays', () => {

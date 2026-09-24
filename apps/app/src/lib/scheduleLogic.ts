@@ -1,4 +1,5 @@
 import { formatLongDate, formatShortDate, formatTimeOfDay } from './datetime';
+import type { ReplayArchiveState, YouTubeReplayVideo } from './youtubeReplay';
 
 export type ParentScheduleFilter = 'upcoming-all' | 'upcoming-games' | 'upcoming-practices' | 'availability' | 'recent-results' | 'past-all';
 export type ScheduleViewMode = 'list' | 'compact' | 'calendar' | 'packets';
@@ -152,7 +153,11 @@ export type ParentScheduleEvent = {
   opponentTeamId?: string | null;
   opponentTeamName?: string | null;
   opponentTeamPhoto?: string | null;
+  sharedScheduleId?: string | null;
+  sharedScheduleSourceTeamId?: string | null;
   sharedScheduleOpponentTeamId?: string | null;
+  sharedScheduleOpponentGameId?: string | null;
+  hasReplayShareMarker?: boolean;
   counterpartTitle?: string | null;
   title?: string | null;
   childId: string;
@@ -170,6 +175,14 @@ export type ParentScheduleEvent = {
   awayScore?: number | null;
   postGameNotes?: string | null;
   summary?: string | null;
+  videoUrl?: string | null;
+  replayVideo?: YouTubeReplayVideo | null;
+  rawReplayState?: ReplayArchiveState;
+  rawReplayLifecycle?: {
+    type?: unknown;
+    status?: unknown;
+    liveStatus?: unknown;
+  };
   practiceFeedItems?: Array<{
     weakness: string;
     evidence: string;
@@ -212,6 +225,9 @@ export type ParentScheduleEvent = {
   practicePacketCompletions?: PracticePacketCompletion[];
   isTeamAdmin?: boolean;
   isTeamStaff?: boolean;
+  canManageReplayVideo?: boolean;
+  canManageReplayVideoAsFullManager?: boolean;
+  isSharedGame?: boolean;
   isTeamRsvpReminderManager?: boolean;
   calendarUrls?: string[];
   gamePlan?: {

@@ -7,6 +7,12 @@ const ACCOUNT_DELETION_MAX_DAYS = 30;
 const ACCOUNT_DELETION_MAX_AUTH_AGE_SECONDS = 5 * 60;
 const ACCOUNT_MEDIA_CLEANUP_PAGE_SIZE = 250;
 const ACCOUNT_STORAGE_DELETE_CONCURRENCY = 10;
+const ACCOUNT_CALENDAR_CREDENTIAL_PAGE_SIZE = 250;
+const ACCOUNT_CALENDAR_CREDENTIAL_TRANSACTION_SIZE = 100;
+const ACCOUNT_REPLAY_ARCHIVE_ATTRIBUTION_FIELDS = Object.freeze(['linkedBy', 'updatedBy']);
+const ACCOUNT_REPLAY_ARCHIVE_PAGE_SIZE = 250;
+const ACCOUNT_REPLAY_ARCHIVE_TRANSACTION_SIZE = 100;
+const CALENDAR_TOKEN_HASH_PATTERN = /^[a-f0-9]{64}$/;
 
 function normalizeConfirmation(value) {
   return String(value || '').trim().toUpperCase();
@@ -548,6 +554,409 @@ function getAccountDeletionCollectionGroupQueries() {
   ];
 }
 
+function getCanonicalCalendarCredentialPrincipal(credential = {}) {
+  for (const field of ['uid', 'userId', 'createdBy']) {
+    if (!Object.prototype.hasOwnProperty.call(credential, field)) continue;
+    const originalValue = credential[field];
+    if (originalValue === undefined || originalValue === null || originalValue === '') continue;
+    if (
+      typeof originalValue !== 'string'
+      || originalValue !== originalValue.trim()
+      || !originalValue
+      || originalValue.length > 128
+      || originalValue.includes('/')
+    ) {
+      return { field, valid: false, value: '' };
+    }
+    return { field, valid: true, value: originalValue };
+  }
+  return { field: '', valid: false, value: '' };
+}
+
+function calendarCredentialBelongsToAccount(credential, uid) {
+  const principal = getCanonicalCalendarCredentialPrincipal(credential);
+  return principal.valid && principal.value === uid;
+}
+
+function getCalendarCredentialTeamId(documentPath, collectionName) {
+  const pathParts = String(documentPath || '').split('/');
+  const collectionIndex = pathParts.lastIndexOf(collectionName);
+  if (collectionIndex < 2 || pathParts[collectionIndex - 2] !== 'teams') return '';
+  return pathParts[collectionIndex - 1] || '';
+}
+
+function getCalendarSubscriptionLookupPath(secretSnapshot, uid) {
+  const secret = secretSnapshot?.data?.() || {};
+  if (!calendarCredentialBelongsToAccount(secret, uid)) return '';
+  const teamId = getCalendarCredentialTeamId(
+    secretSnapshot?.ref?.path,
+    'privateCalendarSubscriptions'
+  );
+  const tokenHash = secret.tokenHash;
+  if (
+    secret.schemaVersion !== 1
+    || secret.teamId !== teamId
+    || typeof tokenHash !== 'string'
+    || !CALENDAR_TOKEN_HASH_PATTERN.test(tokenHash)
+  ) {
+    return '';
+  }
+  return `teams/${teamId}/calendarTokens/${tokenHash}`;
+}
+
+async function collectCalendarCredentialQueryPages({
+  query,
+  documentIdField,
+  pageSize,
+  candidates
+}) {
+  let cursor = null;
+  let pagesRead = 0;
+  while (true) {
+    let pageQuery = query.orderBy(documentIdField).limit(pageSize);
+    if (cursor) pageQuery = pageQuery.startAfter(cursor);
+    const snapshot = await pageQuery.get();
+    const documents = snapshot.docs || [];
+    if (!documents.length) break;
+    pagesRead += 1;
+    documents.forEach((document) => {
+      if (document?.ref?.path) candidates.set(document.ref.path, document);
+    });
+    if (documents.length < pageSize) break;
+    cursor = documents[documents.length - 1];
+  }
+  return pagesRead;
+}
+
+async function deleteCalendarLookupCandidates({ firestore, refs, uid, transactionSize }) {
+  let deleted = 0;
+  for (let index = 0; index < refs.length; index += transactionSize) {
+    const refChunk = refs.slice(index, index + transactionSize);
+    const chunkDeleted = await firestore.runTransaction(async (transaction) => {
+      const currentSnapshots = await Promise.all(refChunk.map((ref) => transaction.get(ref)));
+      const matchingRefs = currentSnapshots
+        .filter((snapshot) => snapshot.exists)
+        .filter((snapshot) => calendarCredentialBelongsToAccount(snapshot.data() || {}, uid))
+        .map((snapshot) => snapshot.ref);
+      matchingRefs.forEach((ref) => transaction.delete(ref));
+      return matchingRefs.length;
+    });
+    deleted += chunkDeleted;
+  }
+  return deleted;
+}
+
+async function deleteCalendarSubscriptionCandidates({
+  firestore,
+  candidates,
+  initialLookupPaths,
+  uid,
+  transactionSize
+}) {
+  let lookupsDeleted = 0;
+  let secretsDeleted = 0;
+  const candidateList = [...candidates.values()];
+  for (let index = 0; index < candidateList.length; index += transactionSize) {
+    const candidateChunk = candidateList.slice(index, index + transactionSize);
+    const counts = await firestore.runTransaction(async (transaction) => {
+      const currentSecrets = await Promise.all(
+        candidateChunk.map((candidate) => transaction.get(candidate.ref))
+      );
+      const actions = currentSecrets
+        .filter((snapshot) => snapshot.exists)
+        .filter((snapshot) => calendarCredentialBelongsToAccount(snapshot.data() || {}, uid))
+        .map((snapshot) => {
+          const initialLookupPath = initialLookupPaths.get(snapshot.ref.path) || '';
+          const currentLookupPath = getCalendarSubscriptionLookupPath(snapshot, uid);
+          return {
+            secretSnapshot: snapshot,
+            currentLookupPath,
+            lookupPaths: [...new Set([initialLookupPath, currentLookupPath].filter(Boolean))]
+          };
+        });
+      const lookupRefsByPath = new Map();
+      actions.forEach((action) => action.lookupPaths.forEach((lookupPath) => {
+        lookupRefsByPath.set(lookupPath, firestore.doc(lookupPath));
+      }));
+      const lookupSnapshots = await Promise.all(
+        [...lookupRefsByPath.values()].map((ref) => transaction.get(ref))
+      );
+      const lookupSnapshotsByPath = new Map(
+        lookupSnapshots.map((snapshot) => [snapshot.ref.path, snapshot])
+      );
+      const lookupRefsToDelete = new Map();
+      actions.forEach((action) => {
+        action.lookupPaths.forEach((lookupPath) => {
+          const lookupSnapshot = lookupSnapshotsByPath.get(lookupPath);
+          if (!lookupSnapshot?.exists) return;
+          const lookup = lookupSnapshot.data() || {};
+          if (!calendarCredentialBelongsToAccount(lookup, uid)) {
+            if (lookupPath === action.currentLookupPath) {
+              const error = new Error('Calendar credential pair has a conflicting principal binding.');
+              error.code = 'calendar-credential-binding-conflict';
+              throw error;
+            }
+            return;
+          }
+          if (lookupPath === action.currentLookupPath) {
+            const teamId = getCalendarCredentialTeamId(lookupPath, 'calendarTokens');
+            const tokenHash = lookupPath.split('/').pop();
+            if (lookup.teamId !== teamId || lookup.tokenHash !== tokenHash) {
+              const error = new Error('Calendar credential pair has inconsistent lookup metadata.');
+              error.code = 'calendar-credential-binding-conflict';
+              throw error;
+            }
+          }
+          lookupRefsToDelete.set(lookupPath, lookupSnapshot.ref);
+        });
+      });
+
+      // The hashed lookup is the active bearer capability. Retire it in the
+      // same transaction, before removing the raw secret document.
+      lookupRefsToDelete.forEach((ref) => transaction.delete(ref));
+      actions.forEach(({ secretSnapshot }) => transaction.delete(secretSnapshot.ref));
+      return {
+        lookupsDeleted: lookupRefsToDelete.size,
+        secretsDeleted: actions.length
+      };
+    });
+    lookupsDeleted += counts.lookupsDeleted;
+    secretsDeleted += counts.secretsDeleted;
+  }
+  return { lookupsDeleted, secretsDeleted };
+}
+
+async function cleanupAccountCalendarCredentials({
+  firestore,
+  uid,
+  documentIdField,
+  pageSize = ACCOUNT_CALENDAR_CREDENTIAL_PAGE_SIZE,
+  transactionSize = ACCOUNT_CALENDAR_CREDENTIAL_TRANSACTION_SIZE
+}) {
+  if (
+    !firestore
+    || typeof uid !== 'string'
+    || uid !== uid.trim()
+    || !uid
+    || uid.length > 128
+    || uid.includes('/')
+    || !documentIdField
+    || !Number.isInteger(pageSize)
+    || pageSize < 1
+    || pageSize > 250
+    || !Number.isInteger(transactionSize)
+    || transactionSize < 1
+    || transactionSize > 200
+  ) {
+    throw new TypeError('Account calendar credential cleanup dependencies are invalid.');
+  }
+
+  const secretCandidates = new Map();
+  const lookupCandidates = new Map();
+  let pagesRead = 0;
+  for (const field of ['uid', 'userId', 'createdBy']) {
+    pagesRead += await collectCalendarCredentialQueryPages({
+      query: firestore.collectionGroup('privateCalendarSubscriptions').where(field, '==', uid),
+      documentIdField,
+      pageSize,
+      candidates: secretCandidates
+    });
+    pagesRead += await collectCalendarCredentialQueryPages({
+      query: firestore.collectionGroup('calendarTokens').where(field, '==', uid),
+      documentIdField,
+      pageSize,
+      candidates: lookupCandidates
+    });
+  }
+
+  const initialLookupPaths = new Map();
+  secretCandidates.forEach((snapshot, secretPath) => {
+    const lookupPath = getCalendarSubscriptionLookupPath(snapshot, uid);
+    if (lookupPath) initialLookupPaths.set(secretPath, lookupPath);
+  });
+  const pairedLookupPaths = new Set(initialLookupPaths.values());
+  const standaloneLookupRefs = [...lookupCandidates.entries()]
+    .filter(([lookupPath]) => !pairedLookupPaths.has(lookupPath))
+    .map(([, snapshot]) => snapshot.ref);
+
+  let lookupsDeleted = await deleteCalendarLookupCandidates({
+    firestore,
+    refs: standaloneLookupRefs,
+    uid,
+    transactionSize
+  });
+  const pairedCounts = await deleteCalendarSubscriptionCandidates({
+    firestore,
+    candidates: secretCandidates,
+    initialLookupPaths,
+    uid,
+    transactionSize
+  });
+  lookupsDeleted += pairedCounts.lookupsDeleted;
+
+  // If a queried secret disappeared or changed principals before its
+  // transaction, its initially paired lookup was intentionally not deleted
+  // with that secret. Re-read those candidates and remove only lookups still
+  // canonically bound to the deleting account.
+  const remainingPairedLookupRefs = [...pairedLookupPaths]
+    .map((lookupPath) => firestore.doc(lookupPath));
+  lookupsDeleted += await deleteCalendarLookupCandidates({
+    firestore,
+    refs: remainingPairedLookupRefs,
+    uid,
+    transactionSize
+  });
+
+  return {
+    lookupCandidates: lookupCandidates.size,
+    lookupsDeleted,
+    pagesRead,
+    secretCandidates: secretCandidates.size,
+    secretsDeleted: pairedCounts.secretsDeleted
+  };
+}
+
+function isAccountReplayArchiveDocument(document) {
+  const path = typeof document?.ref?.path === 'string' ? document.ref.path : '';
+  const segments = path.split('/');
+  return document?.id === 'archive'
+    && segments.length >= 4
+    && segments.length % 2 === 0
+    && segments.at(-2) === 'privateReplay'
+    && segments.at(-1) === 'archive'
+    && ['games', 'sharedGames'].includes(segments.at(-4));
+}
+
+function isValidAccountReplayAttributionUid(uid) {
+  return typeof uid === 'string'
+    && uid === uid.trim()
+    && Boolean(uid)
+    && uid.length <= 128
+    && !uid.includes('/');
+}
+
+function buildReplayArchiveAttributionScrubPlan(archive = {}, uid = '') {
+  if (!archive || typeof archive !== 'object' || Array.isArray(archive)
+    || !isValidAccountReplayAttributionUid(uid)) {
+    return { changed: false, fieldsToDelete: [] };
+  }
+  const fieldsToDelete = ACCOUNT_REPLAY_ARCHIVE_ATTRIBUTION_FIELDS.filter((field) => (
+    archive[field] === uid
+  ));
+  return {
+    changed: fieldsToDelete.length > 0,
+    fieldsToDelete
+  };
+}
+
+async function collectReplayArchiveAttributionQueryPages({
+  firestore,
+  uid,
+  field,
+  documentIdField,
+  pageSize,
+  processPage
+}) {
+  let cursor = null;
+  let pagesRead = 0;
+  let candidatesRead = 0;
+  while (true) {
+    let query = firestore.collectionGroup('privateReplay')
+      .where(field, '==', uid)
+      .orderBy(documentIdField)
+      .limit(pageSize);
+    if (cursor) query = query.startAfter(cursor);
+    const snapshot = await query.get();
+    const documents = snapshot.docs || [];
+    if (!documents.length) break;
+    pagesRead += 1;
+    candidatesRead += documents.length;
+    await processPage(documents.filter(isAccountReplayArchiveDocument));
+    if (documents.length < pageSize) break;
+    cursor = documents[documents.length - 1];
+  }
+  return { candidatesRead, pagesRead };
+}
+
+async function anonymizeAccountReplayArchiveAttribution({
+  firestore,
+  uid,
+  documentIdField,
+  deleteFieldValue,
+  pageSize = ACCOUNT_REPLAY_ARCHIVE_PAGE_SIZE,
+  transactionSize = ACCOUNT_REPLAY_ARCHIVE_TRANSACTION_SIZE
+}) {
+  if (
+    !firestore
+    || typeof firestore.collectionGroup !== 'function'
+    || typeof firestore.runTransaction !== 'function'
+    || !isValidAccountReplayAttributionUid(uid)
+    || !documentIdField
+    || typeof deleteFieldValue !== 'function'
+    || !Number.isInteger(pageSize)
+    || pageSize < 1
+    || pageSize > 250
+    || !Number.isInteger(transactionSize)
+    || transactionSize < 1
+    || transactionSize > 200
+  ) {
+    throw new TypeError('Account replay archive anonymization dependencies are invalid.');
+  }
+
+  let archivesUpdated = 0;
+  let attributionFieldsDeleted = 0;
+  let candidatesRead = 0;
+  let pagesRead = 0;
+  const processPage = async (documents) => {
+    for (let index = 0; index < documents.length; index += transactionSize) {
+      const refs = documents.slice(index, index + transactionSize).map((document) => document.ref);
+      const counts = await firestore.runTransaction(async (transaction) => {
+        const currentSnapshots = await Promise.all(refs.map((ref) => transaction.get(ref)));
+        let transactionArchivesUpdated = 0;
+        let transactionFieldsDeleted = 0;
+        currentSnapshots.forEach((snapshot) => {
+          if (!snapshot.exists || !isAccountReplayArchiveDocument(snapshot)) return;
+          const plan = buildReplayArchiveAttributionScrubPlan(snapshot.data() || {}, uid);
+          if (!plan.changed) return;
+          const update = {};
+          plan.fieldsToDelete.forEach((field) => {
+            update[field] = deleteFieldValue();
+          });
+          transaction.update(snapshot.ref, update);
+          transactionArchivesUpdated += 1;
+          transactionFieldsDeleted += plan.fieldsToDelete.length;
+        });
+        return {
+          archivesUpdated: transactionArchivesUpdated,
+          attributionFieldsDeleted: transactionFieldsDeleted
+        };
+      });
+      archivesUpdated += counts.archivesUpdated;
+      attributionFieldsDeleted += counts.attributionFieldsDeleted;
+    }
+  };
+
+  for (const field of ACCOUNT_REPLAY_ARCHIVE_ATTRIBUTION_FIELDS) {
+    const queryCounts = await collectReplayArchiveAttributionQueryPages({
+      firestore,
+      uid,
+      field,
+      documentIdField,
+      pageSize,
+      processPage
+    });
+    candidatesRead += queryCounts.candidatesRead;
+    pagesRead += queryCounts.pagesRead;
+  }
+
+  return {
+    archivesUpdated,
+    attributionFieldsDeleted,
+    candidatesRead,
+    pagesRead
+  };
+}
+
 function assertDeletionRequest(data, HttpsError) {
   if (normalizeConfirmation(data?.confirmation) !== ACCOUNT_DELETION_CONFIRMATION) {
     throw new HttpsError('invalid-argument', `Type ${ACCOUNT_DELETION_CONFIRMATION} to confirm permanent account deletion.`);
@@ -702,27 +1111,36 @@ function createAccountDeletionRequestHandler({ firestore, auth, Timestamp, Https
 }
 
 module.exports = {
+  ACCOUNT_CALENDAR_CREDENTIAL_PAGE_SIZE,
+  ACCOUNT_CALENDAR_CREDENTIAL_TRANSACTION_SIZE,
   ACCOUNT_DELETION_CONFIRMATION,
   ACCOUNT_DELETION_MAX_AUTH_AGE_SECONDS,
   ACCOUNT_DELETION_MAX_DAYS,
   ACCOUNT_MEDIA_CLEANUP_PAGE_SIZE,
+  ACCOUNT_REPLAY_ARCHIVE_ATTRIBUTION_FIELDS,
+  ACCOUNT_REPLAY_ARCHIVE_PAGE_SIZE,
+  ACCOUNT_REPLAY_ARCHIVE_TRANSACTION_SIZE,
   ACCOUNT_STORAGE_DELETE_CONCURRENCY,
   accountUsesAppleProvider,
+  anonymizeAccountReplayArchiveAttribution,
   assertDeletionRequest,
   assertRecentAuthentication,
   buildChatConversationAccountScrubPlan,
   buildDeletionAuditId,
   buildRegistrationAccountScrubPlan,
+  buildReplayArchiveAttributionScrubPlan,
   buildRosterParentScrubPlan,
   buildTeamAccountGrantScrubPlan,
   classifyAccountStoragePaths,
   collectAccountRosterScopes,
   collectAccountTeamIds,
   collectAccountMediaStoragePaths,
+  cleanupAccountCalendarCredentials,
   createAccountDeletionRequestHandler,
   deleteAccountMediaStoragePages,
   extractAccountProfileStoragePath,
   getAccountEmailQueryCandidates,
+  getCanonicalCalendarCredentialPrincipal,
   getCurrentEnabledAuthEmail,
   getAccountReauthenticationProvider,
   getAccountTeamPermissionQueryFields,

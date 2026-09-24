@@ -1,6 +1,6 @@
-import { getTeam } from './adapters/legacyParentTools';
-import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import { buildPrivateTeamCalendarFeedUrl as buildPrivateTeamCalendarFeedUrlFromRuntime } from './calendarFeedUrls';
 import { loadParentScheduleSummary } from './homeService';
+import { resolvePrivateTeamCalendarFeedUrl } from './privateCalendarFeedResolver';
 import { formatEventDateLabel, formatEventTimeLabel, getScheduleLocationLabel, getScheduleTitle, type ParentScheduleEvent } from './scheduleLogic';
 import type { AuthUser } from './types';
 
@@ -69,48 +69,12 @@ export function buildParentScheduleEventIcs(event: ParentScheduleEvent, calendar
     return buildParentScheduleIcs(event ? [event] : [], calendarName);
 }
 
-export function buildPrivateTeamCalendarFeedUrl(teamId: string, team: Record<string, any> | null | undefined) {
-    const directUrl = team?.privateCalendarFeedUrl
-        || team?.calendarSubscriptionUrl
-        || team?.calendarFeedUrl
-        || team?.teamCalendarFeedUrl;
-    if (typeof directUrl === 'string' && directUrl.trim()) {
-        return directUrl.trim().replace(/^webcal:\/\//i, 'https://');
-    }
-
-    const token = team?.calendarSubscriptionToken
-        || team?.privateCalendarToken
-        || team?.calendarFeedToken
-        || team?.teamCalendarToken;
-    if (!teamId || !token) return '';
-
-    const configured = (window as any).__ALLPLAYS_CONFIG__?.teamCalendarFeedFunctionUrl || (window as any).ALLPLAYS_TEAM_CALENDAR_FEED_URL;
-    const fallback = (window as any).__ALLPLAYS_CONFIG__?.calendarFetchFunctionUrl || (window as any).ALLPLAYS_CALENDAR_FUNCTION_URL;
-    const baseUrl = typeof configured === 'string' && configured.trim()
-        ? configured.trim()
-        : typeof fallback === 'string' && fallback.includes('fetchCalendarIcs')
-            ? fallback.replace('fetchCalendarIcs', 'teamCalendarFeed')
-            : 'https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed';
-    const separator = baseUrl.includes('?') ? '&' : '?';
-    return `${baseUrl}${separator}teamId=${encodeURIComponent(teamId)}&token=${encodeURIComponent(token)}`;
+export function buildPrivateTeamCalendarFeedUrl(teamId: string, token: unknown) {
+    return buildPrivateTeamCalendarFeedUrlFromRuntime(teamId, token);
 }
 
 export async function getPrivateTeamCalendarFeedUrl(teamId: string) {
-    const teamSnap = await Promise.resolve(getTeam(teamId)).catch(() => null);
-    const teamFeedUrl = buildPrivateTeamCalendarFeedUrl(teamId, teamSnap);
-    if (teamFeedUrl) return teamFeedUrl;
-    const token = await getNativeAuthIdToken(false).catch(() => null)
-        || await firebaseAuth.currentUser?.getIdToken?.(false).catch(() => null);
-    if (!teamId || !token) return '';
-    const configured = (window as any).__ALLPLAYS_CONFIG__?.teamCalendarFeedFunctionUrl || (window as any).ALLPLAYS_TEAM_CALENDAR_FEED_URL;
-    const fallback = (window as any).__ALLPLAYS_CONFIG__?.calendarFetchFunctionUrl || (window as any).ALLPLAYS_CALENDAR_FUNCTION_URL;
-    const baseUrl = typeof configured === 'string' && configured.trim()
-        ? configured.trim()
-        : typeof fallback === 'string' && fallback.includes('fetchCalendarIcs')
-            ? fallback.replace('fetchCalendarIcs', 'teamCalendarFeed')
-            : 'https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed';
-    const separator = baseUrl.includes('?') ? '&' : '?';
-    return `${baseUrl}${separator}teamId=${encodeURIComponent(teamId)}&token=${encodeURIComponent(token)}`;
+    return resolvePrivateTeamCalendarFeedUrl(teamId);
 }
 
 export function getAppleCalendarFeedUrl(feedUrl: string) {

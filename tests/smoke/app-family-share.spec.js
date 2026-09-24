@@ -11,6 +11,12 @@ function appUrl(hashPath) {
     return url.toString();
 }
 
+function capturePageErrors(page) {
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    return errors;
+}
+
 async function mockPublicFamilyShareModules(page) {
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
@@ -47,6 +53,14 @@ async function mockPublicFamilyShareModules(page) {
                         this.name = 'FamilyShareTokenError';
                         this.reason = reason;
                     }
+                }
+                export function resolveFamilyShareWatchCta() {
+                    return null;
+                }
+                export function isFamilyShareCompletedGame(event) {
+                    return event?.isCancelled !== true
+                        && (event?.status === 'completed' || event?.status === 'final')
+                        && (!event?.liveStatus || ['scheduled', 'completed', 'final'].includes(event.liveStatus));
                 }
                 export async function loadFamilyShareView(tokenId) {
                     if (tokenId === 'expired-token') {
@@ -115,9 +129,11 @@ async function mockPublicFamilyShareModules(page) {
 }
 
 test('public family share route renders without signed-in auth', async ({ page }) => {
+    const pageErrors = capturePageErrors(page);
     await mockPublicFamilyShareModules(page);
     await page.goto(appUrl('/family/token-1'), { waitUntil: 'domcontentloaded' });
 
+    expect(pageErrors).toEqual([]);
     await expect(page.getByRole('heading', { name: 'Grandma' })).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('Pat Star').first()).toBeVisible();
     await expect(page.getByText('vs Comets')).toBeVisible();
@@ -125,9 +141,11 @@ test('public family share route renders without signed-in auth', async ({ page }
 });
 
 test('public family share route shows friendly expired-token state', async ({ page }) => {
+    const pageErrors = capturePageErrors(page);
     await mockPublicFamilyShareModules(page);
     await page.goto(appUrl('/family/expired-token'), { waitUntil: 'domcontentloaded' });
 
+    expect(pageErrors).toEqual([]);
     await expect(page.getByRole('heading', { name: 'This link has expired' })).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('Ask the parent to create a new family share link')).toBeVisible();
 });

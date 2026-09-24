@@ -11,17 +11,17 @@ import {
     isSignInWithEmailLink,
     signInWithEmailLink,
     updatePassword
-} from './firebase.js?v=27';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433183';
+} from './firebase.js?v=33';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433195';
 import { executeEmailPasswordSignup } from './signup-flow.js?v=14';
-import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=10';
+import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=12';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=3';
 import { createInviteProcessor } from './accept-invite-flow.js?v=443314';
 import {
     queueCurrentUserVerificationEmail,
     queueInviteSignInEmail,
     queuePasswordResetEmail
-} from './auth-email.js?v=5';
+} from './auth-email.js?v=7';
 import { loadAuthProfileViaRest } from './auth-profile-rest.js?v=1';
 import { raceFirstSuccessfulRead } from './hedged-read.js?v=1';
 

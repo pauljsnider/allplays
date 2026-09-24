@@ -17,18 +17,23 @@ describe('track live reset persistence orchestration', () => {
   it('continues when publishing reset event fails', async () => {
     const calls = [];
     const logWarn = vi.fn();
+    const updateResetState = vi.fn(async ({ resetEventId }) => {
+      calls.push(`update:${resetEventId}`);
+    });
 
     await runTrackLiveResetPersistence({
-      publishResetEvent: async () => {
-        calls.push('publish');
+      createResetEventId: () => 'reset-stable',
+      publishResetEvent: async ({ resetEventId }) => {
+        calls.push(`publish:${resetEventId}`);
         throw new Error('permission denied');
       },
-      updateResetState: async () => { calls.push('update'); },
+      updateResetState,
       cleanupPersistedState: async () => { calls.push('cleanup'); },
       logWarn
     });
 
-    expect(calls).toEqual(['publish', 'update', 'cleanup']);
+    expect(calls).toEqual(['publish:reset-stable', 'update:reset-stable', 'cleanup']);
+    expect(updateResetState).toHaveBeenCalledWith({ resetEventId: 'reset-stable' });
     expect(logWarn).toHaveBeenCalledWith('Failed to publish reset event:', expect.any(Error));
   });
 

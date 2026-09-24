@@ -208,7 +208,7 @@ jobs:
         run: npm run app:build:native
 
       - name: Sync iOS project
-        run: npx cap sync ios
+        run: npm run prepare:ios-auth-spm && npx cap sync ios
 
       - name: Resolve iOS package dependencies
         run: |

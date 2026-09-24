@@ -7,10 +7,18 @@ const {
     buildPublicGamesIcs,
     canExposeEmptyPublicFeed,
     isPublicFanGame,
+    normalizePublicCalendarTeamId,
     stablePublicGameUid
 } = require('../../functions/public-calendar-core.cjs');
 
 describe('public games calendar feed helpers', () => {
+    it('accepts canonical slash-free team IDs with supported punctuation', () => {
+        expect(normalizePublicCalendarTeamId(' team 1.blue:varsity ')).toBe('team 1.blue:varsity');
+        expect(normalizePublicCalendarTeamId('team/1')).toBe('');
+        expect(normalizePublicCalendarTeamId('x'.repeat(129))).toBe('');
+        expect(normalizePublicCalendarTeamId({ toString: () => 'team-1' })).toBe('');
+    });
+
     it('includes only public games and excludes practices, private events, and member-only fields', () => {
         const team = { name: 'Wildcats', isPublic: true };
         const ics = buildPublicGamesIcs({
@@ -97,6 +105,9 @@ describe('public games calendar feed helpers', () => {
         const publicFeedSource = source.slice(feedStart, feedEnd);
 
         expect(source).toContain('exports.publicTeamGamesIcs = functions\n  .runWith(fetchCalendarRuntime)');
+        expect(publicFeedSource).toContain('normalizePublicCalendarTeamId(req.query.teamId)');
+        expect(publicFeedSource).toContain("res.set('Content-Disposition', 'inline; filename=\"allplays-public-games.ics\"')");
+        expect(publicFeedSource).not.toContain('filename="${teamId}');
         expect(publicFeedSource).toContain('getCalendarFeedGamesQuery(teamId).get()');
         expect(publicFeedSource).toContain('games.filter((game) => isPublicFanGame(team, game))');
         expect(publicFeedSource).toContain('buildPublicGamesIcs({ teamId, team, games: publicGames })');
