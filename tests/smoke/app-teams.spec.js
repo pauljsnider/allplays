@@ -14,10 +14,11 @@ function appUrl(baseURL, hashPath) {
     return url.toString();
 }
 
-async function waitForTeamsRoute(page, readyLocator, { requireSearchInput = true } = {}) {
+async function waitForTeamsRoute(page, readyLocator, { requireSearchInput = true, pageErrors = [] } = {}) {
     const searchInput = page.getByPlaceholder('Search teams or players');
     const teamsLoadingState = page.getByText(/^Loading teams$/);
     await expect(async () => {
+        expect(pageErrors).toEqual([]);
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
         await expect(teamsLoadingState).toHaveCount(0, { timeout: 3000 });
         if (requireSearchInput) {
@@ -40,6 +41,17 @@ async function waitForTeamDetailRoute(page, teamName, { pageErrors = [] } = {}) 
 
 async function mockTeamsModules(page, { scenario = '', managedTeam = false, rosterPlayerCount = 2, privateCalendarEligible = true } = {}) {
     await page.addInitScript(({ scenarioName, shouldManageTeam, teamRosterPlayerCount, canUsePrivateCalendarSync }) => {
+        window.__ALLPLAYS_CONFIG__ = {
+            firebase: {
+                apiKey: 'demo-api-key',
+                authDomain: 'demo-allplays.firebaseapp.com',
+                projectId: 'demo-allplays',
+                messagingSenderId: '1234567890',
+                appId: '1:1234567890:web:allplayssmoke'
+            },
+            appCheck: { enabled: false },
+            diamondScorebookUiEnabled: false
+        };
         window.__openedPublicUrls = [];
         window.__copiedPublicTexts = [];
         window.__sharedPublicUrls = [];
@@ -103,6 +115,9 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                 export async function sharePublicUrl(payload) {
                     window.__sharedPublicUrls.push(String(payload?.url || ''));
                     return 'shared';
+                }
+                export async function exportCsvFile() {
+                    return 'downloaded';
                 }
             `
         });
@@ -763,6 +778,14 @@ async function mockTeamCreationModule(page) {
                     return ['Basketball', 'Soccer', 'Baseball', 'Softball'];
                 }
 
+                export function getCreateTeamDiamondProfileOptions() {
+                    return [];
+                }
+
+                export async function configureCreatedTeamDiamondForApp() {
+                    return { configured: true };
+                }
+
                 export async function createTeamForApp(user, input) {
                     window.__createdTeams.push({
                         userId: user?.uid || '',
@@ -848,11 +871,13 @@ test.describe('mobile My Teams', () => {
     });
 
     test('creates a team from the native app flow', async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => pageErrors.push(error.message));
         await mockTeamsModules(page, { scenario: 'empty' });
         await mockTeamCreationModule(page);
         await page.goto(appUrl(baseURL, '/teams?scenario=empty'), { waitUntil: 'domcontentloaded' });
 
-        await waitForTeamsRoute(page, page.getByRole('heading', { name: 'No teams linked yet' }), { requireSearchInput: false });
+        await waitForTeamsRoute(page, page.getByRole('heading', { name: 'No teams linked yet' }), { requireSearchInput: false, pageErrors });
         await page.getByRole('link', { name: 'Create team' }).click();
 
         await expect(page).toHaveURL(/#\/teams\/new$/);
