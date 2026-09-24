@@ -879,7 +879,8 @@ for (const authTransition of [
         });
         await expect(page.locator('#edit-photo-preview img')).toHaveCount(1);
 
-        const immediateState = await page.evaluate((nextUser) => {
+        const staticPlayerHtml = await (await page.request.get(`${baseURL}/player.html`)).text();
+        const immediateState = await page.evaluate(({ nextUser, staticHtml }) => {
             for (const id of [
                 'team-nav-banner',
                 'player-header',
@@ -902,6 +903,7 @@ for (const authTransition of [
             }
 
             window.__emitPlayerAuth(nextUser);
+            const staticDoc = new DOMParser().parseFromString(staticHtml, 'text/html');
             const ids = [
                 'team-nav-banner',
                 'player-header',
@@ -926,9 +928,15 @@ for (const authTransition of [
                 exportHidden: exportButton.classList.contains('hidden'),
                 exportUnbound: exportButton.onclick === null,
                 editControlPresent: Boolean(document.getElementById('open-edit-modal')),
-                unclearedContainers: ids.filter((id) => document.getElementById(id)?.innerHTML)
+                // Containers may only hold their initial static placeholder markup.
+                leakedContainers: ids.filter((id) => (document.getElementById(id)?.innerHTML || '').includes('old-private-')),
+                unclearedContainers: ids.filter((id) => {
+                    const html = document.getElementById(id)?.innerHTML || '';
+                    const initial = staticDoc.getElementById(id)?.innerHTML || '';
+                    return html !== '' && html !== initial;
+                })
             };
-        }, authTransition.user);
+        }, { nextUser: authTransition.user, staticHtml: staticPlayerHtml });
 
         expect(immediateState).toEqual({
             modalHidden: true,
@@ -943,6 +951,7 @@ for (const authTransition of [
             exportHidden: true,
             exportUnbound: true,
             editControlPresent: false,
+            leakedContainers: [],
             unclearedContainers: []
         });
 
