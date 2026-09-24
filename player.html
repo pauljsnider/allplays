@@ -319,6 +319,24 @@
             clearPlayerEditForm();
         }
 
+        // Auth changes restore each player container to its initial static
+        // loading/empty markup rather than blanking it: the prior viewer's data
+        // is still discarded, but tabs keep their placeholders while reloading.
+        const PLAYER_AUTH_SCOPED_CONTAINER_IDS = [
+            'team-nav-banner',
+            'player-header',
+            'season-overview',
+            'advanced-stats',
+            'game-stats',
+            'season-stats',
+            'player-events',
+            'content-clips',
+            'player-game-insights-body'
+        ];
+        const playerAuthScopedInitialMarkup = new Map(
+            PLAYER_AUTH_SCOPED_CONTAINER_IDS.map((id) => [id, document.getElementById(id)?.innerHTML ?? ''])
+        );
+
         function clearPlayerAuthScopedState() {
             playerEditModalGeneration += 1;
             currentPlayer = null;
@@ -342,19 +360,9 @@
             }
 
             document.getElementById('diamond-player-stats-status')?.remove();
-            [
-                'team-nav-banner',
-                'player-header',
-                'season-overview',
-                'advanced-stats',
-                'game-stats',
-                'season-stats',
-                'player-events',
-                'content-clips',
-                'player-game-insights-body'
-            ].forEach((id) => {
+            PLAYER_AUTH_SCOPED_CONTAINER_IDS.forEach((id) => {
                 const container = document.getElementById(id);
-                if (container) container.innerHTML = '';
+                if (container) container.innerHTML = playerAuthScopedInitialMarkup.get(id) ?? '';
             });
             document.getElementById('player-game-insights-section')?.classList.add('hidden');
             const backLinkContainer = document.getElementById('back-link-container');
