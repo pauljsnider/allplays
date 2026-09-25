@@ -327,6 +327,15 @@ export function isDiamondDeliveredPitch(result: DiamondCommandPayloadMap['record
   return result !== 'balk' && result !== 'pickoff_attempt';
 }
 
+// An intentional walk may carry live-play evidence (fielding credits or
+// non-award runner movement) only when anchored to a delivered live pitch. An
+// illegal pitch is a dead-ball infraction and cannot anchor either.
+function isDiamondIntentionalWalkLiveAnchor(
+  result: DiamondCommandPayloadMap['record_pitch']['result'] | null | undefined
+): boolean {
+  return !!result && result !== 'illegal_pitch' && isDiamondDeliveredPitch(result);
+}
+
 export function isDiamondTerminalPitchResult(result: DiamondCommandPayloadMap['record_pitch']['result'] | null): boolean {
   return result !== null && TERMINAL_PITCH_RESULTS.includes(result);
 }
@@ -518,7 +527,7 @@ function validatePlateAppearanceRunnerAdvance(
   const awardDestination = forced ? advance.to === next : advance.to === 'stay';
   const contradictory =
     (result === 'intentional_walk' &&
-      (!state.inning.lastPitchResult || !isDiamondDeliveredPitch(state.inning.lastPitchResult)) &&
+      !isDiamondIntentionalWalkLiveAnchor(state.inning.lastPitchResult) &&
       (!awardDestination || !['walk', 'other'].includes(advance.cause))) ||
     (result === 'hit_by_pitch' && (!awardDestination || !['hit_by_pitch', 'other'].includes(advance.cause))) ||
     (result === 'interference' && (!awardDestination || !['obstruction', 'other'].includes(advance.cause))) ||
@@ -913,10 +922,13 @@ export function validateDiamondPitchCauseEvidence(
   }
   if (
     result === 'intentional_walk' &&
-    (!pitchContext?.lastPitchResult || !isDiamondDeliveredPitch(pitchContext.lastPitchResult)) &&
+    !isDiamondIntentionalWalkLiveAnchor(pitchContext?.lastPitchResult) &&
     hasFieldingCredit
   ) {
-    throw new DiamondDomainError('fielding-result-mismatch', 'A pitchless intentional walk cannot carry fielding or batted-ball credits.');
+    throw new DiamondDomainError(
+      'fielding-result-mismatch',
+      'An intentional walk without a delivered live pitch cannot carry fielding or batted-ball credits.'
+    );
   }
   if (advances.some((advance) => ['balk', 'illegal_pitch', 'hit_by_pitch'].includes(advance.cause ?? '')) && hasFieldingCredit) {
     throw new DiamondDomainError('pitch-cause-fielding-mismatch', 'A dead-ball runner award cannot carry fielding or batted-ball credits.');
