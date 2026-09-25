@@ -65,6 +65,33 @@ describe('Diamond security boundary regressions', () => {
       expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
     }
   });
+  it.each([false, true])('rejects fielding credits on IBB anchored to an illegal pitch, attached=%s', (attached) => {
+    for (const fielding of [{ errors: [{ playerId: 'home-3' }] }, { assists: ['home-3'] }, { battedBall: 'ground' as const }]) {
+      const game = harness();
+      setBasicLineups(game);
+      game.submit('record_pitch', { ...currentMatchup(game), result: 'illegal_pitch' });
+      const payload: DiamondCommandPayloadMap['record_plate_appearance'] = {
+        ...currentMatchup(game),
+        result: 'intentional_walk',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      };
+      const play = attached ? game.submit('record_plate_appearance', payload) : null;
+      if (attached) game.submit('record_pitch', { ...currentMatchup(game), result: 'ball' });
+      const command = attached
+        ? game.command('record_fielding', { playEventId: play!.event!.eventId, fielding })
+        : game.command('record_plate_appearance', { ...payload, fielding });
+      expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('fielding-result-mismatch');
+      if (!attached) {
+        expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+          'fielding-result-mismatch'
+        );
+        game.submit('record_plate_appearance', payload);
+      }
+      expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+    }
+  });
   it.each(['out', 'third', 'home'] as const)('rejects pitchless IBB non-award movement to %s', (to) => {
     const game = harness();
     setBasicLineups(game);
@@ -130,14 +157,13 @@ describe('Diamond security boundary regressions', () => {
       runnerAdvances: [],
       outsOnPlay: 0
     };
-    for (const command of [
-      game.command('advance_runner', { ...advance, ...fielding }),
-      game.command('record_plate_appearance', { ...walk, runnerAdvances: [advance], ...fielding })
-    ]) {
-      expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('pitch-cause-fielding-mismatch');
-      expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
-        'pitch-cause-fielding-mismatch'
-      );
+    // An illegal pitch cannot anchor IBB movement, so the walk is rejected at the runner-cause check.
+    for (const [command, code] of [
+      [game.command('advance_runner', { ...advance, ...fielding }), 'pitch-cause-fielding-mismatch'],
+      [game.command('record_plate_appearance', { ...walk, runnerAdvances: [advance], ...fielding }), 'runner-cause-result-mismatch']
+    ] as const) {
+      expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe(code);
+      expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(code);
     }
     const play = game.submit('record_plate_appearance', walk);
     if (cause === 'passed_ball')
