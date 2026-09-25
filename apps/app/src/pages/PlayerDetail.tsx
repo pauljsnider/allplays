@@ -79,6 +79,11 @@ import type { AuthState, AuthUser } from '../lib/types';
 import type { ProfilePhotoSource } from '../lib/profilePhotoService';
 import { PREMIUM_FEATURES, PREMIUM_SCOPES, type PremiumAccessResult } from '../lib/premiumAccessService';
 import { usePremiumFeatureAccess } from '../lib/usePremiumFeatureAccess';
+import {
+  DIAMOND_PLAYER_STAT_CATALOG,
+  getCoverageAwareStatValue,
+  type CoverageAwareStatPresentation
+} from '../lib/adapters/legacyDiamondStatPresentation';
 
 type PlayerSectionId = 'overview' | 'schedule' | 'performance' | 'profile';
 type AthleteProfilePrivacy = 'private' | 'public';
@@ -139,12 +144,12 @@ const rsvpBadgeClasses: Record<RsvpResponse, string> = {
 
 function getPlayerSectionFromSearch(searchParams: URLSearchParams): PlayerSectionId {
   const section = searchParams.get('section');
-  return playerSections.some((item) => item.id === section) ? section as PlayerSectionId : 'overview';
+  return playerSections.some((item) => item.id === section) ? (section as PlayerSectionId) : 'overview';
 }
 
 function getReportPanelFromSearch(searchParams: URLSearchParams): ReportPanelId {
   const panel = searchParams.get('panel');
-  return reportPanels.some((item) => item.id === panel) ? panel as ReportPanelId : 'overview';
+  return reportPanels.some((item) => item.id === panel) ? (panel as ReportPanelId) : 'overview';
 }
 
 function getPlayerSectionRoute(sectionId: PlayerSectionId, panelId?: ReportPanelId) {
@@ -168,7 +173,10 @@ function hasPersistedPrivateProfileShareUrl(profile: Record<string, any> | null 
   return profile?.privacy !== 'public' && !!String(shareUrl || '').trim();
 }
 
-function hasPendingPublicProfilePublish({ hasUnsavedPublishChanges = false, saving = false }: { hasUnsavedPublishChanges?: boolean; saving?: boolean } = {}) {
+function hasPendingPublicProfilePublish({
+  hasUnsavedPublishChanges = false,
+  saving = false
+}: { hasUnsavedPublishChanges?: boolean; saving?: boolean } = {}) {
   return hasUnsavedPublishChanges || saving;
 }
 
@@ -227,8 +235,10 @@ function normalizeExistingAthleteClip(clip: Record<string, any>, index: number):
   if (!url) return null;
   const source = clip?.source === 'upload' ? 'upload' : 'external';
   const mediaType = ['image', 'video', 'link'].includes(compactString(clip?.mediaType).toLowerCase())
-    ? compactString(clip?.mediaType).toLowerCase() as 'image' | 'video' | 'link'
-    : source === 'upload' ? 'video' : 'link';
+    ? (compactString(clip?.mediaType).toLowerCase() as 'image' | 'video' | 'link')
+    : source === 'upload'
+      ? 'video'
+      : 'link';
 
   return {
     id: compactString(clip?.id) || `clip_${index + 1}`,
@@ -288,21 +298,23 @@ function createPendingAthleteClip(file: File): AthleteProfileClipDraftState {
 }
 
 function buildAthleteProfileClipSignature(clips: AthleteProfileClipDraftState[]) {
-  return JSON.stringify(clips.map((clip) => ({
-    id: clip.id,
-    source: clip.source,
-    mediaType: clip.mediaType,
-    title: clip.title,
-    label: clip.label,
-    url: clip.url,
-    storagePath: clip.storagePath,
-    mimeType: clip.mimeType,
-    sizeBytes: clip.sizeBytes,
-    uploadedAtMs: clip.uploadedAtMs,
-    pendingUpload: clip.pendingUpload,
-    fileName: clip.file?.name || '',
-    fileSize: clip.file?.size || null
-  })));
+  return JSON.stringify(
+    clips.map((clip) => ({
+      id: clip.id,
+      source: clip.source,
+      mediaType: clip.mediaType,
+      title: clip.title,
+      label: clip.label,
+      url: clip.url,
+      storagePath: clip.storagePath,
+      mimeType: clip.mimeType,
+      sizeBytes: clip.sizeBytes,
+      uploadedAtMs: clip.uploadedAtMs,
+      pendingUpload: clip.pendingUpload,
+      fileName: clip.file?.name || '',
+      fileSize: clip.file?.size || null
+    }))
+  );
 }
 
 function hasResolvedAthleteProfile(data: ParentAthleteProfileData | null | undefined) {
@@ -360,9 +372,7 @@ function buildAthleteProfileClipSaveState(clips: AthleteProfileClipDraftState[])
       return;
     }
 
-    const url = clip.source === 'external'
-      ? normalizeAthleteProfileHighlightClipUrl(clip.url)
-      : compactString(clip.url);
+    const url = clip.source === 'external' ? normalizeAthleteProfileHighlightClipUrl(clip.url) : compactString(clip.url);
     if (!url) return;
 
     draftClips.push({
@@ -385,6 +395,16 @@ function buildAthleteProfileClipSaveState(clips: AthleteProfileClipDraftState[])
 export function PlayerDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', playerId = '' } = useParams();
   const playerAuthUser = useMemo(() => mergePlayerAuthUser(auth.user, auth.profile), [auth.profile, auth.user]);
+  const playerStatsAuthKey = useMemo(
+    () =>
+      JSON.stringify({
+        uid: playerAuthUser?.uid || '',
+        isAdmin: playerAuthUser?.isAdmin === true,
+        coachOf: playerAuthUser?.coachOf || [],
+        parentOf: playerAuthUser?.parentOf || []
+      }),
+    [playerAuthUser]
+  );
   const [data, setData] = useState<ParentPlayerDetailData | null>(null);
   const hasLoadedPlayerAccess = data?.child.teamId === teamId && data.child.playerId === playerId;
   const playerPremiumAccess = usePremiumFeatureAccess({
@@ -411,51 +431,56 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   const videoClipsRequestKeyRef = useRef('');
   const statsDetailRequestKeyRef = useRef('');
 
-  const loadStatsDetail = useCallback(async ({
-    nextTeamId,
-    nextPlayerId,
-    force = false
-  }: {
-    nextTeamId: string;
-    nextPlayerId: string;
-    force?: boolean;
-  }): Promise<ParentPlayerStatsDetailData | null> => {
-    if (!playerAuthUser?.uid) {
-      return null;
-    }
-    if ((statsDetailState === 'loading' || statsDetailState === 'loaded' || statsDetailState === 'error') && !force) {
-      return null;
-    }
-
-    const requestKey = `${nextTeamId}::${nextPlayerId}`;
-    statsDetailRequestKeyRef.current = requestKey;
-    setStatsDetailState('loading');
-    setStatsDetailError(null);
-    try {
-      const statsDetail = await loadParentPlayerStatsDetail(playerAuthUser, nextTeamId, nextPlayerId);
-      if (statsDetailRequestKeyRef.current !== requestKey) {
+  const loadStatsDetail = useCallback(
+    async ({
+      nextTeamId,
+      nextPlayerId,
+      force = false
+    }: {
+      nextTeamId: string;
+      nextPlayerId: string;
+      force?: boolean;
+    }): Promise<ParentPlayerStatsDetailData | null> => {
+      if (!playerAuthUser?.uid) {
         return null;
       }
-      setData((current) => {
-        if (!current || current.child.teamId !== nextTeamId || current.child.playerId !== nextPlayerId) {
-          return current;
-        }
-        return {
-          ...current,
-          statsDetail,
-          statRows: statsDetail.statRows.length ? statsDetail.statRows : current.statRows
-        };
-      });
-      setStatsDetailState('loaded');
-      return statsDetail;
-    } catch (loadError: any) {
-      if (statsDetailRequestKeyRef.current === requestKey) {
-        setStatsDetailError(toAppServiceError(loadError, 'Unable to load full player stats.'));
-        setStatsDetailState('error');
+      if ((statsDetailState === 'loading' || statsDetailState === 'loaded' || statsDetailState === 'error') && !force) {
+        return null;
       }
-      return null;
-    }
-  }, [playerAuthUser, statsDetailState]);
+
+      const requestKey = `${playerStatsAuthKey}::${nextTeamId}::${nextPlayerId}`;
+      statsDetailRequestKeyRef.current = requestKey;
+      setStatsDetailState('loading');
+      setStatsDetailError(null);
+      try {
+        const statsDetail = force
+          ? await loadParentPlayerStatsDetail(playerAuthUser, nextTeamId, nextPlayerId, { force: true })
+          : await loadParentPlayerStatsDetail(playerAuthUser, nextTeamId, nextPlayerId);
+        if (statsDetailRequestKeyRef.current !== requestKey) {
+          return null;
+        }
+        setData((current) => {
+          if (!current || current.child.teamId !== nextTeamId || current.child.playerId !== nextPlayerId) {
+            return current;
+          }
+          return {
+            ...current,
+            statsDetail,
+            statRows: statsDetail.statRows.length ? statsDetail.statRows : current.statRows
+          };
+        });
+        setStatsDetailState('loaded');
+        return statsDetail;
+      } catch (loadError: any) {
+        if (statsDetailRequestKeyRef.current === requestKey) {
+          setStatsDetailError(toAppServiceError(loadError, 'Unable to load full player stats.'));
+          setStatsDetailState('error');
+        }
+        return null;
+      }
+    },
+    [playerAuthUser, playerStatsAuthKey, statsDetailState]
+  );
 
   const loadVideoClips = async ({
     nextTeamId,
@@ -505,53 +530,56 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     }
   };
 
-  const loadAthleteProfile = useCallback(async ({
-    nextTeamId,
-    nextPlayerId,
-    force = false
-  }: {
-    nextTeamId: string;
-    nextPlayerId: string;
-    force?: boolean;
-  }): Promise<ParentAthleteProfileData | null> => {
-    if (!playerAuthUser?.uid) {
-      return null;
-    }
-    if (athleteProfileLoading && !force) {
-      return null;
-    }
-
-    const requestKey = `${nextTeamId}::${nextPlayerId}`;
-    athleteProfileRequestKeyRef.current = requestKey;
-    setAthleteProfileLoading(true);
-    setAthleteProfileError(null);
-    try {
-      const athleteProfile = await loadParentPlayerAthleteProfile(playerAuthUser, nextTeamId, nextPlayerId);
-      if (athleteProfileRequestKeyRef.current !== requestKey) {
+  const loadAthleteProfile = useCallback(
+    async ({
+      nextTeamId,
+      nextPlayerId,
+      force = false
+    }: {
+      nextTeamId: string;
+      nextPlayerId: string;
+      force?: boolean;
+    }): Promise<ParentAthleteProfileData | null> => {
+      if (!playerAuthUser?.uid) {
         return null;
       }
-      setData((current) => {
-        if (!current || current.child.teamId !== nextTeamId || current.child.playerId !== nextPlayerId) {
-          return current;
+      if (athleteProfileLoading && !force) {
+        return null;
+      }
+
+      const requestKey = `${nextTeamId}::${nextPlayerId}`;
+      athleteProfileRequestKeyRef.current = requestKey;
+      setAthleteProfileLoading(true);
+      setAthleteProfileError(null);
+      try {
+        const athleteProfile = await loadParentPlayerAthleteProfile(playerAuthUser, nextTeamId, nextPlayerId);
+        if (athleteProfileRequestKeyRef.current !== requestKey) {
+          return null;
         }
-        return {
-          ...current,
-          athleteProfile
-        };
-      });
-      setAthleteProfileLoaded(true);
-      return athleteProfile;
-    } catch (loadError: any) {
-      if (athleteProfileRequestKeyRef.current === requestKey) {
-        setAthleteProfileError(toAppServiceError(loadError, 'Unable to load athlete profile.'));
+        setData((current) => {
+          if (!current || current.child.teamId !== nextTeamId || current.child.playerId !== nextPlayerId) {
+            return current;
+          }
+          return {
+            ...current,
+            athleteProfile
+          };
+        });
+        setAthleteProfileLoaded(true);
+        return athleteProfile;
+      } catch (loadError: any) {
+        if (athleteProfileRequestKeyRef.current === requestKey) {
+          setAthleteProfileError(toAppServiceError(loadError, 'Unable to load athlete profile.'));
+        }
+        return null;
+      } finally {
+        if (athleteProfileRequestKeyRef.current === requestKey) {
+          setAthleteProfileLoading(false);
+        }
       }
-      return null;
-    } finally {
-      if (athleteProfileRequestKeyRef.current === requestKey) {
-        setAthleteProfileLoading(false);
-      }
-    }
-  }, [athleteProfileLoading, playerAuthUser]);
+    },
+    [athleteProfileLoading, playerAuthUser]
+  );
 
   const refreshPlayer = async ({
     showLoading = data === null,
@@ -574,27 +602,34 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
         return;
       }
       const nextAthleteProfileLoaded = hasResolvedAthleteProfile(nextData.athleteProfile);
-      const preserveAthleteProfile = athleteProfileLoaded && !nextAthleteProfileLoaded && !!data
-        && data.child.teamId === nextData.child.teamId
-        && data.child.playerId === nextData.child.playerId;
-      const reloadStatsDetail = activeSection === 'performance' && (statsDetailState === 'loaded' || statsDetailState === 'error')
-        && !!data
-        && data.child.teamId === nextData.child.teamId
-        && data.child.playerId === nextData.child.playerId;
+      const preserveAthleteProfile =
+        athleteProfileLoaded &&
+        !nextAthleteProfileLoaded &&
+        !!data &&
+        data.child.teamId === nextData.child.teamId &&
+        data.child.playerId === nextData.child.playerId;
+      const reloadStatsDetail =
+        activeSection === 'performance' &&
+        (statsDetailState === 'loaded' || statsDetailState === 'error') &&
+        !!data &&
+        data.child.teamId === nextData.child.teamId &&
+        data.child.playerId === nextData.child.playerId;
       setData((current) => ({
         ...nextData,
-        athleteProfile: preserveAthleteProfile && current
-          ? current.athleteProfile
-          : nextData.athleteProfile,
-        statsDetail: reloadStatsDetail ? null : nextData.statsDetail
+        athleteProfile: preserveAthleteProfile && current ? current.athleteProfile : nextData.athleteProfile,
+        statsDetail: reloadStatsDetail && current ? current.statsDetail : nextData.statsDetail
       }));
       setAthleteProfileLoaded(nextAthleteProfileLoaded || preserveAthleteProfile);
       setAthleteProfileError(null);
       setVideoClipsError(null);
       if (reloadStatsDetail) {
         statsDetailRequestKeyRef.current = '';
-        setStatsDetailState('idle');
         setStatsDetailError(null);
+        await loadStatsDetail({
+          nextTeamId: nextData.child.teamId,
+          nextPlayerId: nextData.child.playerId,
+          force: true
+        });
       }
       if (reloadVideoClips) {
         await loadVideoClips({
@@ -610,7 +645,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
           force: true
         });
         if (nextAthleteProfile) {
-          setData((current) => current ? { ...current, athleteProfile: nextAthleteProfile } : current);
+          setData((current) => (current ? { ...current, athleteProfile: nextAthleteProfile } : current));
         }
       }
     } catch (loadError: any) {
@@ -634,6 +669,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   };
 
   useEffect(() => {
+    ++playerDetailRequestIdRef.current;
     athleteProfileRequestKeyRef.current = '';
     videoClipsRequestKeyRef.current = '';
     statsDetailRequestKeyRef.current = '';
@@ -646,16 +682,25 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     setVideoClipsError(null);
     setStatsDetailState('idle');
     setStatsDetailError(null);
+    setData(null);
     refreshPlayer({ showLoading: true, reloadVideoClips: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.user?.uid, teamId, playerId]);
+  }, [playerStatsAuthKey, teamId, playerId]);
 
   useEffect(() => {
     setActiveSection(getPlayerSectionFromSearch(searchParams));
   }, [searchParams]);
 
   useEffect(() => {
-    if (activeSection !== 'profile' || !data || !data.access.isLinkedParent || athleteProfileLoaded || athleteProfileLoading || hasResolvedAthleteProfile(data.athleteProfile)) return;
+    if (
+      activeSection !== 'profile' ||
+      !data ||
+      !data.access.isLinkedParent ||
+      athleteProfileLoaded ||
+      athleteProfileLoading ||
+      hasResolvedAthleteProfile(data.athleteProfile)
+    )
+      return;
     void loadAthleteProfile({
       nextTeamId: data.child.teamId,
       nextPlayerId: data.child.playerId
@@ -706,7 +751,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   if (loading) {
     return (
       <div className="app-card p-6 text-center">
-        <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary-600" aria-hidden="true" />
+        <Loader2 className="text-primary-600 mx-auto h-8 w-8 animate-spin" aria-hidden="true" />
         <div className="mt-3 text-sm font-black text-gray-900">Loading player</div>
         <div className="mt-1 text-xs font-semibold text-gray-500">Pulling schedule, stats, clips, and profile links.</div>
       </div>
@@ -741,24 +786,57 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
           <Link to="/home" className="ghost-button !h-9 !min-h-9 !w-9 !flex-none !p-0" aria-label="Back to Home" title="Back to Home">
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </Link>
-          <div className="flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-base font-black text-primary-700">
-            {data.player.photoUrl ? <AvatarImage src={data.player.photoUrl} alt={`${playerName} profile photo`} loading="lazy" decoding="async" className="h-full w-full object-cover" fallback={<span>{jersey || getInitials(playerName)}</span>} /> : <span>{jersey || getInitials(playerName)}</span>}
+          <div className="bg-primary-50 text-primary-700 flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-2xl text-base font-black">
+            {data.player.photoUrl ? (
+              <AvatarImage
+                src={data.player.photoUrl}
+                alt={`${playerName} profile photo`}
+                loading="lazy"
+                decoding="async"
+                className="h-full w-full object-cover"
+                fallback={<span>{jersey || getInitials(playerName)}</span>}
+              />
+            ) : (
+              <span>{jersey || getInitials(playerName)}</span>
+            )}
           </div>
           <div className="min-w-0 flex-1">
             <div className="app-label">Player</div>
-            <h1 className="truncate text-xl font-black leading-tight text-gray-950">{playerName}</h1>
+            <h1 className="truncate text-xl leading-tight font-black text-gray-950">{playerName}</h1>
             <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">{[jersey, teamName].filter(Boolean).join(' · ')}</p>
           </div>
-          <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !flex-none !p-0 sm:!w-auto sm:!px-3 text-xs" onClick={() => refreshPlayer({ showLoading: false })} disabled={refreshing} aria-label="Refresh player" title="Refresh player">
+          <button
+            type="button"
+            className="ghost-button !h-9 !min-h-9 !w-9 !flex-none !p-0 text-xs sm:!w-auto sm:!px-3"
+            onClick={() => refreshPlayer({ showLoading: false })}
+            disabled={refreshing}
+            aria-label="Refresh player"
+            title="Refresh player"
+          >
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
             <span className="hidden sm:inline">Refresh</span>
           </button>
         </div>
         {isLinkedParent ? (
           <div className="flex gap-1.5 overflow-x-auto border-t border-gray-100 px-3 py-1.5 sm:px-4">
-            <SignalChip icon={ClipboardCheck} label="RSVP" value={String(data.actionCounts.rsvpNeeded)} urgent={data.actionCounts.rsvpNeeded > 0} />
-            <SignalChip icon={ClipboardCheck} label="Packets" value={String(data.actionCounts.packetsReady)} urgent={data.actionCounts.packetsReady > 0} />
-            <SignalChip icon={CheckCircle2} label="Tasks" value={String(data.actionCounts.openAssignments)} urgent={data.actionCounts.openAssignments > 0} />
+            <SignalChip
+              icon={ClipboardCheck}
+              label="RSVP"
+              value={String(data.actionCounts.rsvpNeeded)}
+              urgent={data.actionCounts.rsvpNeeded > 0}
+            />
+            <SignalChip
+              icon={ClipboardCheck}
+              label="Packets"
+              value={String(data.actionCounts.packetsReady)}
+              urgent={data.actionCounts.packetsReady > 0}
+            />
+            <SignalChip
+              icon={CheckCircle2}
+              label="Tasks"
+              value={String(data.actionCounts.openAssignments)}
+              urgent={data.actionCounts.openAssignments > 0}
+            />
           </div>
         ) : null}
       </section>
@@ -791,22 +869,28 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
           data={data}
           statsDetailState={statsDetailState}
           statsDetailError={statsDetailError}
-          onRetryStatsDetail={() => loadStatsDetail({
-            nextTeamId: data.child.teamId,
-            nextPlayerId: data.child.playerId,
-            force: true
-          })}
+          onRetryStatsDetail={() =>
+            loadStatsDetail({
+              nextTeamId: data.child.teamId,
+              nextPlayerId: data.child.playerId,
+              force: true
+            })
+          }
           videoClipsLoading={videoClipsLoading}
           videoClipsError={videoClipsError}
-          onVideoClipsOpen={() => loadVideoClips({
-            nextTeamId: data.child.teamId,
-            nextPlayerId: data.child.playerId
-          })}
-          onRetryVideoClips={() => loadVideoClips({
-            nextTeamId: data.child.teamId,
-            nextPlayerId: data.child.playerId,
-            force: true
-          })}
+          onVideoClipsOpen={() =>
+            loadVideoClips({
+              nextTeamId: data.child.teamId,
+              nextPlayerId: data.child.playerId
+            })
+          }
+          onRetryVideoClips={() =>
+            loadVideoClips({
+              nextTeamId: data.child.teamId,
+              nextPlayerId: data.child.playerId,
+              force: true
+            })
+          }
           initialPanel={getReportPanelFromSearch(searchParams)}
           premiumAccess={playerPremiumAccess}
         />
@@ -842,16 +926,27 @@ function OverviewSection({ data, showParentActions = true }: { data: ParentPlaye
           <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none text-emerald-700" aria-hidden="true" />
           <div>
             <div className="text-sm font-black text-emerald-900">{showParentActions ? 'Caught up' : 'Player profile'}</div>
-            <div className="mt-0.5 text-xs font-semibold text-emerald-700">{showParentActions ? 'No open parent actions for this player.' : 'Team-visible player details are ready.'}</div>
+            <div className="mt-0.5 text-xs font-semibold text-emerald-700">
+              {showParentActions ? 'No open parent actions for this player.' : 'Team-visible player details are ready.'}
+            </div>
           </div>
         </div>
       )}
 
-      {data.nextEvent ? <PlayerEventCard event={data.nextEvent} featured /> : <EmptyCard icon={CalendarDays} title="No upcoming events" detail="This player's schedule is clear." />}
+      {data.nextEvent ? (
+        <PlayerEventCard event={data.nextEvent} featured />
+      ) : (
+        <EmptyCard icon={CalendarDays} title="No upcoming events" detail="This player's schedule is clear." />
+      )}
 
       <section className="grid gap-3 sm:grid-cols-3">
         <InfoCard icon={CalendarDays} title="Events" detail={`${data.events.length} total`} to={getPlayerSectionRoute('schedule')} />
-        <InfoCard icon={BarChart3} title="Reports" detail={`${data.statRows.length} recent games`} to={getPlayerSectionRoute('performance')} />
+        <InfoCard
+          icon={BarChart3}
+          title="Reports"
+          detail={`${data.statRows.length} recent games`}
+          to={getPlayerSectionRoute('performance')}
+        />
         <InfoCard icon={ImagePlus} title="Clips" detail={`${data.clips.length} clips`} to={getPlayerSectionRoute('performance', 'clips')} />
       </section>
     </div>
@@ -860,17 +955,29 @@ function OverviewSection({ data, showParentActions = true }: { data: ParentPlaye
 
 function PlayerScheduleSection({ events }: { events: ParentScheduleEvent[] }) {
   const upcoming = useMemo(() => events.filter((event) => event.date.getTime() >= startOfDay(new Date()).getTime()), [events]);
-  const recent = useMemo(() => events.filter((event) => event.date.getTime() < startOfDay(new Date()).getTime()).slice().sort((a, b) => b.date.getTime() - a.date.getTime()).slice(0, 6), [events]);
+  const recent = useMemo(
+    () =>
+      events
+        .filter((event) => event.date.getTime() < startOfDay(new Date()).getTime())
+        .slice()
+        .sort((a, b) => b.date.getTime() - a.date.getTime())
+        .slice(0, 6),
+    [events]
+  );
   return (
     <div className="player-section-content space-y-4">
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <h2 className="app-section-title">Upcoming</h2>
-          <Link to="/schedule" className="text-sm font-black text-primary-700">Full schedule</Link>
+          <Link to="/schedule" className="text-primary-700 text-sm font-black">
+            Full schedule
+          </Link>
         </div>
-        {upcoming.length ? upcoming.map((event) => (
-          <PlayerEventCard key={event.eventKey} event={event} />
-        )) : <EmptyCard icon={CalendarDays} title="No upcoming events" detail="Nothing scheduled for this player yet." />}
+        {upcoming.length ? (
+          upcoming.map((event) => <PlayerEventCard key={event.eventKey} event={event} />)
+        ) : (
+          <EmptyCard icon={CalendarDays} title="No upcoming events" detail="Nothing scheduled for this player yet." />
+        )}
       </section>
       {recent.length ? (
         <section className="space-y-3">
@@ -941,9 +1048,9 @@ function ReportsSection({
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="app-label">Player reports</div>
-            <h2 className="mt-1 app-section-title">Game history and performance</h2>
+            <h2 className="app-section-title mt-1">Game history and performance</h2>
           </div>
-          <BarChart3 className="h-5 w-5 text-primary-600" aria-hidden="true" />
+          <BarChart3 className="text-primary-600 h-5 w-5" aria-hidden="true" />
         </div>
         <div className="mt-3 flex gap-1.5 overflow-x-auto rounded-2xl border border-gray-200 bg-gray-50 p-1">
           {reportPanels.map((panel) => {
@@ -952,7 +1059,7 @@ function ReportsSection({
               <button
                 key={panel.id}
                 type="button"
-                className={`min-h-9 flex-none rounded-xl px-3 text-xs font-black transition ${active ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-600 hover:text-gray-950'}`}
+                className={`min-h-9 flex-none rounded-xl px-3 text-xs font-black transition ${active ? 'text-primary-700 bg-white shadow-sm' : 'text-gray-600 hover:text-gray-950'}`}
                 onClick={() => selectPanel(panel.id)}
                 aria-pressed={active}
               >
@@ -964,25 +1071,36 @@ function ReportsSection({
 
         <div className="mt-3">
           {statsDetailState === 'loading' && !statsDetail ? <StatsDetailLoadingNotice /> : null}
-          {statsDetailError && !statsDetail ? <StatsDetailErrorNotice error={statsDetailError} onRetry={onRetryStatsDetail} /> : null}
-          {activePanel === 'overview' ? <StatsOverviewPanel statsDetail={statsDetail} rows={reportRows} loading={statsDetailState === 'loading'} premiumAccess={premiumAccess} /> : null}
-          {activePanel === 'games' ? <GameStatsPanel rows={reportRows} hasMore={statsDetail?.summary.hasMoreGames} gameLimit={statsDetail?.summary.gameLimit} premiumAccess={premiumAccess} /> : null}
-          {activePanel === 'season' ? <SeasonAveragesPanel rows={reportRows} statsDetail={statsDetail} /> : null}
-          {activePanel === 'events' ? <GameEventsPanel statsDetail={statsDetail} fallbackEvents={data.events} loading={statsDetailState === 'loading'} /> : null}
-          {activePanel === 'clips' ? (
-            <ClipsPanel
-              clips={data.clips}
-              loading={videoClipsLoading}
-              error={videoClipsError}
-              onRetry={onRetryVideoClips}
+          {statsDetailError ? <StatsDetailErrorNotice error={statsDetailError} onRetry={onRetryStatsDetail} /> : null}
+          {activePanel === 'overview' ? (
+            <StatsOverviewPanel
+              statsDetail={statsDetail}
+              rows={reportRows}
+              loading={statsDetailState === 'loading'}
+              premiumAccess={premiumAccess}
             />
+          ) : null}
+          {activePanel === 'games' ? (
+            <GameStatsPanel
+              rows={reportRows}
+              hasMore={statsDetail?.summary.hasMoreGames}
+              gameLimit={statsDetail?.summary.gameLimit}
+              premiumAccess={premiumAccess}
+            />
+          ) : null}
+          {activePanel === 'season' ? <SeasonAveragesPanel rows={reportRows} statsDetail={statsDetail} /> : null}
+          {activePanel === 'events' ? (
+            <GameEventsPanel statsDetail={statsDetail} fallbackEvents={data.events} loading={statsDetailState === 'loading'} />
+          ) : null}
+          {activePanel === 'clips' ? (
+            <ClipsPanel clips={data.clips} loading={videoClipsLoading} error={videoClipsError} onRetry={onRetryVideoClips} />
           ) : null}
         </div>
       </section>
 
       {trackingRows.length ? (
         <section className="app-card p-4">
-          <div className="flex items-center gap-2 text-sm font-black text-primary-800">
+          <div className="text-primary-800 flex items-center gap-2 text-sm font-black">
             <Trophy className="h-4 w-4" aria-hidden="true" />
             Tracking
           </div>
@@ -990,7 +1108,9 @@ function ReportsSection({
             {trackingRows.map((item: any) => (
               <div key={item.id} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
                 <div className="text-sm font-black text-gray-950">{item.title}</div>
-                <div className={`mt-1 text-xs font-bold ${item.isComplete ? 'text-emerald-700' : 'text-gray-500'}`}>{item.isComplete ? 'Complete' : 'Open'}</div>
+                <div className={`mt-1 text-xs font-bold ${item.isComplete ? 'text-emerald-700' : 'text-gray-500'}`}>
+                  {item.isComplete ? 'Complete' : 'Open'}
+                </div>
               </div>
             ))}
           </div>
@@ -1002,7 +1122,7 @@ function ReportsSection({
 
 function StatsDetailLoadingNotice() {
   return (
-    <div className="mb-3 rounded-xl border border-primary-100 bg-primary-50 p-3 text-sm font-semibold text-primary-800">
+    <div className="border-primary-100 bg-primary-50 text-primary-800 mb-3 rounded-xl border p-3 text-sm font-semibold">
       <Loader2 className="mr-2 inline h-4 w-4 animate-spin" aria-hidden="true" />
       Loading full-season player stats...
     </div>
@@ -1013,7 +1133,9 @@ function StatsDetailErrorNotice({ error, onRetry }: { error: AppServiceError; on
   return (
     <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3">
       <div className="text-sm font-black text-rose-900">{error.message}</div>
-      <button type="button" className="mt-2 text-xs font-black text-rose-700" onClick={onRetry}>Retry stats</button>
+      <button type="button" className="mt-2 text-xs font-black text-rose-700" onClick={onRetry}>
+        Retry stats
+      </button>
     </div>
   );
 }
@@ -1030,29 +1152,68 @@ function StatsOverviewPanel({
   premiumAccess: PremiumAccessResult;
 }) {
   const summary = statsDetail?.summary;
-  const averages = summary?.averages || Object.fromEntries(getSeasonAverages(rows).map(([key, value]) => [key.toLowerCase(), Number(value) || 0]));
-  const totals = summary?.totals || buildDisplayTotals(rows);
+  const hasDiamondRows = rows.some((row) => row.statPresentation?.isDiamond === true);
+  const averages =
+    summary?.averages ||
+    (hasDiamondRows ? {} : Object.fromEntries(getSeasonAverages(rows).map(([key, value]) => [key.toLowerCase(), Number(value) || 0])));
+  const totals = summary?.totals || (hasDiamondRows ? {} : buildDisplayTotals(rows, { completeOnly: true }));
   const primaryAverage = Object.entries(averages)[0];
   const primaryTotal = Object.entries(totals)[0];
-  const primaryStatKey = primaryAverage?.[0] || primaryTotal?.[0] || Object.keys(rows[0]?.stats || {})[0] || '';
+  const primaryStatKey = primaryAverage?.[0] || primaryTotal?.[0] || (hasDiamondRows ? '' : Object.keys(rows[0]?.stats || {})[0] || '');
   const avgMinutes = summary && summary.gamesWithTime > 0 ? summary.totalTimeMs / 60000 / summary.gamesWithTime : null;
-  const cards = [
-    { label: 'Games', value: String(summary?.gamesPlayed ?? rows.length), sub: summary?.hasMoreGames ? `Last ${summary.gameLimit}` : 'Tracked' },
-    primaryAverage ? { label: `${primaryAverage[0].toUpperCase()}/G`, value: formatAverage(Number(primaryAverage[1])), sub: 'Average' } : null,
-    primaryTotal ? { label: primaryTotal[0].toUpperCase(), value: formatAverage(Number(primaryTotal[1])), sub: 'Total' } : null,
-    avgMinutes !== null ? { label: 'MIN/G', value: formatAverage(avgMinutes), sub: 'Playing time' } : null
-  ].filter(Boolean) as Array<{ label: string; value: string; sub: string }>;
+  const diamondPresentation = summary?.diamond?.hasDiamond ? summary.statPresentation : undefined;
+  const chartTotals = diamondPresentation
+    ? Object.fromEntries(Object.entries(totals).filter(([key]) => diamondPresentation.statCoverage[key.toLowerCase()] === 'complete'))
+    : totals;
+  const cards = diamondPresentation
+    ? [
+        {
+          label: 'Games',
+          value: String(summary?.gamesPlayed ?? rows.length),
+          sub: summary?.hasMoreGames ? `Last ${summary.gameLimit}` : 'Tracked'
+        },
+        ...(summary?.statDefinitions || DIAMOND_PLAYER_STAT_CATALOG)
+          .filter((definition) => definition.topStat === true)
+          .slice(0, 3)
+          .map((definition) => {
+            const displayed = getCoverageAwareStatValue(diamondPresentation, totals, String(definition.id || ''), definition);
+            return {
+              label: String(definition.label || definition.id || ''),
+              value: displayed.text,
+              sub: displayed.observed ? 'Observed · partial' : displayed.available ? 'Season' : 'Not collected'
+            };
+          })
+      ]
+    : ([
+        {
+          label: 'Games',
+          value: String(summary?.gamesPlayed ?? rows.length),
+          sub: summary?.hasMoreGames ? `Last ${summary.gameLimit}` : 'Tracked'
+        },
+        primaryAverage
+          ? { label: `${primaryAverage[0].toUpperCase()}/G`, value: formatAverage(Number(primaryAverage[1])), sub: 'Average' }
+          : null,
+        primaryTotal ? { label: primaryTotal[0].toUpperCase(), value: formatAverage(Number(primaryTotal[1])), sub: 'Total' } : null,
+        avgMinutes !== null ? { label: 'MIN/G', value: formatAverage(avgMinutes), sub: 'Playing time' } : null
+      ].filter(Boolean) as Array<{ label: string; value: string; sub: string }>);
 
   return (
     <div className="space-y-3">
+      {summary?.diamond?.hasDiamond ? <DiamondPlayerStatsNotice summary={summary} /> : null}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {cards.length ? cards.slice(0, 4).map((card) => (
-          <div key={card.label} className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-center">
-            <div className="text-xl font-black text-gray-950">{card.value}</div>
-            <div className="mt-1 truncate text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{card.label}</div>
-            <div className="mt-0.5 text-[10px] font-bold text-gray-400">{card.sub}</div>
+        {cards.length ? (
+          cards.slice(0, 4).map((card) => (
+            <div key={card.label} className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-center">
+              <div className="text-xl font-black text-gray-950">{card.value}</div>
+              <div className="mt-1 truncate text-[10px] font-black tracking-[0.04em] text-gray-500 uppercase">{card.label}</div>
+              <div className="mt-0.5 text-[10px] font-bold text-gray-400">{card.sub}</div>
+            </div>
+          ))
+        ) : (
+          <div className="col-span-full rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">
+            No season stats yet.
           </div>
-        )) : <div className="col-span-full rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No season stats yet.</div>}
+        )}
       </div>
 
       <PremiumGate access={premiumAccess} label="advanced player analytics">
@@ -1060,13 +1221,13 @@ function StatsOverviewPanel({
           {summary?.topStats.length ? (
             <div className="grid gap-2 sm:grid-cols-2">
               {summary.topStats.map((stat) => (
-                <div key={stat.id} className="rounded-xl border border-primary-100 bg-primary-50 p-3">
-                  <div className="text-xs font-black uppercase tracking-[0.04em] text-primary-700">{stat.label}</div>
+                <div key={stat.id} className="border-primary-100 bg-primary-50 rounded-xl border p-3">
+                  <div className="text-primary-700 text-xs font-black tracking-[0.04em] uppercase">{stat.label}</div>
                   <div className="mt-1 flex items-end justify-between gap-3">
-                    <div className="text-2xl font-black text-primary-900">#{stat.rank}</div>
+                    <div className="text-primary-900 text-2xl font-black">#{stat.rank}</div>
                     <div className="text-right">
                       <div className="text-lg font-black text-gray-950">{stat.formattedValue}</div>
-                      <div className="text-[10px] font-bold uppercase tracking-[0.04em] text-gray-500">of {stat.totalPlayers}</div>
+                      <div className="text-[10px] font-bold tracking-[0.04em] text-gray-500 uppercase">of {stat.totalPlayers}</div>
                     </div>
                   </div>
                 </div>
@@ -1074,7 +1235,7 @@ function StatsOverviewPanel({
             </div>
           ) : null}
 
-          <PlayerChartsPanel rows={rows} totals={totals} primaryStatKey={primaryStatKey} />
+          <PlayerChartsPanel rows={rows} totals={chartTotals} primaryStatKey={primaryStatKey} />
 
           {summary?.trends.length ? (
             <div className="space-y-2">
@@ -1082,32 +1243,123 @@ function StatsOverviewPanel({
                 <div key={trend.key} className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
                   <div>
                     <div className="text-sm font-black text-gray-950">{trend.label}</div>
-                    <div className="text-xs font-semibold text-gray-500">Recent {formatAverage(trend.recentAverage)} vs earlier {formatAverage(trend.earlierAverage)}</div>
+                    <div className="text-xs font-semibold text-gray-500">
+                      Recent {formatAverage(trend.recentAverage)} vs earlier {formatAverage(trend.earlierAverage)}
+                    </div>
                   </div>
-                  <div className={`flex items-center gap-1 text-sm font-black ${trend.direction === 'up' ? 'text-emerald-700' : trend.direction === 'down' ? 'text-rose-700' : 'text-gray-500'}`}>
-                    {trend.direction === 'up' && ArrowUp ? <ArrowUp className="h-4 w-4" aria-hidden="true" /> : trend.direction === 'down' && ArrowDown ? <ArrowDown className="h-4 w-4" aria-hidden="true" /> : null}
+                  <div
+                    className={`flex items-center gap-1 text-sm font-black ${trend.direction === 'up' ? 'text-emerald-700' : trend.direction === 'down' ? 'text-rose-700' : 'text-gray-500'}`}
+                  >
+                    {trend.direction === 'up' && ArrowUp ? (
+                      <ArrowUp className="h-4 w-4" aria-hidden="true" />
+                    ) : trend.direction === 'down' && ArrowDown ? (
+                      <ArrowDown className="h-4 w-4" aria-hidden="true" />
+                    ) : null}
                     {trend.direction === 'neutral' ? 'Even' : `${trend.percentChange}%`}
                   </div>
                 </div>
               ))}
             </div>
-          ) : loading ? null : <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">Track more games to see trends.</div>}
+          ) : loading ? null : (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">
+              Track more games to see trends.
+            </div>
+          )}
         </div>
       </PremiumGate>
     </div>
   );
 }
 
-function GameStatsPanel({ rows, hasMore = false, gameLimit = 0, premiumAccess }: { rows: ParentPlayerStatRow[]; hasMore?: boolean; gameLimit?: number; premiumAccess: PremiumAccessResult }) {
+function DiamondPlayerStatsNotice({ summary }: { summary: ParentPlayerStatsDetailData['summary'] }) {
+  if (!summary.diamond?.hasDiamond) return null;
+  const publicProjectionStatus =
+    summary.diamond.publicStatsStatus === 'complete'
+      ? 'Complete'
+      : summary.diamond.publicStatsStatus === 'partial'
+        ? 'Partial'
+        : summary.diamond.publicStatsStatus === 'unavailable'
+          ? 'Unavailable'
+          : 'Unknown';
+  return (
+    <div
+      className={`rounded-xl border p-3 ${summary.diamond.pending ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-sky-200 bg-sky-50 text-sky-950'}`}
+      role="status"
+      aria-label="Diamond player statistics status"
+    >
+      <div className="text-xs font-black tracking-[0.04em] uppercase">
+        Diamond scorebook stats · {summary.diamond.statVisibility === 'manager-internal' ? 'Manager internal' : 'Public'} · Read only
+      </div>
+      <div className="mt-0.5 text-xs font-semibold">
+        {summary.diamond.pending
+          ? 'A projection is pending. Missing values stay unavailable instead of becoming zero.'
+          : 'Complete values and partial observations are derived from the authoritative play ledger.'}
+      </div>
+      <div className="mt-1 text-[11px] font-bold opacity-75">
+        Source revisions: {summary.diamond.sourceRevisions.length ? summary.diamond.sourceRevisions.join(', ') : 'unavailable'}
+      </div>
+      {summary.diamond.requestedStatVisibility === 'manager-internal' && summary.diamond.statVisibility !== 'manager-internal' ? (
+        <div className="mt-1 text-[11px] font-bold">
+          Internal stats are unavailable. Public projection status: {publicProjectionStatus}. Refresh to retry.
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CoverageAwarePlayerValue({
+  presentation,
+  stats,
+  statKey,
+  definition
+}: {
+  presentation: CoverageAwareStatPresentation;
+  stats: Record<string, unknown>;
+  statKey: string;
+  definition?: Record<string, unknown>;
+}) {
+  const displayed = getCoverageAwareStatValue(presentation, stats, statKey, definition || {});
+  return (
+    <span
+      className="inline-flex flex-col items-center"
+      aria-label={
+        displayed.observed ? `${displayed.text}, observed from partial tracking` : displayed.available ? displayed.text : 'Not collected'
+      }
+    >
+      <span>{displayed.text}</span>
+      {displayed.observed ? <span className="text-[8px] font-black tracking-wide text-amber-700 uppercase">Observed</span> : null}
+    </span>
+  );
+}
+
+function GameStatsPanel({
+  rows,
+  hasMore = false,
+  gameLimit = 0,
+  premiumAccess
+}: {
+  rows: ParentPlayerStatRow[];
+  hasMore?: boolean;
+  gameLimit?: number;
+  premiumAccess: PremiumAccessResult;
+}) {
   return (
     <div className="space-y-3">
-      {hasMore ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-900">Showing the latest {gameLimit} tracked games for speed.</div> : null}
+      {hasMore ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-900">
+          Showing the latest {gameLimit} tracked games for speed.
+        </div>
+      ) : null}
       <PremiumGate access={premiumAccess} label="game-by-game performance trends">
         <GameStatsTrendPanel rows={rows} />
       </PremiumGate>
-      {rows.length ? rows.map((row) => (
-        <StatRow key={row.event.eventKey} row={row} />
-      )) : <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No tracked game stats yet.</div>}
+      {rows.length ? (
+        rows.map((row) => <StatRow key={row.event.eventKey} row={row} />)
+      ) : (
+        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">
+          No tracked game stats yet.
+        </div>
+      )}
     </div>
   );
 }
@@ -1130,7 +1382,7 @@ function PlayerChartsPanel({
     .reverse()
     .map((row) => ({
       label: row.event.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      value: Number((row.stats || {})[primaryStatKey]) || 0,
+      value: Number((row.statPresentation?.isDiamond ? row.completeStats : row.stats)?.[primaryStatKey]) || 0,
       opponent: String(row.event.opponent || row.event.title || 'Game').replace(/^vs\.?\s*/i, '')
     }));
   const minuteSeries = rows
@@ -1163,16 +1415,16 @@ function RecentStatBarChart({ title, series }: { title: string; series: Array<{ 
     <div className="rounded-xl border border-gray-200 bg-white p-3">
       <div className="flex items-center justify-between gap-3">
         <div className="text-sm font-black text-gray-950">{title}</div>
-        <div className="text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">Last {series.length}</div>
+        <div className="text-[10px] font-black tracking-[0.04em] text-gray-500 uppercase">Last {series.length}</div>
       </div>
-      <div className="mt-3 flex h-40 items-end gap-2 rounded-lg bg-gray-50 px-2 pb-2 pt-4">
+      <div className="mt-3 flex h-40 items-end gap-2 rounded-lg bg-gray-50 px-2 pt-4 pb-2">
         {series.map((point) => {
           const height = Math.max(10, Math.round((point.value / maxValue) * 100));
           return (
             <div key={`${point.label}-${point.opponent}`} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1">
-              <div className="text-xs font-black text-primary-800">{formatAverage(point.value)}</div>
+              <div className="text-primary-800 text-xs font-black">{formatAverage(point.value)}</div>
               <div
-                className="w-full rounded-t-md bg-primary-600"
+                className="bg-primary-600 w-full rounded-t-md"
                 style={{ height: `${height}%` }}
                 aria-label={`${point.value} ${title} on ${point.label}`}
               />
@@ -1196,7 +1448,7 @@ function StatMixChart({ stats }: { stats: Array<[string, number]> }) {
           return (
             <div key={key}>
               <div className="mb-1 flex items-center justify-between gap-3">
-                <div className="text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{key}</div>
+                <div className="text-[10px] font-black tracking-[0.04em] text-gray-500 uppercase">{key}</div>
                 <div className="text-xs font-black text-gray-950">{formatAverage(Number(value))}</div>
               </div>
               <div className="h-3 overflow-hidden rounded-full bg-gray-100">
@@ -1221,7 +1473,11 @@ function RecentMinutesChart({ series }: { series: Array<{ label: string; value: 
           return (
             <div key={point.label} className="min-w-0 rounded-lg border border-gray-200 bg-white p-2 text-center">
               <div className="mx-auto flex h-14 w-full items-end overflow-hidden rounded-md bg-gray-100">
-                <div className="w-full bg-amber-500" style={{ height: `${intensity}%` }} aria-label={`${formatAverage(point.value)} minutes on ${point.label}`} />
+                <div
+                  className="w-full bg-amber-500"
+                  style={{ height: `${intensity}%` }}
+                  aria-label={`${formatAverage(point.value)} minutes on ${point.label}`}
+                />
               </div>
               <div className="mt-1 text-xs font-black text-gray-950">{formatAverage(point.value)}</div>
               <div className="truncate text-[10px] font-bold text-gray-500">{point.label}</div>
@@ -1234,28 +1490,64 @@ function RecentMinutesChart({ series }: { series: Array<{ label: string; value: 
 }
 
 function GameStatsTrendPanel({ rows }: { rows: ParentPlayerStatRow[] }) {
-  const statKeys = Object.keys(buildDisplayTotals(rows)).slice(0, 3);
+  const hasDiamondRows = rows.some((row) => row.statPresentation?.isDiamond === true);
+  const statKeys = Object.keys(buildDisplayTotals(rows, { completeOnly: true }))
+    .filter(
+      (key) =>
+        !hasDiamondRows ||
+        rows.every((row) => {
+          if (row.statPresentation?.isDiamond !== true)
+            return (
+              Object.prototype.hasOwnProperty.call(row.stats || {}, key) ||
+              Object.prototype.hasOwnProperty.call(row.stats || {}, key.toLowerCase())
+            );
+          return (
+            Object.prototype.hasOwnProperty.call(row.completeStats || {}, key) ||
+            Object.prototype.hasOwnProperty.call(row.completeStats || {}, key.toLowerCase())
+          );
+        })
+    )
+    .slice(0, 3);
   const recentRows = rows.slice(0, 6).reverse();
   if (!statKeys.length || !recentRows.length) {
     return null;
   }
-  const maxValue = Math.max(...recentRows.flatMap((row) => statKeys.map((key) => Number((row.stats || {})[key]) || Number((row.stats || {})[key.toLowerCase()]) || 0)), 1);
+  const maxValue = Math.max(
+    ...recentRows.flatMap((row) => {
+      const stats = row.statPresentation?.isDiamond ? row.completeStats || {} : row.stats || {};
+      return statKeys.map((key) => Number(stats[key]) || Number(stats[key.toLowerCase()]) || 0);
+    }),
+    1
+  );
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-3">
       <div className="flex items-center justify-between gap-3">
         <div className="text-sm font-black text-gray-950">Game-by-game trend</div>
-        <div className="text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">Last {recentRows.length}</div>
+        <div className="text-[10px] font-black tracking-[0.04em] text-gray-500 uppercase">Last {recentRows.length}</div>
       </div>
       <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
         {statKeys.map((key, keyIndex) => (
           <div key={key} className="rounded-lg bg-gray-50 p-2">
             <div className="mb-2 flex items-center justify-between">
-              <div className="text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{key}</div>
-              <div className="text-xs font-black text-gray-950">{formatAverage(Number(recentRows[recentRows.length - 1]?.stats?.[key] || recentRows[recentRows.length - 1]?.stats?.[key.toLowerCase()] || 0))}</div>
+              <div className="text-[10px] font-black tracking-[0.04em] text-gray-500 uppercase">{key}</div>
+              <div className="text-xs font-black text-gray-950">
+                {formatAverage(
+                  Number(
+                    (recentRows[recentRows.length - 1]?.statPresentation?.isDiamond
+                      ? recentRows[recentRows.length - 1]?.completeStats
+                      : recentRows[recentRows.length - 1]?.stats)?.[key] ||
+                      (recentRows[recentRows.length - 1]?.statPresentation?.isDiamond
+                        ? recentRows[recentRows.length - 1]?.completeStats
+                        : recentRows[recentRows.length - 1]?.stats)?.[key.toLowerCase()] ||
+                      0
+                  )
+                )}
+              </div>
             </div>
             <div className="flex h-24 items-end gap-1">
               {recentRows.map((row) => {
-                const value = Number((row.stats || {})[key]) || Number((row.stats || {})[key.toLowerCase()]) || 0;
+                const stats = row.statPresentation?.isDiamond ? row.completeStats || {} : row.stats || {};
+                const value = Number(stats[key]) || Number(stats[key.toLowerCase()]) || 0;
                 const height = Math.max(8, Math.round((value / maxValue) * 100));
                 return (
                   <div key={`${row.event.eventKey}-${key}`} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-1">
@@ -1264,7 +1556,9 @@ function GameStatsTrendPanel({ rows }: { rows: ParentPlayerStatRow[] }) {
                       style={{ height: `${height}%` }}
                       aria-label={`${key} ${formatAverage(value)} on ${row.event.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
                     />
-                    <div className="w-full truncate text-center text-[9px] font-bold text-gray-500">{row.event.date.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}</div>
+                    <div className="w-full truncate text-center text-[9px] font-bold text-gray-500">
+                      {row.event.date.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}
+                    </div>
                   </div>
                 );
               })}
@@ -1277,6 +1571,48 @@ function GameStatsTrendPanel({ rows }: { rows: ParentPlayerStatRow[] }) {
 }
 
 function SeasonAveragesPanel({ rows, statsDetail }: { rows: ParentPlayerStatRow[]; statsDetail: ParentPlayerStatsDetailData | null }) {
+  const summary = statsDetail?.summary;
+  if (summary?.diamond?.hasDiamond && summary.statPresentation) {
+    const definitions = summary.statDefinitions?.length ? summary.statDefinitions : DIAMOND_PLAYER_STAT_CATALOG;
+    return (
+      <div className="space-y-3">
+        <DiamondPlayerStatsNotice summary={summary} />
+        <div className="rounded-xl border border-gray-200 bg-white p-3">
+          <div className="text-sm font-black text-gray-950">Season stat catalog</div>
+          <div className="mt-0.5 text-xs font-semibold text-gray-500">Unavailable fields were not collected; they are not zero.</div>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {definitions.map((definition) => {
+              const key = String(definition.id || '');
+              return (
+                <div key={key} className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-center">
+                  <div className="text-lg font-black text-gray-950">
+                    <CoverageAwarePlayerValue
+                      presentation={summary.statPresentation!}
+                      stats={summary.totals}
+                      statKey={key}
+                      definition={definition}
+                    />
+                  </div>
+                  <div className="mt-1 truncate text-[10px] font-black tracking-[0.04em] text-gray-500 uppercase">
+                    {String(definition.label || key)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!summary && rows.some((row) => row.statPresentation?.isDiamond === true)) {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900" role="status">
+        Coverage-aware season totals are loading. Missing Diamond values will remain unavailable instead of becoming zero.
+      </div>
+    );
+  }
+
   const averages = statsDetail
     ? Object.entries(statsDetail.summary.averages).map(([key, value]) => [key.toUpperCase(), formatAverage(value)] as [string, string])
     : getSeasonAverages(rows);
@@ -1285,21 +1621,27 @@ function SeasonAveragesPanel({ rows, statsDetail }: { rows: ParentPlayerStatRow[
     <div className="space-y-4">
       <SeasonComparisonChart averages={averages} totals={totals} />
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {averages.length ? averages.slice(0, 12).map(([key, value]) => (
-          <div key={key} className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-center">
-            <div className="text-xl font-black text-gray-950">{value}</div>
-            <div className="mt-1 truncate text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{key}/G</div>
+        {averages.length ? (
+          averages.slice(0, 12).map(([key, value]) => (
+            <div key={key} className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-center">
+              <div className="text-xl font-black text-gray-950">{value}</div>
+              <div className="mt-1 truncate text-[10px] font-black tracking-[0.04em] text-gray-500 uppercase">{key}/G</div>
+            </div>
+          ))
+        ) : (
+          <div className="col-span-full rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">
+            No season averages yet.
           </div>
-        )) : <div className="col-span-full rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No season averages yet.</div>}
+        )}
       </div>
       {totals.length ? (
         <div>
-          <div className="mb-2 text-xs font-black uppercase tracking-[0.04em] text-gray-500">Totals</div>
+          <div className="mb-2 text-xs font-black tracking-[0.04em] text-gray-500 uppercase">Totals</div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {totals.slice(0, 12).map(([key, value]) => (
               <div key={key} className="rounded-xl border border-gray-200 bg-white p-3 text-center">
                 <div className="text-lg font-black text-gray-950">{formatAverage(Number(value))}</div>
-                <div className="mt-1 truncate text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{key}</div>
+                <div className="mt-1 truncate text-[10px] font-black tracking-[0.04em] text-gray-500 uppercase">{key}</div>
               </div>
             ))}
           </div>
@@ -1309,13 +1651,7 @@ function SeasonAveragesPanel({ rows, statsDetail }: { rows: ParentPlayerStatRow[
   );
 }
 
-function SeasonComparisonChart({
-  averages,
-  totals
-}: {
-  averages: Array<[string, string]>;
-  totals: Array<[string, unknown]>;
-}) {
+function SeasonComparisonChart({ averages, totals }: { averages: Array<[string, string]>; totals: Array<[string, unknown]> }) {
   const averageMap = new Map(averages.map(([key, value]) => [key.replace(/\/G$/i, '').toUpperCase(), Number(value)]));
   const rows = totals
     .map(([key, value]) => ({
@@ -1334,9 +1670,15 @@ function SeasonComparisonChart({
     <div className="rounded-xl border border-gray-200 bg-white p-3">
       <div className="flex items-center justify-between gap-3">
         <div className="text-sm font-black text-gray-950">Season profile</div>
-        <div className="flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">
-          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-primary-600" />Total</span>
-          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-600" />Avg</span>
+        <div className="flex items-center gap-3 text-[10px] font-black tracking-[0.04em] text-gray-500 uppercase">
+          <span className="flex items-center gap-1">
+            <span className="bg-primary-600 h-2 w-2 rounded-full" />
+            Total
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="h-2 w-2 rounded-full bg-emerald-600" />
+            Avg
+          </span>
         </div>
       </div>
       <div className="mt-3 space-y-2">
@@ -1345,13 +1687,21 @@ function SeasonComparisonChart({
           const averageWidth = Math.max(5, Math.round((row.average / maxAverage) * 100));
           return (
             <div key={row.key} className="grid grid-cols-[3rem_1fr_3.5rem] items-center gap-2">
-              <div className="truncate text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{row.key}</div>
+              <div className="truncate text-[10px] font-black tracking-[0.04em] text-gray-500 uppercase">{row.key}</div>
               <div className="space-y-1">
                 <div className="h-2 overflow-hidden rounded-full bg-gray-100">
-                  <div className="h-full rounded-full bg-primary-600" style={{ width: `${totalWidth}%` }} aria-label={`${row.key} total ${formatAverage(row.total)}`} />
+                  <div
+                    className="bg-primary-600 h-full rounded-full"
+                    style={{ width: `${totalWidth}%` }}
+                    aria-label={`${row.key} total ${formatAverage(row.total)}`}
+                  />
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-gray-100">
-                  <div className="h-full rounded-full bg-emerald-600" style={{ width: `${averageWidth}%` }} aria-label={`${row.key} average ${formatAverage(row.average)}`} />
+                  <div
+                    className="h-full rounded-full bg-emerald-600"
+                    style={{ width: `${averageWidth}%` }}
+                    aria-label={`${row.key} average ${formatAverage(row.average)}`}
+                  />
                 </div>
               </div>
               <div className="text-right text-xs font-black text-gray-950">{formatAverage(row.total)}</div>
@@ -1363,11 +1713,26 @@ function SeasonComparisonChart({
   );
 }
 
-function GameEventsPanel({ statsDetail, fallbackEvents, loading }: { statsDetail: ParentPlayerStatsDetailData | null; fallbackEvents: ParentScheduleEvent[]; loading: boolean }) {
+function GameEventsPanel({
+  statsDetail,
+  fallbackEvents,
+  loading
+}: {
+  statsDetail: ParentPlayerStatsDetailData | null;
+  fallbackEvents: ParentScheduleEvent[];
+  loading: boolean;
+}) {
   const gameEventRows = statsDetail?.gameEventRows || [];
+  const diamondEventsIncomplete = statsDetail?.gameEventsLoadStatus === 'partial' || statsDetail?.gameEventsLoadStatus === 'unavailable';
+  const retryNotice = diamondEventsIncomplete ? (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-950" role="status">
+      Diamond player events could not be loaded completely. Refresh to retry; missing plays are not being reported as no events.
+    </div>
+  ) : null;
   if (gameEventRows.length) {
     return (
       <div className="space-y-3">
+        {retryNotice}
         <GameEventTimelineChart rows={gameEventRows} />
         {gameEventRows.map((row) => (
           <div key={row.gameId} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
@@ -1380,9 +1745,13 @@ function GameEventsPanel({ statsDetail, fallbackEvents, loading }: { statsDetail
                 <div key={event.id} className="rounded-lg border border-gray-200 bg-white px-3 py-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0 truncate text-sm font-black text-gray-950">{event.description}</div>
-                    <div className="flex-none text-xs font-black text-primary-700">{[event.period, event.clock].filter(Boolean).join(' ')}</div>
+                    <div className="text-primary-700 flex-none text-xs font-black">
+                      {[event.period, event.clock].filter(Boolean).join(' ')}
+                    </div>
                   </div>
-                  <div className="mt-0.5 text-xs font-semibold text-gray-500">{[event.statKey.toUpperCase(), event.value].filter((value) => String(value || '').trim()).join(' · ')}</div>
+                  <div className="mt-0.5 text-xs font-semibold text-gray-500">
+                    {[event.statKey.toUpperCase(), event.value].filter((value) => String(value || '').trim()).join(' · ')}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1392,14 +1761,24 @@ function GameEventsPanel({ statsDetail, fallbackEvents, loading }: { statsDetail
     );
   }
   if (loading) {
-    return <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">Loading player events...</div>;
+    return (
+      <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">Loading player events...</div>
+    );
   }
-  const gameEvents = fallbackEvents.filter((event) => event.type === 'game').slice().sort((a, b) => b.date.getTime() - a.date.getTime());
+  if (retryNotice) return retryNotice;
+  const gameEvents = fallbackEvents
+    .filter((event) => event.type === 'game')
+    .slice()
+    .sort((a, b) => b.date.getTime() - a.date.getTime());
   return (
     <div className="space-y-2">
-      {gameEvents.length ? gameEvents.map((event) => (
-        <PlayerEventCard key={event.eventKey} event={event} />
-      )) : <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No game events recorded yet.</div>}
+      {gameEvents.length ? (
+        gameEvents.map((event) => <PlayerEventCard key={event.eventKey} event={event} />)
+      ) : (
+        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">
+          No game events recorded yet.
+        </div>
+      )}
     </div>
   );
 }
@@ -1421,14 +1800,14 @@ function GameEventTimelineChart({ rows }: { rows: ParentPlayerStatsDetailData['g
     <div className="rounded-xl border border-gray-200 bg-white p-3">
       <div className="flex items-center justify-between gap-3">
         <div className="text-sm font-black text-gray-950">Event volume</div>
-        <div className="text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">Recorded plays</div>
+        <div className="text-[10px] font-black tracking-[0.04em] text-gray-500 uppercase">Recorded plays</div>
       </div>
-      <div className="mt-3 flex h-32 items-end gap-2 rounded-lg bg-gray-50 px-2 pb-2 pt-4">
+      <div className="mt-3 flex h-32 items-end gap-2 rounded-lg bg-gray-50 px-2 pt-4 pb-2">
         {series.map((point) => {
           const height = Math.max(12, Math.round((point.value / maxValue) * 100));
           return (
             <div key={`${point.game}-${point.label}`} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-1">
-              <div className="text-xs font-black text-primary-800">{point.value}</div>
+              <div className="text-primary-800 text-xs font-black">{point.value}</div>
               <div
                 className="w-full rounded-t-md bg-indigo-600"
                 style={{ height: `${height}%` }}
@@ -1457,7 +1836,7 @@ function ClipsPanel({
   if (loading) {
     return (
       <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">
-        <Loader2 className="mr-2 inline h-4 w-4 animate-spin text-primary-600" aria-hidden="true" />
+        <Loader2 className="text-primary-600 mr-2 inline h-4 w-4 animate-spin" aria-hidden="true" />
         Loading video clips...
       </div>
     );
@@ -1467,7 +1846,9 @@ function ClipsPanel({
     return (
       <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
         <div className="text-sm font-black text-rose-900">{error.message}</div>
-        <button type="button" className="mt-2 text-xs font-black text-rose-700" onClick={onRetry}>Retry clips</button>
+        <button type="button" className="mt-2 text-xs font-black text-rose-700" onClick={onRetry}>
+          Retry clips
+        </button>
       </div>
     );
   }
@@ -1476,15 +1857,28 @@ function ClipsPanel({
     <div className="space-y-3">
       <ClipCoverageChart clips={clips} />
       <div className="grid gap-2 sm:grid-cols-2">
-        {clips.length ? clips.map((clip) => (
-          <a key={`${clip.url}-${clip.title}`} href={clip.url} target="_blank" rel="noreferrer" className="rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
-            <div className="flex items-center gap-2 text-sm font-black text-gray-950">
-              <ImagePlus className="h-4 w-4 flex-none text-primary-600" aria-hidden="true" />
-              <span className="truncate">{clip.title || 'Game clip'}</span>
-            </div>
-            <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{clip.gameLabel || clip.game || 'Game'}{clip.gameDate ? ` · ${clip.gameDate}` : ''}</div>
-          </a>
-        )) : <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No clips yet.</div>}
+        {clips.length ? (
+          clips.map((clip) => (
+            <a
+              key={`${clip.url}-${clip.title}`}
+              href={clip.url}
+              target="_blank"
+              rel="noreferrer"
+              className="hover:border-primary-200 hover:bg-primary-50/40 rounded-xl border border-gray-200 bg-gray-50 p-3 transition"
+            >
+              <div className="flex items-center gap-2 text-sm font-black text-gray-950">
+                <ImagePlus className="text-primary-600 h-4 w-4 flex-none" aria-hidden="true" />
+                <span className="truncate">{clip.title || 'Game clip'}</span>
+              </div>
+              <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">
+                {clip.gameLabel || clip.game || 'Game'}
+                {clip.gameDate ? ` · ${clip.gameDate}` : ''}
+              </div>
+            </a>
+          ))
+        ) : (
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No clips yet.</div>
+        )}
       </div>
     </div>
   );
@@ -1505,7 +1899,7 @@ function ClipCoverageChart({ clips }: { clips: Array<Record<string, any>> }) {
     <div className="rounded-xl border border-gray-200 bg-white p-3">
       <div className="flex items-center justify-between gap-3">
         <div className="text-sm font-black text-gray-950">Clip coverage</div>
-        <div className="text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{clips.length} total</div>
+        <div className="text-[10px] font-black tracking-[0.04em] text-gray-500 uppercase">{clips.length} total</div>
       </div>
       <div className="mt-3 space-y-2">
         {rows.map(([label, count]) => {
@@ -1565,7 +1959,11 @@ function PlayerProfileSection({
     return panels;
   }, [customRosterFields.length, data.access.canEditRosterDetails, isLinkedParent]);
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(data.athleteProfile.profile, data.athleteProfile.shareUrl);
-  const persistedPublicProfileAvailable = isPersistedPublicProfileReady(data.athleteProfile.profile, data.athleteProfile.shareUrl, athleteProfileShareState);
+  const persistedPublicProfileAvailable = isPersistedPublicProfileReady(
+    data.athleteProfile.profile,
+    data.athleteProfile.shareUrl,
+    athleteProfileShareState
+  );
   const fullBuilderAvailable = athleteProfileLoaded && !!String(data.athleteProfile.builderUrl || '').trim();
 
   useEffect(() => {
@@ -1588,9 +1986,9 @@ function PlayerProfileSection({
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="app-label">Profile tools</div>
-            <h2 className="mt-1 app-section-title">Player profile</h2>
+            <h2 className="app-section-title mt-1">Player profile</h2>
           </div>
-          <Shield className="h-5 w-5 text-primary-600" aria-hidden="true" />
+          <Shield className="text-primary-600 h-5 w-5" aria-hidden="true" />
         </div>
         <div className="mt-3 flex gap-1.5 overflow-x-auto rounded-2xl border border-gray-200 bg-gray-50 p-1">
           {visibleProfilePanels.map((panel) => {
@@ -1599,7 +1997,7 @@ function PlayerProfileSection({
               <button
                 key={panel.id}
                 type="button"
-                className={`min-h-9 flex-none rounded-xl px-3 text-xs font-black transition ${active ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-600 hover:text-gray-950'}`}
+                className={`min-h-9 flex-none rounded-xl px-3 text-xs font-black transition ${active ? 'text-primary-700 bg-white shadow-sm' : 'text-gray-600 hover:text-gray-950'}`}
                 onClick={() => setActivePanel(panel.id)}
                 aria-pressed={active}
               >
@@ -1618,7 +2016,7 @@ function PlayerProfileSection({
         </>
       ) : null}
       {isLinkedParent && athleteProfileLoading ? (
-        <div className="rounded-xl border border-primary-100 bg-primary-50/60 p-3 text-sm font-semibold text-primary-800">
+        <div className="border-primary-100 bg-primary-50/60 text-primary-800 rounded-xl border p-3 text-sm font-semibold">
           <div className="flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             Loading athlete profile tools...
@@ -1636,7 +2034,9 @@ function PlayerProfileSection({
             onShareStateChange={setAthleteProfileShareState}
           />
         ) : (
-          <div className="app-card p-4 text-sm font-semibold text-gray-500">Athlete profile tools will appear here after the profile data finishes loading.</div>
+          <div className="app-card p-4 text-sm font-semibold text-gray-500">
+            Athlete profile tools will appear here after the profile data finishes loading.
+          </div>
         )
       ) : null}
       {activePanel === 'family' ? (
@@ -1647,39 +2047,61 @@ function PlayerProfileSection({
       ) : null}
       {isLinkedParent && activePanel === 'incentives' ? <IncentivesCard data={data} auth={auth} onChanged={onChanged} /> : null}
 
-      {isLinkedParent ? <section className="grid gap-3 sm:grid-cols-3">
-        <a
-          href={fullBuilderAvailable ? data.athleteProfile.builderUrl : '#'}
-          target={fullBuilderAvailable ? '_blank' : undefined}
-          rel={fullBuilderAvailable ? 'noreferrer' : undefined}
-          aria-disabled={!fullBuilderAvailable}
-          tabIndex={fullBuilderAvailable ? undefined : -1}
-          onClick={fullBuilderAvailable ? undefined : (event) => event.preventDefault()}
-          className={`app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg ${fullBuilderAvailable ? '' : 'pointer-events-none opacity-60'}`}
-        >
-          <IconBox icon={Sparkles} />
-          <CardText title="Full builder" detail={athleteProfileLoading ? 'Loading athlete profile builder...' : 'Open the legacy builder for headshot and highlight uploads.'} />
-          <ExternalLink className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
-        </a>
-        <a
-          href={persistedPublicProfileAvailable ? persistedPublicProfileUrl : '#'}
-          target={persistedPublicProfileAvailable ? '_blank' : undefined}
-          rel={persistedPublicProfileAvailable ? 'noreferrer' : undefined}
-          aria-disabled={!persistedPublicProfileAvailable}
-          tabIndex={persistedPublicProfileAvailable ? undefined : -1}
-          onClick={persistedPublicProfileAvailable ? undefined : (event) => event.preventDefault()}
-          className={`app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg ${persistedPublicProfileAvailable ? '' : 'pointer-events-none opacity-60'}`}
-        >
-          <IconBox icon={Share2} />
-          <CardText title="Public athlete profile" detail={athleteProfileLoading ? 'Loading athlete profile share status...' : (persistedPublicProfileAvailable ? 'Open the shareable athlete profile.' : 'Publish and save this profile to enable sharing.')} />
-          <ExternalLink className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
-        </a>
-        <Link to="/parent-tools/certificates" className="app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg">
-          <IconBox icon={Award} />
-          <CardText title="Certificates" detail={`${data.certificates.length} published award${data.certificates.length === 1 ? '' : 's'}.`} />
-          <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
-        </Link>
-      </section> : null}
+      {isLinkedParent ? (
+        <section className="grid gap-3 sm:grid-cols-3">
+          <a
+            href={fullBuilderAvailable ? data.athleteProfile.builderUrl : '#'}
+            target={fullBuilderAvailable ? '_blank' : undefined}
+            rel={fullBuilderAvailable ? 'noreferrer' : undefined}
+            aria-disabled={!fullBuilderAvailable}
+            tabIndex={fullBuilderAvailable ? undefined : -1}
+            onClick={fullBuilderAvailable ? undefined : (event) => event.preventDefault()}
+            className={`app-card hover:border-primary-200 hover:shadow-app-lg flex items-start gap-3 p-4 transition ${fullBuilderAvailable ? '' : 'pointer-events-none opacity-60'}`}
+          >
+            <IconBox icon={Sparkles} />
+            <CardText
+              title="Full builder"
+              detail={
+                athleteProfileLoading ? 'Loading athlete profile builder...' : 'Open the legacy builder for headshot and highlight uploads.'
+              }
+            />
+            <ExternalLink className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
+          </a>
+          <a
+            href={persistedPublicProfileAvailable ? persistedPublicProfileUrl : '#'}
+            target={persistedPublicProfileAvailable ? '_blank' : undefined}
+            rel={persistedPublicProfileAvailable ? 'noreferrer' : undefined}
+            aria-disabled={!persistedPublicProfileAvailable}
+            tabIndex={persistedPublicProfileAvailable ? undefined : -1}
+            onClick={persistedPublicProfileAvailable ? undefined : (event) => event.preventDefault()}
+            className={`app-card hover:border-primary-200 hover:shadow-app-lg flex items-start gap-3 p-4 transition ${persistedPublicProfileAvailable ? '' : 'pointer-events-none opacity-60'}`}
+          >
+            <IconBox icon={Share2} />
+            <CardText
+              title="Public athlete profile"
+              detail={
+                athleteProfileLoading
+                  ? 'Loading athlete profile share status...'
+                  : persistedPublicProfileAvailable
+                    ? 'Open the shareable athlete profile.'
+                    : 'Publish and save this profile to enable sharing.'
+              }
+            />
+            <ExternalLink className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
+          </a>
+          <Link
+            to="/parent-tools/certificates"
+            className="app-card hover:border-primary-200 hover:shadow-app-lg flex items-start gap-3 p-4 transition"
+          >
+            <IconBox icon={Award} />
+            <CardText
+              title="Certificates"
+              detail={`${data.certificates.length} published award${data.certificates.length === 1 ? '' : 's'}.`}
+            />
+            <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
+          </Link>
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -1693,16 +2115,18 @@ function FamilyContactsCard({ data }: { data: ParentPlayerDetailData }) {
     if (!normalizedEmail) return;
     await navigator.clipboard?.writeText(normalizedEmail);
     setCopiedEmail(normalizedEmail);
-    window.setTimeout(() => setCopiedEmail((current) => current === normalizedEmail ? '' : current), 1400);
+    window.setTimeout(() => setCopiedEmail((current) => (current === normalizedEmail ? '' : current)), 1400);
   };
 
   return (
     <section className="app-card p-4">
       <div className="flex items-center gap-2 text-sm font-black text-gray-950">
-        <Users className="h-4 w-4 text-primary-600" aria-hidden="true" />
+        <Users className="text-primary-600 h-4 w-4" aria-hidden="true" />
         Linked Family
       </div>
-      <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Parent and guardian accounts or contacts already connected to this player.</p>
+      <p className="mt-1 text-xs leading-5 font-semibold text-gray-500">
+        Parent and guardian accounts or contacts already connected to this player.
+      </p>
       {contacts.length ? (
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           {contacts.map((contact) => {
@@ -1713,21 +2137,33 @@ function FamilyContactsCard({ data }: { data: ParentPlayerDetailData }) {
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-center gap-2">
-                      <div className="truncate text-sm font-black leading-5 text-gray-950">{label}</div>
+                      <div className="truncate text-sm leading-5 font-black text-gray-950">{label}</div>
                       {contact.email ? (
-                        <button type="button" className="ghost-button !h-7 !min-h-7 !w-7 !flex-none !p-0" onClick={() => copyEmail(contact.email)} aria-label={`Copy ${contact.email}`} title={copiedEmail === contact.email ? 'Copied' : 'Copy email'}>
-                          {copiedEmail === contact.email ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+                        <button
+                          type="button"
+                          className="ghost-button !h-7 !min-h-7 !w-7 !flex-none !p-0"
+                          onClick={() => copyEmail(contact.email)}
+                          aria-label={`Copy ${contact.email}`}
+                          title={copiedEmail === contact.email ? 'Copied' : 'Copy email'}
+                        >
+                          {copiedEmail === contact.email ? (
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                          )}
                         </button>
                       ) : null}
                     </div>
-                    <div className="text-xs font-semibold leading-4 text-gray-500">{contact.relation || 'Parent/guardian'}</div>
+                    <div className="text-xs leading-4 font-semibold text-gray-500">{contact.relation || 'Parent/guardian'}</div>
                   </div>
-                  <span className={`flex-none rounded-full border px-2 py-0.5 text-[11px] font-black uppercase leading-4 ${contact.status === 'linked' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-white text-gray-600'}`}>
+                  <span
+                    className={`flex-none rounded-full border px-2 py-0.5 text-[11px] leading-4 font-black uppercase ${contact.status === 'linked' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-white text-gray-600'}`}
+                  >
                     {contact.status === 'linked' ? 'Linked' : 'Contact'}
                   </span>
                 </div>
                 {showEmailMeta || contact.phone ? (
-                  <div className="mt-1 flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-xs font-semibold leading-4 text-gray-600">
+                  <div className="mt-1 flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-xs leading-4 font-semibold text-gray-600">
                     {showEmailMeta ? <span className="truncate">{contact.email}</span> : null}
                     {contact.phone ? <span className="truncate">{contact.phone}</span> : null}
                   </div>
@@ -1745,7 +2181,15 @@ function FamilyContactsCard({ data }: { data: ParentPlayerDetailData }) {
   );
 }
 
-function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
+function StaffRosterDetailsCard({
+  data,
+  auth,
+  onChanged
+}: {
+  data: ParentPlayerDetailData;
+  auth: AuthState;
+  onChanged: () => Promise<void>;
+}) {
   const canEditRosterDetails = data.access.canEditRosterDetails;
   const [name, setName] = useState(data.player.name || data.child.playerName || '');
   const [number, setNumber] = useState(String(data.player.number || ''));
@@ -1806,15 +2250,26 @@ function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerD
   return (
     <section className="app-card p-4">
       <div className="flex items-start gap-3">
-        <div className="flex h-14 w-14 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-sm font-black text-primary-700">
-          {previewUrl ? <AvatarImage src={previewUrl} alt={`${name || data.child.playerName || 'Player'} roster photo preview`} className="h-full w-full object-cover" fallback={getInitials(name || data.child.playerName || 'Player')} /> : getInitials(name || data.child.playerName || 'Player')}
+        <div className="bg-primary-50 text-primary-700 flex h-14 w-14 flex-none items-center justify-center overflow-hidden rounded-2xl text-sm font-black">
+          {previewUrl ? (
+            <AvatarImage
+              src={previewUrl}
+              alt={`${name || data.child.playerName || 'Player'} roster photo preview`}
+              className="h-full w-full object-cover"
+              fallback={getInitials(name || data.child.playerName || 'Player')}
+            />
+          ) : (
+            getInitials(name || data.child.playerName || 'Player')
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-sm font-black text-gray-950">
-            <Edit3 className="h-4 w-4 text-primary-600" aria-hidden="true" />
+            <Edit3 className="text-primary-600 h-4 w-4" aria-hidden="true" />
             Roster Details
           </div>
-          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Team staff can update the player name, jersey number, and roster photo here.</p>
+          <p className="mt-1 text-xs leading-5 font-semibold text-gray-500">
+            Team staff can update the player name, jersey number, and roster photo here.
+          </p>
         </div>
       </div>
 
@@ -1824,7 +2279,7 @@ function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerD
           <TextField label="Jersey number" value={number} onChange={setNumber} placeholder="Number" inputMode="numeric" />
         </div>
         <label className="block">
-          <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Roster photo</span>
+          <span className="text-xs font-black tracking-[0.04em] text-gray-500 uppercase">Roster photo</span>
           <input
             type="file"
             accept="image/*"
@@ -1837,10 +2292,14 @@ function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerD
             }}
           />
         </label>
-        <button type="button" className="secondary-button w-full justify-center" onClick={() => {
-          setPhotoFile(null);
-          setRemovePhoto(true);
-        }}>
+        <button
+          type="button"
+          className="secondary-button w-full justify-center"
+          onClick={() => {
+            setPhotoFile(null);
+            setRemovePhoto(true);
+          }}
+        >
           Remove roster photo
         </button>
         {status ? <Status tone={status.tone} message={status.message} /> : null}
@@ -1853,7 +2312,15 @@ function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerD
   );
 }
 
-function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
+function EditablePlayerProfileCard({
+  data,
+  auth,
+  onChanged
+}: {
+  data: ParentPlayerDetailData;
+  auth: AuthState;
+  onChanged: () => Promise<void>;
+}) {
   const canEditProfile = data.access.isLinkedParent || auth.isAdmin || auth.isPlatformAdmin;
   const canEditRosterDetails = data.access.canEditRosterDetails;
   const canEditPhoto = !canEditRosterDetails;
@@ -1864,7 +2331,10 @@ function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlay
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
   const playerName = data.player.name || data.child.playerName || 'Player';
-  const previewUrl = useMemo(() => canEditPhoto ? (photoFile ? URL.createObjectURL(photoFile) : (data.player.photoUrl || '')) : '', [canEditPhoto, photoFile, data.player.photoUrl]);
+  const previewUrl = useMemo(
+    () => (canEditPhoto ? (photoFile ? URL.createObjectURL(photoFile) : data.player.photoUrl || '') : ''),
+    [canEditPhoto, photoFile, data.player.photoUrl]
+  );
 
   useEffect(() => {
     return () => {
@@ -1909,16 +2379,27 @@ function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlay
   return (
     <section className="app-card p-4">
       <div className="flex items-start gap-3">
-        <div className="flex h-14 w-14 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-sm font-black text-primary-700">
-          {previewUrl ? <AvatarImage src={previewUrl} alt={`${playerName} profile photo preview`} className="h-full w-full object-cover" fallback={getInitials(playerName)} /> : getInitials(playerName)}
+        <div className="bg-primary-50 text-primary-700 flex h-14 w-14 flex-none items-center justify-center overflow-hidden rounded-2xl text-sm font-black">
+          {previewUrl ? (
+            <AvatarImage
+              src={previewUrl}
+              alt={`${playerName} profile photo preview`}
+              className="h-full w-full object-cover"
+              fallback={getInitials(playerName)}
+            />
+          ) : (
+            getInitials(playerName)
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-sm font-black text-gray-950">
-            <Edit3 className="h-4 w-4 text-primary-600" aria-hidden="true" />
+            <Edit3 className="text-primary-600 h-4 w-4" aria-hidden="true" />
             Edit Profile
           </div>
-          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">
-            {canEditPhoto ? 'Parents can update the player photo and private emergency/medical details.' : 'Parents can update private emergency and medical details here. Use Roster Details for the team roster photo.'}
+          <p className="mt-1 text-xs leading-5 font-semibold text-gray-500">
+            {canEditPhoto
+              ? 'Parents can update the player photo and private emergency/medical details.'
+              : 'Parents can update private emergency and medical details here. Use Roster Details for the team roster photo.'}
           </p>
         </div>
       </div>
@@ -1926,7 +2407,7 @@ function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlay
       <form className="mt-4 space-y-3" onSubmit={submit}>
         {canEditPhoto ? (
           <label className="block">
-            <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Player photo</span>
+            <span className="text-xs font-black tracking-[0.04em] text-gray-500 uppercase">Player photo</span>
             <input
               type="file"
               accept="image/*"
@@ -1940,12 +2421,12 @@ function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlay
           <TextField label="Emergency phone" value={emergencyPhone} onChange={setEmergencyPhone} placeholder="Phone" type="tel" />
         </div>
         <label className="block">
-          <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Medical info / notes</span>
+          <span className="text-xs font-black tracking-[0.04em] text-gray-500 uppercase">Medical info / notes</span>
           <textarea
             value={medicalInfo}
             onChange={(event) => setMedicalInfo(event.currentTarget.value)}
             rows={3}
-            className="mt-1 block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+            className="focus:border-primary-300 focus:ring-primary-100 mt-1 block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 outline-none focus:ring-2"
             placeholder="Allergies, conditions, or notes"
           />
         </label>
@@ -1959,7 +2440,15 @@ function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlay
   );
 }
 
-function CustomRosterFieldsCard({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
+function CustomRosterFieldsCard({
+  data,
+  auth,
+  onChanged
+}: {
+  data: ParentPlayerDetailData;
+  auth: AuthState;
+  onChanged: () => Promise<void>;
+}) {
   const [values, setValues] = useState<Record<string, string | boolean>>(() => buildCustomRosterFieldState(data.customRosterFields));
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
@@ -1997,7 +2486,7 @@ function CustomRosterFieldsCard({ data, auth, onChanged }: { data: ParentPlayerD
         <IconBox icon={Users} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-sm font-black text-gray-950">Custom roster fields</div>
-          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">
+          <p className="mt-1 text-xs leading-5 font-semibold text-gray-500">
             {canEdit ? 'Team staff can update player custom field values here.' : 'Visible roster fields from the team roster setup.'}
           </p>
         </div>
@@ -2049,7 +2538,7 @@ function CustomRosterFieldInput({
           checked={value === true}
           disabled={disabled}
           onChange={(event) => onChange(event.currentTarget.checked)}
-          className="h-5 w-5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          className="text-primary-600 focus:ring-primary-500 h-5 w-5 rounded border-gray-300"
         />
       </label>
     );
@@ -2057,7 +2546,7 @@ function CustomRosterFieldInput({
 
   return (
     <label className="block">
-      <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">{field.label}</span>
+      <span className="text-xs font-black tracking-[0.04em] text-gray-500 uppercase">{field.label}</span>
       {field.description ? <span className="mt-1 block text-xs font-semibold text-gray-500">{field.description}</span> : null}
       {field.type === 'menu' ? (
         <select
@@ -2065,11 +2554,13 @@ function CustomRosterFieldInput({
           value={String(value ?? '')}
           disabled={disabled}
           onChange={(event) => onChange(event.currentTarget.value)}
-          className="mt-1 block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+          className="focus:border-primary-300 focus:ring-primary-100 mt-1 block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 outline-none focus:ring-2"
         >
           <option value="">Select an option</option>
           {field.options.map((option) => (
-            <option key={option.value} value={option.value}>{option.label}</option>
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
           ))}
         </select>
       ) : (
@@ -2079,7 +2570,7 @@ function CustomRosterFieldInput({
           value={String(value ?? '')}
           disabled={disabled}
           onChange={(event) => onChange(event.currentTarget.value)}
-          className="mt-1 block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+          className="focus:border-primary-300 focus:ring-primary-100 mt-1 block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 outline-none focus:ring-2"
         />
       )}
     </label>
@@ -2093,7 +2584,17 @@ function buildCustomRosterFieldState(fields: ParentPlayerDetailData['customRoste
   }, {});
 }
 
-function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void>; onShareStateChange: (state: { hasUnsavedPublishChanges: boolean; saving: boolean }) => void }) {
+function AthleteProfileBuilderCard({
+  data,
+  auth,
+  onChanged,
+  onShareStateChange
+}: {
+  data: ParentPlayerDetailData;
+  auth: AuthState;
+  onChanged: () => Promise<void>;
+  onShareStateChange: (state: { hasUnsavedPublishChanges: boolean; saving: boolean }) => void;
+}) {
   const existing = data.athleteProfile.profile;
   const currentSeasonKey = `${data.child.teamId || ''}::${data.child.playerId || ''}`;
   const seasonOptions = useMemo(() => {
@@ -2103,32 +2604,39 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
     if (!data.child.teamId || !data.child.playerId) {
       return [];
     }
-    return [{
-      seasonKey: currentSeasonKey,
-      teamId: data.child.teamId,
-      teamName: data.child.teamName || data.team?.name || 'Team',
-      playerId: data.child.playerId,
-      playerName: data.child.playerName || data.player.name || 'Athlete'
-    }];
-  }, [currentSeasonKey, data.athleteProfile.seasonOptions, data.child.playerId, data.child.playerName, data.child.teamId, data.child.teamName, data.player.name, data.team?.name]);
+    return [
+      {
+        seasonKey: currentSeasonKey,
+        teamId: data.child.teamId,
+        teamName: data.child.teamName || data.team?.name || 'Team',
+        playerId: data.child.playerId,
+        playerName: data.child.playerName || data.player.name || 'Athlete'
+      }
+    ];
+  }, [
+    currentSeasonKey,
+    data.athleteProfile.seasonOptions,
+    data.child.playerId,
+    data.child.playerName,
+    data.child.teamId,
+    data.child.teamName,
+    data.player.name,
+    data.team?.name
+  ]);
   const initialSelectedSeasonKeys = useMemo(() => {
-    const availableSeasonKeys = new Set(
-      seasonOptions
-        .map((option) => String(option?.seasonKey || '').trim())
-        .filter(Boolean)
-    );
+    const availableSeasonKeys = new Set(seasonOptions.map((option) => String(option?.seasonKey || '').trim()).filter(Boolean));
     const existingKeys = Array.isArray(existing?.seasons)
       ? existing.seasons
-        .map((season: any) => {
-          const seasonKey = String(season?.seasonKey || '').trim();
-          if (seasonKey) {
-            return seasonKey;
-          }
-          const seasonTeamId = String(season?.teamId || '').trim();
-          const seasonPlayerId = String(season?.playerId || '').trim();
-          return seasonTeamId && seasonPlayerId ? `${seasonTeamId}::${seasonPlayerId}` : '';
-        })
-        .filter((seasonKey: string) => !availableSeasonKeys.size || availableSeasonKeys.has(seasonKey))
+          .map((season: any) => {
+            const seasonKey = String(season?.seasonKey || '').trim();
+            if (seasonKey) {
+              return seasonKey;
+            }
+            const seasonTeamId = String(season?.teamId || '').trim();
+            const seasonPlayerId = String(season?.playerId || '').trim();
+            return seasonTeamId && seasonPlayerId ? `${seasonTeamId}::${seasonPlayerId}` : '';
+          })
+          .filter((seasonKey: string) => !availableSeasonKeys.size || availableSeasonKeys.has(seasonKey))
       : [];
     if (existingKeys.length) {
       return [...new Set(existingKeys)];
@@ -2170,7 +2678,9 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
   }, [existingHeadshotUrl, headshotFile, linkedHeadshotUrl, resetHeadshot]);
   const headshotLabel = headshotFile
     ? 'New headshot selected. Save to publish it.'
-    : (existingHeadshotUrl && !resetHeadshot ? 'Custom athlete profile headshot' : 'Using linked season photo');
+    : existingHeadshotUrl && !resetHeadshot
+      ? 'Custom athlete profile headshot'
+      : 'Using linked season photo';
   const publicSummary = useMemo(() => {
     const items = [
       name || data.child.playerName || 'Athlete name',
@@ -2180,11 +2690,24 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
       hometown,
       dominantHand ? `${dominantHand} hand` : '',
       achievements,
-      selectedSeasonKeys.length ? `${selectedSeasonKeys.length} season${selectedSeasonKeys.length === 1 ? '' : 's'} of stats and game clips` : '',
+      selectedSeasonKeys.length
+        ? `${selectedSeasonKeys.length} season${selectedSeasonKeys.length === 1 ? '' : 's'} of stats and game clips`
+        : '',
       clipDrafts.length ? `${clipDrafts.length} highlight clip${clipDrafts.length === 1 ? '' : 's'}` : ''
     ].filter(Boolean);
     return items;
-  }, [achievements, clipDrafts.length, data.child.playerName, dominantHand, graduationYear, headline, hometown, name, position, selectedSeasonKeys.length]);
+  }, [
+    achievements,
+    clipDrafts.length,
+    data.child.playerName,
+    dominantHand,
+    graduationYear,
+    headline,
+    hometown,
+    name,
+    position,
+    selectedSeasonKeys.length
+  ]);
   const normalizedExistingName = existing?.athlete?.name || data.player.name || data.child.playerName || '';
   const normalizedExistingHeadline = existing?.athlete?.headline || '';
   const normalizedExistingPosition = existing?.bio?.position || '';
@@ -2196,7 +2719,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
   const normalizedSelectedSeasonKeys = [...selectedSeasonKeys].sort();
   const normalizedInitialClipSignature = buildAthleteProfileClipSignature(initialClipDrafts);
   const normalizedClipSignature = buildAthleteProfileClipSignature(clipDrafts);
-  const hasUnsavedPublishChanges = (
+  const hasUnsavedPublishChanges =
     privacy !== persistedPrivacy ||
     name !== normalizedExistingName ||
     headline !== normalizedExistingHeadline ||
@@ -2209,8 +2732,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
     normalizedInitialSelectedSeasonKeys.some((seasonKey, index) => seasonKey !== normalizedSelectedSeasonKeys[index]) ||
     normalizedInitialClipSignature !== normalizedClipSignature ||
     !!headshotFile ||
-    resetHeadshot
-  );
+    resetHeadshot;
   const normalizedShareUrl = String(data.athleteProfile.shareUrl || '').trim();
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(existing, normalizedShareUrl);
   const hasPersistedPrivateShareUrl = hasPersistedPrivateProfileShareUrl(existing, normalizedShareUrl);
@@ -2280,11 +2802,9 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
   }, [existing?.privacy]);
 
   const toggleSeasonKey = (seasonKey: string) => {
-    setSelectedSeasonKeys((current) => (
-      current.includes(seasonKey)
-        ? current.filter((key) => key !== seasonKey)
-        : [...current, seasonKey]
-    ));
+    setSelectedSeasonKeys((current) =>
+      current.includes(seasonKey) ? current.filter((key) => key !== seasonKey) : [...current, seasonKey]
+    );
   };
 
   const prepareHeadshotFile = async (file: File | null, options: { normalize?: boolean } = {}) => {
@@ -2302,9 +2822,10 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
     setHeadshotBusy(true);
     setHeadshotError('');
     try {
-      const nextFile = options.normalize === false
-        ? file
-        : await import('../lib/profilePhotoService').then((module) => module.normalizeProfilePhoto(file));
+      const nextFile =
+        options.normalize === false
+          ? file
+          : await import('../lib/profilePhotoService').then((module) => module.normalizeProfilePhoto(file));
       setHeadshotFile(nextFile);
       setResetHeadshot(false);
     } catch (error: any) {
@@ -2330,11 +2851,12 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
         headshotInputRef.current?.click();
         return;
       }
-      const message = error?.code === 'permission-denied'
-        ? source === 'camera'
-          ? 'Camera permission was denied. Allow camera access to take a headshot.'
-          : 'Photo permission was denied. Allow photo library access to choose a headshot.'
-        : error?.message || 'Athlete headshot could not be selected right now.';
+      const message =
+        error?.code === 'permission-denied'
+          ? source === 'camera'
+            ? 'Camera permission was denied. Allow camera access to take a headshot.'
+            : 'Photo permission was denied. Allow photo library access to choose a headshot.'
+          : error?.message || 'Athlete headshot could not be selected right now.';
       setHeadshotError(message);
     } finally {
       setHeadshotBusy(false);
@@ -2366,9 +2888,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
   };
 
   const updateClipDraft = (clipId: string, patch: Partial<AthleteProfileClipDraftState>) => {
-    setClipDrafts((current) => current.map((clip) => (
-      clip.id === clipId ? { ...clip, ...patch } : clip
-    )));
+    setClipDrafts((current) => current.map((clip) => (clip.id === clipId ? { ...clip, ...patch } : clip)));
     setHighlightClipError('');
   };
 
@@ -2425,13 +2945,15 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
           privacy,
           selectedSeasonKeys,
           clips: clipSaveState.draftClips,
-          profilePhoto: existing?.profilePhotoUrl ? {
-            url: existing.profilePhotoUrl,
-            storagePath: existing.profilePhotoPath,
-            mimeType: existing.profilePhotoMimeType,
-            sizeBytes: existing.profilePhotoSizeBytes,
-            uploadedAtMs: existing.profilePhotoUploadedAtMs
-          } : null
+          profilePhoto: existing?.profilePhotoUrl
+            ? {
+                url: existing.profilePhotoUrl,
+                storagePath: existing.profilePhotoPath,
+                mimeType: existing.profilePhotoMimeType,
+                sizeBytes: existing.profilePhotoSizeBytes,
+                uploadedAtMs: existing.profilePhotoUploadedAtMs
+              }
+            : null
         },
         profilePhotoFile: headshotFile,
         resetProfilePhoto: resetHeadshot,
@@ -2490,26 +3012,39 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
     <section className="app-card athlete-profile-editor p-3 sm:p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2 text-sm font-black text-primary-800">
+          <div className="text-primary-800 flex items-center gap-2 text-sm font-black">
             <Sparkles className="h-4 w-4 flex-none" aria-hidden="true" />
             <span className="truncate">Athlete Profile Builder</span>
           </div>
-          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Native quick edit for the parent-managed public profile, including the public headshot and one highlight clip.</p>
+          <p className="mt-1 text-xs leading-5 font-semibold text-gray-500">
+            Native quick edit for the parent-managed public profile, including the public headshot and one highlight clip.
+          </p>
         </div>
         {status?.tone === 'success' ? (
-          <span className="flex-none rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.04em] text-emerald-700">Saved</span>
+          <span className="flex-none rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-black tracking-[0.04em] text-emerald-700 uppercase">
+            Saved
+          </span>
         ) : null}
       </div>
       <form className="mt-4 space-y-3" onSubmit={submit}>
         <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
           <div className="flex items-center gap-3">
-            <div className="flex h-16 w-16 flex-none items-center justify-center overflow-hidden rounded-2xl bg-white text-sm font-black text-primary-700">
-              {headshotPreviewUrl ? <AvatarImage src={headshotPreviewUrl} alt="Athlete profile headshot preview" className="h-full w-full object-cover" fallback={getInitials(name || data.child.playerName || 'Athlete')} /> : getInitials(name || data.child.playerName || 'Athlete')}
+            <div className="text-primary-700 flex h-16 w-16 flex-none items-center justify-center overflow-hidden rounded-2xl bg-white text-sm font-black">
+              {headshotPreviewUrl ? (
+                <AvatarImage
+                  src={headshotPreviewUrl}
+                  alt="Athlete profile headshot preview"
+                  className="h-full w-full object-cover"
+                  fallback={getInitials(name || data.child.playerName || 'Athlete')}
+                />
+              ) : (
+                getInitials(name || data.child.playerName || 'Athlete')
+              )}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Public headshot</div>
+              <div className="text-xs font-black tracking-[0.04em] text-gray-500 uppercase">Public headshot</div>
               <p className="mt-1 text-sm font-semibold text-gray-700">{headshotLabel}</p>
-              {headshotFile ? <p className="mt-1 text-xs font-semibold text-primary-700">{headshotFile.name}</p> : null}
+              {headshotFile ? <p className="text-primary-700 mt-1 text-xs font-semibold">{headshotFile.name}</p> : null}
             </div>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -2519,7 +3054,11 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
               disabled={headshotBusy}
               onClick={() => void chooseNativeHeadshot('camera')}
             >
-              {headshotBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Camera className="h-4 w-4" aria-hidden="true" />}
+              {headshotBusy ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Camera className="h-4 w-4" aria-hidden="true" />
+              )}
               Take photo
             </button>
             <button
@@ -2562,12 +3101,14 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
         </div>
         <div className="rounded-2xl border border-gray-200 bg-white p-3">
           <div className="flex items-start gap-3">
-            <div className="flex h-11 w-11 flex-none items-center justify-center rounded-2xl bg-primary-50 text-primary-700">
+            <div className="bg-primary-50 text-primary-700 flex h-11 w-11 flex-none items-center justify-center rounded-2xl">
               <ImagePlus className="h-5 w-5" aria-hidden="true" />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Highlight clips</div>
-              <p className="mt-1 text-sm font-semibold text-gray-700">Add links or upload image/video highlights, then drag the order with move controls.</p>
+              <div className="text-xs font-black tracking-[0.04em] text-gray-500 uppercase">Highlight clips</div>
+              <p className="mt-1 text-sm font-semibold text-gray-700">
+                Add links or upload image/video highlights, then drag the order with move controls.
+              </p>
             </div>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -2591,77 +3132,79 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
             </label>
           </div>
           <div className="mt-3 space-y-2">
-            {clipDrafts.length ? clipDrafts.map((clip, index) => (
-              <div key={clip.id} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">
-                      {clip.pendingUpload ? 'Pending upload' : clip.source === 'upload' ? 'Uploaded clip' : 'External link'}
+            {clipDrafts.length ? (
+              clipDrafts.map((clip, index) => (
+                <div key={clip.id} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs font-black tracking-[0.04em] text-gray-500 uppercase">
+                        {clip.pendingUpload ? 'Pending upload' : clip.source === 'upload' ? 'Uploaded clip' : 'External link'}
+                      </div>
+                      <p className="mt-1 truncate text-sm font-bold text-gray-900">
+                        {clip.title || (clip.pendingUpload ? clip.file?.name : '') || 'Untitled clip'}
+                      </p>
+                      <p className="mt-1 truncate text-xs font-semibold text-gray-500">
+                        {clip.pendingUpload ? clip.file?.name || 'Selected clip' : clip.url || 'Add a URL before saving'}
+                      </p>
                     </div>
-                    <p className="mt-1 truncate text-sm font-bold text-gray-900">
-                      {clip.title || (clip.pendingUpload ? clip.file?.name : '') || 'Untitled clip'}
-                    </p>
-                    <p className="mt-1 truncate text-xs font-semibold text-gray-500">
-                      {clip.pendingUpload ? clip.file?.name || 'Selected clip' : clip.url || 'Add a URL before saving'}
-                    </p>
+                    <div className="flex flex-none items-center gap-1">
+                      <button
+                        type="button"
+                        className="icon-button h-8 w-8"
+                        aria-label="Move clip up"
+                        disabled={index === 0}
+                        onClick={() => moveClipDraft(clip.id, -1)}
+                      >
+                        <InlineIcon icon={ArrowUp} fallback={ChevronRight} className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-button h-8 w-8"
+                        aria-label="Move clip down"
+                        disabled={index === clipDrafts.length - 1}
+                        onClick={() => moveClipDraft(clip.id, 1)}
+                      >
+                        <InlineIcon icon={ArrowDown} fallback={ChevronRight} className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-button h-8 w-8 text-rose-600"
+                        aria-label="Remove clip"
+                        onClick={() => removeClipDraft(clip.id)}
+                      >
+                        <InlineIcon icon={Trash2} fallback={AlertCircle} className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex flex-none items-center gap-1">
-                    <button
-                      type="button"
-                      className="icon-button h-8 w-8"
-                      aria-label="Move clip up"
-                      disabled={index === 0}
-                      onClick={() => moveClipDraft(clip.id, -1)}
-                    >
-                      <InlineIcon icon={ArrowUp} fallback={ChevronRight} className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-button h-8 w-8"
-                      aria-label="Move clip down"
-                      disabled={index === clipDrafts.length - 1}
-                      onClick={() => moveClipDraft(clip.id, 1)}
-                    >
-                      <InlineIcon icon={ArrowDown} fallback={ChevronRight} className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-button h-8 w-8 text-rose-600"
-                      aria-label="Remove clip"
-                      onClick={() => removeClipDraft(clip.id)}
-                    >
-                      <InlineIcon icon={Trash2} fallback={AlertCircle} className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  <TextField
-                    label="Clip title"
-                    value={clip.title}
-                    onChange={(value) => updateClipDraft(clip.id, { title: value })}
-                    placeholder="Fast break"
-                  />
-                  <TextField
-                    label="Note"
-                    value={clip.label}
-                    onChange={(value) => updateClipDraft(clip.id, { label: value })}
-                    placeholder="Optional context"
-                  />
-                </div>
-                {clip.source === 'external' ? (
-                  <label className="mt-2 block">
-                    <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Clip URL</span>
-                    <input
-                      type="url"
-                      value={clip.url}
-                      onChange={(event) => updateClipDraft(clip.id, { url: event.currentTarget.value })}
-                      placeholder="https://www.youtube.com/watch?v=..."
-                      className="mt-1 block w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-800 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <TextField
+                      label="Clip title"
+                      value={clip.title}
+                      onChange={(value) => updateClipDraft(clip.id, { title: value })}
+                      placeholder="Fast break"
                     />
-                  </label>
-                ) : null}
-              </div>
-            )) : (
+                    <TextField
+                      label="Note"
+                      value={clip.label}
+                      onChange={(value) => updateClipDraft(clip.id, { label: value })}
+                      placeholder="Optional context"
+                    />
+                  </div>
+                  {clip.source === 'external' ? (
+                    <label className="mt-2 block">
+                      <span className="text-xs font-black tracking-[0.04em] text-gray-500 uppercase">Clip URL</span>
+                      <input
+                        type="url"
+                        value={clip.url}
+                        onChange={(event) => updateClipDraft(clip.id, { url: event.currentTarget.value })}
+                        placeholder="https://www.youtube.com/watch?v=..."
+                        className="focus:border-primary-300 focus:ring-primary-100 mt-1 block w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-800 outline-none focus:ring-2"
+                      />
+                    </label>
+                  ) : null}
+                </div>
+              ))
+            ) : (
               <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-3 text-sm font-semibold text-gray-500">
                 No highlight clips yet.
               </div>
@@ -2678,21 +3221,21 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
           <TextField label="Dominant hand" value={dominantHand} onChange={setDominantHand} placeholder="Right" />
         </div>
         <label className="block">
-          <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Achievements</span>
+          <span className="text-xs font-black tracking-[0.04em] text-gray-500 uppercase">Achievements</span>
           <textarea
             value={achievements}
             onChange={(event) => setAchievements(event.currentTarget.value)}
             rows={3}
-            className="mt-1 block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+            className="focus:border-primary-300 focus:ring-primary-100 mt-1 block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 outline-none focus:ring-2"
             placeholder="Captains, honors, goals, recruiting notes"
           />
         </label>
         <div className="rounded-2xl border border-gray-200 bg-white p-3">
-          <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Selected seasons</div>
+          <div className="text-xs font-black tracking-[0.04em] text-gray-500 uppercase">Selected seasons</div>
           {hasSingleSeasonOption && singleSeasonOption ? (
             <>
               <p className="mt-1 text-sm font-semibold text-gray-700">Included linked season</p>
-              <div className="mt-3 rounded-xl border border-primary-200 bg-primary-50 px-3 py-3">
+              <div className="border-primary-200 bg-primary-50 mt-3 rounded-xl border px-3 py-3">
                 <div className="text-sm font-black text-gray-900">{singleSeasonOption.playerName}</div>
                 <div className="text-xs font-semibold text-gray-500">{singleSeasonOption.teamName}</div>
               </div>
@@ -2704,13 +3247,16 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
                 {seasonOptions.map((option) => {
                   const checked = selectedSeasonKeys.includes(option.seasonKey);
                   return (
-                    <label key={option.seasonKey} className={`flex items-start gap-3 rounded-xl border p-3 ${checked ? 'border-primary-300 bg-primary-50' : 'border-gray-200 bg-gray-50'}`}>
+                    <label
+                      key={option.seasonKey}
+                      className={`flex items-start gap-3 rounded-xl border p-3 ${checked ? 'border-primary-300 bg-primary-50' : 'border-gray-200 bg-gray-50'}`}
+                    >
                       <input
                         type="checkbox"
                         aria-label={`${option.playerName} ${option.teamName}`}
                         checked={checked}
                         onChange={() => toggleSeasonKey(option.seasonKey)}
-                        className="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                        className="text-primary-600 focus:ring-primary-500 mt-1 h-4 w-4 rounded border-gray-300"
                       />
                       <span className="min-w-0">
                         <span className="block text-sm font-black text-gray-900">{option.playerName}</span>
@@ -2723,13 +3269,19 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
             </>
           )}
         </div>
-        <div className="rounded-2xl border border-primary-100 bg-primary-50/60 p-3">
-          <div className="text-xs font-black uppercase tracking-[0.04em] text-primary-700">What others see</div>
-          <p className="mt-1 text-sm font-semibold text-gray-700">Publishing makes this read-only athlete profile public at the share link.</p>
+        <div className="border-primary-100 bg-primary-50/60 rounded-2xl border p-3">
+          <div className="text-primary-700 text-xs font-black tracking-[0.04em] uppercase">What others see</div>
+          <p className="mt-1 text-sm font-semibold text-gray-700">
+            Publishing makes this read-only athlete profile public at the share link.
+          </p>
           <ul className="mt-3 space-y-1 text-xs font-semibold text-gray-600">
-            {publicSummary.map((item) => <li key={item}>• {item}</li>)}
+            {publicSummary.map((item) => (
+              <li key={item}>• {item}</li>
+            ))}
           </ul>
-          <p className="mt-3 text-xs font-semibold text-gray-500">Private keeps the profile off the public page. Public matches the legacy athlete profile share behavior.</p>
+          <p className="mt-3 text-xs font-semibold text-gray-500">
+            Private keeps the profile off the public page. Public matches the legacy athlete profile share behavior.
+          </p>
         </div>
         <div className="athlete-profile-privacy grid grid-cols-2 gap-2">
           {(['private', 'public'] as const).map((option) => (
@@ -2746,7 +3298,11 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
         {status?.tone === 'error' ? <Status tone={status.tone} message={status.message} /> : null}
         <div className="athlete-profile-actions grid gap-2 sm:grid-cols-2">
           <button type="submit" className="primary-button justify-center" disabled={saveDisabled}>
-            {saveDisabled ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+            {saveDisabled ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Save className="h-4 w-4" aria-hidden="true" />
+            )}
             {saveLabel}
           </button>
           {canSharePublicProfile ? (
@@ -2765,7 +3321,12 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
               Publish changes before sharing
             </button>
           ) : (
-            <a href={canPreviewPublishedPublicProfile ? persistedPublicProfileUrl : data.athleteProfile.builderUrl} target="_blank" rel="noreferrer" className="secondary-button justify-center">
+            <a
+              href={canPreviewPublishedPublicProfile ? persistedPublicProfileUrl : data.athleteProfile.builderUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="secondary-button justify-center"
+            >
               <ExternalLink className="h-4 w-4" aria-hidden="true" />
               {canPreviewPublishedPublicProfile ? 'Preview Public Page' : 'Open Full Builder'}
             </a>
@@ -2774,9 +3335,13 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
         {privacy === 'public' && awaitingPersistedPublish ? (
           <p className="text-center text-xs font-semibold text-gray-500">Waiting for refresh to confirm the public share link.</p>
         ) : privacy === 'public' && hasUnsavedPublishChanges ? (
-          <p className="text-center text-xs font-semibold text-gray-500">Publish and save this profile before the public share link becomes available.</p>
+          <p className="text-center text-xs font-semibold text-gray-500">
+            Publish and save this profile before the public share link becomes available.
+          </p>
         ) : hasPersistedPrivateShareUrl ? (
-          <p className="text-center text-xs font-semibold text-gray-500">This saved share link stays private until you publish and save the profile.</p>
+          <p className="text-center text-xs font-semibold text-gray-500">
+            This saved share link stays private until you publish and save the profile.
+          </p>
         ) : null}
       </form>
     </section>
@@ -2803,8 +3368,12 @@ function CoParentInviteCard({ data, auth }: { data: ParentPlayerDetailData; auth
         playerName: data.player.name || data.child.playerName,
         email
       });
-      const code = String(result?.code || '').trim().toUpperCase();
-      const recipientEmail = String(result?.email || normalizedEmail).trim().toLowerCase();
+      const code = String(result?.code || '')
+        .trim()
+        .toUpperCase();
+      const recipientEmail = String(result?.email || normalizedEmail)
+        .trim()
+        .toLowerCase();
       const reused = result?.reused === true;
       setCreatedInvite({
         code,
@@ -2814,9 +3383,7 @@ function CoParentInviteCard({ data, auth }: { data: ParentPlayerDetailData; auth
       });
       setStatus({
         tone: 'success',
-        message: reused
-          ? `Existing invite reused for ${recipientEmail}. No new email was sent.`
-          : `Invite sent to ${recipientEmail}.`
+        message: reused ? `Existing invite reused for ${recipientEmail}. No new email was sent.` : `Invite sent to ${recipientEmail}.`
       });
       setEmail('');
     } catch (error: any) {
@@ -2824,9 +3391,10 @@ function CoParentInviteCard({ data, auth }: { data: ParentPlayerDetailData; auth
       const errorCode = String(error?.code || '').replace(/^functions\//, '');
       setStatus({
         tone: 'error',
-        message: errorCode === 'resource-exhausted'
-          ? 'Too many co-parent invites. Please wait and try again. No email was sent.'
-          : error?.message || 'Unable to send co-parent invite.'
+        message:
+          errorCode === 'resource-exhausted'
+            ? 'Too many co-parent invites. Please wait and try again. No email was sent.'
+            : error?.message || 'Unable to send co-parent invite.'
       });
     } finally {
       setSending(false);
@@ -2835,11 +3403,13 @@ function CoParentInviteCard({ data, auth }: { data: ParentPlayerDetailData; auth
 
   return (
     <section className="app-card p-4">
-      <div className="flex items-center gap-2 text-sm font-black text-primary-800">
+      <div className="text-primary-800 flex items-center gap-2 text-sm font-black">
         <Users className="h-4 w-4" aria-hidden="true" />
         Create invite
       </div>
-      <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Invite another parent or caregiver to connect their account to this player.</p>
+      <p className="mt-1 text-xs leading-5 font-semibold text-gray-500">
+        Invite another parent or caregiver to connect their account to this player.
+      </p>
       <form className="mt-4 space-y-3" onSubmit={submit}>
         <TextField label="Recipient email" value={email} onChange={setEmail} placeholder="parent@example.com" type="email" />
         {status ? <Status tone={status.tone} message={status.message} /> : null}
@@ -2880,7 +3450,7 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
   const pendingEarnings = incentives.seasonGameEarnings.filter((earning) => !earning.paid && earning.totalCents !== 0);
   const hasRules = incentives.currentRules.length > 0;
   const hasHistory = incentives.seasonGameEarnings.length > 0;
-  const [activePanel, setActivePanel] = useState<IncentivePanelId>(pendingEarnings.length ? 'overview' : (hasRules ? 'rules' : 'overview'));
+  const [activePanel, setActivePanel] = useState<IncentivePanelId>(pendingEarnings.length ? 'overview' : hasRules ? 'rules' : 'overview');
   const [builderOpen, setBuilderOpen] = useState(!hasRules);
   const [statKey, setStatKey] = useState(statOptions[0]?.key || 'pts');
   const [type, setType] = useState<'per_unit' | 'threshold'>('per_unit');
@@ -2910,32 +3480,37 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
     }
   };
 
-  const saveRule = () => run('rule', async () => {
-    const amountCents = Math.round(Number(amount || 0) * 100);
-    if (!statKey || !Number.isFinite(amountCents) || amountCents === 0) {
-      throw new Error('Choose a stat and enter a non-zero amount.');
-    }
-    const thresholdValue = Number(threshold || 0);
-    if (type === 'threshold' && (!Number.isFinite(thresholdValue) || thresholdValue <= 0)) {
-      throw new Error('Enter the stat target for this bonus.');
-    }
-    await saveParentPlayerIncentiveRule({
-      user: auth.user,
-      teamId: data.child.teamId,
-      playerId: data.child.playerId,
-      playerName: data.player.name || data.child.playerName,
-      rule: {
-        ...(editingRule?.id ? { id: editingRule.id } : {}),
-        statKey,
-        type,
-        amountCents,
-        threshold: type === 'threshold' ? thresholdValue : null,
-        thresholdOp,
-        active: editingRule ? editingRule.active !== false : true
-      }
-    });
-    closeBuilder();
-  }, editingRule ? 'Rule saved.' : 'Rule added.');
+  const saveRule = () =>
+    run(
+      'rule',
+      async () => {
+        const amountCents = Math.round(Number(amount || 0) * 100);
+        if (!statKey || !Number.isFinite(amountCents) || amountCents === 0) {
+          throw new Error('Choose a stat and enter a non-zero amount.');
+        }
+        const thresholdValue = Number(threshold || 0);
+        if (type === 'threshold' && (!Number.isFinite(thresholdValue) || thresholdValue <= 0)) {
+          throw new Error('Enter the stat target for this bonus.');
+        }
+        await saveParentPlayerIncentiveRule({
+          user: auth.user,
+          teamId: data.child.teamId,
+          playerId: data.child.playerId,
+          playerName: data.player.name || data.child.playerName,
+          rule: {
+            ...(editingRule?.id ? { id: editingRule.id } : {}),
+            statKey,
+            type,
+            amountCents,
+            threshold: type === 'threshold' ? thresholdValue : null,
+            thresholdOp,
+            active: editingRule ? editingRule.active !== false : true
+          }
+        });
+        closeBuilder();
+      },
+      editingRule ? 'Rule saved.' : 'Rule added.'
+    );
 
   const startNewRule = () => {
     setEditingRule(null);
@@ -2964,18 +3539,24 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
     setActivePanel('rules');
   };
 
-  const saveCap = () => run('cap', async () => {
-    const raw = cap.trim();
-    const numeric = raw ? Number(raw) : null;
-    if (raw && (!Number.isFinite(numeric) || Number(numeric) < 0)) throw new Error('Enter a valid cap amount.');
-    const cents = numeric === null ? null : Math.round(Number(numeric) * 100);
-    await saveParentPlayerIncentiveCap(auth.user, data.child.teamId, data.child.playerId, cents);
-  });
+  const saveCap = () =>
+    run('cap', async () => {
+      const raw = cap.trim();
+      const numeric = raw ? Number(raw) : null;
+      if (raw && (!Number.isFinite(numeric) || Number(numeric) < 0)) throw new Error('Enter a valid cap amount.');
+      const cents = numeric === null ? null : Math.round(Number(numeric) * 100);
+      await saveParentPlayerIncentiveCap(auth.user, data.child.teamId, data.child.playerId, cents);
+    });
 
-  const removeCap = () => run('cap-remove', async () => {
-    setCap('');
-    await saveParentPlayerIncentiveCap(auth.user, data.child.teamId, data.child.playerId, null);
-  }, 'Game limit removed.');
+  const removeCap = () =>
+    run(
+      'cap-remove',
+      async () => {
+        setCap('');
+        await saveParentPlayerIncentiveCap(auth.user, data.child.teamId, data.child.playerId, null);
+      },
+      'Game limit removed.'
+    );
 
   const openPayouts = () => {
     setActivePanel('history');
@@ -2984,29 +3565,38 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
     });
   };
 
-  const ruleDraftPreview = formatIncentiveDraft({
-    statKey,
-    type,
-    amountCents: Math.round(Number(amount || 0) * 100),
-    threshold,
-    thresholdOp
-  }, statOptions);
+  const ruleDraftPreview = formatIncentiveDraft(
+    {
+      statKey,
+      type,
+      amountCents: Math.round(Number(amount || 0) * 100),
+      threshold,
+      thresholdOp
+    },
+    statOptions
+  );
 
   return (
     <section className="app-card overflow-hidden">
       <div className="bg-[linear-gradient(135deg,#111827_0%,#4338ca_52%,#047857_100%)] p-4 text-white">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.06em] text-white/70">
+            <div className="flex items-center gap-2 text-xs font-black tracking-[0.06em] text-white/70 uppercase">
               <DollarSign className="h-4 w-4" aria-hidden="true" />
               Incentive wallet
             </div>
-            <div className="mt-3 text-3xl font-black leading-none">{formatMoney(Math.max(incentives.unpaidCents, 0), false)}</div>
+            <div className="mt-3 text-3xl leading-none font-black">{formatMoney(Math.max(incentives.unpaidCents, 0), false)}</div>
             <div className="mt-1 text-sm font-bold text-white/80">
-              {pendingEarnings.length ? `${pendingEarnings.length} game${pendingEarnings.length === 1 ? '' : 's'} ready to settle` : 'No unpaid game payouts'}
+              {pendingEarnings.length
+                ? `${pendingEarnings.length} game${pendingEarnings.length === 1 ? '' : 's'} ready to settle`
+                : 'No unpaid game payouts'}
             </div>
           </div>
-          <button type="button" className="inline-flex min-h-9 flex-none items-center justify-center gap-2 rounded-xl bg-white/95 px-3 text-xs font-black text-gray-950 shadow-sm" onClick={startNewRule}>
+          <button
+            type="button"
+            className="inline-flex min-h-9 flex-none items-center justify-center gap-2 rounded-xl bg-white/95 px-3 text-xs font-black text-gray-950 shadow-sm"
+            onClick={startNewRule}
+          >
             <Plus className="h-4 w-4" aria-hidden="true" />
             Rule
           </button>
@@ -3018,7 +3608,11 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
         </div>
       </div>
 
-      {status ? <div className="px-4 pt-4"><Status tone={status.tone} message={status.message} /></div> : null}
+      {status ? (
+        <div className="px-4 pt-4">
+          <Status tone={status.tone} message={status.message} />
+        </div>
+      ) : null}
 
       <div className="border-b border-gray-100 px-3 pt-3">
         <div className="flex gap-1 overflow-x-auto rounded-2xl border border-gray-200 bg-gray-50 p-1">
@@ -3028,7 +3622,7 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
               <button
                 key={panel.id}
                 type="button"
-                className={`min-h-9 flex-1 rounded-xl px-3 text-xs font-black transition ${active ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-600 hover:text-gray-950'}`}
+                className={`min-h-9 flex-1 rounded-xl px-3 text-xs font-black transition ${active ? 'text-primary-700 bg-white shadow-sm' : 'text-gray-600 hover:text-gray-950'}`}
                 onClick={() => setActivePanel(panel.id)}
                 aria-pressed={active}
               >
@@ -3043,10 +3637,16 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
         {activePanel === 'overview' ? (
           <>
             {pendingEarnings.length ? (
-              <button type="button" className="flex w-full items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-left" onClick={openPayouts}>
+              <button
+                type="button"
+                className="flex w-full items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-left"
+                onClick={openPayouts}
+              >
                 <span className="min-w-0">
                   <span className="block text-sm font-black text-amber-950">Payouts need attention</span>
-                  <span className="mt-0.5 block truncate text-xs font-semibold text-amber-700">{getScheduleTitle(pendingEarnings[0].event)} · {formatMoney(pendingEarnings[0].totalCents)}</span>
+                  <span className="mt-0.5 block truncate text-xs font-semibold text-amber-700">
+                    {getScheduleTitle(pendingEarnings[0].event)} · {formatMoney(pendingEarnings[0].totalCents)}
+                  </span>
                 </span>
                 <ChevronRight className="h-5 w-5 flex-none text-amber-700" aria-hidden="true" />
               </button>
@@ -3055,7 +3655,9 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
                 <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none text-emerald-700" aria-hidden="true" />
                 <div>
                   <div className="text-sm font-black text-emerald-900">Payouts are current</div>
-                  <div className="mt-0.5 text-xs font-semibold text-emerald-700">{hasHistory ? 'Every tracked game is settled.' : 'Game payouts appear here after stats are tracked.'}</div>
+                  <div className="mt-0.5 text-xs font-semibold text-emerald-700">
+                    {hasHistory ? 'Every tracked game is settled.' : 'Game payouts appear here after stats are tracked.'}
+                  </div>
                 </div>
               </div>
             )}
@@ -3070,7 +3672,11 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-sm font-black text-gray-950">Active rules</div>
-                  <div className="mt-0.5 text-xs font-semibold text-gray-500">{activeRules.length ? `${activeRules.length} rule${activeRules.length === 1 ? '' : 's'} applying to future games` : 'No active rules yet'}</div>
+                  <div className="mt-0.5 text-xs font-semibold text-gray-500">
+                    {activeRules.length
+                      ? `${activeRules.length} rule${activeRules.length === 1 ? '' : 's'} applying to future games`
+                      : 'No active rules yet'}
+                  </div>
                 </div>
                 <button type="button" className="secondary-button !min-h-9 text-xs" onClick={startNewRule}>
                   <Plus className="h-4 w-4" aria-hidden="true" />
@@ -3082,20 +3688,36 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
                   {activeRules.slice(0, 2).map((rule) => (
                     <div key={rule.id} className="flex items-center justify-between gap-3 rounded-lg bg-gray-50 px-3 py-2">
                       <span className="truncate text-xs font-black text-gray-800">{formatIncentiveRule(rule, statOptions)}</span>
-                      <button type="button" className="text-xs font-black text-primary-700" onClick={() => editRule(rule)}>Edit</button>
+                      <button type="button" className="text-primary-700 text-xs font-black" onClick={() => editRule(rule)}>
+                        Edit
+                      </button>
                     </div>
                   ))}
-                  {activeRules.length > 2 ? <button type="button" className="text-xs font-black text-primary-700" onClick={() => setActivePanel('rules')}>View all rules</button> : null}
+                  {activeRules.length > 2 ? (
+                    <button type="button" className="text-primary-700 text-xs font-black" onClick={() => setActivePanel('rules')}>
+                      View all rules
+                    </button>
+                  ) : null}
                 </div>
               ) : (
-                <div className="mt-3 rounded-lg border border-dashed border-gray-200 bg-gray-50 p-3 text-xs font-semibold text-gray-500">Create a rule for tracked stats such as points, assists, goals, or custom team stats.</div>
+                <div className="mt-3 rounded-lg border border-dashed border-gray-200 bg-gray-50 p-3 text-xs font-semibold text-gray-500">
+                  Create a rule for tracked stats such as points, assists, goals, or custom team stats.
+                </div>
               )}
             </div>
 
-            <button type="button" className="flex w-full items-center justify-between rounded-xl border border-gray-200 bg-gray-50 p-3 text-left" onClick={() => setActivePanel('rules')}>
+            <button
+              type="button"
+              className="flex w-full items-center justify-between rounded-xl border border-gray-200 bg-gray-50 p-3 text-left"
+              onClick={() => setActivePanel('rules')}
+            >
               <span>
                 <span className="block text-sm font-black text-gray-950">Game limit</span>
-                <span className="mt-0.5 block text-xs font-semibold text-gray-500">{incentives.maxPerGameCents !== null ? `Capped at ${formatMoney(incentives.maxPerGameCents, false)} per game` : 'No max per game'}</span>
+                <span className="mt-0.5 block text-xs font-semibold text-gray-500">
+                  {incentives.maxPerGameCents !== null
+                    ? `Capped at ${formatMoney(incentives.maxPerGameCents, false)} per game`
+                    : 'No max per game'}
+                </span>
               </span>
               <ChevronRight className="h-5 w-5 text-gray-400" aria-hidden="true" />
             </button>
@@ -3118,36 +3740,59 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
             </div>
 
             {builderOpen ? (
-              <div className="rounded-xl border border-primary-200 bg-primary-50 p-3">
+              <div className="border-primary-200 bg-primary-50 rounded-xl border p-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-black text-primary-950">{editingRule ? 'Edit rule' : 'New rule'}</div>
-                    <div className="mt-0.5 text-xs font-semibold text-primary-700">{ruleDraftPreview}</div>
+                    <div className="text-primary-950 text-sm font-black">{editingRule ? 'Edit rule' : 'New rule'}</div>
+                    <div className="text-primary-700 mt-0.5 text-xs font-semibold">{ruleDraftPreview}</div>
                   </div>
-                  {hasRules ? <button type="button" className="text-xs font-black text-primary-700" onClick={closeBuilder}>Cancel</button> : null}
+                  {hasRules ? (
+                    <button type="button" className="text-primary-700 text-xs font-black" onClick={closeBuilder}>
+                      Cancel
+                    </button>
+                  ) : null}
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {statOptions.map((option) => (
-                    <button key={option.key} type="button" className={`rounded-lg border px-2.5 py-1.5 text-xs font-black ${statKey === option.key ? 'border-primary-500 bg-primary-600 text-white' : 'border-gray-200 bg-white text-gray-600'}`} onClick={() => setStatKey(option.key)}>
+                    <button
+                      key={option.key}
+                      type="button"
+                      className={`rounded-lg border px-2.5 py-1.5 text-xs font-black ${statKey === option.key ? 'border-primary-500 bg-primary-600 text-white' : 'border-gray-200 bg-white text-gray-600'}`}
+                      onClick={() => setStatKey(option.key)}
+                    >
                       {option.label}
                     </button>
                   ))}
                 </div>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   <label className="block">
-                    <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Type</span>
-                    <select value={type} onChange={(event) => setType(event.currentTarget.value as 'per_unit' | 'threshold')} className="mt-1 block min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-800">
+                    <span className="text-xs font-black tracking-[0.04em] text-gray-500 uppercase">Type</span>
+                    <select
+                      value={type}
+                      onChange={(event) => setType(event.currentTarget.value as 'per_unit' | 'threshold')}
+                      className="mt-1 block min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-800"
+                    >
                       <option value="per_unit">Per stat</option>
                       <option value="threshold">Goal bonus</option>
                     </select>
                   </label>
-                  <TextField label={type === 'threshold' ? 'Bonus amount' : 'Amount'} value={amount} onChange={setAmount} placeholder="1.00" type="number" />
+                  <TextField
+                    label={type === 'threshold' ? 'Bonus amount' : 'Amount'}
+                    value={amount}
+                    onChange={setAmount}
+                    placeholder="1.00"
+                    type="number"
+                  />
                 </div>
                 {type === 'threshold' ? (
                   <div className="mt-2 grid grid-cols-[1fr_1fr] gap-2">
                     <label className="block">
-                      <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Condition</span>
-                      <select value={thresholdOp} onChange={(event) => setThresholdOp(event.currentTarget.value as 'gt' | 'gte')} className="mt-1 block min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-800">
+                      <span className="text-xs font-black tracking-[0.04em] text-gray-500 uppercase">Condition</span>
+                      <select
+                        value={thresholdOp}
+                        onChange={(event) => setThresholdOp(event.currentTarget.value as 'gt' | 'gte')}
+                        className="mt-1 block min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-800"
+                      >
                         <option value="gt">Greater than</option>
                         <option value="gte">At least</option>
                       </select>
@@ -3156,36 +3801,75 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
                   </div>
                 ) : null}
                 <button type="button" className="primary-button mt-3 w-full justify-center" disabled={busy === 'rule'} onClick={saveRule}>
-                  {busy === 'rule' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+                  {busy === 'rule' ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Save className="h-4 w-4" aria-hidden="true" />
+                  )}
                   {editingRule ? 'Save Rule' : 'Add Rule'}
                 </button>
               </div>
             ) : null}
 
             <div className="space-y-2">
-              {incentives.currentRules.length ? incentives.currentRules.map((rule) => (
-                <div key={rule.id} className={`rounded-xl border p-3 ${rule.active === false ? 'border-gray-200 bg-gray-50' : 'border-gray-200 bg-white'}`}>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className={`truncate text-sm font-black ${rule.active === false ? 'text-gray-500' : 'text-gray-950'}`}>{formatIncentiveRule(rule, statOptions)}</div>
-                      <div className={`mt-0.5 text-xs font-bold ${rule.active === false ? 'text-gray-400' : 'text-emerald-700'}`}>{rule.active === false ? 'Disabled for future games' : 'Active for future games'}</div>
-                    </div>
-                    <div className="flex flex-none gap-1">
-                      <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 text-xs" onClick={() => editRule(rule)}>
-                        <Edit3 className="h-3.5 w-3.5" aria-hidden="true" />
-                        Edit
-                      </button>
-                      <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 text-xs" disabled={busy === `toggle-${rule.id}`} onClick={() => run(`toggle-${rule.id}`, () => toggleParentPlayerIncentiveRule(auth.user, data.child.teamId, data.child.playerId, rule))}>{rule.active === false ? 'Enable' : 'Disable'}</button>
-                      <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 text-xs" disabled={!rule.id || busy === `retire-${rule.id}`} onClick={() => {
-                        const ruleId = rule.id;
-                        return ruleId ? run(`retire-${ruleId}`, () => retireParentPlayerIncentiveRule(auth.user, data.child.teamId, data.child.playerId, ruleId), 'Rule stopped.') : undefined;
-                      }}>
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                      </button>
+              {incentives.currentRules.length ? (
+                incentives.currentRules.map((rule) => (
+                  <div
+                    key={rule.id}
+                    className={`rounded-xl border p-3 ${rule.active === false ? 'border-gray-200 bg-gray-50' : 'border-gray-200 bg-white'}`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className={`truncate text-sm font-black ${rule.active === false ? 'text-gray-500' : 'text-gray-950'}`}>
+                          {formatIncentiveRule(rule, statOptions)}
+                        </div>
+                        <div className={`mt-0.5 text-xs font-bold ${rule.active === false ? 'text-gray-400' : 'text-emerald-700'}`}>
+                          {rule.active === false ? 'Disabled for future games' : 'Active for future games'}
+                        </div>
+                      </div>
+                      <div className="flex flex-none gap-1">
+                        <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 text-xs" onClick={() => editRule(rule)}>
+                          <Edit3 className="h-3.5 w-3.5" aria-hidden="true" />
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost-button !h-8 !min-h-8 !px-2 text-xs"
+                          disabled={busy === `toggle-${rule.id}`}
+                          onClick={() =>
+                            run(`toggle-${rule.id}`, () =>
+                              toggleParentPlayerIncentiveRule(auth.user, data.child.teamId, data.child.playerId, rule)
+                            )
+                          }
+                        >
+                          {rule.active === false ? 'Enable' : 'Disable'}
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost-button !h-8 !min-h-8 !px-2 text-xs"
+                          disabled={!rule.id || busy === `retire-${rule.id}`}
+                          onClick={() => {
+                            const ruleId = rule.id;
+                            return ruleId
+                              ? run(
+                                  `retire-${ruleId}`,
+                                  () => retireParentPlayerIncentiveRule(auth.user, data.child.teamId, data.child.playerId, ruleId),
+                                  'Rule stopped.'
+                                )
+                              : undefined;
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                      </div>
                     </div>
                   </div>
+                ))
+              ) : (
+                <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-center text-sm font-semibold text-gray-500">
+                  No incentive rules yet.
                 </div>
-              )) : <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-center text-sm font-semibold text-gray-500">No incentive rules yet.</div>}
+              )}
             </div>
 
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
@@ -3194,7 +3878,11 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
                   <div className="text-sm font-black text-gray-950">Max earned per game</div>
                   <div className="mt-0.5 text-xs font-semibold text-gray-500">Optional parent-only limit across all rules.</div>
                 </div>
-                {incentives.maxPerGameCents !== null ? <button type="button" className="text-xs font-black text-rose-600" disabled={busy === 'cap-remove'} onClick={removeCap}>Remove</button> : null}
+                {incentives.maxPerGameCents !== null ? (
+                  <button type="button" className="text-xs font-black text-rose-600" disabled={busy === 'cap-remove'} onClick={removeCap}>
+                    Remove
+                  </button>
+                ) : null}
               </div>
               <div className="mt-3 flex items-end gap-2">
                 <div className="min-w-0 flex-1">
@@ -3214,7 +3902,11 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-black text-gray-950">Game payouts</h3>
-                <p className="mt-0.5 text-xs font-semibold text-gray-500">{hasHistory ? `${incentives.seasonGameEarnings.length} tracked game${incentives.seasonGameEarnings.length === 1 ? '' : 's'}` : 'No tracked games yet.'}</p>
+                <p className="mt-0.5 text-xs font-semibold text-gray-500">
+                  {hasHistory
+                    ? `${incentives.seasonGameEarnings.length} tracked game${incentives.seasonGameEarnings.length === 1 ? '' : 's'}`
+                    : 'No tracked games yet.'}
+                </p>
               </div>
               <MiniMoney label="Unpaid" cents={incentives.unpaidCents} warn={incentives.unpaidCents > 0} />
             </div>
@@ -3225,23 +3917,56 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0">
                         <div className="truncate text-sm font-black text-gray-950">{getScheduleTitle(earning.event)}</div>
-                        <div className="mt-0.5 text-xs font-semibold text-gray-500">{formatEventDateLabel(earning.event.date)}{earning.wasCapped ? ` · capped at ${formatMoney(earning.totalCents, false)}` : ''}</div>
+                        <div className="mt-0.5 text-xs font-semibold text-gray-500">
+                          {formatEventDateLabel(earning.event.date)}
+                          {earning.wasCapped ? ` · capped at ${formatMoney(earning.totalCents, false)}` : ''}
+                        </div>
                       </div>
                       <div className="text-right">
-                        <div className={`text-sm font-black ${earning.totalCents >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatMoney(earning.totalCents)}</div>
-                        {earning.paid ? <div className="text-xs font-black text-emerald-700">Paid</div> : <div className="text-xs font-black text-amber-700">Unpaid</div>}
+                        <div className={`text-sm font-black ${earning.totalCents >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {formatMoney(earning.totalCents)}
+                        </div>
+                        {earning.paid ? (
+                          <div className="text-xs font-black text-emerald-700">Paid</div>
+                        ) : (
+                          <div className="text-xs font-black text-amber-700">Unpaid</div>
+                        )}
                       </div>
                     </div>
                     {earning.breakdown.length ? (
                       <div className="mt-3 space-y-1 rounded-lg bg-gray-50 px-3 py-2">
                         {earning.breakdown.slice(0, 4).map((line, index) => (
-                          <div key={`${earning.event.eventKey}-${index}`} className="text-xs font-semibold text-gray-600">{formatIncentiveBreakdownLine(line)}</div>
+                          <div key={`${earning.event.eventKey}-${index}`} className="text-xs font-semibold text-gray-600">
+                            {formatIncentiveBreakdownLine(line)}
+                          </div>
                         ))}
                       </div>
                     ) : null}
                     {!earning.paid && earning.totalCents !== 0 ? (
-                      <button type="button" className="secondary-button mt-2 !min-h-9 w-full justify-center text-xs" disabled={busy === `paid-${earning.event.id}`} onClick={() => run(`paid-${earning.event.id}`, () => markParentPlayerIncentivePaid(auth.user, data.child.teamId, data.child.playerId, earning.event.id, earning.totalCents), 'Marked paid.')}>
-                        {busy === `paid-${earning.event.id}` ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <CheckCircle2 className="h-4 w-4" aria-hidden="true" />}
+                      <button
+                        type="button"
+                        className="secondary-button mt-2 !min-h-9 w-full justify-center text-xs"
+                        disabled={busy === `paid-${earning.event.id}`}
+                        onClick={() =>
+                          run(
+                            `paid-${earning.event.id}`,
+                            () =>
+                              markParentPlayerIncentivePaid(
+                                auth.user,
+                                data.child.teamId,
+                                data.child.playerId,
+                                earning.event.id,
+                                earning.totalCents
+                              ),
+                            'Marked paid.'
+                          )
+                        }
+                      >
+                        {busy === `paid-${earning.event.id}` ? (
+                          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                        ) : (
+                          <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                        )}
                         Mark Paid
                       </button>
                     ) : null}
@@ -3249,7 +3974,9 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
                 ))}
               </div>
             ) : (
-              <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-center text-sm font-semibold text-gray-500">Game payouts appear after tracked games have stats.</div>
+              <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-center text-sm font-semibold text-gray-500">
+                Game payouts appear after tracked games have stats.
+              </div>
             )}
           </>
         ) : null}
@@ -3260,11 +3987,20 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
 
 type TextFieldHints = Pick<InputHTMLAttributes<HTMLInputElement>, 'inputMode' | 'autoComplete' | 'enterKeyHint'>;
 
-function TextField({ label, value, onChange, placeholder = '', type = 'text', inputMode, autoComplete, enterKeyHint }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; type?: string } & TextFieldHints) {
+function TextField({
+  label,
+  value,
+  onChange,
+  placeholder = '',
+  type = 'text',
+  inputMode,
+  autoComplete,
+  enterKeyHint
+}: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; type?: string } & TextFieldHints) {
   const hints = inferInputHints(type);
   return (
     <label className="block">
-      <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">{label}</span>
+      <span className="text-xs font-black tracking-[0.04em] text-gray-500 uppercase">{label}</span>
       <input
         type={type}
         inputMode={inputMode || hints.inputMode}
@@ -3273,7 +4009,7 @@ function TextField({ label, value, onChange, placeholder = '', type = 'text', in
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
         placeholder={placeholder}
-        className="mt-1 block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+        className="focus:border-primary-300 focus:ring-primary-100 mt-1 block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 outline-none focus:ring-2"
       />
     </label>
   );
@@ -3286,12 +4022,28 @@ function inferInputHints(type: string): TextFieldHints {
   return { enterKeyHint: 'next' };
 }
 
-function MiniMoney({ label, cents = 0, value, warn = false, inverse = false }: { label: string; cents?: number; value?: string; warn?: boolean; inverse?: boolean }) {
+function MiniMoney({
+  label,
+  cents = 0,
+  value,
+  warn = false,
+  inverse = false
+}: {
+  label: string;
+  cents?: number;
+  value?: string;
+  warn?: boolean;
+  inverse?: boolean;
+}) {
   const display = typeof value === 'string' ? value : formatMoney(cents, false);
   return (
-    <div className={`rounded-xl border p-3 text-center ${inverse ? 'border-white/15 bg-white/10' : warn ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-gray-50'}`}>
+    <div
+      className={`rounded-xl border p-3 text-center ${inverse ? 'border-white/15 bg-white/10' : warn ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-gray-50'}`}
+    >
       <div className={`text-base font-black ${inverse ? 'text-white' : warn ? 'text-amber-800' : 'text-gray-950'}`}>{display}</div>
-      <div className={`mt-0.5 text-[10px] font-black uppercase tracking-[0.04em] ${inverse ? 'text-white/65' : 'text-gray-500'}`}>{label}</div>
+      <div className={`mt-0.5 text-[10px] font-black tracking-[0.04em] uppercase ${inverse ? 'text-white/65' : 'text-gray-500'}`}>
+        {label}
+      </div>
     </div>
   );
 }
@@ -3300,20 +4052,41 @@ function PlayerEventCard({ event, featured = false }: { event: ParentScheduleEve
   const rsvp = normalizeRsvpResponse(event.myRsvp);
   const openAssignments = getOpenScheduleAssignments(event.assignments).length;
   return (
-    <Link to={getEventDetailPath(event)} className={`app-card block p-3 transition hover:border-primary-200 hover:shadow-app-lg ${featured ? 'border-primary-100' : ''}`}>
+    <Link
+      to={getEventDetailPath(event)}
+      className={`app-card hover:border-primary-200 hover:shadow-app-lg block p-3 transition ${featured ? 'border-primary-100' : ''}`}
+    >
       <div className="flex items-start gap-3">
         <DateTile date={event.date} />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-xs font-black uppercase tracking-[0.04em] text-gray-500">{event.teamName}</span>
-            <span className={`flex-none rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${event.type === 'practice' ? 'bg-amber-100 text-amber-800' : 'bg-primary-100 text-primary-800'}`}>{event.type}</span>
+            <span className="truncate text-xs font-black tracking-[0.04em] text-gray-500 uppercase">{event.teamName}</span>
+            <span
+              className={`flex-none rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${event.type === 'practice' ? 'bg-amber-100 text-amber-800' : 'bg-primary-100 text-primary-800'}`}
+            >
+              {event.type}
+            </span>
           </div>
           <h3 className="mt-1 truncate text-base font-black text-gray-950">{getScheduleTitle(event)}</h3>
-          <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{formatEventTimeLabel(event.date)} · {getScheduleLocationLabel(event)}</div>
+          <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">
+            {formatEventTimeLabel(event.date)} · {getScheduleLocationLabel(event)}
+          </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
-            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>{rsvp === 'not_responded' ? 'RSVP' : rsvp.replace('_', ' ')}</span>
-            {event.practiceHomePacketSummary ? <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] text-blue-700">Packet</span> : null}
-            {openAssignments ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] text-emerald-700">{openAssignments} tasks</span> : null}
+            <span
+              className={`rounded-full border px-2 py-0.5 text-[10px] font-black tracking-[0.04em] uppercase ${rsvpBadgeClasses[rsvp]}`}
+            >
+              {rsvp === 'not_responded' ? 'RSVP' : rsvp.replace('_', ' ')}
+            </span>
+            {event.practiceHomePacketSummary ? (
+              <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-black tracking-[0.04em] text-blue-700 uppercase">
+                Packet
+              </span>
+            ) : null}
+            {openAssignments ? (
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-black tracking-[0.04em] text-emerald-700 uppercase">
+                {openAssignments} tasks
+              </span>
+            ) : null}
           </div>
         </div>
         <ChevronRight className="mt-1 h-5 w-5 flex-none text-gray-400" aria-hidden="true" />
@@ -3323,16 +4096,35 @@ function PlayerEventCard({ event, featured = false }: { event: ParentScheduleEve
 }
 
 function StatRow({ row }: { row: ParentPlayerStatRow }) {
-  const statEntries = Object.entries(row.stats || {})
-    .filter(([, value]) => Number.isFinite(Number(value)))
-    .slice(0, 5);
+  const diamond = row.statPresentation?.isDiamond === true;
+  const diamondDefinitions = Array.isArray(row.statDefinitions) ? row.statDefinitions : DIAMOND_PLAYER_STAT_CATALOG;
+  const statEntries: Array<{ key: string; value: unknown; definition?: Record<string, unknown> }> = diamond
+    ? diamondDefinitions.slice(0, 5).map((definition) => ({
+        key: String(definition.id || ''),
+        value: row.stats?.[String(definition.id || '')],
+        definition
+      }))
+    : Object.entries(row.stats || {})
+        .filter(([, value]) => Number.isFinite(Number(value)))
+        .slice(0, 5)
+        .map(([key, value]) => ({ key, value }));
   const timeMs = Number(row.timeMs || 0);
   return (
-    <Link to={getEventDetailPath(row.event, 'game')} className="block rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
+    <Link
+      to={getEventDetailPath(row.event, 'game')}
+      className="hover:border-primary-200 hover:bg-primary-50/40 block rounded-xl border border-gray-200 bg-gray-50 p-3 transition"
+    >
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate text-sm font-black text-gray-950">{getScheduleTitle(row.event)}</div>
           <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{formatEventDateLabel(row.event.date)}</div>
+          {diamond ? (
+            <div className="mt-0.5 text-[10px] font-bold text-sky-700">
+              {row.statVisibility === 'manager-internal' ? 'Manager-internal' : 'Public'} Diamond stats rev{' '}
+              {row.statPresentation?.sourceRevision ?? 'unavailable'}
+              {row.statPresentation?.projection?.pending ? ' · projection pending' : ''}
+            </div>
+          ) : null}
         </div>
         <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
       </div>
@@ -3341,27 +4133,41 @@ function StatRow({ row }: { row: ParentPlayerStatRow }) {
           {timeMs > 0 ? (
             <div className="rounded-lg border border-gray-200 bg-white p-2 text-center">
               <div className="text-base font-black text-gray-950">{formatAverage(timeMs / 60000)}</div>
-              <div className="mt-0.5 truncate text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">MIN</div>
+              <div className="mt-0.5 truncate text-[10px] font-black tracking-[0.04em] text-gray-500 uppercase">MIN</div>
             </div>
           ) : null}
-          {statEntries.map(([key, value]) => (
+          {statEntries.map(({ key, value, definition }) => (
             <div key={key} className="rounded-lg border border-gray-200 bg-white p-2 text-center">
-              <div className="text-base font-black text-gray-950">{String(value)}</div>
-              <div className="mt-0.5 truncate text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{key}</div>
+              <div className="text-base font-black text-gray-950">
+                {diamond && row.statPresentation ? (
+                  <CoverageAwarePlayerValue presentation={row.statPresentation} stats={row.stats} statKey={key} definition={definition} />
+                ) : (
+                  String(value)
+                )}
+              </div>
+              <div className="mt-0.5 truncate text-[10px] font-black tracking-[0.04em] text-gray-500 uppercase">
+                {String(definition?.label || key)}
+              </div>
             </div>
           ))}
         </div>
-      ) : <div className="mt-2 text-xs font-semibold text-gray-500">No stat line recorded.</div>}
+      ) : (
+        <div className="mt-2 text-xs font-semibold text-gray-500">No stat line recorded.</div>
+      )}
     </Link>
   );
 }
 
 function SignalChip({ icon: Icon, label, value, urgent = false }: { icon: LucideIcon; label: string; value: string; urgent?: boolean }) {
   return (
-    <div className={`flex min-h-7 flex-none items-center gap-1.5 rounded-full border px-2.5 text-xs font-black ${urgent ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
+    <div
+      className={`flex min-h-7 flex-none items-center gap-1.5 rounded-full border px-2.5 text-xs font-black ${urgent ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-gray-200 bg-gray-50 text-gray-700'}`}
+    >
       {Icon ? <Icon className={`h-3.5 w-3.5 ${urgent ? 'text-amber-700' : 'text-primary-600'}`} aria-hidden="true" /> : null}
       <span>{label}</span>
-      <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${urgent ? 'bg-amber-200/70 text-amber-950' : 'bg-white text-gray-950'}`}>{value}</span>
+      <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${urgent ? 'bg-amber-200/70 text-amber-950' : 'bg-white text-gray-950'}`}>
+        {value}
+      </span>
     </div>
   );
 }
@@ -3370,17 +4176,19 @@ function InfoCard({ icon: Icon, title, detail, to }: { icon: LucideIcon; title: 
   const body = (
     <>
       <div className="flex items-start justify-between gap-3">
-        {Icon ? <Icon className="h-5 w-5 text-primary-600" aria-hidden="true" /> : null}
-        {to ? <ChevronRight className="h-4 w-4 flex-none text-gray-400 transition group-hover:text-primary-600" aria-hidden="true" /> : null}
+        {Icon ? <Icon className="text-primary-600 h-5 w-5" aria-hidden="true" /> : null}
+        {to ? (
+          <ChevronRight className="group-hover:text-primary-600 h-4 w-4 flex-none text-gray-400 transition" aria-hidden="true" />
+        ) : null}
       </div>
       <div className="mt-3 text-sm font-black text-gray-950">{title}</div>
-      <div className="mt-1 text-xs font-semibold leading-5 text-gray-600">{detail}</div>
+      <div className="mt-1 text-xs leading-5 font-semibold text-gray-600">{detail}</div>
     </>
   );
 
   if (to) {
     return (
-      <Link to={to} className="app-card group block p-4 transition hover:border-primary-200 hover:shadow-app-lg">
+      <Link to={to} className="app-card group hover:border-primary-200 hover:shadow-app-lg block p-4 transition">
         {body}
       </Link>
     );
@@ -3402,9 +4210,13 @@ function EmptyCard({ icon: Icon, title, detail }: { icon: LucideIcon; title: str
 function DateTile({ date }: { date: Date }) {
   return (
     <div className="flex h-12 w-12 flex-none flex-col items-center justify-center rounded-xl bg-gray-50 shadow-inner ring-1 ring-gray-200">
-      <div className="text-[10px] font-black uppercase leading-none tracking-[0.06em] text-gray-500">{date.toLocaleDateString('en-US', { month: 'short' })}</div>
-      <div className="mt-0.5 text-lg font-black leading-none text-gray-950">{date.getDate()}</div>
-      <div className="mt-0.5 text-[10px] font-black uppercase leading-none tracking-[0.06em] text-gray-500">{date.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+      <div className="text-[10px] leading-none font-black tracking-[0.06em] text-gray-500 uppercase">
+        {date.toLocaleDateString('en-US', { month: 'short' })}
+      </div>
+      <div className="mt-0.5 text-lg leading-none font-black text-gray-950">{date.getDate()}</div>
+      <div className="mt-0.5 text-[10px] leading-none font-black tracking-[0.06em] text-gray-500 uppercase">
+        {date.toLocaleDateString('en-US', { weekday: 'short' })}
+      </div>
     </div>
   );
 }
@@ -3412,13 +4224,21 @@ function DateTile({ date }: { date: Date }) {
 function IconBox({ icon: Icon }: { icon: LucideIcon }) {
   const ResolvedIcon = Icon || UserRound;
   return (
-    <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
+    <div className="bg-primary-50 text-primary-700 flex h-11 w-11 flex-none items-center justify-center rounded-xl">
       <ResolvedIcon className="h-5 w-5" aria-hidden="true" />
     </div>
   );
 }
 
-function InlineIcon({ icon: Icon, fallback: Fallback = UserRound, className }: { icon: LucideIcon; fallback?: LucideIcon; className: string }) {
+function InlineIcon({
+  icon: Icon,
+  fallback: Fallback = UserRound,
+  className
+}: {
+  icon: LucideIcon;
+  fallback?: LucideIcon;
+  className: string;
+}) {
   const ResolvedIcon = Icon || Fallback || UserRound;
   return <ResolvedIcon className={className} aria-hidden="true" />;
 }
@@ -3427,7 +4247,7 @@ function CardText({ title, detail }: { title: string; detail: string }) {
   return (
     <span className="min-w-0 flex-1">
       <span className="block text-sm font-black text-gray-950">{title}</span>
-      <span className="mt-1 block text-xs font-semibold leading-5 text-gray-600">{detail}</span>
+      <span className="mt-1 block text-xs leading-5 font-semibold text-gray-600">{detail}</span>
     </span>
   );
 }
@@ -3441,7 +4261,11 @@ function Status({ tone, message }: { tone: 'error' | 'success'; message: string 
       aria-live={isError ? 'assertive' : 'polite'}
       aria-atomic="true"
     >
-      {isError ? <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />}
+      {isError ? (
+        <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+      ) : (
+        <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+      )}
       {message}
     </div>
   );
@@ -3474,22 +4298,22 @@ const defaultStatOptions = [
 function getSeasonAverages(rows: ParentPlayerStatRow[]) {
   const totals = new Map<string, number>();
   rows.forEach((row) => {
-    Object.entries(row.stats || {}).forEach(([key, value]) => {
+    const stats = row.statPresentation?.isDiamond ? row.completeStats || {} : row.stats || {};
+    Object.entries(stats).forEach(([key, value]) => {
       const numeric = Number(value);
       if (!Number.isFinite(numeric)) return;
       totals.set(key, (totals.get(key) || 0) + numeric);
     });
   });
   const games = Math.max(rows.length, 1);
-  return [...totals.entries()]
-    .map(([key, total]) => [key.toUpperCase(), formatAverage(total / games)] as [string, string])
-    .slice(0, 8);
+  return [...totals.entries()].map(([key, total]) => [key.toUpperCase(), formatAverage(total / games)] as [string, string]).slice(0, 8);
 }
 
-function buildDisplayTotals(rows: ParentPlayerStatRow[]) {
+function buildDisplayTotals(rows: ParentPlayerStatRow[], { completeOnly = false } = {}) {
   const totals = new Map<string, number>();
   rows.forEach((row) => {
-    Object.entries(row.stats || {}).forEach(([key, value]) => {
+    const stats = row.statPresentation?.isDiamond && completeOnly ? row.completeStats || {} : row.stats || {};
+    Object.entries(stats).forEach(([key, value]) => {
       const numeric = Number(value);
       if (!Number.isFinite(numeric)) return;
       totals.set(key.toUpperCase(), (totals.get(key.toUpperCase()) || 0) + numeric);
@@ -3522,7 +4346,10 @@ function formatIncentiveRule(rule: PlayerIncentiveRule, statOptions = defaultSta
   return `${stat}: ${amount} per ${stat.toLowerCase()}`;
 }
 
-function formatIncentiveDraft(draft: { statKey: string; type: 'per_unit' | 'threshold'; amountCents: number; threshold: string; thresholdOp: 'gt' | 'gte' }, statOptions: Array<{ key: string; label: string }>) {
+function formatIncentiveDraft(
+  draft: { statKey: string; type: 'per_unit' | 'threshold'; amountCents: number; threshold: string; thresholdOp: 'gt' | 'gte' },
+  statOptions: Array<{ key: string; label: string }>
+) {
   const stat = getIncentiveStatLabel(statOptions, draft.statKey);
   if (!draft.statKey || !Number.isFinite(draft.amountCents) || draft.amountCents === 0) {
     return 'Choose a stat and amount.';
@@ -3548,13 +4375,14 @@ function formatIncentiveBreakdownLine(line: Record<string, any>) {
 }
 
 function getPlayerAction(data: ParentPlayerDetailData) {
-  const event = data.events.find((candidate) => (
-    !candidate.isCancelled &&
-    candidate.isDbGame &&
-    !candidate.availabilityLocked &&
-    normalizeRsvpResponse(candidate.myRsvp) === 'not_responded' &&
-    candidate.date.getTime() >= startOfDay(new Date()).getTime()
-  ));
+  const event = data.events.find(
+    (candidate) =>
+      !candidate.isCancelled &&
+      candidate.isDbGame &&
+      !candidate.availabilityLocked &&
+      normalizeRsvpResponse(candidate.myRsvp) === 'not_responded' &&
+      candidate.date.getTime() >= startOfDay(new Date()).getTime()
+  );
   if (event) {
     return {
       title: 'Availability needed',
@@ -3564,12 +4392,13 @@ function getPlayerAction(data: ParentPlayerDetailData) {
     };
   }
 
-  const packet = data.events.find((candidate) => (
-    !candidate.isCancelled &&
-    candidate.type === 'practice' &&
-    candidate.practiceHomePacketSummary &&
-    candidate.date.getTime() >= startOfDay(new Date()).getTime()
-  ));
+  const packet = data.events.find(
+    (candidate) =>
+      !candidate.isCancelled &&
+      candidate.type === 'practice' &&
+      candidate.practiceHomePacketSummary &&
+      candidate.date.getTime() >= startOfDay(new Date()).getTime()
+  );
   if (packet) {
     return {
       title: 'Practice packet ready',
@@ -3579,11 +4408,12 @@ function getPlayerAction(data: ParentPlayerDetailData) {
     };
   }
 
-  const assignment = data.events.find((candidate) => (
-    !candidate.isCancelled &&
-    getOpenScheduleAssignments(candidate.assignments).length > 0 &&
-    candidate.date.getTime() >= startOfDay(new Date()).getTime()
-  ));
+  const assignment = data.events.find(
+    (candidate) =>
+      !candidate.isCancelled &&
+      getOpenScheduleAssignments(candidate.assignments).length > 0 &&
+      candidate.date.getTime() >= startOfDay(new Date()).getTime()
+  );
   if (assignment) {
     return {
       title: 'Open assignment',
@@ -3597,7 +4427,14 @@ function getPlayerAction(data: ParentPlayerDetailData) {
 }
 
 function getInitials(name: string) {
-  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'P';
+  return (
+    name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join('') || 'P'
+  );
 }
 
 function startOfDay(date: Date) {

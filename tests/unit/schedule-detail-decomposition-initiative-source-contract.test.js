@@ -198,7 +198,7 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
         expect(playerSwitcherSource).toContain('data-testid="event-player-switcher"');
         expect(playerSwitcherSource).toContain('onClick={() => onSelect(event.childId)}');
         expect(gameReportSectionsSource).toContain('export function GameReportSections');
-        expect(gameReportSectionsSource).toContain('loadGameReportSections(event.teamId, event.id)');
+        expect(gameReportSectionsSource).toContain('loadGameReportSections(event.teamId, event.id, {');
         expect(gameReportSectionsSource).toContain('function getVisibleGameReportSections(report: GameReportData | null)');
         expect(gameReportContentSource).toContain('export function GameReportSectionContent');
         expect(gameReportContentSource).toContain('function MatchSummarySection({ report }: { report: GameReportData })');

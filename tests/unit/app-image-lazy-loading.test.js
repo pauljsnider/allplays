@@ -30,7 +30,12 @@ function expectEagerAsyncImages(source, marker, expectedCount = 1) {
 describe('app image lazy loading', () => {
     it('lazy-loads repeated roster photos in game report sections', () => {
         const source = read('src/components/schedule/GameReportSectionContent.tsx');
-        expect(source).toContain('src={player.photoUrl} alt="" loading="lazy" decoding="async"');
+        const tags = (source.match(/<AvatarImage\b[^>]*>/g) || []).filter((tag) => tag.includes('player.photoUrl'));
+        expect(tags.length).toBeGreaterThan(0);
+        tags.forEach((tag) => {
+            expect(tag).toContain('loading="lazy"');
+            expect(tag).toContain('decoding="async"');
+        });
     });
 
     it('lazy-loads team media grid images', () => {

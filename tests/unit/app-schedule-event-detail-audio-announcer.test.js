@@ -22,11 +22,11 @@ describe('React app schedule event detail audio announcer wiring', () => {
         const source = readSource('apps/app/src/components/schedule/GameReportSections.tsx');
 
         expect(source).toContain('const liveReportPollIntervalMs = 15000;');
-        expect(source).toContain('const currentReportStatuses = (report');
-        expect(source).toContain('!currentReportStatuses.some((status) => completedReportStatuses.has(status))');
+        expect(source).toMatch(/const currentReportStatuses = \(\s*displayedReport \?/);
+        expect(source).toContain('!currentReportStatuses.some((status) => terminalReportStatuses.has(status))');
         expect(source).toContain('currentReportStatuses.some((status) => liveReportStatuses.has(status))');
         expect(source).toContain('const refreshedStatuses = [refresh.game?.liveStatus, refresh.game?.status]');
-        expect(source).toContain('refreshedStatuses.some((status) => completedReportStatuses.has(status))');
+        expect(source).toContain('refreshedStatuses.some((status) => terminalReportStatuses.has(status))');
         expect(source).toContain('await refreshReport(false);');
         expect(source).toContain('if (!isLivePlaysRefreshEnabled) return undefined;');
         expect(source).toContain('const intervalId = window.setInterval(() => {');
