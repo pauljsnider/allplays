@@ -5,6 +5,7 @@ const dbMocks = vi.hoisted(() => ({
     deleteAthleteProfileMediaByPath: vi.fn(),
     deleteLegacyImageUpload: vi.fn(),
     getAggregatedStatsForPlayer: vi.fn(),
+    getConfigs: vi.fn(),
     getGames: vi.fn(),
     getPlayerPrivateProfile: vi.fn(),
     getPlayerTrackingStatuses: vi.fn(),
@@ -49,6 +50,7 @@ const playerProfileMocks = vi.hoisted(() => ({
     retireIncentiveRule: vi.fn(),
     saveCapSetting: vi.fn(),
     saveIncentiveRule: vi.fn(),
+    selectAnalyticsConfig: vi.fn((configs = []) => configs[0] || null),
     toggleIncentiveRule: vi.fn()
 }));
 
@@ -160,6 +162,7 @@ beforeEach(() => {
         ]
     });
     profileMocks.loadProfileDocument.mockResolvedValue(null);
+    dbMocks.getConfigs.mockResolvedValue([]);
     dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', sport: 'basketball' });
     dbMocks.getPlayers.mockResolvedValue([
         {
