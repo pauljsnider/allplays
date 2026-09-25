@@ -42,11 +42,7 @@ export type LegacyInviteRedemptionResult = {
   [key: string]: unknown;
 };
 
-export type LegacyInviteProcessor = (
-  userId: string,
-  code: string,
-  authEmail?: string | null
-) => Promise<LegacyInviteRedemptionResult>;
+export type LegacyInviteProcessor = (userId: string, code: string, authEmail?: string | null) => Promise<LegacyInviteRedemptionResult>;
 
 export type LegacyInviteFlowModule = {
   createInviteProcessor: (...args: any[]) => LegacyInviteProcessor;
@@ -58,7 +54,7 @@ export type LegacySignupFlowModule = {
 
 export type LegacyAuthEmailModule = {
   queuePasswordResetEmail: (email: string) => Promise<unknown>;
-  queueCurrentUserVerificationEmail: (idToken?: string) => Promise<unknown>;
+  queueCurrentUserVerificationEmail: (idToken?: string, verificationNextRoute?: string) => Promise<unknown>;
   queueInviteSignInEmail: (inviteCode: string) => Promise<unknown>;
 };
 
@@ -68,10 +64,7 @@ export type LegacyParentMembershipSync = {
 };
 
 export type LegacyParentMembershipUtilsModule = {
-  mergeApprovedParentMembershipRequests: (
-    profile: Record<string, unknown>,
-    requests: unknown[]
-  ) => LegacyParentMembershipSync;
+  mergeApprovedParentMembershipRequests: (profile: Record<string, unknown>, requests: unknown[]) => LegacyParentMembershipSync;
 };
 
 let authDbPromise: Promise<LegacyAuthDbModule> | null = null;
