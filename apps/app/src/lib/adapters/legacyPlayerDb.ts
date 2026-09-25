@@ -1,69 +1,72 @@
 import {
-    getAggregatedStatsForGames as legacyGetAggregatedStatsForGames,
-    getAggregatedStatsDocumentForPlayer as legacyGetAggregatedStatsDocumentForPlayer,
-    getAggregatedStatsForPlayer as legacyGetAggregatedStatsForPlayer,
-    getConfigs as legacyGetConfigs,
-    getGameEvents as legacyGetGameEvents,
-    getGames as legacyGetGames,
-    getPlayerPrivateProfile as legacyGetPlayerPrivateProfile,
-    getPlayerTrackingStatuses as legacyGetPlayerTrackingStatuses,
-    getPlayers as legacyGetPlayers,
-    getPublicTrackingItems as legacyGetPublicTrackingItems,
-    getRosterFieldDefinitions as legacyGetRosterFieldDefinitions,
-    getTeam as legacyGetTeam,
-    deleteLegacyImageUpload as legacyDeleteLegacyImageUpload,
-    deleteAthleteProfileMediaByPath as legacyDeleteAthleteProfileMediaByPath,
-    listAthleteProfilesForParent as legacyListAthleteProfilesForParent,
-    listCertificatesForPlayer as legacyListCertificatesForPlayer,
-    releaseAthleteProfileMediaReservation as legacyReleaseAthleteProfileMediaReservation,
-    reserveAthleteProfileMediaOwnership as legacyReserveAthleteProfileMediaOwnership,
-    saveAthleteProfile as legacySaveAthleteProfile,
-    setPlayerPrivateRosterProfileFields as legacySetPlayerPrivateRosterProfileFields,
-    updatePlayer as legacyUpdatePlayer,
-    updatePlayerWithPrivateRosterProfileFields as legacyUpdatePlayerWithPrivateRosterProfileFields,
-    updatePlayerPrivateProfile as legacyUpdatePlayerPrivateProfile,
-    updatePlayerProfile as legacyUpdatePlayerProfile,
-    uploadAthleteProfileMedia as legacyUploadAthleteProfileMedia,
-    uploadPlayerPhoto as legacyUploadPlayerPhoto
+  getAggregatedStatsForGames as legacyGetAggregatedStatsForGames,
+  getAggregatedStatsDocumentForPlayer as legacyGetAggregatedStatsDocumentForPlayer,
+  getAggregatedStatsForPlayer as legacyGetAggregatedStatsForPlayer,
+  getConfigs as legacyGetConfigs,
+  getGameEvents as legacyGetGameEvents,
+  getGames as legacyGetGames,
+  getPlayerPrivateProfile as legacyGetPlayerPrivateProfile,
+  getPlayerTrackingStatuses as legacyGetPlayerTrackingStatuses,
+  getPlayers as legacyGetPlayers,
+  getPublicTrackingItems as legacyGetPublicTrackingItems,
+  getRosterFieldDefinitions as legacyGetRosterFieldDefinitions,
+  getTeam as legacyGetTeam,
+  deleteLegacyImageUpload as legacyDeleteLegacyImageUpload,
+  deleteAthleteProfileMediaByPath as legacyDeleteAthleteProfileMediaByPath,
+  listAthleteProfilesForParent as legacyListAthleteProfilesForParent,
+  listCertificatesForPlayer as legacyListCertificatesForPlayer,
+  releaseAthleteProfileMediaReservation as legacyReleaseAthleteProfileMediaReservation,
+  reserveAthleteProfileMediaOwnership as legacyReserveAthleteProfileMediaOwnership,
+  saveAthleteProfile as legacySaveAthleteProfile,
+  setPlayerPrivateRosterProfileFields as legacySetPlayerPrivateRosterProfileFields,
+  updatePlayer as legacyUpdatePlayer,
+  updatePlayerWithPrivateRosterProfileFields as legacyUpdatePlayerWithPrivateRosterProfileFields,
+  updatePlayerPrivateProfile as legacyUpdatePlayerPrivateProfile,
+  updatePlayerProfile as legacyUpdatePlayerProfile,
+  uploadAthleteProfileMedia as legacyUploadAthleteProfileMedia,
+  uploadPlayerPhoto as legacyUploadPlayerPhoto
 } from '@legacy/db.js';
 import {
-    functions as legacyFunctions,
-    httpsCallable as legacyHttpsCallable
+  db as legacyDbInstance,
+  doc as legacyDoc,
+  functions as legacyFunctions,
+  getDoc as legacyGetDoc,
+  httpsCallable as legacyHttpsCallable
 } from '@legacy/firebase.js';
 import { collectRosterParentContacts as legacyCollectRosterParentContacts } from '@legacy/roster-profile-fields.js';
 
 export type LegacyTeamRecord = {
-    id?: string;
-    name?: string;
-    ownerId?: string;
-    adminEmails?: string[];
-    [key: string]: any;
+  id?: string;
+  name?: string;
+  ownerId?: string;
+  adminEmails?: string[];
+  [key: string]: any;
 };
 
 export type LegacyPlayerRecord = {
-    id?: string;
-    name?: string;
-    number?: string | null;
-    photoUrl?: string | null;
-    teamName?: string;
-    profile?: {
-        customFields?: Record<string, unknown>;
-        rosterFields?: Record<string, unknown>;
-        [key: string]: any;
-    };
-    rosterFieldValues?: Record<string, unknown>;
+  id?: string;
+  name?: string;
+  number?: string | null;
+  photoUrl?: string | null;
+  teamName?: string;
+  profile?: {
     customFields?: Record<string, unknown>;
+    rosterFields?: Record<string, unknown>;
     [key: string]: any;
+  };
+  rosterFieldValues?: Record<string, unknown>;
+  customFields?: Record<string, unknown>;
+  [key: string]: any;
 };
 
 export type LegacyPlayerPrivateProfileRecord = {
-    emergencyContact?: {
-        name?: string | null;
-        phone?: string | null;
-    } | null;
-    medicalInfo?: string | null;
-    rosterFields?: Record<string, unknown>;
-    [key: string]: any;
+  emergencyContact?: {
+    name?: string | null;
+    phone?: string | null;
+  } | null;
+  medicalInfo?: string | null;
+  rosterFields?: Record<string, unknown>;
+  [key: string]: any;
 };
 
 export type LegacyCertificateRecord = Record<string, any>;
@@ -71,141 +74,173 @@ export type LegacyTrackingItemRecord = Record<string, any>;
 export type LegacyTrackingStatusRecord = Record<string, any>;
 export type LegacyGameRecord = Record<string, any>;
 export type LegacyAthleteProfileRecord = {
-    id?: string;
-    seasons?: Array<{ teamId?: string; playerId?: string; [key: string]: any }>;
-    [key: string]: any;
+  id?: string;
+  seasons?: Array<{ teamId?: string; playerId?: string; [key: string]: any }>;
+  [key: string]: any;
 };
 export type LegacyCoParentInviteResult = {
-    id: string;
-    code: string;
-    teamName: string | null;
-    playerName: string | null;
-    email: string;
-    created: boolean;
-    reused: boolean;
+  id: string;
+  code: string;
+  teamName: string | null;
+  playerName: string | null;
+  email: string;
+  created: boolean;
+  reused: boolean;
 };
 
 export const collectRosterParentContacts = legacyCollectRosterParentContacts as (...args: any[]) => any;
 
 export async function getTeam(teamId: string, options?: { includeInactive?: boolean }): Promise<LegacyTeamRecord | null> {
-    return await Promise.resolve(legacyGetTeam(teamId, options)).catch(() => null);
+  return await Promise.resolve(legacyGetTeam(teamId, options)).catch(() => null);
 }
 
 export async function getPlayers(teamId: string, options?: { includeInactive?: boolean }): Promise<LegacyPlayerRecord[]> {
-    return await Promise.resolve(legacyGetPlayers(teamId, options));
+  return await Promise.resolve(legacyGetPlayers(teamId, options));
 }
 
-export async function getGames(teamId: string): Promise<LegacyGameRecord[]> {
-    return await Promise.resolve(legacyGetGames(teamId));
+export async function getGames(teamId: string, options?: { requireCompleteSharedGames?: boolean }): Promise<LegacyGameRecord[]> {
+  return await Promise.resolve(options ? legacyGetGames(teamId, options) : legacyGetGames(teamId));
 }
 
 export async function getConfigs(teamId: string): Promise<Record<string, any>[]> {
-    return await Promise.resolve(legacyGetConfigs(teamId));
+  return await Promise.resolve(legacyGetConfigs(teamId));
 }
 
-export async function listCertificatesForPlayer(teamId: string, playerId: string, options?: { status?: string; limit?: number }): Promise<LegacyCertificateRecord[]> {
-    return await Promise.resolve(legacyListCertificatesForPlayer(teamId, playerId, options));
+export async function listCertificatesForPlayer(
+  teamId: string,
+  playerId: string,
+  options?: { status?: string; limit?: number }
+): Promise<LegacyCertificateRecord[]> {
+  return await Promise.resolve(legacyListCertificatesForPlayer(teamId, playerId, options));
 }
 
 export async function getPublicTrackingItems(teamId: string): Promise<LegacyTrackingItemRecord[]> {
-    return await Promise.resolve(legacyGetPublicTrackingItems(teamId));
+  return await Promise.resolve(legacyGetPublicTrackingItems(teamId));
 }
 
 export async function getPlayerTrackingStatuses(teamId: string, playerIds: string[]): Promise<LegacyTrackingStatusRecord[]> {
-    return await Promise.resolve(legacyGetPlayerTrackingStatuses(teamId, playerIds));
+  return await Promise.resolve(legacyGetPlayerTrackingStatuses(teamId, playerIds));
 }
 
 export async function getPlayerPrivateProfile(teamId: string, playerId: string): Promise<LegacyPlayerPrivateProfileRecord | null> {
-    return await Promise.resolve(legacyGetPlayerPrivateProfile(teamId, playerId));
+  return await Promise.resolve(legacyGetPlayerPrivateProfile(teamId, playerId));
 }
 
 export async function getRosterFieldDefinitions(teamId: string, team: LegacyTeamRecord | null) {
-    return await Promise.resolve(legacyGetRosterFieldDefinitions(teamId, team));
+  return await Promise.resolve(legacyGetRosterFieldDefinitions(teamId, team));
 }
 
 export async function getAggregatedStatsForPlayer(teamId: string, gameId: string, playerId: string): Promise<Record<string, unknown>> {
-    return await Promise.resolve(legacyGetAggregatedStatsForPlayer(teamId, gameId, playerId));
+  return await Promise.resolve(legacyGetAggregatedStatsForPlayer(teamId, gameId, playerId));
 }
 
 export async function getAggregatedStatsDocumentForPlayer(teamId: string, gameId: string, playerId: string): Promise<Record<string, any>> {
-    return await Promise.resolve(legacyGetAggregatedStatsDocumentForPlayer(teamId, gameId, playerId));
+  return await Promise.resolve(legacyGetAggregatedStatsDocumentForPlayer(teamId, gameId, playerId));
+}
+
+export async function getDiamondPublicPlayerStatDocument(collectionPath: string, playerId: string): Promise<Record<string, any>> {
+  const snapshot = await Promise.resolve(legacyGetDoc(legacyDoc(legacyDbInstance, collectionPath, playerId)));
+  return snapshot.exists() ? snapshot.data() || {} : {};
 }
 
 export async function getAggregatedStatsForGames(teamId: string, gameIds: string[]): Promise<Record<string, Record<string, unknown>>> {
-    return await Promise.resolve(legacyGetAggregatedStatsForGames(teamId, gameIds));
+  return await Promise.resolve(legacyGetAggregatedStatsForGames(teamId, gameIds));
 }
 
 export async function getGameEvents(teamId: string, gameId: string, options?: { limit?: number }): Promise<Record<string, any>[]> {
-    return await Promise.resolve(legacyGetGameEvents(teamId, gameId, options));
+  return await Promise.resolve(legacyGetGameEvents(teamId, gameId, options));
 }
 
 export async function listAthleteProfilesForParent(userId: string): Promise<LegacyAthleteProfileRecord[]> {
-    return await Promise.resolve(legacyListAthleteProfilesForParent(userId));
+  return await Promise.resolve(legacyListAthleteProfilesForParent(userId));
 }
 
 export async function updatePlayer(teamId: string, playerId: string, payload: Record<string, unknown>) {
-    return await Promise.resolve(legacyUpdatePlayer(teamId, playerId, payload));
+  return await Promise.resolve(legacyUpdatePlayer(teamId, playerId, payload));
 }
 
 export async function setPlayerPrivateRosterProfileFields(teamId: string, playerId: string, values: Record<string, unknown>) {
-    return await Promise.resolve(legacySetPlayerPrivateRosterProfileFields(teamId, playerId, values));
+  return await Promise.resolve(legacySetPlayerPrivateRosterProfileFields(teamId, playerId, values));
 }
 
-export async function updatePlayerWithPrivateRosterProfileFields(teamId: string, playerId: string, payload: Record<string, unknown>, values: Record<string, unknown>) {
-    return await Promise.resolve(legacyUpdatePlayerWithPrivateRosterProfileFields(teamId, playerId, payload, values));
+export async function updatePlayerWithPrivateRosterProfileFields(
+  teamId: string,
+  playerId: string,
+  payload: Record<string, unknown>,
+  values: Record<string, unknown>
+) {
+  return await Promise.resolve(legacyUpdatePlayerWithPrivateRosterProfileFields(teamId, playerId, payload, values));
 }
 
 export async function updatePlayerProfile(teamId: string, playerId: string, payload: Record<string, unknown>) {
-    return await Promise.resolve(legacyUpdatePlayerProfile(teamId, playerId, payload));
+  return await Promise.resolve(legacyUpdatePlayerProfile(teamId, playerId, payload));
 }
 
 export async function updatePlayerPrivateProfile(teamId: string, playerId: string, payload: Record<string, unknown>) {
-    return await Promise.resolve(legacyUpdatePlayerPrivateProfile(teamId, playerId, payload));
+  return await Promise.resolve(legacyUpdatePlayerPrivateProfile(teamId, playerId, payload));
 }
 
 export async function deleteLegacyImageUpload(path: string) {
-    return await Promise.resolve(legacyDeleteLegacyImageUpload(path));
+  return await Promise.resolve(legacyDeleteLegacyImageUpload(path));
 }
 
-export async function uploadPlayerPhoto(file: File, options: { returnUpload?: true; teamId?: string; playerId?: string } = {}): Promise<{ url: string; path: string }> {
-    return await Promise.resolve(legacyUploadPlayerPhoto(file, { ...options, returnUpload: true })) as { url: string; path: string };
+export async function uploadPlayerPhoto(
+  file: File,
+  options: { returnUpload?: true; teamId?: string; playerId?: string } = {}
+): Promise<{ url: string; path: string }> {
+  return (await Promise.resolve(legacyUploadPlayerPhoto(file, { ...options, returnUpload: true }))) as { url: string; path: string };
 }
 
 export async function inviteCoParentToAthlete(teamId: string, playerId: string, email: string): Promise<LegacyCoParentInviteResult> {
-    const callable = legacyHttpsCallable(legacyFunctions, 'createCoParentInvite');
-    const response = await callable({
-        teamId,
-        playerId,
-        email: String(email || '').trim().toLowerCase()
-    });
-    const result = response?.data || {};
-    return {
-        id: String(result.id || '').trim(),
-        code: String(result.code || '').trim().toUpperCase(),
-        teamName: result.teamName || null,
-        playerName: result.playerName || null,
-        email: String(result.email || email || '').trim().toLowerCase(),
-        created: result.created === true,
-        reused: result.reused === true
-    };
+  const callable = legacyHttpsCallable(legacyFunctions, 'createCoParentInvite');
+  const response = await callable({
+    teamId,
+    playerId,
+    email: String(email || '')
+      .trim()
+      .toLowerCase()
+  });
+  const result = response?.data || {};
+  return {
+    id: String(result.id || '').trim(),
+    code: String(result.code || '')
+      .trim()
+      .toUpperCase(),
+    teamName: result.teamName || null,
+    playerName: result.playerName || null,
+    email: String(result.email || email || '')
+      .trim()
+      .toLowerCase(),
+    created: result.created === true,
+    reused: result.reused === true
+  };
 }
 
-export async function saveAthleteProfile(userId: string, draft: Record<string, unknown>, options: { profileId: string; isNewProfile?: boolean }) {
-    return await Promise.resolve(legacySaveAthleteProfile(userId, draft, options));
+export async function saveAthleteProfile(
+  userId: string,
+  draft: Record<string, unknown>,
+  options: { profileId: string; isNewProfile?: boolean }
+) {
+  return await Promise.resolve(legacySaveAthleteProfile(userId, draft, options));
 }
 
 export async function reserveAthleteProfileMediaOwnership(userId: string, profileId: string, options: { isNewProfile?: boolean } = {}) {
-    return await Promise.resolve(legacyReserveAthleteProfileMediaOwnership(userId, profileId, options));
+  return await Promise.resolve(legacyReserveAthleteProfileMediaOwnership(userId, profileId, options));
 }
 
 export async function releaseAthleteProfileMediaReservation(userId: string, profileId: string) {
-    return await Promise.resolve(legacyReleaseAthleteProfileMediaReservation(userId, profileId));
+  return await Promise.resolve(legacyReleaseAthleteProfileMediaReservation(userId, profileId));
 }
 
-export async function uploadAthleteProfileMedia(userId: string, profileId: string, file: File, options: { kind: 'profile-photo' | 'clip' }) {
-    return await Promise.resolve(legacyUploadAthleteProfileMedia(userId, profileId, file, options));
+export async function uploadAthleteProfileMedia(
+  userId: string,
+  profileId: string,
+  file: File,
+  options: { kind: 'profile-photo' | 'clip' }
+) {
+  return await Promise.resolve(legacyUploadAthleteProfileMedia(userId, profileId, file, options));
 }
 
 export async function deleteAthleteProfileMediaByPath(storagePath: string) {
-    return await Promise.resolve(legacyDeleteAthleteProfileMediaByPath(storagePath));
+  return await Promise.resolve(legacyDeleteAthleteProfileMediaByPath(storagePath));
 }
