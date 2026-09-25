@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, KeyboardEvent, ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Eye, EyeOff, KeyRound, LogIn, Mail, ShieldCheck } from 'lucide-react';
@@ -19,8 +19,9 @@ import {
   signUpWithEmail
 } from '../lib/authService';
 import type { AuthState } from '../lib/types';
-import { getSafeAuthNextRoute } from '../lib/authNextRoute';
+import { completeAuthNavigation, getDocumentAuthNextRoute, getSafeAuthNextRoute } from '../lib/authNextRoute';
 import { isNativeRuntime } from '../lib/nativeRuntime';
+import { openPublicUrl } from '../lib/publicActions';
 import { Capacitor } from '@capacitor/core';
 
 type AuthMode = 'login' | 'signup';
@@ -34,11 +35,9 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   const inviteType = (searchParams.get('type') || 'parent').trim().toLowerCase();
   const requestedMode = searchParams.get('mode');
   const requestedNextRoute = getSafeAuthNextRoute(searchParams.get('next'));
-  const initialMode: AuthMode = requestedMode === 'login'
-    ? 'login'
-    : requestedMode === 'signup' || inviteCode
-      ? 'signup'
-      : 'login';
+  const requestedDocumentRoute = getDocumentAuthNextRoute(requestedNextRoute);
+  const accountSwitchRequested = searchParams.get('switch') === '1' && Boolean(requestedDocumentRoute);
+  const initialMode: AuthMode = requestedMode === 'login' ? 'login' : requestedMode === 'signup' || inviteCode ? 'signup' : 'login';
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -51,15 +50,18 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [redirectSettlementVersion, setRedirectSettlementVersion] = useState(0);
   const loginTabRef = useRef<HTMLButtonElement>(null);
   const signupTabRef = useRef<HTMLButtonElement>(null);
   const authPageActiveRef = useRef(true);
+  const authRef = useRef(auth);
+  const redirectCheckSettledRef = useRef(false);
+  const nativeDocumentHandoffStartedRef = useRef(false);
 
   const signupBlockedByTerms = mode === 'signup' && !agreedToTerms;
   const title = mode === 'signup' ? 'Create your account' : 'Sign in';
-  const subtitle = mode === 'signup'
-    ? 'A team or family join code is required. Then verify your email.'
-    : 'Use email/password or Google to continue.';
+  const subtitle =
+    mode === 'signup' ? 'A team or family join code is required. Then verify your email.' : 'Use email/password or Google to continue.';
 
   const postAuthRoute = useMemo(() => {
     if (inviteCode) {
@@ -67,6 +69,20 @@ export function AuthPage({ auth }: { auth: AuthState }) {
     }
     return requestedNextRoute || getRouteForUser(auth.user);
   }, [auth.user, inviteCode, inviteType, requestedNextRoute]);
+  const postAuthRouteRef = useRef(postAuthRoute);
+  authRef.current = auth;
+  postAuthRouteRef.current = postAuthRoute;
+
+  const completePostAuthNavigation = useCallback(
+    (route: string, reloadApp = false) =>
+      completeAuthNavigation(route, navigate, {
+        accountSwitchRequested,
+        nativeRuntime: isNativeRuntime(),
+        openHostedAuth: openPublicUrl,
+        reloadApp
+      }),
+    [accountSwitchRequested, navigate]
+  );
 
   useEffect(() => {
     authPageActiveRef.current = true;
@@ -76,38 +92,86 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   }, []);
 
   useEffect(() => {
+    if (!redirectCheckSettledRef.current || !requestedDocumentRoute || !isNativeRuntime() || nativeDocumentHandoffStartedRef.current) {
+      return;
+    }
+
+    nativeDocumentHandoffStartedRef.current = true;
+    void completePostAuthNavigation(requestedDocumentRoute).catch((handoffError: any) => {
+      if (authPageActiveRef.current && isBrowserAuthRouteActive()) {
+        setError(describeAuthError(handoffError));
+      }
+    });
+  }, [completePostAuthNavigation, redirectSettlementVersion, requestedDocumentRoute]);
+
+  useEffect(() => {
     // Auth hydration can finish after the browser has already moved away from
     // this route. An effect queued by the old AuthPage render must not replace
     // that newer deep link with the signed-in default route.
-    if (!auth.loading && auth.user && !inviteCode && isBrowserAuthRouteActive()) {
-      navigate(postAuthRoute, { replace: true });
+    if (
+      redirectCheckSettledRef.current &&
+      !auth.loading &&
+      auth.user &&
+      !inviteCode &&
+      !accountSwitchRequested &&
+      isBrowserAuthRouteActive() &&
+      !(requestedDocumentRoute && isNativeRuntime() && nativeDocumentHandoffStartedRef.current)
+    ) {
+      void completePostAuthNavigation(postAuthRoute).catch((navigationError: any) => {
+        if (authPageActiveRef.current && isBrowserAuthRouteActive()) {
+          setError(describeAuthError(navigationError));
+        }
+      });
     }
-  }, [auth.loading, auth.user, inviteCode, navigate, postAuthRoute]);
+  }, [
+    accountSwitchRequested,
+    auth.loading,
+    auth.user,
+    completePostAuthNavigation,
+    inviteCode,
+    postAuthRoute,
+    redirectSettlementVersion,
+    requestedDocumentRoute
+  ]);
 
   useEffect(() => {
     let cancelled = false;
+    let redirectCompletionSucceeded = false;
 
     async function finishRedirect() {
       try {
         const result = await completeGoogleRedirect();
-        if (!result || cancelled) {
+        if (cancelled) {
           return;
         }
-        await auth.refresh();
+        if (!result) {
+          redirectCompletionSucceeded = true;
+          return;
+        }
+        await authRef.current.refresh();
         const redirectRoute = result.wasNewUser
           ? requestedNextRoute
             ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}`
             : '/verify-pending'
           : inviteCode || requestedNextRoute
-            ? postAuthRoute
+            ? postAuthRouteRef.current
             : '/home';
         if (cancelled || !authPageActiveRef.current || !isBrowserAuthRouteActive()) {
           return;
         }
-        navigate(redirectRoute, { replace: true });
+        await completePostAuthNavigation(redirectRoute);
+        redirectCompletionSucceeded = true;
       } catch (redirectError: any) {
         if (!cancelled) {
           setError(describeAuthError(redirectError));
+        }
+      } finally {
+        // Do not turn a failed redirect completion into a restored-session
+        // fallback. Firebase can have a hydrated user while the redirect still
+        // fails later during activation or invite provisioning.
+        if (!cancelled && redirectCompletionSucceeded) {
+          redirectCheckSettledRef.current = true;
+          setRedirectSettlementVersion((version) => version + 1);
         }
       }
     }
@@ -116,7 +180,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [auth, inviteCode, navigate, postAuthRoute, requestedNextRoute]);
+  }, [completePostAuthNavigation, inviteCode, requestedNextRoute]);
 
   const clearStatus = () => {
     setError('');
@@ -170,12 +234,18 @@ export function AuthPage({ auth }: { auth: AuthState }) {
           throw new Error('Passwords do not match.');
         }
 
-        await signUpWithEmail(normalizedEmail, password, code);
+        if (requestedNextRoute) {
+          await signUpWithEmail(normalizedEmail, password, code, requestedNextRoute);
+        } else {
+          await signUpWithEmail(normalizedEmail, password, code);
+        }
         await auth.refresh();
         if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
           return;
         }
-        navigate(requestedNextRoute ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}` : '/verify-pending', { replace: true });
+        await completePostAuthNavigation(
+          requestedNextRoute ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}` : '/verify-pending'
+        );
         return;
       }
 
@@ -185,21 +255,11 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       }
       const hydrated = inviteCode ? null : await hydrateFirebaseUser(credential.user).catch(() => null);
       const postLoginRoute = inviteCode || requestedNextRoute ? postAuthRoute : getRouteForUser(hydrated?.user || auth.user);
-      if (credential.nativeRest) {
-        await auth.refresh();
-        if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
-          return;
-        }
-        window.location.hash = `#${postLoginRoute}`;
-        window.location.reload();
-        return;
-      }
-
       await auth.refresh();
       if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
         return;
       }
-      navigate(postLoginRoute, { replace: true });
+      await completePostAuthNavigation(postLoginRoute, credential.nativeRest === true);
     } catch (submitError: any) {
       setError(describeAuthError(submitError));
     } finally {
@@ -226,26 +286,19 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       const result = await signInWithGoogleAccount(code || null);
       if (result) {
         const hydrated = mode === 'signup' || inviteCode ? null : await hydrateFirebaseUser(result.user).catch(() => null);
-        const postGoogleRoute = mode === 'signup' && result.wasNewUser
-          ? requestedNextRoute ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}` : '/verify-pending'
-          : inviteCode
-            ? postAuthRoute
-            : requestedNextRoute || getRouteForUser(hydrated?.user || auth.user);
-        if (result.nativeRest) {
-          await auth.refresh();
-          if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
-            return;
-          }
-          window.location.hash = `#${postGoogleRoute}`;
-          window.location.reload();
-          return;
-        }
-
+        const postGoogleRoute =
+          mode === 'signup' && result.wasNewUser
+            ? requestedNextRoute
+              ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}`
+              : '/verify-pending'
+            : inviteCode
+              ? postAuthRoute
+              : requestedNextRoute || getRouteForUser(hydrated?.user || auth.user);
         await auth.refresh();
         if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
           return;
         }
-        navigate(postGoogleRoute, { replace: true });
+        await completePostAuthNavigation(postGoogleRoute, result.nativeRest === true);
       }
     } catch (googleError: any) {
       setError(describeAuthError(googleError));
@@ -273,17 +326,19 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       const result = await signInWithAppleAccount(code || null);
       if (result) {
         const hydrated = mode === 'signup' || inviteCode ? null : await hydrateFirebaseUser(result.user).catch(() => null);
-        const destination = mode === 'signup' && result.wasNewUser
-          ? requestedNextRoute ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}` : '/verify-pending'
-          : inviteCode
-            ? postAuthRoute
-            : requestedNextRoute || getRouteForUser(hydrated?.user || auth.user);
+        const destination =
+          mode === 'signup' && result.wasNewUser
+            ? requestedNextRoute
+              ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}`
+              : '/verify-pending'
+            : inviteCode
+              ? postAuthRoute
+              : requestedNextRoute || getRouteForUser(hydrated?.user || auth.user);
         await auth.refresh();
         if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
           return;
         }
-        window.location.hash = `#${destination}`;
-        window.location.reload();
+        await completePostAuthNavigation(destination, true);
       }
     } catch (appleError: any) {
       setError(describeAuthError(appleError));
@@ -315,18 +370,20 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   return (
     <AuthFrame eyebrow={mode === 'signup' ? 'Sign up' : 'Sign in'}>
       <div className="flex items-start gap-3">
-        <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
+        <div className="bg-primary-50 text-primary-700 flex h-11 w-11 flex-none items-center justify-center rounded-xl">
           {mode === 'signup' ? <ShieldCheck className="h-6 w-6" aria-hidden="true" /> : <LogIn className="h-6 w-6" aria-hidden="true" />}
         </div>
         <div>
           <h1 className="text-2xl font-black text-gray-950">{title}</h1>
-          <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">{subtitle}</p>
+          <p className="mt-1 text-sm leading-6 font-semibold text-gray-600">{subtitle}</p>
         </div>
       </div>
 
       {inviteCode ? (
-        <div className="mt-4 rounded-xl border border-primary-100 bg-primary-50 p-3 text-sm font-semibold text-primary-800">
-          <div>Join code entered: <span className="font-mono font-black tracking-widest">{inviteCode}</span></div>
+        <div className="border-primary-100 bg-primary-50 text-primary-800 mt-4 rounded-xl border p-3 text-sm font-semibold">
+          <div>
+            Join code entered: <span className="font-mono font-black tracking-widest">{inviteCode}</span>
+          </div>
           <div className="mt-1">We’ll verify it after you sign in or create your account.</div>
         </div>
       ) : null}
@@ -340,7 +397,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
           aria-selected={mode === 'login'}
           aria-controls="auth-panel-login"
           tabIndex={mode === 'login' ? 0 : -1}
-          className={`min-h-10 rounded-lg text-sm font-black ${mode === 'login' ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-600'}`}
+          className={`min-h-10 rounded-lg text-sm font-black ${mode === 'login' ? 'text-primary-700 bg-white shadow-sm' : 'text-gray-600'}`}
           onClick={() => selectMode('login')}
           onKeyDown={handleTabKeyDown}
         >
@@ -354,7 +411,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
           aria-selected={mode === 'signup'}
           aria-controls="auth-panel-signup"
           tabIndex={mode === 'signup' ? 0 : -1}
-          className={`min-h-10 rounded-lg text-sm font-black ${mode === 'signup' ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-600'}`}
+          className={`min-h-10 rounded-lg text-sm font-black ${mode === 'signup' ? 'text-primary-700 bg-white shadow-sm' : 'text-gray-600'}`}
           onClick={() => selectMode('signup')}
           onKeyDown={handleTabKeyDown}
         >
@@ -363,139 +420,178 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       </div>
 
       <div id={`auth-panel-${mode}`} role="tabpanel" aria-labelledby={`auth-tab-${mode}`}>
-      <form className="mt-4 space-y-3" onSubmit={handleEmailSubmit}>
-        <Field icon={Mail} label="Email" htmlFor="auth-email">
-          <input
-            id="auth-email"
-            className="auth-input"
-            type="email"
-            value={email}
-            onChange={(event) => {
-              setEmail(event.target.value);
-              clearStatus();
-            }}
-            required
-            autoComplete="email"
-          />
-        </Field>
-        <Field icon={KeyRound} label="Password" htmlFor="auth-password">
-          <PasswordInput
-            id="auth-password"
-            value={password}
-            visible={showPassword}
-            onChange={(value) => {
-              setPassword(value);
-              clearStatus();
-            }}
-            onToggle={() => setShowPassword((current) => !current)}
-            autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-            showLabel="Show password"
-            hideLabel="Hide password"
-          />
-        </Field>
-        {mode === 'signup' ? (
-          <>
-            <Field icon={KeyRound} label="Confirm password" htmlFor="auth-confirm-password">
-              <PasswordInput
-                id="auth-confirm-password"
-                value={confirmPassword}
-                visible={showConfirmPassword}
-                onChange={(value) => {
-                  setConfirmPassword(value);
-                  clearStatus();
-                }}
-                onToggle={() => setShowConfirmPassword((current) => !current)}
-                autoComplete="new-password"
-                showLabel="Show confirmation password"
-                hideLabel="Hide confirmation password"
-              />
-            </Field>
-            <Field icon={Eye} label="Join code" htmlFor="auth-join-code">
-              <input
-                id="auth-join-code"
-                className="auth-input font-mono uppercase tracking-widest"
-                value={activationCode}
-                onChange={(event) => {
-                  setActivationCode(event.target.value.toUpperCase());
-                  clearStatus();
-                }}
-                required
-                maxLength={12}
-              />
-            </Field>
-            <label htmlFor="auth-terms-agree" className="flex items-start gap-2.5 text-sm font-semibold leading-5 text-gray-600">
-              <input
-                id="auth-terms-agree"
-                type="checkbox"
-                className="mt-0.5 h-4 w-4 flex-none rounded border-gray-300 text-primary-700 focus:ring-primary-600"
-                checked={agreedToTerms}
-                onChange={(event) => {
-                  setAgreedToTerms(event.target.checked);
-                  clearStatus();
-                }}
-              />
-              <span>
-                I agree to the <a className="font-black text-primary-700" href="https://allplays.ai/terms.html" target="_blank" rel="noreferrer">Terms</a> and <a className="font-black text-primary-700" href="https://allplays.ai/privacy.html" target="_blank" rel="noreferrer">Privacy Policy</a>.
-              </span>
-            </label>
-          </>
-        ) : null}
+        <form className="mt-4 space-y-3" onSubmit={handleEmailSubmit}>
+          <Field icon={Mail} label="Email" htmlFor="auth-email">
+            <input
+              id="auth-email"
+              className="auth-input"
+              type="email"
+              value={email}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                clearStatus();
+              }}
+              required
+              autoComplete="email"
+            />
+          </Field>
+          <Field icon={KeyRound} label="Password" htmlFor="auth-password">
+            <PasswordInput
+              id="auth-password"
+              value={password}
+              visible={showPassword}
+              onChange={(value) => {
+                setPassword(value);
+                clearStatus();
+              }}
+              onToggle={() => setShowPassword((current) => !current)}
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+              showLabel="Show password"
+              hideLabel="Hide password"
+            />
+          </Field>
+          {mode === 'signup' ? (
+            <>
+              <Field icon={KeyRound} label="Confirm password" htmlFor="auth-confirm-password">
+                <PasswordInput
+                  id="auth-confirm-password"
+                  value={confirmPassword}
+                  visible={showConfirmPassword}
+                  onChange={(value) => {
+                    setConfirmPassword(value);
+                    clearStatus();
+                  }}
+                  onToggle={() => setShowConfirmPassword((current) => !current)}
+                  autoComplete="new-password"
+                  showLabel="Show confirmation password"
+                  hideLabel="Hide confirmation password"
+                />
+              </Field>
+              <Field icon={Eye} label="Join code" htmlFor="auth-join-code">
+                <input
+                  id="auth-join-code"
+                  className="auth-input font-mono tracking-widest uppercase"
+                  value={activationCode}
+                  onChange={(event) => {
+                    setActivationCode(event.target.value.toUpperCase());
+                    clearStatus();
+                  }}
+                  required
+                  maxLength={12}
+                />
+              </Field>
+              <label htmlFor="auth-terms-agree" className="flex items-start gap-2.5 text-sm leading-5 font-semibold text-gray-600">
+                <input
+                  id="auth-terms-agree"
+                  type="checkbox"
+                  className="text-primary-700 focus:ring-primary-600 mt-0.5 h-4 w-4 flex-none rounded border-gray-300"
+                  checked={agreedToTerms}
+                  onChange={(event) => {
+                    setAgreedToTerms(event.target.checked);
+                    clearStatus();
+                  }}
+                />
+                <span>
+                  I agree to the{' '}
+                  <a className="text-primary-700 font-black" href="https://allplays.ai/terms.html" target="_blank" rel="noreferrer">
+                    Terms
+                  </a>{' '}
+                  and{' '}
+                  <a className="text-primary-700 font-black" href="https://allplays.ai/privacy.html" target="_blank" rel="noreferrer">
+                    Privacy Policy
+                  </a>
+                  .
+                </span>
+              </label>
+            </>
+          ) : null}
 
-        {error ? <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-700">{error}</div> : null}
-        {message ? <div role="status" aria-live="polite" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-700">{message}</div> : null}
-        {busy ? <div role="status" aria-live="polite" className="sr-only">Authentication in progress.</div> : null}
+          {error ? (
+            <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-700">
+              {error}
+            </div>
+          ) : null}
+          {message ? (
+            <div
+              role="status"
+              aria-live="polite"
+              className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-700"
+            >
+              {message}
+            </div>
+          ) : null}
+          {busy ? (
+            <div role="status" aria-live="polite" className="sr-only">
+              Authentication in progress.
+            </div>
+          ) : null}
 
-        <button type="submit" className="primary-button w-full" disabled={busy || signupBlockedByTerms}>
-          {busy ? 'Working...' : mode === 'signup' ? 'Create account' : 'Sign in'}
-        </button>
-      </form>
-
-      <button type="button" className="secondary-button mt-3 w-full" onClick={handleGoogle} disabled={busy || signupBlockedByTerms}>
-        Continue with Google
-      </button>
-      {isNativeRuntime() && Capacitor.getPlatform() === 'ios' ? (
-        <button type="button" className="mt-3 flex min-h-11 w-full items-center justify-center rounded-xl bg-black px-4 text-sm font-black text-white disabled:opacity-60" onClick={handleApple} disabled={busy || signupBlockedByTerms}>
-          Continue with Apple
-        </button>
-      ) : null}
-
-      {mode === 'login' ? (
-        <button
-          type="button"
-          className="mt-3 w-full text-center text-sm font-black text-primary-700"
-          aria-expanded={showReset}
-          aria-controls="password-reset-form"
-          onClick={() => setShowReset((current) => !current)}
-        >
-          Forgot password?
-        </button>
-      ) : null}
-
-      {showReset ? (
-        <form id="password-reset-form" className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3" onSubmit={handleReset}>
-          <label htmlFor="password-reset-email" className="text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Password reset email</label>
-          <input
-            id="password-reset-email"
-            className="auth-input mt-2"
-            type="email"
-            value={email}
-            onChange={(event) => {
-              setEmail(event.target.value);
-              clearStatus();
-            }}
-            placeholder="you@example.com"
-            autoComplete="email"
-          />
-          <button type="submit" className="secondary-button mt-3 w-full" disabled={busy}>
-            Send reset email
+          <button type="submit" className="primary-button w-full" disabled={busy || signupBlockedByTerms}>
+            {busy ? 'Working...' : mode === 'signup' ? 'Create account' : 'Sign in'}
           </button>
         </form>
-      ) : null}
-      {mode === 'login' ? (
-        <p className="mt-4 text-center text-xs font-semibold leading-5 text-gray-500">
-          By continuing, you agree to our <a className="font-black text-primary-700" href="https://allplays.ai/terms.html" target="_blank" rel="noreferrer">Terms</a> and acknowledge our <a className="font-black text-primary-700" href="https://allplays.ai/privacy.html" target="_blank" rel="noreferrer">Privacy Policy</a>.
-        </p>
-      ) : null}
+
+        <button type="button" className="secondary-button mt-3 w-full" onClick={handleGoogle} disabled={busy || signupBlockedByTerms}>
+          Continue with Google
+        </button>
+        {isNativeRuntime() && Capacitor.getPlatform() === 'ios' ? (
+          <button
+            type="button"
+            className="mt-3 flex min-h-11 w-full items-center justify-center rounded-xl bg-black px-4 text-sm font-black text-white disabled:opacity-60"
+            onClick={handleApple}
+            disabled={busy || signupBlockedByTerms}
+          >
+            Continue with Apple
+          </button>
+        ) : null}
+
+        {mode === 'login' ? (
+          <button
+            type="button"
+            className="text-primary-700 mt-3 w-full text-center text-sm font-black"
+            aria-expanded={showReset}
+            aria-controls="password-reset-form"
+            onClick={() => setShowReset((current) => !current)}
+          >
+            Forgot password?
+          </button>
+        ) : null}
+
+        {showReset ? (
+          <form id="password-reset-form" className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3" onSubmit={handleReset}>
+            <label htmlFor="password-reset-email" className="text-xs font-extrabold tracking-[0.04em] text-gray-500 uppercase">
+              Password reset email
+            </label>
+            <input
+              id="password-reset-email"
+              className="auth-input mt-2"
+              type="email"
+              value={email}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                clearStatus();
+              }}
+              placeholder="you@example.com"
+              autoComplete="email"
+            />
+            <button type="submit" className="secondary-button mt-3 w-full" disabled={busy}>
+              Send reset email
+            </button>
+          </form>
+        ) : null}
+        {mode === 'login' ? (
+          <p className="mt-4 text-center text-xs leading-5 font-semibold text-gray-500">
+            By continuing, you agree to our{' '}
+            <a className="text-primary-700 font-black" href="https://allplays.ai/terms.html" target="_blank" rel="noreferrer">
+              Terms
+            </a>{' '}
+            and acknowledge our{' '}
+            <a className="text-primary-700 font-black" href="https://allplays.ai/privacy.html" target="_blank" rel="noreferrer">
+              Privacy Policy
+            </a>
+            .
+          </p>
+        ) : null}
       </div>
       <div
         id={`auth-panel-${mode === 'login' ? 'signup' : 'login'}`}
@@ -517,7 +613,10 @@ function isBrowserAuthRouteActive() {
 function Field({ icon: Icon, label, htmlFor, children }: { icon: typeof Mail; label: string; htmlFor: string; children: ReactNode }) {
   return (
     <div className="block">
-      <label htmlFor={htmlFor} className="mb-1.5 flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">
+      <label
+        htmlFor={htmlFor}
+        className="mb-1.5 flex items-center gap-1.5 text-xs font-extrabold tracking-[0.04em] text-gray-500 uppercase"
+      >
         <Icon className="h-3.5 w-3.5" aria-hidden="true" />
         {label}
       </label>
@@ -526,7 +625,16 @@ function Field({ icon: Icon, label, htmlFor, children }: { icon: typeof Mail; la
   );
 }
 
-function PasswordInput({ id, value, visible, onChange, onToggle, autoComplete, showLabel, hideLabel }: {
+function PasswordInput({
+  id,
+  value,
+  visible,
+  onChange,
+  onToggle,
+  autoComplete,
+  showLabel,
+  hideLabel
+}: {
   id: string;
   value: string;
   visible: boolean;

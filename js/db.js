@@ -113,7 +113,12 @@ import {
     collectAthleteProfileMediaCleanupPaths,
     summarizeAthleteProfileCareer,
     collectAthleteGameClipsForPlayer
-} from './athlete-profile-utils.js?v=3';
+} from './athlete-profile-utils.js?v=4';
+import { loadCompleteAthleteProfileSeasonStats } from './diamond-legacy-game-context.js?v=1';
+import {
+    DIAMOND_PLAYER_STAT_CATALOG,
+    resolveDiamondPublicTeamStatDocument
+} from './diamond-stat-presentation.js?v=7';
 import {
     isTeamActive,
     filterTeamsByActive,
@@ -355,11 +360,31 @@ function normalizeSharedGameSnapshot(docSnap) {
     };
 }
 
+const GAME_INVENTORY_CACHE_ONLY_ERROR_CODE = 'allplays/game-inventory-cache-only';
+
+function buildGameInventoryCacheOnlyError() {
+    const error = new Error('Game inventory was loaded only from the local cache.');
+    error.code = GAME_INVENTORY_CACHE_ONLY_ERROR_CODE;
+    return error;
+}
+
+function isGameInventoryCacheOnlyError(error) {
+    return error?.code === GAME_INVENTORY_CACHE_ONLY_ERROR_CODE;
+}
+
+function requireServerGameSnapshot(snapshot, required) {
+    if (required && snapshot?.metadata?.fromCache === true) {
+        throw buildGameInventoryCacheOnlyError();
+    }
+    return snapshot;
+}
+
 async function getSharedGamesForTeam(teamId, options = {}) {
     const sharedGamesRef = collectionGroup(db, 'sharedGames');
     const startDate = options?.startDate ?? null;
     const endDate = options?.endDate ?? null;
     const requireComplete = options?.requireComplete === true;
+    const requireServerSnapshots = options?.requireServerSnapshots === true;
     const dateConstraints = [];
     if (startDate instanceof Date) dateConstraints.push(where('date', '>=', Timestamp.fromDate(startDate)));
     if (endDate instanceof Date) dateConstraints.push(where('date', '<=', Timestamp.fromDate(endDate)));
@@ -383,6 +408,11 @@ async function getSharedGamesForTeam(teamId, options = {}) {
     if (requireComplete) {
         const failedQuery = snapshots.find((result) => result.status === 'rejected');
         if (failedQuery) throw failedQuery.reason;
+    }
+    if (requireServerSnapshots && snapshots.some((result) => (
+        result.status === 'fulfilled' && result.value?.metadata?.fromCache === true
+    ))) {
+        throw buildGameInventoryCacheOnlyError();
     }
     const sharedGamesByPath = new Map();
 
@@ -794,7 +824,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443371'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443375'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -4073,6 +4103,199 @@ function getPublicProjectionRange(options = {}) {
     };
 }
 
+const PUBLIC_DIAMOND_UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const PUBLIC_DIAMOND_SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const PUBLIC_DIAMOND_COVERAGE_STATUSES = new Set(['complete', 'partial', 'not_collected']);
+const PUBLIC_DIAMOND_PLAYER_STAT_IDS = new Set(DIAMOND_PLAYER_STAT_CATALOG.map(({ id }) => id));
+
+function exactPublicDiamondResourceId(value) {
+    return typeof value === 'string'
+        && value.length >= 1
+        && value.length <= 128
+        && value === value.trim()
+        && value !== '.'
+        && value !== '..'
+        && !value.includes('/')
+        && !/[\u0000-\u001f\u007f]/.test(value)
+        ? value
+        : '';
+}
+
+function decodePublicDiamondSharedGameId(gameId) {
+    if (typeof gameId !== 'string' || !gameId.startsWith('shared_')) return '';
+    let path;
+    try {
+        path = decodeURIComponent(gameId.slice('shared_'.length));
+    } catch {
+        return '';
+    }
+    const segments = path.split('/');
+    return segments.length === 4
+        && ['organizations', 'tournaments'].includes(segments[0])
+        && segments[2] === 'sharedGames'
+        && segments.every((segment) => exactPublicDiamondResourceId(segment))
+        && `shared_${encodeURIComponent(path)}` === gameId
+        ? path
+        : '';
+}
+
+function mapExactPublicDiamondOpponentStats(value, sourceRevision) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const entries = Object.entries(value);
+    if (entries.length > 100) return null;
+    const result = {};
+    for (const [rawId, rawStats] of entries) {
+        const playerId = exactPublicDiamondResourceId(rawId);
+        if (
+            !playerId
+            || playerId !== rawId
+            || !rawStats
+            || typeof rawStats !== 'object'
+            || Array.isArray(rawStats)
+            || exactPublicDiamondResourceId(rawStats.playerId) !== playerId
+            || rawStats.diamondSourceRevision !== sourceRevision
+            || !rawStats.diamondCoverage
+            || typeof rawStats.diamondCoverage !== 'object'
+            || Array.isArray(rawStats.diamondCoverage)
+        ) return null;
+        const coverageEntries = Object.entries(rawStats.diamondCoverage);
+        if (
+            coverageEntries.length === 0
+            || coverageEntries.length > 32
+            || coverageEntries.some(([family, status]) => (
+                !/^[a-z0-9][a-z0-9_]{0,63}$/.test(family)
+                || !PUBLIC_DIAMOND_COVERAGE_STATUSES.has(status)
+            ))
+        ) return null;
+        const mapped = {
+            playerId,
+            diamondCoverage: Object.fromEntries(coverageEntries),
+            diamondSourceRevision: sourceRevision
+        };
+        if (typeof rawStats.name === 'string' && rawStats.name.length <= 160) mapped.name = rawStats.name;
+        if (typeof rawStats.number === 'string' && rawStats.number.length <= 32) mapped.number = rawStats.number;
+        if (typeof rawStats.photoUrl === 'string' && rawStats.photoUrl.length <= 2048) {
+            try {
+                const photoUrl = new URL(rawStats.photoUrl);
+                if (
+                    ['https:', 'http:'].includes(photoUrl.protocol)
+                    && !photoUrl.username
+                    && !photoUrl.password
+                ) mapped.photoUrl = photoUrl.toString();
+            } catch {
+                // Invalid presentation metadata is omitted, never reflected.
+            }
+        }
+        Object.entries(rawStats).forEach(([key, statValue]) => {
+            if (!PUBLIC_DIAMOND_PLAYER_STAT_IDS.has(key)) return;
+            if (typeof statValue === 'number' && Number.isFinite(statValue) && statValue >= 0) {
+                mapped[key] = statValue;
+            } else if (key === 'innings_pitched' && typeof statValue === 'string' && /^\d+\.[012]$/.test(statValue)) {
+                mapped[key] = statValue;
+            }
+        });
+        result[playerId] = mapped;
+    }
+    return result;
+}
+
+function mapExactPublicDiamondEnvelope(game = {}, teamId = '') {
+    if (game?.trackingEngine !== 'diamond-v2') return null;
+    const sharedGamePath = decodePublicDiamondSharedGameId(game.id);
+    const isSharedGame = game.isSharedGame === true;
+    if (Boolean(sharedGamePath) !== isSharedGame) return null;
+    const id = isSharedGame
+        ? (typeof game.id === 'string' && game.id.length <= 1000 ? game.id : '')
+        : exactPublicDiamondResourceId(game.id);
+    const statTrackerConfigId = exactPublicDiamondResourceId(game.statTrackerConfigId);
+    const status = game.diamondProjectionStatus;
+    const instanceId = game.diamondScorebookInstanceId;
+    const sourceRevision = game.diamondProjectionRevision;
+    const checkpointHash = game.diamondProjectionCheckpointHash;
+    const statConfigSnapshotHash = game.diamondStatConfigSnapshotHash;
+    const projectionHash = game.diamondProjectionHash;
+    if (
+        !id
+        || !statTrackerConfigId
+        || !['current', 'complete'].includes(status)
+        || game.diamondProjectionComplete !== true
+        || typeof instanceId !== 'string'
+        || !PUBLIC_DIAMOND_UUID_V4_PATTERN.test(instanceId)
+        || !Number.isSafeInteger(sourceRevision)
+        || sourceRevision < 0
+        || typeof checkpointHash !== 'string'
+        || !PUBLIC_DIAMOND_SHA256_PATTERN.test(checkpointHash)
+        || typeof statConfigSnapshotHash !== 'string'
+        || !PUBLIC_DIAMOND_SHA256_PATTERN.test(statConfigSnapshotHash)
+        || typeof projectionHash !== 'string'
+        || !PUBLIC_DIAMOND_SHA256_PATTERN.test(projectionHash)
+    ) return null;
+
+    let readTeamId = teamId;
+    let readGameId = id;
+    const sourceBinding = {};
+    if (isSharedGame) {
+        const sourceTeamId = exactPublicDiamondResourceId(game.diamondSourceTeamId);
+        const sourceGameId = exactPublicDiamondResourceId(game.diamondSourceGameId);
+        // Public player/team projections are source-oriented. Do not map an
+        // opponent team's source projection onto this viewing team's report.
+        if (!sourceTeamId || sourceTeamId !== teamId || !sourceGameId) return null;
+        readTeamId = sourceTeamId;
+        readGameId = sourceGameId;
+        sourceBinding.diamondSourceTeamId = sourceTeamId;
+        sourceBinding.diamondSourceGameId = sourceGameId;
+    } else if (
+        Object.prototype.hasOwnProperty.call(game, 'diamondSourceTeamId')
+        || Object.prototype.hasOwnProperty.call(game, 'diamondSourceGameId')
+    ) {
+        return null;
+    }
+
+    const identity = {
+        statTrackerConfigId,
+        diamondProjectionStatus: status,
+        diamondProjectionComplete: true,
+        diamondScorebookInstanceId: instanceId,
+        diamondProjectionRevision: sourceRevision,
+        diamondProjectionCheckpointHash: checkpointHash,
+        diamondStatConfigSnapshotHash: statConfigSnapshotHash,
+        diamondProjectionHash: projectionHash,
+        ...sourceBinding
+    };
+    const teamStats = game.diamondPublicTeamStats;
+    if (
+        !teamStats
+        || typeof teamStats !== 'object'
+        || Array.isArray(teamStats)
+        || teamStats.teamId !== readTeamId
+        || teamStats.diamondGameId !== readGameId
+        || teamStats.instanceId !== instanceId
+        || teamStats.diamondScorebookInstanceId !== instanceId
+        || teamStats.projectionGeneration !== instanceId
+        || teamStats.sourceRevision !== sourceRevision
+        || teamStats.checkpointHash !== checkpointHash
+        || teamStats.statConfigSnapshotHash !== statConfigSnapshotHash
+        || teamStats.projectionHash !== projectionHash
+    ) return null;
+    const teamStatsResolution = resolveDiamondPublicTeamStatDocument({
+        game: {
+            ...game,
+            ...identity,
+            id: readGameId,
+            gameId: readGameId,
+            teamId: readTeamId
+        }
+    });
+    if (teamStatsResolution.status !== 'complete' || !teamStatsResolution.document) return null;
+    const opponentStats = mapExactPublicDiamondOpponentStats(game.opponentStats, sourceRevision);
+    if (opponentStats === null) return null;
+    return {
+        ...identity,
+        opponentStats,
+        diamondPublicTeamStats: teamStatsResolution.document
+    };
+}
+
 function mapPublicGameProjection(game = {}, teamId = '') {
     const startsAt = game?.startsAt ? new Date(game.startsAt) : null;
     const endsAt = game?.endsAt ? new Date(game.endsAt) : null;
@@ -4080,6 +4303,9 @@ function mapPublicGameProjection(game = {}, teamId = '') {
     const isHome = game?.isHome !== false;
     const teamScore = Number.isFinite(game?.teamScore) ? game.teamScore : null;
     const opponentScore = Number.isFinite(game?.opponentScore) ? game.opponentScore : null;
+    const exactDiamondEnvelope = mapExactPublicDiamondEnvelope(game, teamId);
+    const projectedSharedGame = game?.isSharedGame === true
+        && Boolean(decodeSharedGameSyntheticId(String(game?.id || '')));
     return {
         id: String(game?.id || ''),
         teamId,
@@ -4104,10 +4330,16 @@ function mapPublicGameProjection(game = {}, teamId = '') {
         competitionType: game?.competitionType || null,
         countsTowardSeasonRecord: game?.countsTowardSeasonRecord !== false,
         tournament: game?.tournament || null,
-        opponentStats: game?.opponentStats || {},
+        opponentStats: game?.trackingEngine === 'diamond-v2'
+            ? (exactDiamondEnvelope?.opponentStats || {})
+            : (game?.opponentStats || {}),
         teamName: game?.teamName || null,
         homeTeamName: game?.homeTeamName || null,
         sport: game?.sport || null,
+        ...(game?.trackingEngine === 'diamond-v2'
+            ? { trackingEngine: 'diamond-v2' }
+            : {}),
+        ...(exactDiamondEnvelope || {}),
         teamPhotoUrl: game?.teamPhotoUrl || null,
         homeTeamPhoto: game?.homeTeamPhoto || game?.teamPhotoUrl || null,
         opponentTeamPhoto: game?.opponentTeamPhoto || null,
@@ -4116,7 +4348,7 @@ function mapPublicGameProjection(game = {}, teamId = '') {
         liveResetEventId: typeof game?.liveResetEventId === 'string'
             ? game.liveResetEventId.trim().slice(0, 128)
             : '',
-        isSharedGame: game?.isSharedGame === true || String(game?.id || '').startsWith('shared_'),
+        isSharedGame: projectedSharedGame,
         isPublicProjection: true
     };
 }
@@ -4130,6 +4362,38 @@ function markCanonicalGameProjectionProvenance(game) {
         // Firestore document cannot opt itself into projection-only behavior.
         isPublicProjection: false
     };
+}
+
+function getSourceOwnedDiamondSharedReportHydrationMode(data, teamId, gameId) {
+    const visibility = typeof data?.visibility === 'string'
+        ? data.visibility.trim().toLowerCase()
+        : '';
+    const status = typeof data?.status === 'string' ? data.status.trim().toLowerCase() : '';
+    const liveStatus = typeof data?.liveStatus === 'string' ? data.liveStatus.trim().toLowerCase() : '';
+    if (
+        !decodePublicDiamondSharedGameId(gameId)
+        || data?.trackingEngine !== 'diamond-v2'
+        || exactPublicDiamondResourceId(data?.diamondSourceTeamId) !== teamId
+        || !exactPublicDiamondResourceId(data?.diamondSourceGameId)
+        || visibility === 'private'
+        || data?.isPrivate === true
+        || data?.private === true
+        || data?.deleted === true
+        || data?.isDeleted === true
+        || status === 'deleted'
+        || liveStatus === 'deleted'
+    ) return '';
+    const hasExplicitPublicMarker = visibility === 'public'
+        || data.isPublic === true
+        || data.public === true
+        || data.shareable === true
+        || data.isShareable === true
+        || data.publicCalendar === true;
+    // Public teams commonly omit a per-game visibility marker. Probe the
+    // server-authoritative exact projection for those source-owned shared
+    // games, but preserve the directly authorized private result when the
+    // server says the unmarked game is not public.
+    return hasExplicitPublicMarker ? 'required' : 'probe';
 }
 
 function normalizeTournamentStandingsGroups(options = {}) {
@@ -4223,9 +4487,13 @@ async function getPublicGameProjection(teamId, gameId) {
     const callable = httpsCallable(functions, 'getPublicGameProjection');
     try {
         const response = await callable({ teamId, gameId });
-        return response?.data?.item
-            ? mapPublicGameProjection(response.data.item, teamId)
-            : null;
+        if (!response?.data?.item) return null;
+        if (response.data.item.id !== gameId) {
+            const mismatch = new Error('The public game projection did not match the requested game.');
+            mismatch.code = 'public-game-projection-mismatch';
+            throw mismatch;
+        }
+        return mapPublicGameProjection(response.data.item, teamId);
     } catch (error) {
         if (String(error?.code || '').endsWith('/not-found') || error?.code === 'not-found') {
             return null;
@@ -4234,9 +4502,12 @@ async function getPublicGameProjection(teamId, gameId) {
     }
 }
 
-async function getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate) {
+async function getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate, options = {}) {
     if (!startDate && !endDate) return [];
-    const snapshot = await getDocs(query(gamesRef, where("isSeriesMaster", "==", true)));
+    const snapshot = requireServerGameSnapshot(
+        await getDocs(query(gamesRef, where("isSeriesMaster", "==", true))),
+        options?.requireServerSnapshot === true
+    );
     return snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))
         .filter(game => recurringPracticeMasterMayOverlapDateRange(game, startDate, endDate));
@@ -4250,6 +4521,7 @@ async function getRecurringPracticeMastersForDateRange(gamesRef, startDate, endD
 export async function getGames(teamId, options = {}) {
     const startDate = options?.startDate ?? null;
     const endDate = options?.endDate ?? null;
+    const requireCompleteSharedGames = options?.requireCompleteSharedGames === true;
     const tournamentGroups = normalizeTournamentStandingsGroups(options);
     const hasTournamentGroup = tournamentGroups.length > 0;
     const gamesRef = getTeamGameCollectionRef(teamId);
@@ -4261,13 +4533,16 @@ export async function getGames(teamId, options = {}) {
         if (hasTournamentGroup) {
             const groupGames = await Promise.all(tournamentGroups.map(async (tournamentGroup) => {
                 if (tournamentGroup.poolName) {
-                    const snapshot = await getDocs(query(gamesRef, where("tournament.poolName", "==", tournamentGroup.poolName)));
+                    const snapshot = requireServerGameSnapshot(
+                        await getDocs(query(gamesRef, where("tournament.poolName", "==", tournamentGroup.poolName))),
+                        requireCompleteSharedGames
+                    );
                     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 }
-                const snapshots = await Promise.all([
+                const snapshots = (await Promise.all([
                     getDocs(query(gamesRef, where("tournament.divisionName", "==", tournamentGroup.divisionName))),
                     getDocs(query(gamesRef, where("tournament.division", "==", tournamentGroup.divisionName)))
-                ]);
+                ])).map((snapshot) => requireServerGameSnapshot(snapshot, requireCompleteSharedGames));
                 return mergeGamesById(
                     snapshots[0].docs.map(doc => ({ id: doc.id, ...doc.data() })),
                     snapshots[1].docs.map(doc => ({ id: doc.id, ...doc.data() }))
@@ -4275,10 +4550,14 @@ export async function getGames(teamId, options = {}) {
             }));
             teamGames = groupGames.reduce((merged, games) => mergeGamesById(merged, games), []);
         } else {
-            const snapshot = await getDocs(query(gamesRef, ...rangeConstraints, orderBy("date")));
+            const snapshot = requireServerGameSnapshot(
+                await getDocs(query(gamesRef, ...rangeConstraints, orderBy("date"))),
+                requireCompleteSharedGames
+            );
             teamGames = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         }
     } catch (error) {
+        if (requireCompleteSharedGames && isGameInventoryCacheOnlyError(error)) throw error;
         if (isPermissionDeniedError(error)) {
             return getPublicGamesProjection(teamId, options);
         }
@@ -4287,25 +4566,36 @@ export async function getGames(teamId, options = {}) {
         if (hasTournamentGroup) throw error;
         // Fallback when indexes are still building or unavailable: read the
         // collection and apply the range client-side so results stay correct.
-        const snapshot = await getDocs(gamesRef);
+        const snapshot = requireServerGameSnapshot(
+            await getDocs(gamesRef),
+            requireCompleteSharedGames
+        );
         teamGames = snapshot.docs
             .map(doc => ({ id: doc.id, ...doc.data() }))
             .filter(game => isGameWithinDateRange(game, startDate, endDate));
     }
     if (!hasTournamentGroup && (startDate || endDate)) {
         try {
-            const recurringMasters = await getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate);
+            const recurringMasters = await getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate, {
+                requireServerSnapshot: requireCompleteSharedGames
+            });
             teamGames = mergeGamesById(teamGames, recurringMasters);
         } catch (error) {
+            if (requireCompleteSharedGames && isGameInventoryCacheOnlyError(error)) throw error;
             console.warn('[getGames] Failed to load recurring practice masters for team', teamId, error);
         }
     }
 
     let sharedGames = [];
     try {
-        sharedGames = await getSharedGamesForTeam(teamId, { startDate, endDate, requireComplete: hasTournamentGroup });
+        sharedGames = await getSharedGamesForTeam(teamId, {
+            startDate,
+            endDate,
+            requireComplete: hasTournamentGroup || requireCompleteSharedGames,
+            requireServerSnapshots: requireCompleteSharedGames
+        });
     } catch (error) {
-        if (hasTournamentGroup) throw error;
+        if (hasTournamentGroup || requireCompleteSharedGames) throw error;
         console.warn('[getGames] Failed to load shared games for team', teamId, error);
     }
 
@@ -4409,7 +4699,7 @@ export async function getAggregatedStatsDocumentForPlayer(teamId, gameId, player
     return docSnap.data() || {};
 }
 
-export async function getGame(teamId, gameId) {
+export async function getGame(teamId, gameId, options = {}) {
     const docRef = getGameDocRef(teamId, gameId);
     let docSnap;
     try {
@@ -4423,6 +4713,18 @@ export async function getGame(teamId, gameId) {
     if (docSnap.exists()) {
         const data = docSnap.data();
         if (isSharedGameSyntheticId(gameId)) {
+            const reportHydrationMode = options?.exactPublicDiamondReport === true
+                ? getSourceOwnedDiamondSharedReportHydrationMode(data, teamId, gameId)
+                : '';
+            if (reportHydrationMode) {
+                const exactProjection = await getPublicGameProjection(teamId, gameId);
+                if (exactProjection) return exactProjection;
+                if (reportHydrationMode === 'required') {
+                    const unavailable = new Error('The exact public Diamond report is unavailable.');
+                    unavailable.code = 'allplays/diamond-public-report-unavailable';
+                    throw unavailable;
+                }
+            }
             return markCanonicalGameProjectionProvenance(projectSharedGameForTeam({
                 id: docSnap.id,
                 ...data,
@@ -6934,7 +7236,7 @@ async function buildAthleteProfileSeasonSummary(link) {
     const [team, playerSnap, games] = await Promise.all([
         getTeam(link.teamId, { includeInactive: true }),
         getDoc(doc(db, `teams/${link.teamId}/players`, link.playerId)),
-        getGames(link.teamId)
+        getGames(link.teamId, { requireCompleteSharedGames: true })
     ]);
 
     if (!team || !playerSnap.exists()) {
@@ -6942,23 +7244,23 @@ async function buildAthleteProfileSeasonSummary(link) {
     }
 
     const player = playerSnap.data() || {};
-    let gamesPlayed = 0;
-    let totalTimeMs = 0;
-    const statTotals = {};
-
-    for (const game of (games || [])) {
-        const statsSnap = await getDoc(doc(db, `teams/${link.teamId}/games/${game.id}/aggregatedStats`, link.playerId));
-        if (!statsSnap.exists()) continue;
-
-        const statsData = statsSnap.data() || {};
-        const stats = statsData.stats || {};
-
-        gamesPlayed += 1;
-        totalTimeMs += Number(statsData.timeMs || 0);
-        Object.entries(stats).forEach(([statKey, value]) => {
-            statTotals[statKey] = (statTotals[statKey] || 0) + Number(value || 0);
-        });
-    }
+    const seasonStatGames = (games || []).filter((game) => {
+        if (String(game?.trackingEngine || '').trim().toLowerCase() !== 'diamond-v2') return true;
+        const status = String(game?.status || '').trim().toLowerCase();
+        const liveStatus = String(game?.liveStatus || '').trim().toLowerCase();
+        return ['completed', 'complete', 'final'].includes(status)
+            || ['completed', 'complete', 'final'].includes(liveStatus);
+    });
+    const seasonStats = await loadCompleteAthleteProfileSeasonStats({
+        teamId: link.teamId,
+        games: seasonStatGames,
+        playerId: link.playerId,
+        loadClassicPlayerRecord: async (teamId, gameId, playerId) => {
+            const gameRef = getGameDocRef(teamId, gameId);
+            const statsSnap = await getDoc(doc(db, `${gameRef.path}/aggregatedStats`, playerId));
+            return statsSnap.exists() ? (statsSnap.data() || {}) : null;
+        }
+    });
 
     return {
         seasonKey: buildParentSeasonKey(link.teamId, link.playerId),
@@ -6967,9 +7269,30 @@ async function buildAthleteProfileSeasonSummary(link) {
         playerId: link.playerId,
         playerName: link.playerName || player.name || 'Athlete',
         playerPhotoUrl: player.photoUrl || link.playerPhotoUrl || null,
-        gamesPlayed,
-        totalTimeMs,
-        statTotals,
+        gamesPlayed: seasonStats.gamesPlayed,
+        totalTimeMs: seasonStats.totalTimeMs,
+        statTotals: seasonStats.statTotals,
+        ...(seasonStats.evidence
+            ? {
+                playingTimeComplete: seasonStats.playingTimeComplete,
+                playingTimeEvidence: {
+                    complete: seasonStats.evidence.playingTime?.complete === true,
+                    instructions: seasonStats.evidence.playingTime?.instructions || 'Unavailable playing time is unknown, never zero.'
+                },
+                statEvidence: {
+                    complete: seasonStats.evidence.complete === true,
+                    readComplete: seasonStats.evidence.readComplete === true,
+                    visibility: 'public',
+                    completeStatKeys: Array.isArray(seasonStats.evidence.completeStatKeys)
+                        ? seasonStats.evidence.completeStatKeys
+                        : [],
+                    omittedOrIncompleteStatKeys: Array.isArray(seasonStats.evidence.omittedOrIncompleteStatKeys)
+                        ? seasonStats.evidence.omittedOrIncompleteStatKeys
+                        : [],
+                    instructions: 'Only complete public totals are stored. Omitted counters are unknown, never zero.'
+                }
+            }
+            : {}),
         gameClips: collectAthleteGameClipsForPlayer(games, {
             teamId: link.teamId,
             teamName: team.name || link.teamName || 'Team',
