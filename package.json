@@ -31,6 +31,8 @@
     "stage:pages": "node scripts/stage-pages-bundle.mjs",
     "app:build-help-index": "node scripts/build-app-help-knowledge-index.mjs",
     "app:check-bundle-size": "node scripts/check-app-bundle-size.mjs",
+    "build:diamond-engine": "apps/app/node_modules/.bin/tsc -p functions/tsconfig.diamond.json",
+    "check:diamond-engine": "npm run build:diamond-engine && git diff --exit-code -- functions/diamond-engine && test -z \"$(git ls-files --others --exclude-standard -- functions/diamond-engine)\"",
     "serve:firebase": "node scripts/serve-firebase-local.mjs demo-allplays",
     "serve:firebase:safe": "node scripts/serve-firebase-local.mjs demo-allplays",
     "serve:firebase:live": "node scripts/serve-firebase-local.mjs game-flow-c6311",
