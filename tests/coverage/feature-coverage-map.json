@@ -643,6 +643,7 @@
             ],
             "cloudFunctions": [
                 "cleanupPrivateReplayArchiveOnGameDelete",
+                "cleanupAccountDiamondPrivateNotesOnAuthDelete",
                 "cleanupPrivateReplayArchiveOnSharedGameDelete",
                 "deleteStatConfig",
                 "gameReportSharePreview",
@@ -657,6 +658,7 @@
             ],
             "unitTests": [
                 "functions/test/athlete-profile-projection-core.test.cjs",
+                "functions/test/account-deletion-diamond-private-notes.test.cjs",
                 "functions/test/live-game-share-preview-core.test.cjs",
                 "functions/test/replay-private-archive-callables.test.cjs",
                 "functions/test/replay-private-archive-core.test.cjs",

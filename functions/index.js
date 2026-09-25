@@ -447,8 +447,11 @@ const {
   collectAccountRosterScopes,
   collectAccountTeamIds,
   cleanupAccountCalendarCredentials,
+  cleanupAccountDiamondPrivateNotes,
+  createAccountDiamondPrivateNoteAuthDeleteHandler,
   createAccountDeletionRequestHandler,
   deleteAccountMediaStoragePages,
+  deleteAccountQueryPages,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   getAccountEmailQueryCandidates,
@@ -4103,6 +4106,18 @@ exports.cleanupInviteSignupOnAuthDelete = functions.auth.user().onDelete(async (
   await cleanupFailedInviteSignupForUser(userId, { authUserRecord: user });
   return null;
 });
+
+const cleanupAccountDiamondPrivateNotesOnAuthDelete = createAccountDiamondPrivateNoteAuthDeleteHandler({
+  firestore,
+  getDocumentIdField: () => admin.firestore.FieldPath.documentId(),
+  deleteFieldValue: () => admin.firestore.FieldValue.delete()
+});
+
+exports.cleanupAccountDiamondPrivateNotesOnAuthDelete = functions
+  .runWith({ timeoutSeconds: 540, memory: '1GB', failurePolicy: true })
+  .auth
+  .user()
+  .onDelete(cleanupAccountDiamondPrivateNotesOnAuthDelete);
 
 exports.cleanupPublicUserProfileOnAuthDelete = functions.auth
   .user()
@@ -21464,15 +21479,7 @@ exports.requestAccountDeletion = functions.https.onCall(createAccountDeletionReq
 }));
 
 async function deleteAccountQuery(query) {
-  while (true) {
-    const snapshot = await query.limit(250).get();
-    if (snapshot.empty) return;
-    for (let index = 0; index < snapshot.docs.length; index += 10) {
-      await Promise.all(snapshot.docs
-        .slice(index, index + 10)
-        .map((docSnapshot) => firestore.recursiveDelete(docSnapshot.ref)));
-    }
-  }
+  return deleteAccountQueryPages({ firestore, query });
 }
 
 async function deleteAccountStorage(uid, mediaQueries, profilePhotoUrls = []) {
@@ -21732,6 +21739,13 @@ exports.processAccountDeletionRequest = functions
         throw migrationError;
       }
 
+      await cleanupAccountDiamondPrivateNotes({
+        firestore,
+        uid,
+        documentIdField: admin.firestore.FieldPath.documentId(),
+        redactedAt: admin.firestore.Timestamp.now().toDate().toISOString()
+      });
+
       await deleteAccountStorage(uid, [
         firestore.collectionGroup('media').where('uploadedBy', '==', uid),
         firestore.collectionGroup('mediaItems').where('uploadedBy', '==', uid),
@@ -21792,7 +21806,11 @@ exports.processAccountDeletionRequest = functions
       await requestRef.set({
         status: 'failed',
         updatedAt: admin.firestore.Timestamp.now(),
-        failureCode: error?.code === 'legacy-profile-photo-migration-required'
+        failureCode: [
+          'legacy-profile-photo-migration-required',
+          'diamond-private-note-migration-required',
+          'diamond-private-note-integrity-failed'
+        ].includes(error?.code)
           ? error.code
           : 'processing-failed'
       }, { merge: true });
