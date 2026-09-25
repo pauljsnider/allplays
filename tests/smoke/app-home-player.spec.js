@@ -1134,6 +1134,17 @@ async function mockHomePlayerModules(page, { switchableSocialTargets = false, fa
                 }
 
                 export async function loadParentPlayerStatsDetail() {
+                    if (window.__diamondPendingStatsSmoke) {
+                        return {
+                            summary: {
+                                gamesPlayed: 1, gamesWithTime: 0, totalTimeMs: 0,
+                                totals: {}, averages: {}, topStats: [], trends: [], gameLimit: 20, hasMoreGames: false,
+                                diamond: { hasDiamond: true, pending: true, statVisibility: 'public',
+                                    requestedStatVisibility: 'manager-internal', publicStatsStatus: 'partial', sourceRevisions: [] }
+                            },
+                            statRows: [], gameEventRows: []
+                        };
+                    }
                     const statEvent = event({
                         eventKey: 'team-1::game-final::player-1',
                         id: 'game-final',
@@ -1479,6 +1490,28 @@ test('home dashboard drills into player detail with section submenus', async ({ 
     await page.getByRole('button', { name: 'Rules', exact: true }).click();
     await expect(page.getByText('Rules and limits')).toBeVisible();
     await expect(page.getByText('PTS: +$1.00 per pts')).toBeVisible();
+});
+
+test('player reports expose pending Diamond evidence without inventing zero statistics', async ({ page, baseURL }) => {
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.addInitScript(() => {
+        window.__diamondPendingStatsSmoke = true;
+        window.ALLPLAYS_PERFORMANCE_ENABLED = false;
+        window.ALLPLAYS_TELEMETRY_ENABLED = false;
+    });
+    await mockHomePlayerModules(page);
+    await page.goto(appUrl(baseURL, '/players/team-1/player-1'), { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => errors).toEqual([]);
+    await expect(page.getByRole('heading', { name: 'Pat Star' })).toBeVisible();
+    await page.getByRole('button', { name: 'Reports' }).click();
+    const status = page.getByRole('status', { name: 'Diamond player statistics status' });
+    await expect(status).toContainText('Missing values stay unavailable instead of becoming zero.');
+    await expect(status).toContainText('Internal stats are unavailable. Public projection status: Partial. Refresh to retry.');
+    await expect(status).toContainText('Public · Read only');
+    await expect(page.getByText('0.000', { exact: true })).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    expect(errors).toEqual([]);
 });
 
 test('parent core player drill-in sends workflow timer to telemetry storage payload', async ({ page, baseURL }) => {

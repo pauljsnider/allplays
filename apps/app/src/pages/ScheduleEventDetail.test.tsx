@@ -3140,7 +3140,7 @@ describe('ScheduleEventDetail assignments', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Report sections' }));
     await waitFor(() => {
       expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
-      expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledWith('team-1', 'game-1');
+      expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledWith('team-1', 'game-1', { statVisibility: 'manager-internal' });
       expect(screen.getByText('Loaded on demand.')).toBeTruthy();
     });
   });
