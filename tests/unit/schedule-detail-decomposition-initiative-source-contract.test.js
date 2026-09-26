@@ -188,7 +188,7 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
         expect(gameHubSource).toContain("gameReportSectionsModulePromise = import('../../components/schedule/GameReportSections');");
         expect(gameHubSource).toContain('const DeferredGameReportSections = lazy(() => (');
         expect(detailSource).toContain('<PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={selectChild} compact />');
-        expect(gameHubSource).toContain('<DeferredGameReportSections event={event} />');
+        expect(gameHubSource).toContain('<DeferredGameReportSections event={event} onRefreshEvent={onEventRefresh} />');
         expect(detailSource).not.toMatch(/^function PlayerSwitcher\b/m);
         expect(detailSource).not.toMatch(/^function GameReportSections\b/m);
         expect(detailSource).not.toMatch(/^function GameReportSectionContent\b/m);

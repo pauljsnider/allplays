@@ -749,6 +749,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
                 onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled}
                 onGamePlanPublished={handleGamePlanPublished}
                 onReplayVideoUpdated={handleReplayVideoUpdated}
+                onEventRefresh={loadEvent}
               />
             </Suspense>
           </ErrorBoundary>

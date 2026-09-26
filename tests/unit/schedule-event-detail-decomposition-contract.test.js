@@ -229,7 +229,7 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(gameHub).toContain('export function loadGameReportSectionsModule()');
         expect(gameHub).toContain("gameReportSectionsModulePromise = import('../../components/schedule/GameReportSections');");
         expect(gameHub).toContain('loadGameReportSectionsModule().then((module) => ({ default: module.GameReportSections }))');
-        expect(gameHub).toContain('<DeferredGameReportSections event={event} />');
+        expect(gameHub).toContain('<DeferredGameReportSections event={event} onRefreshEvent={onEventRefresh} />');
         expect(page).not.toMatch(/^function GameReportSections\b/m);
         expect(page).not.toMatch(/^function GameReportSectionContent\b/m);
         expect(page).not.toMatch(/loadGameReportSections\(/);
