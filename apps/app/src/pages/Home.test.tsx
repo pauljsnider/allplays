@@ -926,6 +926,23 @@ describe('Home', () => {
     expect(screen.getByText('Needs refresh')).toBeTruthy();
   });
 
+  it('renders a successful social load on Feed when Home details fail', async () => {
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockRejectedValueOnce(new Error('fees unavailable'));
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [baseFeedItem],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    expect(await screen.findByRole('button', { name: 'Retry loading Home' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Feed' })).toBeTruthy();
+    expect(screen.getByText('Pat Player highlight')).toBeTruthy();
+    expect(screen.queryByText('No posts for this filter')).toBeNull();
+    expect(screen.getByText('Needs refresh')).toBeTruthy();
+  });
+
   it('keeps the Needs refresh badge when a secondary retry also fails', async () => {
     homeServiceMocks.loadParentHomeWithSecondaryData
       .mockRejectedValueOnce(new TypeError('Failed to fetch'))

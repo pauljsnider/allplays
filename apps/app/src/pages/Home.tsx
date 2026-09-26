@@ -496,6 +496,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const homeDetailsPending = Boolean(authUserId) && !hasLoadedHomeDetails;
   const homeDetailsRefreshFailed = Boolean(authUserId) && authUserId === failedHomeDetailsUserId;
   const showIncompleteHomeError = !hasLoadedHomeDetails && Boolean(homeLoadError);
+  const canRenderFeed = canRenderHomeSections && !showBlockingErrorState && (!showIncompleteHomeError || social.feedItems.length > 0);
   const resolvedOfficialsAccess = authUserId ? officialsAccess : { hasAccess: false, teamCount: 0, isPartial: false };
 
   useViewLoadTimer({
@@ -685,7 +686,7 @@ export function Home({ auth }: { auth: AuthState }) {
           officialsAccess={resolvedOfficialsAccess}
         />
       ) : null}
-      {canRenderHomeSections && !showBlockingErrorState && !showIncompleteHomeError && activeSection === 'feed' ? (
+      {canRenderFeed && activeSection === 'feed' ? (
         <FeedSection
           social={social}
           loading={socialLoading}
