@@ -24,8 +24,11 @@ async function stubCertificateBrowserApis(page) {
 
 test('certificates demo workflow creates, edits, exports, and prints', async ({ page, baseURL }) => {
     await stubCertificateBrowserApis(page);
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
 
     await page.goto(`${baseURL}/certificates.html?demo=1#teamId=demo-junior-current`, { waitUntil: 'networkidle' });
+    expect(pageErrors).toEqual([]);
     await expect(page.getByRole('heading', { name: 'Awards & Certificates' })).toBeVisible();
     await expect(page.locator('#cert-new-run-btn')).toHaveText('Start new run');
     await expect(page.locator('#cert-view-saved-btn')).toHaveText('View saved work');
@@ -221,8 +224,11 @@ test('certificates demo workflow creates, edits, exports, and prints', async ({ 
 
 test('one-off certificates save, reopen, export, and print with custom data intact', async ({ page, baseURL }) => {
     await stubCertificateBrowserApis(page);
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
 
     await page.goto(`${baseURL}/certificates.html?demo=1#teamId=demo-junior-current`, { waitUntil: 'networkidle' });
+    expect(pageErrors).toEqual([]);
     await expect(page.getByRole('heading', { name: 'Awards & Certificates' })).toBeVisible();
 
     await page.locator('#cert-custom-recipient-btn').click();
