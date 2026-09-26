@@ -1,5 +1,6 @@
 import { createConfig as legacyCreateConfig, createTeam as legacyCreateTeam } from '@legacy/db.js';
 import {
+  getDefaultDiamondStatConfigForSport as legacyGetDefaultDiamondStatConfigForSport,
   getDefaultStatConfigForSport as legacyGetDefaultStatConfigForSport,
   getStatConfigPresetOptions as legacyGetStatConfigPresetOptions
 } from '@legacy/stat-config-presets.js';
@@ -9,6 +10,10 @@ export const createConfig = legacyCreateConfig as (teamId: string, configData: u
 
 export function getDefaultStatConfigForSport(sport: string): unknown {
   return legacyGetDefaultStatConfigForSport(sport);
+}
+
+export function getDefaultDiamondStatConfigForSport(sport: string): unknown {
+  return legacyGetDefaultDiamondStatConfigForSport(sport);
 }
 
 export function getStatConfigPresetOptions(): unknown[] {
