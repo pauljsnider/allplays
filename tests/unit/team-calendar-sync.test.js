@@ -35,10 +35,11 @@ describe('team calendar sync controls', () => {
     it('builds Apple, Google, and HTTPS private feed URLs', () => {
         const source = readTeamPage();
 
-        expect(source).toContain('function getPrivateCalendarFeedUrl(token)');
-        expect(source).toContain('async function resolvePrivateCalendarFeedUrl()');
+        expect(source).toContain('function getPrivateCalendarFeedUrl(token, teamId)');
+        expect(source).toContain('async function resolvePrivateCalendarFeedUrl(context)');
         expect(source).toContain("httpsCallable(functions, 'getPrivateTeamCalendarFeedToken')");
-        expect(source).toContain('await resolvePrivateCalendarFeedUrl()');
+        expect(source).toContain('await resolvePrivateCalendarFeedUrl(context)');
+        expect(source).toContain('getPrivateCalendarFeedUrl(token, context.teamId)');
         expect(source).not.toContain('privateCalendarFeedTokensByTeamId');
         expect(source).toContain("let preparedPrivateCalendarFeedUrl = '';");
         expect(source).toContain('setSyncCalendarActionsEnabled(Boolean(feedUrl));');

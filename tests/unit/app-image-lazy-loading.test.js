@@ -89,7 +89,7 @@ describe('app image lazy loading', () => {
         expectEagerAsyncImages(readRepo('live-game.html'), 'home-team-photo');
         expectEagerAsyncImages(readRepo('live-game.html'), 'away-team-photo');
         expectEagerAsyncImages(readRepo('login.html'), 'google.svg');
-        expectEagerAsyncImages(readRepo('player.html'), 'player.photoUrl');
+        expectEagerAsyncImages(readRepo('player.html'), 'alt="${escapeHtml(player.name)}"');
         expectEagerAsyncImages(readRepo('team-chat.html'), 'escapeHtml(photoUrl)');
         expectEagerAsyncImages(readRepo('team.html'), 'escapeHtml(team.photoUrl)');
         expectEagerAsyncImages(read('src/pages/PrivateAiChat.tsx'), './logo_small.png', 2);

@@ -71,13 +71,17 @@ describe('legacy image upload rollback contracts', () => {
         const source = read('player.html');
         const validationIndex = source.indexOf('const validationErrors = validateRosterProfileValues');
         const uploadIndex = source.indexOf('uploadPlayerPhoto(photoFile, {', validationIndex);
+        const privateLoadSnapshotIndex = source.indexOf('const profileLoadFailed = privateProfileLoadFailed;');
+        const privateLoadGuardIndex = source.indexOf('if (photoFile && profileLoadFailed)', privateLoadSnapshotIndex);
 
         expect(validationIndex).toBeGreaterThan(0);
         expect(uploadIndex).toBeGreaterThan(validationIndex);
         expect(source).toContain('photoPath = newlyUploadedPlayerPhotoPath || null;');
-        expect(source).toContain('photoFile && privateProfileLoadFailed');
+        expect(privateLoadSnapshotIndex).toBeGreaterThan(0);
+        expect(privateLoadGuardIndex).toBeGreaterThan(privateLoadSnapshotIndex);
+        expect(privateLoadGuardIndex).toBeLessThan(uploadIndex);
         expect(source).toContain('Refresh before replacing the photo.');
-        expect(source).toContain('await getPlayerPhotoPersistenceState(newlyUploadedPlayerPhotoPath)');
+        expect(source).toContain('await getPlayerPhotoPersistenceState(newlyUploadedPlayerPhotoPath, context)');
         expect(source).toContain("if (persistenceState === 'unknown')");
         expect(source).toContain('if (newlyUploadedPlayerPhotoPath && !playerPhotoPersisted)');
     });
