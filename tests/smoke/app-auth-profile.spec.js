@@ -757,6 +757,95 @@ test('Diamond viewer sign-in returns to the static viewer with its exact context
     expect(pageErrors).toEqual([]);
 });
 
+test('an unauthorized signed-in Diamond viewer can switch accounts and return to the exact game', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const wrongUser = {
+        uid: 'wrong-viewer',
+        email: 'wrong@example.com',
+        displayName: 'Wrong Viewer',
+        roles: ['parent']
+    };
+    const rightUser = {
+        uid: 'right-viewer',
+        email: 'right@example.com',
+        displayName: 'Right Viewer',
+        roles: ['parent']
+    };
+    await mockAppModules(page, { user: wrongUser, signInUser: rightUser });
+
+    await page.route(/\/js\/firebase\.js(?:\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export const auth = {
+                    currentUser: { uid: 'wrong-viewer', displayName: 'Wrong Viewer' },
+                    async authStateReady() {}
+                };
+                export const db = {};
+                export const functions = {};
+                export const collection = () => ({});
+                export const getDocs = async () => ({ docs: [] });
+                export const limit = (...args) => args;
+                export const onSnapshot = () => () => {};
+                export const orderBy = (...args) => args;
+                export const query = (...args) => args;
+                export function onAuthStateChanged(_auth, callback) {
+                    callback(auth.currentUser);
+                    return () => {};
+                }
+                export function httpsCallable() {
+                    return async () => {
+                        throw Object.assign(new Error('Viewer access is unavailable'), {
+                            code: 'functions/permission-denied'
+                        });
+                    };
+                }
+            `
+        });
+    });
+
+    const viewerRoute = '/live-game-diamond-v2.html?teamId=private-team&gameId=private-game&replay=1';
+    const switchRoute = `/auth?next=${encodeURIComponent(viewerRoute)}&switch=1`;
+    const appOrigin = new URL('/', appBaseUrl || baseURL).toString();
+    await page.route(new URL('/app/', baseURL).toString(), async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'text/html',
+            body: `<script>window.location.replace(${JSON.stringify(appOrigin)} + window.location.hash);</script>`
+        });
+    });
+    await page.route(new URL(viewerRoute, appOrigin).toString(), async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'text/html',
+            body: '<!doctype html><html><body><h1>Authorized Diamond viewer</h1></body></html>'
+        });
+    });
+
+    await page.goto(new URL(viewerRoute, baseURL).toString(), { waitUntil: 'domcontentloaded' });
+    const accountAction = page.locator('[data-diamond-error-sign-in]');
+    await expect(accountAction).toBeVisible();
+    await expect(accountAction).toHaveAttribute('href', `/app/#${switchRoute}`);
+    await accountAction.click();
+
+    await waitForAuthRoute(page, page.getByRole('heading', { name: 'Sign in' }));
+    await expect(page).toHaveURL(appUrl(baseURL, switchRoute));
+    await expect(page.getByLabel('Email')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__mockGoogleRedirectSettled)).toBe(true);
+    await expect(page).toHaveURL(appUrl(baseURL, switchRoute));
+
+    await page.getByLabel('Email').fill('right@example.com');
+    await page.getByLabel('Password', { exact: true }).fill('password123');
+    await page.getByRole('button', { name: 'Sign in' }).last().click();
+
+    await expect(page).toHaveURL(new URL(viewerRoute, appOrigin).toString());
+    await expect(page.getByRole('heading', { name: 'Authorized Diamond viewer' })).toBeVisible();
+    expect(await page.evaluate(() => window.sessionStorage.getItem('mock-last-sign-in-email'))).toBe('right@example.com');
+    expect(pageErrors).toEqual([]);
+});
+
 test('signed-in invite and account action routes process existing site flows', async ({ page, baseURL }) => {
     const user = {
         uid: 'user-1',

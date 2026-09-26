@@ -628,6 +628,7 @@
                 "game.html",
                 "live-game-overlay-poc.html",
                 "live-game-overlay.html",
+                "live-game-diamond-v2.html",
                 "live-game.html",
                 "live-tracker.html",
                 "track-basketball.html",
@@ -668,6 +669,7 @@
                 "tests/unit/app-game-report-service.test.js",
                 "tests/unit/app-live-game-announcer.test.js",
                 "tests/unit/db-tracking-items.test.js",
+                "tests/unit/diamond-live-view-model.test.js",
                 "tests/unit/game-day-entry.test.js",
                 "tests/unit/live-game-share-preview.test.js",
                 "functions/test/live-event-notification-core.test.cjs",
@@ -687,6 +689,7 @@
             ],
             "workflowTests": [
                 "tests/smoke/delegated-tracker-entrypoints.spec.js",
+                "tests/smoke/diamond-live-viewer.spec.js",
                 "tests/smoke/track-statsheet-apply.spec.js",
                 "tests/smoke/live-tracker-foul-workflow.spec.js",
                 "tests/smoke/game-day-live-substitution.spec.js",
