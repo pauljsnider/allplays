@@ -15,6 +15,7 @@ const successfulHtmlByPath = {
     '/': '<!doctype html><title>ALL PLAYS</title><body></body>',
     '/app/': '<!doctype html><title>ALL PLAYS APP</title><main id="root"></main>',
     '/teams.html': '<!doctype html><title>Browse Teams - ALL PLAYS</title><div id="teams-list"></div>',
+    '/live-game-diamond-v2.html': '<!doctype html><title>Diamond Live - ALL PLAYS</title><main id="diamond-viewer-error" data-diamond-error></main>',
     '/privacy.html': '<!doctype html><title>Privacy Policy | ALL PLAYS</title><main><h1>Privacy Policy</h1></main>',
     '/terms.html': '<!doctype html><title>Terms of Use | ALL PLAYS</title><main><h1>Terms of Use</h1></main>',
     '/support.html': '<!doctype html><title>Support | ALL PLAYS</title><main><h1>Support</h1></main>',
@@ -108,6 +109,7 @@ describe('candidate host public smoke', () => {
             `${candidateOrigin}/teams.html`,
             `${candidateOrigin}/widget-scoreboard.html`,
             `${candidateOrigin}/live-game-overlay.html?demo=1`,
+            `${candidateOrigin}/live-game-diamond-v2.html`,
             `${candidateOrigin}/privacy.html`,
             `${candidateOrigin}/terms.html`,
             `${candidateOrigin}/support.html`,
@@ -146,7 +148,7 @@ describe('candidate host public smoke', () => {
             }
         });
 
-        await expect(smokeCandidateHost(candidateOrigin, { fetchImpl })).resolves.toHaveLength(13);
+        await expect(smokeCandidateHost(candidateOrigin, { fetchImpl })).resolves.toHaveLength(14);
     });
 
     it('rejects an HSTS policy below the configured max-age', async () => {
