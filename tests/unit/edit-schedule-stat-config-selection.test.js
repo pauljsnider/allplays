@@ -57,4 +57,15 @@ describe('edit schedule stat config selection', () => {
         expect(eventRecordBlock).toContain('officiatingSelfAssignmentEnabled: event.officiatingSelfAssignmentEnabled === true,');
         expect(eventRecordBlock).toContain('officiatingCoverageStatus: event.officiatingCoverageStatus || null,');
     });
+
+    it('locks and omits Diamond-pinned fields while leaving classic edit payloads unchanged', () => {
+        const source = readEditSchedule();
+
+        expect(source).toContain('trackingEngine: event.trackingEngine || null,');
+        expect(source).toContain('setDiamondPinnedGameControls(game.trackingEngine === DIAMOND_ENGINE);');
+        expect(source).toContain('previousGame?.trackingEngine === DIAMOND_ENGINE');
+        expect(source).toContain('delete gameData.isHome;');
+        expect(source).toContain('delete gameData.statTrackerConfigId;');
+        expect(source).toContain('delete gameData.opponentTeamId;');
+    });
 });

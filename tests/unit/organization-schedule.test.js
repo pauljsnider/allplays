@@ -528,7 +528,7 @@ describe('organization schedule helpers', () => {
         expect(source).toContain('buildOrganizationPublishedMatchups');
         expect(source).toContain('getGames(team.id, { startDate, endDate })');
         expect(source).toContain('lastCompletePublishedMatchups');
-        expect(source).toContain("import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=3';");
+        expect(source).toContain("import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=4';");
         expect(source).toContain('await getGame(teamId, gameId)');
         expect(source).toContain('Cancellation is incomplete. Please retry.');
         expect(source).toContain('Matchup cancelled, but team notifications were incomplete.');
