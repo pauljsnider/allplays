@@ -103,7 +103,7 @@ test('staff account reaches every critical app workflow with smoke fixtures', as
         await expect(page.getByRole('heading', { name: /Team settings|Edit team/ })).toBeVisible({ timeout: 20_000 });
         await page.setViewportSize({ width: 1280, height: 720 });
         await openAuthenticatedAppRoute(page, config.appBaseUrl, `/schedule?teamId=${encodeURIComponent(config.teamId)}`, {
-            heading: /Schedule|Your team calendar/,
+            heading: /^(Schedule|Team schedule management|Games, practices, RSVP)$/,
             requiredHref: `/schedule/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.eventId)}`
         });
         await openAuthenticatedAppRoute(page, config.appBaseUrl, `/messages/${encodeURIComponent(config.teamId)}`, { heading: 'Conversations' });
@@ -148,7 +148,7 @@ test('parent account reaches every critical family workflow with linked fixtures
             requiredHref: playerPath
         });
         await openAuthenticatedAppRoute(page, config.appBaseUrl, `/schedule?teamId=${encodeURIComponent(config.teamId)}`, {
-            heading: /Schedule|Your team calendar/,
+            heading: /^(Schedule|Team schedule management|Games, practices, RSVP)$/,
             requiredHref: `/schedule/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.eventId)}`
         });
         await openAuthenticatedAppRoute(page, config.appBaseUrl, `/messages/${encodeURIComponent(config.teamId)}`, { heading: 'Conversations' });
