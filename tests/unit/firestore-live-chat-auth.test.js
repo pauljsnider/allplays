@@ -7,7 +7,17 @@ import {
     assertSucceeds,
     initializeTestEnvironment
 } from '@firebase/rules-unit-testing';
-import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import {
+    collection,
+    deleteDoc,
+    doc,
+    getDoc,
+    getDocs,
+    orderBy,
+    query,
+    serverTimestamp,
+    setDoc,
+} from 'firebase/firestore';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
@@ -45,12 +55,18 @@ const liveReactionsBlock = extractMatchBlock(rulesSource, 'match /liveReactions/
 const liveChatValidatorBlock = extractMatchBlock(rulesSource, 'function isValidLiveChatCreate(data)');
 const liveReactionValidatorBlock = extractMatchBlock(rulesSource, 'function isValidLiveReactionCreate(data)');
 const liveInteractionLifecycleBlock = extractMatchBlock(rulesSource, 'function canCreateLiveGameInteraction(teamId, gameId)');
+const diamondLiveGenerationBlock = extractMatchBlock(rulesSource, 'match /diamondLiveGenerations/{instanceId}');
 
 describe('firestore rules — live game read visibility helpers', () => {
     it('keeps live events, chat, and reactions behind the shared game visibility helper', () => {
-        expect(liveEventsBlock).toContain('allow read: if canReadGameSubcollectionDocument(teamId, gameId);');
-        expect(liveChatBlock).toContain('allow read: if canReadGameSubcollectionDocument(teamId, gameId);');
-        expect(liveReactionsBlock).toContain('allow read: if canReadGameSubcollectionDocument(teamId, gameId);');
+        for (const block of [liveEventsBlock, liveChatBlock, liveReactionsBlock]) {
+            expect(block).toContain('allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&');
+            expect(block).toContain('canReadGameSubcollectionDocument(teamId, gameId);');
+        }
+        expect(diamondLiveGenerationBlock).toContain('gameUsesDiamondGeneration(teamId, gameId, instanceId)');
+        expect(diamondLiveGenerationBlock).not.toMatch(
+            /allow\s+(?:create|update|delete|write)\s*:/
+        );
         expect(liveEventsBlock).not.toContain('allow read: if true;');
         expect(liveChatBlock).not.toContain('allow read: if true;');
         expect(liveReactionsBlock).not.toContain('allow read: if true;');
@@ -78,6 +94,7 @@ describe('firestore rules — liveChat authentication requirements', () => {
     });
 
     it('requires the verified-email authentication gate for liveChat creates', () => {
+        expect(liveChatBlock).toContain('!gameUsesDiamondScorebook(teamId, gameId)');
         expect(liveChatBlock).toContain('isVerifiedForSensitiveWrite()');
         expect(rulesSource).toContain('function isVerifiedForSensitiveWrite()');
         expect(rulesSource).toContain('return isSignedIn() &&');
@@ -119,6 +136,7 @@ describe('firestore rules — liveReactions authentication requirements', () => 
     });
 
     it('requires the verified-email authentication gate for liveReactions creates', () => {
+        expect(liveReactionsBlock).toContain('!gameUsesDiamondScorebook(teamId, gameId)');
         expect(liveReactionsBlock).toContain('isVerifiedForSensitiveWrite()');
         expect(rulesSource).toContain('function isVerifiedForSensitiveWrite()');
         expect(rulesSource).toContain('return isSignedIn() &&');
@@ -201,6 +219,22 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('live interaction lifecycl
                 status: 'scheduled',
                 liveStatus: 'live'
             });
+            await setDoc(doc(firestore, 'teams/shareable-team/games/diamond-game'), {
+                type: 'game',
+                visibility: 'public',
+                shareable: true,
+                trackingEngine: 'diamond-v2',
+                diamondScorebookInstanceId: '00000000-0000-4000-8000-000000000001',
+                status: 'scheduled',
+                liveStatus: 'live'
+            });
+            await setDoc(doc(firestore, 'teams/shareable-team/games/recreated-game'), {
+                type: 'game',
+                visibility: 'public',
+                shareable: true,
+                status: 'scheduled',
+                liveStatus: 'live'
+            });
             await setDoc(doc(firestore, 'teams/private-team/games/active-game'), {
                 type: 'game',
                 visibility: 'private',
@@ -277,6 +311,151 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('live interaction lifecycl
         await assertSucceeds(reactionWrite(firestore, 'shareable-team', 'active-game', 'shareable-reaction'));
         await assertSucceeds(chatWrite(firestore, 'private-team', 'active-game', 'private-chat'));
         await assertSucceeds(reactionWrite(firestore, 'private-team', 'active-game', 'private-reaction'));
+    });
+
+    it('denies direct Diamond writes while exposing only the current generation path', async () => {
+        const firestore = fanDb();
+        await assertFails(chatWrite(firestore, 'shareable-team', 'diamond-game', 'direct-chat'));
+        await assertFails(reactionWrite(firestore, 'shareable-team', 'diamond-game', 'direct-reaction'));
+        const generationRoot = 'teams/shareable-team/games/diamond-game/diamondLiveGenerations/00000000-0000-4000-8000-000000000001';
+        await assertFails(setDoc(doc(firestore, `${generationRoot}/chat/direct-chat`), {
+            text: 'client-created',
+            senderId: 'fan-1',
+            createdAt: serverTimestamp()
+        }));
+
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            const adminDb = context.firestore();
+            await setDoc(doc(adminDb, 'teams/shareable-team/games/diamond-game/liveEvents/stale-event'), {
+                description: 'Prior private game play',
+                createdAt: new Date()
+            });
+            await setDoc(doc(adminDb, 'teams/shareable-team/games/diamond-game/liveChat/stale-chat'), {
+                text: 'Prior private game message',
+                senderId: 'fan-1',
+                createdAt: new Date()
+            });
+            await setDoc(doc(adminDb, 'teams/shareable-team/games/diamond-game/liveReactions/stale-reaction'), {
+                type: 'heart',
+                senderId: 'fan-1',
+                createdAt: new Date()
+            });
+            await setDoc(doc(adminDb, `${generationRoot}/chat/server-chat`), {
+                schemaVersion: 1,
+                trackingEngine: 'diamond-v2',
+                teamId: 'shareable-team',
+                gameId: 'diamond-game',
+                instanceId: '00000000-0000-4000-8000-000000000001',
+                text: 'Server-created',
+                senderId: 'fan-1',
+                createdAt: new Date()
+            });
+            await setDoc(doc(adminDb, `${generationRoot}/reactions/server-reaction`), {
+                schemaVersion: 1,
+                trackingEngine: 'diamond-v2',
+                teamId: 'shareable-team',
+                gameId: 'diamond-game',
+                instanceId: '00000000-0000-4000-8000-000000000001',
+                type: 'heart',
+                senderId: 'fan-1',
+                createdAt: new Date()
+            });
+        });
+
+        await assertSucceeds(getDoc(doc(
+            firestore,
+            `${generationRoot}/chat/server-chat`
+        )));
+        await assertSucceeds(getDoc(doc(
+            firestore,
+            `${generationRoot}/reactions/server-reaction`
+        )));
+        for (const [collectionName, documentId] of [
+            ['liveEvents', 'stale-event'],
+            ['liveChat', 'stale-chat'],
+            ['liveReactions', 'stale-reaction']
+        ]) {
+            await assertFails(getDoc(doc(
+                firestore,
+                `teams/shareable-team/games/diamond-game/${collectionName}/${documentId}`
+            )));
+            await assertFails(getDocs(collection(
+                firestore,
+                `teams/shareable-team/games/diamond-game/${collectionName}`
+            )));
+        }
+        await assertSucceeds(getDocs(query(
+            collection(firestore, `${generationRoot}/chat`),
+            orderBy('createdAt', 'desc')
+        )));
+        await assertFails(getDocs(collection(
+            firestore,
+            'teams/shareable-team/games/diamond-game/diamondLiveGenerations/00000000-0000-4000-8000-000000000099/chat'
+        )));
+        const ownerDb = testEnv.authenticatedContext('shareable-owner', {
+            email: 'owner@example.com',
+            email_verified: true
+        }).firestore();
+        await assertFails(deleteDoc(doc(
+            ownerDb,
+            `${generationRoot}/chat/server-chat`
+        )));
+    });
+
+    it('fences stale Diamond interactions after a same-path game is recreated', async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            const adminDb = context.firestore();
+            const staleOwnership = {
+                schemaVersion: 1,
+                trackingEngine: 'diamond-v2',
+                teamId: 'shareable-team',
+                gameId: 'recreated-game',
+                instanceId: '00000000-0000-4000-8000-000000000099',
+                senderId: 'fan-1',
+                createdAt: new Date()
+            };
+            const staleRoot = 'teams/shareable-team/games/recreated-game/diamondLiveGenerations/00000000-0000-4000-8000-000000000099';
+            await setDoc(doc(adminDb, `${staleRoot}/chat/stale-chat`), {
+                ...staleOwnership,
+                text: 'stale'
+            });
+            await setDoc(doc(adminDb, `${staleRoot}/reactions/stale-reaction`), {
+                ...staleOwnership,
+                type: 'heart'
+            });
+            await setDoc(doc(adminDb, 'teams/shareable-team/games/recreated-game/liveChat/classic-chat'), {
+                text: 'classic',
+                senderId: 'fan-1',
+                createdAt: new Date()
+            });
+        });
+
+        const firestore = fanDb();
+        await assertFails(getDoc(doc(
+            firestore,
+            'teams/shareable-team/games/recreated-game/diamondLiveGenerations/00000000-0000-4000-8000-000000000099/chat/stale-chat'
+        )));
+        await assertFails(getDoc(doc(
+            firestore,
+            'teams/shareable-team/games/recreated-game/diamondLiveGenerations/00000000-0000-4000-8000-000000000099/reactions/stale-reaction'
+        )));
+        await assertSucceeds(getDoc(doc(
+            firestore,
+            'teams/shareable-team/games/recreated-game/liveChat/classic-chat'
+        )));
+
+        const ownerDb = testEnv.authenticatedContext('shareable-owner', {
+            email: 'owner@example.com',
+            email_verified: true
+        }).firestore();
+        await assertFails(deleteDoc(doc(
+            ownerDb,
+            'teams/shareable-team/games/recreated-game/diamondLiveGenerations/00000000-0000-4000-8000-000000000099/chat/stale-chat'
+        )));
+        await assertFails(getDocs(collection(
+            firestore,
+            'teams/shareable-team/games/recreated-game/diamondLiveGenerations/00000000-0000-4000-8000-000000000099/chat'
+        )));
     });
 
     it('denies cross-tenant chat and reaction creates for an unauthorized private game', async () => {
