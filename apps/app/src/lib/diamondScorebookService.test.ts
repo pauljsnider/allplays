@@ -416,6 +416,56 @@ describe('diamondScorebookService', () => {
     expect(() => buildCommand({ appBuild: Number.MAX_SAFE_INTEGER + 1 })).toThrow('valid build number');
   });
 
+  it('preserves independent defensive personnel histories and DP/FLEX pairing without changing batting order', () => {
+    const raw = buildRawSnapshot();
+    const dhDefense = {
+      slot: 1,
+      activePlayerId: 'dh-sub',
+      starterPlayerId: 'dh-starter',
+      starterReentriesUsed: 1,
+      substitutions: ['dh-first', 'dh-sub'],
+      battingRole: 'dh'
+    };
+    const flexDefense = {
+      slot: 2,
+      activePlayerId: 'flex-sub',
+      starterPlayerId: 'flex-starter',
+      starterReentriesUsed: 1,
+      substitutions: ['flex-first', 'flex-sub'],
+      battingRole: 'dp'
+    };
+    const dpFlex = { dpPlayerId: 'pitcher-1', flexPlayerId: 'flex-sub', dpBattingSlot: 2, flexDefensivePosition: 'RF' };
+    const snapshot = normalizeDiamondSnapshot({
+      ...raw,
+      state: {
+        ...raw.state,
+        lineups: {
+          home: { ...raw.state.lineups.home, dhDefense },
+          away: { ...raw.state.lineups.away, flexDefense, dpFlex }
+        }
+      }
+    });
+    expect(snapshot.lineupPersonnel?.home.dhDefense).toMatchObject({
+      playerId: 'dh-sub',
+      starterPlayerId: 'dh-starter',
+      starterReentriesUsed: 1,
+      substitutions: ['dh-first', 'dh-sub']
+    });
+    expect(snapshot.lineupPersonnel?.away.flexDefense).toMatchObject({
+      playerId: 'flex-sub',
+      starterPlayerId: 'flex-starter',
+      starterReentriesUsed: 1,
+      substitutions: ['flex-first', 'flex-sub']
+    });
+    expect(snapshot.lineupPersonnel?.away.dpFlex).toEqual(dpFlex);
+    expect(snapshot.lineups.home.map((entry) => entry.playerId)).toEqual(['batter-1', 'runner-1']);
+    expect(snapshot.lineups.away.map((entry) => entry.playerId)).toEqual(['pitcher-1']);
+    expect(snapshot.lineupPersonnel?.home.flexDefense).toBeNull();
+    expect(snapshot.lineupPersonnel?.away.dhDefense).toBeNull();
+    const missing = normalizeDiamondSnapshot(raw);
+    expect(missing.lineupPersonnel?.home).toEqual({ dhDefense: null, flexDefense: null, dpFlex: null });
+  });
+
   it('normalizes authoritative state, lineup context, lease, recent plays, and completeness evidence', () => {
     const snapshot = normalizeDiamondSnapshot(buildRawSnapshot());
     expect(snapshot).toMatchObject({
