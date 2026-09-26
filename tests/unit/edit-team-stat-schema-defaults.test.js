@@ -11,7 +11,9 @@ describe('edit team stat schema defaults', () => {
         const source = readEditTeamSource();
 
         expect(source).toContain("from './js/stat-config-presets.js?v=4'");
-        expect(source).toContain('const defaultStatConfig = getDefaultStatConfigForSport(teamData.sport);');
+        expect(source).toContain('const defaultStatConfig = diamondSetupRequested');
+        expect(source).toContain('? getDefaultDiamondStatConfigForSport(teamData.sport)');
+        expect(source).toContain(': getDefaultStatConfigForSport(teamData.sport);');
         expect(source).toContain('const configId = await addConfig(newTeamId, defaultStatConfig);');
     });
 
@@ -37,10 +39,12 @@ describe('edit team stat schema defaults', () => {
         expect(selectMatch).not.toBeNull();
 
         const sportSelect = selectMatch[0];
-        const optionValues = [...sportSelect.matchAll(/<option value="([^"]+)"/g)]
-            .map(match => match[1])
+        const optionValues = [...sportSelect.matchAll(/<option\b[^>]*>/g)]
+            .filter(match => !match[0].includes('data-diamond-only'))
+            .map(match => match[0].match(/value="([^"]+)"/)?.[1])
             .filter(Boolean);
 
         expect(optionValues).toEqual(getSportTemplateOptions().map(template => template.sport));
+        expect(sportSelect).toContain('data-diamond-only hidden');
     });
 });
