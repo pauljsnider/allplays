@@ -749,14 +749,101 @@ describe('Home', () => {
     expect(screen.queryByText('To-do list')).toBeNull();
   });
 
+  it('settles an online timeout after a preview and recovers through Retry', async () => {
+    const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+    const failAfterPreview = async (_user: unknown, options: any) => {
+      options.onPartial({ home: baseHome, schedule: { children: [], events: [], isPartial: true } });
+      throw new Error('Team schedule timed out.');
+    };
+    homeServiceMocks.loadParentHomeSummaryBootstrap
+      .mockImplementationOnce(failAfterPreview)
+      .mockImplementationOnce(failAfterPreview);
+    try {
+      renderHome(signedInAuth);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        expect(await screen.findByRole('button', { name: 'Retry loading Home' })).toBeTruthy();
+        expect(screen.getByText('Needs refresh')).toBeTruthy();
+        expect(screen.queryByText('Loading')).toBeNull();
+        expect(screen.queryByText(/while offline/)).toBeNull();
+        expect(screen.queryByText(/Showing the last loaded Home/)).toBeNull();
+        expect(screen.queryByRole('heading', { name: 'Checking today’s actions…' })).toBeNull();
+        expect(screen.queryByRole('heading', { name: 'All caught up' })).toBeNull();
+        expect(screen.queryByText('No upcoming events')).toBeNull();
+        expect(homeServiceMocks.loadParentHomeWithSecondaryData).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole('button', { name: 'Retry loading Home' }));
+      }
+      expect(await screen.findByRole('heading', { name: 'All caught up' })).toBeTruthy();
+      expect(screen.queryByText('Needs refresh')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Retry loading Home' })).toBeNull();
+      expect(homeServiceMocks.loadParentHomeSummaryBootstrap).toHaveBeenLastCalledWith(signedInAuth.user, expect.objectContaining({ force: true }));
+    } finally {
+      online.mockRestore();
+    }
+  });
+
+  it.each(['players', 'teams', 'feed', 'friends'])('does not claim empty %s after an incomplete preview fails', async (section) => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementationOnce(async (_user: unknown, options: any) => {
+      options.onPartial({ home: emptyHome, schedule: { children: [], events: [], isPartial: true } });
+      throw new Error('Team schedule timed out.');
+    });
+    renderHome(signedInAuth, `/home?section=${section}`);
+    expect(await screen.findByRole('button', { name: 'Retry loading Home' })).toBeTruthy();
+    for (const emptyClaim of ['No players linked yet', 'No teams available', 'No posts for this filter', 'No friends yet', 'No suggestions yet']) {
+      expect(screen.queryByText(emptyClaim)).toBeNull();
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading Home' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry loading Home' })).toBeNull());
+    expect(homeServiceMocks.loadParentHomeWithSecondaryData).toHaveBeenCalled();
+  });
+
+  it('retains the last complete Home if a refresh emits an empty preview then fails', async () => {
+    renderHome(signedInAuth);
+    expect(await screen.findByRole('heading', { name: 'All caught up' })).toBeTruthy();
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementationOnce(async (_user: unknown, options: any) => {
+      options.onPartial({ home: emptyHome, schedule: { children: [], events: [], isPartial: true } });
+      throw new Error('Team schedule timed out.');
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh Home' }));
+    expect(await screen.findByText('Unable to refresh Home. The request failed or timed out. Showing the last loaded Home. Try again.')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'All caught up' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Get linked to your player' })).toBeNull();
+  });
+
+  it('preserves completed actions when a secondary refresh emits partial emptiness then fails', async () => {
+    const completeHome = buildLargeHomeModel();
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(completeHome);
+    renderHome(signedInAuth);
+    expect(await screen.findByRole('heading', { name: 'Player 1 needs availability' })).toBeTruthy();
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockImplementationOnce(async (_user: unknown, options: any) => {
+      options.onPartial(emptyHome);
+      throw new Error('Home details timed out.');
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh Home' }));
+    expect(await screen.findByText('Needs refresh')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Player 1 needs availability' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'All caught up' })).toBeNull();
+  });
+
+  it('settles failed secondary details even while social work is pending', async () => {
+    socialServiceMocks.loadSocialHome.mockImplementationOnce(() => new Promise(() => {}));
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockRejectedValueOnce(new Error('Team details timed out.'));
+    renderHome(signedInAuth);
+    expect(await screen.findByRole('button', { name: 'Retry loading Home' })).toBeTruthy();
+    expect(screen.queryByText('Loading')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'All caught up' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Checking today’s actions…' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading Home' }));
+    expect(await screen.findByRole('heading', { name: 'All caught up' })).toBeTruthy();
+  });
+
   it('shows network-specific Home retry copy after an initial load failure', async () => {
     homeServiceMocks.loadParentHomeSummaryBootstrap.mockRejectedValueOnce(new TypeError('Failed to fetch'));
 
     renderHome(signedInAuth);
 
-    expect(await screen.findByText('Unable to load Home while offline. Check your connection and try again.')).toBeTruthy();
+    expect(await screen.findByText('Unable to load Home. The request failed or timed out. Try again.')).toBeTruthy();
     expect(screen.getByText('Home could not connect')).toBeTruthy();
-    expect(screen.getByText('Check your connection and try loading Home again.')).toBeTruthy();
+    expect(screen.getByText('The request failed or timed out. Try loading Home again.')).toBeTruthy();
   });
 
   it('does not expose a raw internal backend code after an initial Home load failure', async () => {
@@ -773,10 +860,10 @@ describe('Home', () => {
 
     renderHome(signedInAuth);
 
-    expect(await screen.findByText('Home details could not refresh while offline.')).toBeTruthy();
+    expect(await screen.findByText('Home details could not refresh. The request failed or timed out. Try again.')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Your day' })).toBeTruthy();
-    expect(screen.queryByText('Home could not connect')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Retry loading Home' })).toBeNull();
+    expect(screen.getByText('Home could not connect')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry loading Home' })).toBeTruthy();
     expect(screen.getByText('Needs refresh')).toBeTruthy();
     expect(screen.queryByText('Loading')).toBeNull();
     expect(screen.queryByText('Checking actions')).toBeNull();
@@ -799,7 +886,7 @@ describe('Home', () => {
       summaryOptions.onBackgroundError(new TypeError('Failed to fetch'));
     });
 
-    expect(await screen.findByText('Home details could not refresh while offline.')).toBeTruthy();
+    expect(await screen.findByText('Home details could not refresh. The request failed or timed out. Try again.')).toBeTruthy();
     expect(screen.getByText('Needs refresh')).toBeTruthy();
   });
 
@@ -846,7 +933,7 @@ describe('Home', () => {
 
     renderHome(signedInAuth);
 
-    expect(await screen.findByText('Home details could not refresh while offline.')).toBeTruthy();
+    expect(await screen.findByText('Home details could not refresh. The request failed or timed out. Try again.')).toBeTruthy();
     expect(screen.getByText('Needs refresh')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh Home' }));

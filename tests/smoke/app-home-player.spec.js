@@ -104,7 +104,7 @@ async function waitForTeamsRoute(page, readyLocator) {
     }).toPass({ timeout: 45000 });
 }
 
-async function mockHomePlayerModules(page, { switchableSocialTargets = false, failSocialPost = false, unsafeSocialTarget = false } = {}) {
+async function mockHomePlayerModules(page, { switchableSocialTargets = false, failSocialPost = false, unsafeSocialTarget = false, failHomeAfterPreview = false } = {}) {
     await page.route('https://img.example.test/**', async (route) => {
         await route.fulfill({
             status: 200,
@@ -116,6 +116,7 @@ async function mockHomePlayerModules(page, { switchableSocialTargets = false, fa
     await page.addInitScript(({ switchableSocialTargets: enableSwitching, failSocialPost: failPost, unsafeSocialTarget: includeUnsafeTarget }) => {
         window.__ALLPLAYS_CONFIG__ = {
             ...(window.__ALLPLAYS_CONFIG__ || {}),
+            performanceMonitoringEnabled: false,
             firebase: {
                 apiKey: 'preview-smoke-key',
                 authDomain: 'allplays-preview-smoke.firebaseapp.com',
@@ -388,6 +389,10 @@ async function mockHomePlayerModules(page, { switchableSocialTargets = false, fa
 
                 export async function loadParentHomeSummaryBootstrap(...args) {
                     const home = await loadParentHome(...args);
+                    if (${failHomeAfterPreview} && !args[1]?.force) {
+                        args[1]?.onPartial?.({ home, schedule: { children: [], events: [], isPartial: true } });
+                        throw new Error('Team schedule timed out.');
+                    }
                     return { home, schedule: [] };
                 }
 
@@ -1359,6 +1364,27 @@ async function mockHomePlayerModules(page, { switchableSocialTargets = false, fa
         });
     });
 }
+
+test('home recovers from an online timeout after a partial preview', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await mockHomePlayerModules(page, { failHomeAfterPreview: true });
+    await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'networkidle' });
+    expect(pageErrors).toEqual([]);
+    expect(await page.evaluate(() => navigator.onLine)).toBe(true);
+    await expect(page.getByRole('button', { name: 'Retry loading Home' })).toBeVisible();
+    await expect(page.getByText('Needs refresh')).toBeVisible();
+    await expect(page.getByText(/while offline/)).toHaveCount(0);
+    await expect(page.getByText('Loading', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Checking today’s actions…' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'All caught up' })).toHaveCount(0);
+    await page.screenshot({ path: 'test-results/home-timeout-recovery.png' });
+    await page.getByRole('button', { name: 'Retry loading Home' }).click();
+    await expect(page.getByRole('heading', { name: 'Pat Star needs availability' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Retry loading Home' })).toHaveCount(0);
+    await expect(page.getByText('Needs refresh')).toHaveCount(0);
+    expect(pageErrors).toEqual([]);
+});
 
 test('home dashboard drills into player detail with section submenus', async ({ page, baseURL }) => {
     await mockHomePlayerModules(page);

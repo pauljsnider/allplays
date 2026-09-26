@@ -79,7 +79,7 @@ describe('app performance baseline contract', () => {
         expect(home).toContain('timer.end({');
         expect(home).toContain('hydrated: true');
         expect(home).toContain('playerCount: secondaryHome.players.length');
-        expect(home).toContain("getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome || receivedHomePreview)");
+        expect(home).toContain("getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome)");
         expect(home).toContain('onError: (loadError) => {');
         expect(home).toContain('timer.end({\n            hydrated: false,\n            error: appError.message\n          });');
 
