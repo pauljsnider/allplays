@@ -38,12 +38,25 @@ function parseCalendarMonthLabel(label) {
     return new Date(Date.UTC(Number(yearText), monthIndex, 1));
 }
 
-function buildDbStub({ team, games, trackedUids, publicCalendarEvents = [] }) {
+function buildDbStub({
+    team,
+    games,
+    trackedUids,
+    publicCalendarEvents = [],
+    configs = [],
+    configReadMode = 'success',
+    privateRsvps = [],
+    deferRsvps = false
+}) {
     return `
 const team = ${JSON.stringify(team)};
 const games = ${JSON.stringify(games)};
 const trackedUids = ${JSON.stringify(trackedUids)};
 const publicCalendarEvents = ${JSON.stringify(publicCalendarEvents)};
+const configs = ${JSON.stringify(configs)};
+const configReadMode = ${JSON.stringify(configReadMode)};
+const privateRsvps = ${JSON.stringify(privateRsvps)};
+const deferRsvps = ${JSON.stringify(deferRsvps)};
 
 function clone(value) {
     return JSON.parse(JSON.stringify(value));
@@ -70,7 +83,11 @@ export async function getPublicTeamCalendarEvents() {
 }
 
 export async function getConfigs() {
-    return [];
+    window.__getConfigsCalls = (window.__getConfigsCalls || 0) + 1;
+    if (configReadMode === 'reject') {
+        throw new Error('classic config unavailable');
+    }
+    return clone(configs);
 }
 
 export async function getTrackedCalendarEventUids() {
@@ -114,7 +131,13 @@ export async function revokeStreamScoreAccess() {
 }
 
 export async function getRsvps() {
-    return [];
+    window.__teamRsvpReadCalls = (window.__teamRsvpReadCalls || 0) + 1;
+    if (!deferRsvps) return clone(privateRsvps);
+    window.__pendingTeamRsvpReads ||= [];
+    return new Promise((resolve) => {
+        window.__pendingTeamRsvpReads.push(() => resolve(clone(privateRsvps)));
+        window.__resolveNextTeamRsvpRead = () => window.__pendingTeamRsvpReads.shift()?.();
+    });
 }
 
 export async function getRsvpSummaries() {
@@ -231,11 +254,18 @@ export async function shareOrCopy() {}
 `;
 }
 
-const AUTH_STUB = `
+function buildAuthStub({ authenticatedManager = false } = {}) {
+    const initialUser = authenticatedManager
+        ? { uid: 'manager-1', email: 'manager@example.test' }
+        : null;
+    return `
+const initialUser = ${JSON.stringify(initialUser)};
 export function checkAuth(callback) {
-    callback(null);
+    window.__emitTeamAuth = (user) => callback(user);
+    callback(initialUser);
 }
 `;
+}
 
 const LEAGUE_STUB = `
 export async function fetchLeagueStandings() {
@@ -251,6 +281,26 @@ export function computeNativeStandings() {
 
 const STAT_STUB = `
 export async function aggregateSeasonStatsByPlayerId() {
+    return {};
+}
+
+export function buildPlayerLeaderboardSnapshot() {
+    return null;
+}
+
+export function selectAnalyticsConfig() {
+    return null;
+}
+`;
+
+const ANALYTICS_STAT_STUB = `
+export async function aggregateSeasonStatsByPlayerId({ games = [], seasonLabel = '', loadGameStats } = {}) {
+    for (const game of games) {
+        const gameYear = String(new Date(game.date).getUTCFullYear());
+        if (!seasonLabel || seasonLabel === gameYear) {
+            await loadGameStats(game);
+        }
+    }
     return {};
 }
 
@@ -293,31 +343,49 @@ export function listSeasonLabels(games) {
 }
 `;
 
-const FIREBASE_STUB = `
+function buildFirebaseStub({ deferPrivateCalendarToken = false } = {}) {
+    return `
 export const db = {};
 export const functions = {};
+const deferPrivateCalendarToken = ${JSON.stringify(deferPrivateCalendarToken)};
 
 export function httpsCallable(_functions, name) {
     return async (data) => {
         window.__privateCalendarCallableCalls ||= [];
         window.__privateCalendarCallableCalls.push({ name, data });
+        if (name === 'getPrivateTeamCalendarFeedToken' && deferPrivateCalendarToken) {
+            window.__pendingPrivateCalendarTokens ||= [];
+            return new Promise((resolve) => {
+                window.__pendingPrivateCalendarTokens.push(resolve);
+                window.__resolveNextPrivateCalendarToken = (token = 'stale-private-calendar-token') => {
+                    window.__pendingPrivateCalendarTokens.shift()?.({ data: { token } });
+                };
+            });
+        }
         return { data: { token: 'private-calendar-token' } };
     };
 }
 
-export function collection() {
-    return {};
+export function collection(_db, path) {
+    return { path };
 }
 
-export function query() {
-    return {};
+export function query(ref) {
+    return ref;
 }
 
 export function where() {
     return {};
 }
 
-export async function getDocs() {
+export function orderBy() {
+    return null;
+}
+
+export async function getDocs(ref) {
+    if (String(ref?.path || '').endsWith('/statTrackerConfigs')) {
+        window.__getConfigsCalls = (window.__getConfigsCalls || 0) + 1;
+    }
     return {
         empty: true,
         docs: [],
@@ -325,6 +393,7 @@ export async function getDocs() {
     };
 }
 `;
+}
 
 const TEAM_ADMIN_BANNER_STUB = `
 export function renderTeamAdminBanner() {}
@@ -348,7 +417,13 @@ export function getVisibleRosterFieldValues() {
 
 const AVAILABILITY_PREFERENCES_STUB = `
 export function buildAvailabilityNoteRows() {
-    return [];
+    const rsvps = arguments[0];
+    return (Array.isArray(rsvps) ? rsvps : [])
+        .filter((entry) => typeof entry?.note === 'string' && entry.note.trim())
+        .map((entry) => ({
+            displayName: entry.displayName || 'Team member',
+            note: entry.note.trim()
+        }));
 }
 
 export function formatAvailabilityCutoff() {
@@ -411,7 +486,12 @@ async function mockTeamPageModules(page, scenario) {
     await page.route('https://cdn.tailwindcss.com/**', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
-        body: 'window.tailwind = window.tailwind || { config: {} };'
+        body: `
+window.tailwind = window.tailwind || { config: {} };
+const smokeStyles = document.createElement('style');
+smokeStyles.textContent = '.min-h-11 { min-height: 2.75rem; }';
+document.head.appendChild(smokeStyles);
+`
     }));
     await page.route('**/js/db.js?v=*', (route) => route.fulfill({
         status: 200,
@@ -436,7 +516,7 @@ async function mockTeamPageModules(page, scenario) {
     await page.route(/\/js\/stat-leaderboards\.js(?:\?v=\d+)?$/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
-        body: STAT_STUB
+        body: scenario.enableAnalyticsLoad ? ANALYTICS_STAT_STUB : STAT_STUB
     }));
     await page.route('**/js/season-record.js', (route) => route.fulfill({
         status: 200,
@@ -446,17 +526,19 @@ async function mockTeamPageModules(page, scenario) {
     await page.route('**/js/auth.js?v=*', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
-        body: AUTH_STUB
+        body: buildAuthStub(scenario)
     }));
     await page.route(/\/js\/firebase\.js(?:\?.*)?$/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
-        body: FIREBASE_STUB
+        body: buildFirebaseStub(scenario)
     }));
     await page.route('**/js/team-admin-banner.js*', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
-        body: TEAM_ADMIN_BANNER_STUB
+        body: scenario.authenticatedManager
+            ? 'export function renderTeamAdminBanner() {} export function getTeamAccessInfo() { return { hasAccess: true, accessLevel: "full" }; }'
+            : TEAM_ADMIN_BANNER_STUB
     }));
     await page.route('**/js/tournament-standings.js?v=4', (route) => route.fulfill({
         status: 200,
@@ -486,7 +568,9 @@ async function mockTeamPageModules(page, scenario) {
     await page.route('**/js/premium-entitlements.js*', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
-        body: 'export async function readTeamPremiumEntitlement() { return null; } export function renderPremiumGateState() {}'
+        body: scenario.enableAnalyticsLoad
+            ? 'export async function readTeamPremiumEntitlement() { return { state: "active" }; } export function renderPremiumGateState() { return false; }'
+            : 'export async function readTeamPremiumEntitlement() { return null; } export function renderPremiumGateState() {}'
     }));
     await page.route('**/js/team-pass.js?v=*', (route) => route.fulfill({
         status: 200,
@@ -504,6 +588,96 @@ async function mockTeamPageModules(page, scenario) {
         body: TEAM_STAFF_PERMISSIONS_STUB
     }));
 }
+
+test('team Diamond config mismatch retries twice per load and exposes a reload-safe retry action', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await page.addInitScript(() => {
+        const nextLoad = Number(window.sessionStorage.getItem('team-config-document-loads') || 0) + 1;
+        window.sessionStorage.setItem('team-config-document-loads', String(nextLoad));
+    });
+    const completedDate = addDays(new Date(), -2, 18);
+    const scenario = {
+        team: { name: 'Diamond Team', sport: 'Baseball' },
+        games: [{
+            id: 'diamond-game-1',
+            date: makeIso(completedDate),
+            type: 'game',
+            status: 'completed',
+            homeScore: 4,
+            awayScore: 2,
+            trackingEngine: 'diamond-v2',
+            statTrackerConfigId: 'diamond-config',
+            diamondStatConfigSnapshotHash: `sha256:${'a'.repeat(64)}`
+        }],
+        configs: [{
+            id: 'diamond-config',
+            diamondPublicTeamStatIds: [],
+            statDefinitions: [{ id: 'h', scope: 'player', visibility: 'public' }]
+        }],
+        trackedUids: [],
+        calendarEvents: [],
+        enableAnalyticsLoad: true,
+        authenticatedManager: true
+    };
+
+    await mockTeamPageModules(page, scenario);
+    await page.goto(buildUrl(baseURL, '/team.html#teamId=team-a'), { waitUntil: 'domcontentloaded' });
+
+    const alert = page.getByRole('alert');
+    const retryButton = page.getByRole('button', { name: 'Retry loading Diamond statistic definitions' });
+    await expect(alert).toContainText('Diamond statistic definitions could not be verified.');
+    await expect(retryButton).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__getConfigsCalls)).toBe(2);
+    const target = await retryButton.boundingBox();
+    expect(target).not.toBeNull();
+    expect(target.width).toBeGreaterThanOrEqual(44);
+    expect(target.height).toBeGreaterThanOrEqual(44);
+    expect(pageErrors).toEqual([]);
+
+    await retryButton.click();
+    await expect.poll(() => page.evaluate(() => Number(window.sessionStorage.getItem('team-config-document-loads')))).toBe(2);
+    await expect(page.getByRole('alert')).toContainText('Diamond statistic definitions could not be verified.');
+    await expect(page.getByRole('button', { name: 'Retry loading Diamond statistic definitions' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__getConfigsCalls)).toBe(2);
+    expect(await page.evaluate(() => performance.getEntriesByType('navigation')[0]?.type)).toBe('reload');
+    expect(pageErrors).toEqual([]);
+});
+
+test('team classic config read rejection reaches the generic error path without a Diamond retry', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    const consoleErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    page.on('console', (message) => {
+        if (message.type() === 'error') consoleErrors.push(message.text());
+    });
+    const scenario = {
+        team: { name: 'Classic Team', sport: 'Soccer' },
+        games: [{
+            id: 'classic-game-1',
+            date: makeIso(addDays(new Date(), -2, 18)),
+            type: 'game',
+            status: 'completed',
+            homeScore: 2,
+            awayScore: 1,
+            trackingEngine: 'standard'
+        }],
+        configReadMode: 'reject',
+        trackedUids: [],
+        calendarEvents: [],
+        enableAnalyticsLoad: true
+    };
+
+    await mockTeamPageModules(page, scenario);
+    await page.goto(buildUrl(baseURL, '/team.html#teamId=team-a'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#team-header')).toContainText('Classic Team');
+    await expect.poll(() => page.evaluate(() => window.__getConfigsCalls)).toBe(1);
+    await expect.poll(() => consoleErrors.some((message) => message.includes('classic config unavailable'))).toBe(true);
+    await expect(page.locator('[data-retry-diamond-config]')).toHaveCount(0);
+    await expect(page.locator('#configured-team-leaderboards-section')).toHaveText('');
+    expect(pageErrors).toEqual([]);
+});
 
 async function gotoCalendarMonth(page, fromDate, targetDate) {
     void fromDate;
@@ -596,7 +770,8 @@ test('team private sync provisions before enabling popup-safe provider actions',
         team: { name: 'Team A', sport: 'Soccer' },
         games: [],
         trackedUids: [],
-        calendarEvents: []
+        calendarEvents: [],
+        authenticatedManager: true
     });
     await page.goto(buildUrl(baseURL, '/team.html#teamId=team-a'), { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('load');
@@ -617,6 +792,122 @@ test('team private sync provisions before enabling popup-safe provider actions',
     ]);
     await expect.poll(() => page.evaluate(() => window.__privateCalendarCallableCalls)).toHaveLength(1);
 });
+
+for (const transition of [
+    {
+        label: 'UID change',
+        nextUser: { uid: 'manager-2', email: 'other-manager@example.test' }
+    },
+    {
+        label: 'sign-out',
+        nextUser: null
+    }
+]) {
+    test(`team ${transition.label} synchronously clears private UI and rejects held A reads`, async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => pageErrors.push(error.message));
+        const upcomingDate = addDays(new Date(), 5, 18);
+        await page.addInitScript(() => {
+            window.__ALLPLAYS_CONFIG__ = {
+                teamCalendarFeedFunctionUrl: 'https://functions.example.test/teamCalendarFeed'
+            };
+        });
+        await mockTeamPageModules(page, {
+            team: {
+                name: 'Private Team A',
+                sport: 'Soccer',
+                availabilityPreferences: { noteVisibility: 'admins' }
+            },
+            games: [{
+                id: 'private-game-1',
+                opponent: 'Rivals',
+                location: 'Private Field',
+                type: 'game',
+                status: 'scheduled',
+                date: makeIso(upcomingDate)
+            }],
+            trackedUids: [],
+            calendarEvents: [],
+            authenticatedManager: true,
+            deferRsvps: true,
+            deferPrivateCalendarToken: true,
+            privateRsvps: [{
+                displayName: 'Manager A child',
+                note: 'manager-a-private-note'
+            }]
+        });
+        await page.goto(buildUrl(baseURL, '/team.html#teamId=team-a'), { waitUntil: 'domcontentloaded' });
+
+        await expect.poll(() => page.evaluate(() => window.__teamRsvpReadCalls || 0)).toBe(1);
+        await expect(page.locator('#sync-calendar')).toBeVisible();
+        await page.locator('#sync-calendar').click();
+        await expect.poll(() => page.evaluate(() => window.__privateCalendarCallableCalls?.length || 0)).toBe(1);
+        await expect(page.locator('#sync-calendar-modal')).not.toHaveClass(/hidden/);
+
+        const immediate = await page.evaluate((nextUser) => {
+            const dayModal = document.getElementById('schedule-day-modal');
+            const dayTitle = document.getElementById('schedule-day-modal-title');
+            const dayContent = document.getElementById('schedule-day-modal-content');
+            dayModal?.classList.remove('hidden');
+            if (dayTitle) dayTitle.textContent = 'Manager A private day';
+            if (dayContent) dayContent.innerHTML = '<p>manager-a-private-note</p>';
+            document.getElementById('team-nav-banner').innerHTML = '<p>manager-a-private-nav</p>';
+            document.getElementById('team-pass-container').innerHTML = '<p>manager-a-private-pass</p>';
+            document.getElementById('availability-settings-section').innerHTML = '<p>manager-a-private-settings</p>';
+            document.getElementById('team-staff-permissions-section').innerHTML = '<p>manager-a-private-staff</p>';
+            window.__emitTeamAuth(nextUser);
+            return {
+                dayModalHidden: dayModal?.classList.contains('hidden'),
+                dayTitle: dayTitle?.textContent,
+                dayContent: dayContent?.textContent,
+                syncModalHidden: document.getElementById('sync-calendar-modal')?.classList.contains('hidden'),
+                syncFeedback: document.getElementById('sync-calendar-feedback')?.textContent,
+                syncActionsDisabled: ['sync-calendar-apple', 'sync-calendar-google', 'sync-calendar-copy']
+                    .every((id) => document.getElementById(id)?.disabled),
+                syncButtonHidden: document.getElementById('sync-calendar')?.classList.contains('hidden'),
+                nav: document.getElementById('team-nav-banner')?.textContent,
+                pass: document.getElementById('team-pass-container')?.textContent,
+                availability: document.getElementById('availability-settings-section')?.textContent,
+                staff: document.getElementById('team-staff-permissions-section')?.textContent,
+                roster: document.getElementById('roster-list')?.textContent,
+                schedule: document.getElementById('schedule-list')?.textContent,
+                controlsDisabled: ['download-ics', 'print-schedule', 'schedule-view-list']
+                    .every((id) => document.getElementById(id)?.disabled)
+            };
+        }, transition.nextUser);
+
+        expect(immediate).toEqual({
+            dayModalHidden: true,
+            dayTitle: '',
+            dayContent: '',
+            syncModalHidden: true,
+            syncFeedback: '',
+            syncActionsDisabled: true,
+            syncButtonHidden: true,
+            nav: '',
+            pass: '',
+            availability: '',
+            staff: '',
+            roster: '',
+            schedule: '',
+            controlsDisabled: true
+        });
+
+        await page.evaluate(() => {
+            window.__resolveNextTeamRsvpRead?.();
+            window.__resolveNextPrivateCalendarToken?.('manager-a-private-token');
+        });
+        await page.waitForTimeout(50);
+
+        await expect(page.locator('body')).not.toContainText('manager-a-private-note');
+        await expect(page.locator('#sync-calendar-modal')).toHaveClass(/hidden/);
+        await expect(page.locator('#sync-calendar-feedback')).toHaveText('');
+        await expect(page.locator('#sync-calendar-apple')).toBeDisabled();
+        await expect(page.locator('#sync-calendar-google')).toBeDisabled();
+        await expect(page.locator('#sync-calendar-copy')).toBeDisabled();
+        expect(pageErrors).toEqual([]);
+    });
+}
 
 test('public team schedule uses projected calendar events without a browser-visible feed URL', async ({ page, baseURL }) => {
     const pageErrors = [];
