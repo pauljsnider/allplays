@@ -5932,6 +5932,84 @@ describe('DiamondScorebook', () => {
     });
   });
 
+  it.each(['take-defense', 'restore-flex'] as const)('reviews the %s DP/FLEX role without confusing batting history', async (action) => {
+    const base = buildSnapshot();
+    const snapshot = buildSnapshot({
+      rulesProfileId: 'fastpitch-nfhs@1',
+      bases: { first: null, second: null, third: null },
+      lineups: { ...base.lineups, home: [{ ...base.lineups.home[0]!, battingRole: 'dp' }, base.lineups.home[1]!] },
+      defense: {
+        ...base.defense,
+        home: { P: action === 'take-defense' ? { playerId: 'flex-player', name: 'Flex Player' } : base.lineups.home[0]! }
+      },
+      lineupPersonnel: {
+        home: {
+          dhDefense: null,
+          flexDefense: { slot: 1, playerId: 'flex-player', name: 'Flex Player', starterPlayerId: 'flex-player', starterReentriesUsed: 0 },
+          dpFlex: { dpPlayerId: 'batter-1', flexPlayerId: 'flex-player', dpBattingSlot: 1, flexDefensivePosition: 'P' }
+        },
+        away: { dhDefense: null, flexDefense: null, dpFlex: null }
+      }
+    });
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+    const group = screen.getByRole('group', { name: 'Substitution' });
+    fireEvent.change(within(group).getByLabelText('Batting slot'), { target: { value: 'flex:1' } });
+    if (action === 'take-defense') fireEvent.change(within(group).getByLabelText('Incoming'), { target: { value: 'batter-1' } });
+    const label = action === 'take-defense' ? 'Review substitution' : 'Review starter re-entry';
+    fireEvent.click(within(group).getByRole('button', { name: label }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: label })).getByRole('button', { name: 'Confirm action' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand.mock.calls[0]![0].payload).toEqual(
+      action === 'take-defense'
+        ? { side: 'home', battingSlot: 1, outgoingPlayerId: 'flex-player', incomingPlayerId: 'batter-1', defensivePosition: 'P' }
+        : { side: 'home', battingSlot: 1, replacedPlayerId: 'batter-1', starterPlayerId: 'flex-player', defensivePosition: 'P' }
+    );
+  });
+
+  it.each(['dh', 'flex'] as const)('selects independent %s defensive personnel for substitution and starter re-entry', async (role) => {
+    const base = buildSnapshot();
+    const defender = { playerId: 'defender-sub', name: 'Defender Substitute' };
+    const snapshot = buildSnapshot({
+      rulesProfileId: role === 'dh' ? 'baseball-nfhs@1' : 'fastpitch-nfhs@1',
+      bases: { first: null, second: null, third: null },
+      lineups: { ...base.lineups, home: [{ ...base.lineups.home[0]!, battingRole: role === 'dh' ? 'dh' : 'dp' }, base.lineups.home[1]!] },
+      defense: { ...base.defense, home: { P: defender } },
+      lineupPersonnel: {
+        home: {
+          dhDefense: role === 'dh' ? { ...defender, slot: 1, starterPlayerId: 'defender-starter', starterReentriesUsed: 0 } : null,
+          flexDefense: role === 'flex' ? { ...defender, slot: 1, starterPlayerId: 'defender-starter', starterReentriesUsed: 0 } : null,
+          dpFlex:
+            role === 'flex' ? { dpPlayerId: 'batter-1', flexPlayerId: 'defender-sub', dpBattingSlot: 1, flexDefensivePosition: 'P' } : null
+        },
+        away: { dhDefense: null, flexDefense: null, dpFlex: null }
+      }
+    });
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+    const group = screen.getByRole('group', { name: 'Substitution' });
+    fireEvent.change(within(group).getByLabelText('Batting slot'), { target: { value: `${role}:1` } });
+    fireEvent.change(within(group).getByLabelText('Incoming'), { target: { value: 'bench-home' } });
+    fireEvent.click(within(group).getByRole('button', { name: 'Review substitution' }));
+    const review = screen.getByRole('dialog', { name: 'Review substitution' });
+    expect(review).toHaveTextContent('defender-sub');
+    fireEvent.click(within(review).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(within(group).getByRole('button', { name: 'Review starter re-entry' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Review starter re-entry' })).getByRole('button', { name: 'Confirm action' })
+    );
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand.mock.calls[0]![0].payload).toEqual({
+      side: 'home',
+      battingSlot: 1,
+      starterPlayerId: 'defender-starter',
+      replacedPlayerId: 'defender-sub',
+      defensivePosition: 'P'
+    });
+  });
+
   it('re-enters the verified starter and restores the defensive assignment through a reducer-accepted command', async () => {
     const baseSnapshot = buildSnapshot();
     const snapshot = buildSnapshot({
