@@ -62,11 +62,13 @@ describe('mobile store legal and support pages', () => {
         const requiredIndexes = [
             ['messages', 'authorId'],
             ['chatMessages', 'senderId'],
+            ['chat', 'senderId'],
             ['chatConversations', 'participantIds', 'array'],
             ['chatConversations', 'directUserIds', 'array'],
             ['chatConversations', 'mutedBy', 'array'],
             ['comments', 'authorId'],
             ['reactions', 'userId'],
+            ['reactions', 'senderId'],
             ['rsvps', 'userId'],
             ['rideOffers', 'driverUserId'],
             ['rideRequests', 'parentUserId'],

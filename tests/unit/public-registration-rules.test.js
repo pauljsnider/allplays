@@ -38,7 +38,13 @@ describe('public registration Firestore boundary', () => {
     expect(registrationBlock).toContain('match /checkoutAttempts/{attemptId}');
     expect(registrationBlock).toContain('allow read, create, update, delete: if false;');
     expect(registrationBlock).not.toContain('allow create: if request.auth == null');
-    expect(rules.match(/'checkoutAttemptToken'/g)).toHaveLength(4);
+    const teamFeeCheckoutHelper = rules.slice(
+      rules.indexOf('function serverOwnedTeamFeeCheckoutFields()'),
+      rules.indexOf('function hasNoServerOwnedRegistrationCheckoutFields(data)')
+    );
+    expect(teamFeeCheckoutHelper).toContain("'checkoutAttemptToken'");
+    expect(teamFeeCheckoutHelper.match(/hasAny\(serverOwnedTeamFeeCheckoutFields\(\)\)/g)).toHaveLength(2);
+    expect(rules.match(/'checkoutAttemptToken'/g)).toHaveLength(3);
   });
 
   describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('rules engine coverage', () => {

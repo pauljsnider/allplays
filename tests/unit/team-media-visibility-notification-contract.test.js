@@ -60,7 +60,7 @@ describe('team media visibility notification contract', () => {
         expect(functionsSource).toContain('audienceContext,\n      recipientDocs: categoryRecipientDocs,');
         expect(functionsSource).toContain('const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (');
         expect(functionsSource).toContain('getLegacyTargetsForCategory(teamId, category, users, actorUid, audienceContext)');
-        expect(functionsSource).toContain('async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}, additionalUsers = []) {');
+        expect(functionsSource).toMatch(/async function getTargetsForCategory\(\s*teamId,\s*category,\s*actorUid = null,\s*audienceContext = \{\},\s*additionalUsers = \[\],\s*telemetryOptions = \{\},\s*\) \{/);
         expect(functionsSource).toContain('const rawCategoryRecipientDocs = targetSnap.docs || [];');
         expect(functionsSource).toContain('const enabledAuthUserIds = await getEnabledNotificationAuthUserIds([');
         expect(functionsSource).toContain('const categoryRecipientDocs = rawCategoryRecipientDocs.filter((docSnap) => (');

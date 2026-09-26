@@ -15,13 +15,13 @@ const successfulHtmlByPath = {
     '/': '<!doctype html><title>ALL PLAYS</title><body></body>',
     '/app/': '<!doctype html><title>ALL PLAYS APP</title><main id="root"></main>',
     '/teams.html': '<!doctype html><title>Browse Teams - ALL PLAYS</title><div id="teams-list"></div>',
-    '/live-game-diamond-v2.html': '<!doctype html><title>Diamond Live - ALL PLAYS</title><main id="diamond-viewer-error" data-diamond-error></main>',
     '/privacy.html': '<!doctype html><title>Privacy Policy | ALL PLAYS</title><main><h1>Privacy Policy</h1></main>',
     '/terms.html': '<!doctype html><title>Terms of Use | ALL PLAYS</title><main><h1>Terms of Use</h1></main>',
     '/support.html': '<!doctype html><title>Support | ALL PLAYS</title><main><h1>Support</h1></main>',
     '/account-deletion.html': '<!doctype html><title>Delete Account | ALL PLAYS</title><main><h1>Delete account</h1></main>',
     '/widget-scoreboard.html': '<!doctype html><title>ALL PLAYS Scoreboard Widget</title><main id="scoreboard-widget"></main>',
     '/live-game-overlay.html': '<!doctype html><title>Live Game Broadcast - ALL PLAYS</title><main id="broadcast-stage"><div id="score-bug"></div><iframe id="overlay-video"></iframe></main>',
+    '/live-game-diamond-v2.html': '<!doctype html><title>Diamond Live - ALL PLAYS</title><main id="diamond-viewer-loading" data-diamond-loading></main>',
     '/compare.html': '<!doctype html><title>ALL PLAYS — Explore the platform</title><div id="header-container"></div><footer></footer>',
     '/about.html': '<!doctype html><title>ALL PLAYS — About</title><div id="header-container"></div><footer></footer>',
     '/app.html': '<!doctype html><title>ALL PLAYS — Use the web app</title><div id="header-container"></div><footer></footer>'
@@ -70,11 +70,24 @@ describe('candidate host public smoke', () => {
         expect(getExpectedRuntimeConfig({
             siteKey: ' public-site-key_123 '
         })).toMatchObject({
+            diamondScorebookUiEnabled: false,
             appCheck: {
                 enabled: false,
                 isTokenAutoRefreshEnabled: true
             }
         });
+    });
+
+    it('expects the Diamond UI only for an exact staged true', () => {
+        expect(getExpectedRuntimeConfig({
+            diamondScorebookUiEnabled: 'TRUE'
+        }).diamondScorebookUiEnabled).toBe(false);
+        expect(getExpectedRuntimeConfig({
+            diamondScorebookUiEnabled: '1'
+        }).diamondScorebookUiEnabled).toBe(false);
+        expect(getExpectedRuntimeConfig({
+            diamondScorebookUiEnabled: 'true'
+        }).diamondScorebookUiEnabled).toBe(true);
     });
 
     it('expects an enabled runtime configuration only with a rollout-ready key', () => {
