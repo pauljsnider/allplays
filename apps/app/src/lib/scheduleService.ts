@@ -173,6 +173,7 @@ const staffTeamDiscoveryTimeoutMs = 15000;
 const staffTeamHttpHedgeDelayMs = 2000;
 const officialTeamDiscoveryTimeoutMs = 12000;
 const MAX_SCHEDULE_TRACKER_CONFIG_OPTIONS = 100;
+const MAX_ACTIVE_GAME_LIVE_EVENTS = 20;
 // Per-team schedule builds are network-bound (team + games + practiceSessions
 // reads each); 3 workers made a 5-team account load in two serialized waves
 // (~18 sequential-ish Firestore round trips measured via the parent schedule
@@ -6688,7 +6689,7 @@ export async function loadGameDayLiveEventsForApp(teamId: string, gameId: string
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST game day live events.', 'game-day-live-events-load', error, { fallback: 'rest', teamId, gameId });
     const events = await nativeListCollection(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/liveEvents`);
-    return Array.isArray(events) ? events : [];
+    return Array.isArray(events) ? events.slice(0, MAX_ACTIVE_GAME_LIVE_EVENTS) : [];
   }
 }
 
