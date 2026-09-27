@@ -379,6 +379,7 @@ async function stubRealOverlayModules(page) {
                 status: window.__OVERLAY_COMPLETED_LIVE_GAME__ || window.__OVERLAY_COMPLETED_GAME__
                     ? 'completed'
                     : 'live',
+                trackingEngine: window.__OVERLAY_TRACKING_ENGINE__,
                 recordedReplayTeamPassRequired: window.__OVERLAY_GAME_TEAM_PASS_OVERRIDE__,
                 viewerCount: 4, liveViewerCount: 19,
                 videoUrl: window.__OVERLAY_NO_PUBLIC_VIDEO__
@@ -1488,6 +1489,25 @@ test('completed game gates its recorded video without requiring replay query mod
         'href',
         'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true'
     );
+    expect(pageErrors).toEqual([]);
+});
+
+test('signed-out overlay redirects a sanitized Diamond projection to the Diamond overlay', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_AUTH_USER__ = null;
+        window.__OVERLAY_TRACKING_ENGINE__ = 'diamond-v2';
+    });
+    await page.route('**/live-game-diamond-v2.html?*', (route) => route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: '<!doctype html><title>Diamond overlay fixture</title>'
+    }));
+    await stubRealOverlayModules(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page).toHaveURL(`${baseURL}/live-game-diamond-v2.html?teamId=team-1&gameId=game-1&overlay=true`);
     expect(pageErrors).toEqual([]);
 });
 

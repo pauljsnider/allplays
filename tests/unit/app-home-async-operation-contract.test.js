@@ -46,9 +46,9 @@ describe('Home async operation contract', () => {
         expect(refreshHomeSource).toContain('let latestSecondaryHome = summary.home;');
         expect(refreshHomeSource).toContain('latestSecondaryHome = partial;');
         expect(refreshHomeSource).toContain('setHome(partial);');
-        expect(refreshHomeSource).toContain("getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome || receivedHomePreview)");
+        expect(refreshHomeSource).toContain("getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome)");
         expect(refreshHomeSource).toContain("const appError = toAppServiceError(loadError, 'Unable to load Home.');");
-        expect(refreshHomeSource).toContain('if (!hasExistingHome) {');
+        expect(refreshHomeSource).toContain('setFailedHomeDetailsUserId(user.uid);');
         expect(refreshHomeSource).toContain('setHome(emptyHome());');
         expect(refreshHomeSource).toContain('setSocial(emptySocialHome());');
         expect(refreshHomeSource).toContain("getErrorMessage: (secondaryError) => getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.'))");
@@ -58,7 +58,7 @@ describe('Home async operation contract', () => {
         expect(refreshHomeSource).toContain('const isCurrentHomeLoad = () => (');
         expect(refreshHomeSource).toContain('currentAuthUserIdRef.current === user.uid');
         expect(refreshHomeSource).toContain('if (!isCurrentHomeLoad()) return;');
-        expect(refreshHomeSource).toContain('if (summaryResultReturned) return;');
+        expect(refreshHomeSource).toContain('if (summaryResultReturned || hasExistingHome) return;');
         expect(refreshHomeSource).toContain('onRefresh: (refreshedSummary) => {');
         expect(refreshHomeSource).toContain('void refreshHome({ forceSecondary: true, preserveCurrentHome: true });');
         expect(refreshHomeSource).toContain('force: force || forceSecondary');
@@ -70,9 +70,9 @@ describe('Home async operation contract', () => {
 
     it('surfaces typed, retryable Home load copy for network and permission failures', () => {
         expect(homeSource).toContain("import { toAppServiceError, type AppServiceError } from '../lib/appErrors';");
-        expect(homeSource).toContain("if (error.type === 'network') return 'Unable to load Home while offline. Check your connection and try again.';");
+        expect(homeSource).toContain("if (error.type === 'network') return 'Unable to load Home. The request failed or timed out. Try again.';");
         expect(homeSource).toContain("if (error.type === 'permission') return 'You do not have permission to load this Home data.';");
-        expect(homeSource).toContain("if (error.type === 'network') return 'Unable to refresh Home while offline. Showing the last loaded Home.';");
+        expect(homeSource).toContain("if (error.type === 'network') return 'Unable to refresh Home. The request failed or timed out. Showing the last loaded Home. Try again.';");
         expect(homeSource).toContain("if (error.type === 'permission') return 'Unable to refresh Home because access was denied. Showing the last loaded Home.';");
         expect(homeSource).toContain('function HomeLoadErrorState({ error, onRetry, retrying }');
         expect(homeSource).toContain('aria-label="Retry loading Home"');

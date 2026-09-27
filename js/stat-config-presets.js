@@ -1,21 +1,29 @@
 import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=4';
+import { DIAMOND_PLAYER_STAT_CATALOG, DIAMOND_TEAM_STAT_CATALOG } from './diamond-stat-presentation.js?v=7';
 
 const DIAMOND_STAT_COLUMNS = ['AB', 'H', 'R', 'RBI', 'BB', 'FP'];
 
-function createDiamondSportConfig(sport) {
-    return {
+function createDiamondSportConfig(sport, { fullCatalog = false } = {}) {
+    const coreDefinitions = [
+        { label: 'AB', acronym: 'AB', group: 'Batting' },
+        { label: 'H', acronym: 'H', group: 'Batting', topStat: true },
+        { label: 'R', acronym: 'R', group: 'Batting', topStat: true },
+        { label: 'RBI', acronym: 'RBI', group: 'Batting', topStat: true },
+        { label: 'BB', acronym: 'BB', group: 'Plate Discipline', topStat: true },
+        { label: 'FP', acronym: 'FP', group: 'Fielding', topStat: true }
+    ];
+    const config = {
         name: `${sport} Standard`,
         baseType: sport,
         columns: [...DIAMOND_STAT_COLUMNS],
-        statDefinitions: [
-            { label: 'AB', acronym: 'AB', group: 'Batting' },
-            { label: 'H', acronym: 'H', group: 'Batting', topStat: true },
-            { label: 'R', acronym: 'R', group: 'Batting', topStat: true },
-            { label: 'RBI', acronym: 'RBI', group: 'Batting', topStat: true },
-            { label: 'BB', acronym: 'BB', group: 'Plate Discipline', topStat: true },
-            { label: 'FP', acronym: 'FP', group: 'Fielding', topStat: true }
-        ]
+        statDefinitions: fullCatalog
+            ? DIAMOND_PLAYER_STAT_CATALOG.map((definition) => ({ ...definition }))
+            : coreDefinitions
     };
+    if (fullCatalog) {
+        config.diamondPublicTeamStatIds = DIAMOND_TEAM_STAT_CATALOG.map((definition) => definition.id);
+    }
+    return config;
 }
 
 const PRESET_DEFINITIONS = [
@@ -173,6 +181,20 @@ export function getDefaultStatConfigForSport(sport = '') {
     const normalizedSport = String(sport || '').trim().toLowerCase();
     const preset = PRESET_DEFINITIONS.find((entry) => String(entry.config.baseType || '').trim().toLowerCase() === normalizedSport);
     return preset ? normalizeStatTrackerConfig(cloneConfig(preset.config)) : null;
+}
+
+export function getDefaultDiamondStatConfigForSport(sport = '') {
+    const normalizedSport = String(sport || '').trim().toLowerCase();
+    const canonicalSport = normalizedSport === 'baseball'
+        ? 'Baseball'
+        : normalizedSport === 'softball'
+            ? 'Softball'
+            : normalizedSport === 'fastpitch' || normalizedSport === 'fastpitch softball'
+                ? 'Fastpitch'
+                : '';
+    return canonicalSport
+        ? normalizeStatTrackerConfig(createDiamondSportConfig(canonicalSport, { fullCatalog: true }))
+        : null;
 }
 
 export function serializeAdvancedStatDefinitions(config = {}) {

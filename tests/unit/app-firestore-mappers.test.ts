@@ -153,6 +153,9 @@ describe('firestore mappers', () => {
                 location: { stringValue: ' Main Gym ' },
                 liveClockMs: { integerValue: '120000' },
                 liveClockRunning: { booleanValue: true },
+                trackingEngine: { stringValue: ' diamond-v2 ' },
+                diamondScorebookInstanceId: { stringValue: ' aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa ' },
+                diamondRevision: { integerValue: '7' },
                 assignments: {
                     arrayValue: {
                         values: [
@@ -194,6 +197,9 @@ describe('firestore mappers', () => {
             location: 'Main Gym',
             liveClockMs: 120000,
             liveClockRunning: true,
+            trackingEngine: 'diamond-v2',
+            diamondScorebookInstanceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            diamondRevision: 7,
             assignments: [{ role: 'Scoreboard', value: 'Open' }],
             sourceMetadata: { sourceType: 'registration' }
         });
@@ -208,6 +214,22 @@ describe('firestore mappers', () => {
             sourceMetadata: null,
             exDates: []
         });
+
+        expect(mapScheduleEventRecords([{
+            id: 'game-sdk-1',
+            type: 'game',
+            date: new Date('2026-06-22T18:00:00.000Z'),
+            trackingEngine: ' diamond-v2 ',
+            diamondScorebookInstanceId: ' aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa ',
+            diamondRevision: '8'
+        }])).toEqual([
+            expect.objectContaining({
+                id: 'game-sdk-1',
+                trackingEngine: 'diamond-v2',
+                diamondScorebookInstanceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                diamondRevision: 8
+            })
+        ]);
     });
 
     it('rejects invalid schedule event documents at the mapper boundary', () => {

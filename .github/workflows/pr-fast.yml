@@ -143,6 +143,10 @@ jobs:
             echo "No app performance measurement artifact to validate."
           fi
 
+      - name: Run Diamond scorebook acceptance gate
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
+        run: npm run test:diamond:ci
+
       - name: Run unit tests
         if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: npm run test:unit:ci

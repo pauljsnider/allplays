@@ -1,179 +1,189 @@
 import type { ReplayArchiveState } from '../youtubeReplay';
 
 export type FirestoreScalarValue = {
-    stringValue?: string;
-    booleanValue?: boolean;
-    integerValue?: string;
-    doubleValue?: number;
-    timestampValue?: string;
-    nullValue?: 'NULL_VALUE';
+  stringValue?: string;
+  booleanValue?: boolean;
+  integerValue?: string;
+  doubleValue?: number;
+  timestampValue?: string;
+  nullValue?: 'NULL_VALUE';
 };
 
 export type FirestoreArrayValue = {
-    arrayValue?: {
-        values?: FirestoreValue[];
-    };
+  arrayValue?: {
+    values?: FirestoreValue[];
+  };
 };
 
 export type FirestoreMapValue = {
-    mapValue?: {
-        fields?: Record<string, FirestoreValue>;
-    };
+  mapValue?: {
+    fields?: Record<string, FirestoreValue>;
+  };
 };
 
 export type FirestoreValue = FirestoreScalarValue & FirestoreArrayValue & FirestoreMapValue;
 
 export type FirestoreDocument = {
-    name?: string;
-    fields?: Record<string, FirestoreValue>;
+  name?: string;
+  fields?: Record<string, FirestoreValue>;
 };
 
 export type NativeChatPageCursor = {
-    kind: 'native-chat-rest';
-    collectionPath: string;
-    orderBy: 'createdAt desc';
-    pageSize: 50;
-    nextPageToken: string | null;
+  kind: 'native-chat-rest';
+  collectionPath: string;
+  orderBy: 'createdAt desc';
+  pageSize: 50;
+  nextPageToken: string | null;
 };
 
 export function isNativeChatPageCursor(value: unknown): value is NativeChatPageCursor {
-    return Boolean(value && typeof value === 'object' && (value as { kind?: unknown }).kind === 'native-chat-rest');
+  return Boolean(value && typeof value === 'object' && (value as { kind?: unknown }).kind === 'native-chat-rest');
 }
 
 export type FirestoreDecodedDocument = Record<string, unknown> & {
-    id: string;
+  id: string;
 };
 
 export type ChatConversationFirestoreRecord = {
-    id: string;
-    type: 'team' | 'group' | 'direct';
-    name?: string | null;
-    participantIds?: string[];
-    participantRoles?: string[];
-    directAccess?: 'accepted_friend' | 'team_admin' | null;
-    directUserIds?: string[];
-    friendshipId?: string | null;
-    initiatedBy?: string | null;
-    mutedBy?: string[];
-    isDefault?: boolean;
-    isLegacy?: boolean;
-    updatedAt?: unknown;
-    lastMessageAt?: unknown;
+  id: string;
+  type: 'team' | 'group' | 'direct';
+  name?: string | null;
+  participantIds?: string[];
+  participantRoles?: string[];
+  directAccess?: 'accepted_friend' | 'team_admin' | null;
+  directUserIds?: string[];
+  friendshipId?: string | null;
+  initiatedBy?: string | null;
+  mutedBy?: string[];
+  isDefault?: boolean;
+  isLegacy?: boolean;
+  updatedAt?: unknown;
+  lastMessageAt?: unknown;
 };
 
 export type ChatAttachmentFirestoreRecord = {
-    type: 'image' | 'video';
-    url: string | null;
-    path?: string | null;
-    thumbnailUrl?: string | null;
-    name?: string | null;
-    mimeType?: string | null;
-    size?: number | null;
-    uploadedAt?: unknown;
+  type: 'image' | 'video';
+  url: string | null;
+  path?: string | null;
+  thumbnailUrl?: string | null;
+  name?: string | null;
+  mimeType?: string | null;
+  size?: number | null;
+  uploadedAt?: unknown;
 };
 
 export type ChatMessageFirestoreRecord = {
-    id: string;
-    clientMessageId?: string | null;
-    text?: string | null;
-    senderId?: string | null;
-    senderName?: string | null;
-    senderEmail?: string | null;
-    senderPhotoUrl?: string | null;
-    attachments?: ChatAttachmentFirestoreRecord[];
-    imageUrl?: string | null;
-    imagePath?: string | null;
-    imageName?: string | null;
-    imageType?: string | null;
-    imageSize?: number | null;
-    createdAt?: unknown;
-    editedAt?: unknown;
-    deleted?: boolean;
-    ai?: boolean;
-    aiName?: string | null;
-    aiQuestion?: string | null;
-    aiMeta?: Record<string, unknown> | null;
-    reactions?: Record<string, string[]>;
-    targetType?: 'full_team' | 'staff' | 'individuals';
-    recipientIds?: string[];
-    mentionedUids?: string[];
-    targetRole?: string | null;
-    conversationId?: string | null;
-    sendStatus?: 'pending' | 'failed';
-    sendError?: string | null;
-    attachmentCount?: number;
-    _doc?: unknown;
+  id: string;
+  clientMessageId?: string | null;
+  text?: string | null;
+  senderId?: string | null;
+  senderName?: string | null;
+  senderEmail?: string | null;
+  senderPhotoUrl?: string | null;
+  attachments?: ChatAttachmentFirestoreRecord[];
+  imageUrl?: string | null;
+  imagePath?: string | null;
+  imageName?: string | null;
+  imageType?: string | null;
+  imageSize?: number | null;
+  createdAt?: unknown;
+  editedAt?: unknown;
+  deleted?: boolean;
+  ai?: boolean;
+  aiName?: string | null;
+  aiQuestion?: string | null;
+  aiMeta?: Record<string, unknown> | null;
+  reactions?: Record<string, string[]>;
+  targetType?: 'full_team' | 'staff' | 'individuals';
+  recipientIds?: string[];
+  mentionedUids?: string[];
+  targetRole?: string | null;
+  conversationId?: string | null;
+  sendStatus?: 'pending' | 'failed';
+  sendError?: string | null;
+  attachmentCount?: number;
+  _doc?: unknown;
 };
 
 export type ScheduleEventFirestoreRecord = {
-    id: string;
-    type: 'game' | 'practice';
-    date: Date;
-    calendarEventUid?: string | null;
-    endDate?: Date | null;
-    end?: Date | null;
-    endTime?: Date | null;
-    opponent?: string | null;
-    title?: string | null;
-    location?: string | null;
-    locationDetail?: string | null;
-    opponentTeamId?: string | null;
-    opponentTeamName?: string | null;
-    awayTeamName?: string | null;
-    opponentTeamPhoto?: string | null;
-    sharedScheduleId?: string | null;
-    sharedScheduleSourceTeamId?: string | null;
-    sharedScheduleOpponentTeamId?: string | null;
-    sharedScheduleOpponentGameId?: string | null;
-    hasReplayShareMarker?: boolean;
-    gameId?: string | null;
-    status?: string | null;
-    liveStatus?: string | null;
-    isCancelled?: boolean;
-    deleted?: boolean;
-    isDeleted?: boolean;
-    liveClockMs?: number | null;
-    liveClockRunning?: boolean | null;
-    liveClockPeriod?: string | null;
-    liveClockUpdatedAt?: Date | null;
-    homeScore?: number | null;
-    awayScore?: number | null;
-    postGameNotes?: string | null;
-    summary?: string | null;
-    videoUrl?: string | null;
-    replayVideo?: Record<string, unknown> | null;
-    rawReplayState?: ReplayArchiveState;
-    rawReplayLifecycle?: {
-        type?: unknown;
-        status?: unknown;
-        liveStatus?: unknown;
-    };
-    practiceFeedItems?: Array<Record<string, unknown>>;
-    isSharedGame?: boolean;
-    isHome?: boolean | null;
-    kitColor?: string | null;
-    arrivalTime?: Date | null;
-    notes?: string | null;
-    seasonLabel?: string | null;
-    competitionType?: string | null;
-    countsTowardSeasonRecord?: boolean | null;
-    tournament?: Record<string, unknown> | null;
-    statTrackerConfigId?: string | null;
-    source?: string | null;
-    sourceMetadata?: (Record<string, unknown> & { sourceType?: string | null }) | null;
-    visibility?: string | null;
-    assignments?: Array<Record<string, unknown>>;
-    rsvpSummary?: Record<string, unknown> | null;
-    gamePlan?: Record<string, unknown> | null;
-    rotationPlan?: Record<string, unknown> | null;
-    rotationActual?: Record<string, unknown> | null;
-    coachingNotes?: Array<Record<string, unknown>>;
-    isSeriesMaster?: boolean;
-    recurrence?: Record<string, unknown> | null;
-    startTime?: string | null;
-    endDayOffset?: number | null;
-    exDates?: string[];
-    overrides?: Record<string, Record<string, unknown>> | null;
+  id: string;
+  type: 'game' | 'practice';
+  date: Date;
+  calendarEventUid?: string | null;
+  endDate?: Date | null;
+  end?: Date | null;
+  endTime?: Date | null;
+  opponent?: string | null;
+  title?: string | null;
+  location?: string | null;
+  locationDetail?: string | null;
+  opponentTeamId?: string | null;
+  opponentTeamName?: string | null;
+  awayTeamName?: string | null;
+  opponentTeamPhoto?: string | null;
+  sharedScheduleId?: string | null;
+  sharedScheduleSourceTeamId?: string | null;
+  sharedScheduleOpponentTeamId?: string | null;
+  sharedScheduleOpponentGameId?: string | null;
+  hasReplayShareMarker?: boolean;
+  gameId?: string | null;
+  status?: string | null;
+  liveStatus?: string | null;
+  isCancelled?: boolean;
+  deleted?: boolean;
+  isDeleted?: boolean;
+  liveClockMs?: number | null;
+  liveClockRunning?: boolean | null;
+  liveClockPeriod?: string | null;
+  liveClockUpdatedAt?: Date | null;
+  homeScore?: number | null;
+  awayScore?: number | null;
+  postGameNotes?: string | null;
+  summary?: string | null;
+  videoUrl?: string | null;
+  replayVideo?: Record<string, unknown> | null;
+  rawReplayState?: ReplayArchiveState;
+  rawReplayLifecycle?: {
+    type?: unknown;
+    status?: unknown;
+    liveStatus?: unknown;
+  };
+  practiceFeedItems?: Array<Record<string, unknown>>;
+  isSharedGame?: boolean;
+  isHome?: boolean | null;
+  kitColor?: string | null;
+  arrivalTime?: Date | null;
+  notes?: string | null;
+  seasonLabel?: string | null;
+  competitionType?: string | null;
+  countsTowardSeasonRecord?: boolean | null;
+  tournament?: Record<string, unknown> | null;
+  trackingEngine?: string | null;
+  diamondScorebookInstanceId?: string | null;
+  diamondRevision?: number | null;
+  diamondProjectionStatus?: string | null;
+  diamondProjectionComplete?: boolean;
+  diamondProjectionRevision?: number | null;
+  diamondProjectionCheckpointHash?: string | null;
+  statTrackerConfigId?: string | null;
+  diamondStatConfigSnapshotHash?: string | null;
+  diamondProjectionHash?: string | null;
+  isPublicProjection?: boolean;
+  source?: string | null;
+  sourceMetadata?: (Record<string, unknown> & { sourceType?: string | null }) | null;
+  visibility?: string | null;
+  assignments?: Array<Record<string, unknown>>;
+  rsvpSummary?: Record<string, unknown> | null;
+  gamePlan?: Record<string, unknown> | null;
+  rotationPlan?: Record<string, unknown> | null;
+  rotationActual?: Record<string, unknown> | null;
+  coachingNotes?: Array<Record<string, unknown>>;
+  isSeriesMaster?: boolean;
+  recurrence?: Record<string, unknown> | null;
+  startTime?: string | null;
+  endDayOffset?: number | null;
+  exDates?: string[];
+  overrides?: Record<string, Record<string, unknown>> | null;
 };
 
 export type GameReportStatValue = string | number | boolean | null;
@@ -181,54 +191,54 @@ export type GameReportStatValue = string | number | boolean | null;
 export type GameReportStatsRecord = Record<string, GameReportStatValue>;
 
 export type GameReportPlayerFirestoreRecord = {
-    id: string;
-    name?: string | null;
-    number?: string | null;
-    photoUrl?: string | null;
-    [key: string]: unknown;
+  id: string;
+  name?: string | null;
+  number?: string | null;
+  photoUrl?: string | null;
+  [key: string]: unknown;
 };
 
 export type GameReportTeamFirestoreRecord = {
-    id: string;
-    name?: string | null;
-    sport?: string | null;
-    [key: string]: unknown;
+  id: string;
+  name?: string | null;
+  sport?: string | null;
+  [key: string]: unknown;
 };
 
 export type GameReportOpponentFirestoreRecord = {
-    name?: string | null;
-    number?: string | null;
-    notes?: string | null;
-    playerId?: string | null;
-    photoUrl?: string | null;
-    [key: string]: unknown;
+  name?: string | null;
+  number?: string | null;
+  notes?: string | null;
+  playerId?: string | null;
+  photoUrl?: string | null;
+  [key: string]: unknown;
 };
 
 export type GameReportGameFirestoreRecord = {
-    id: string;
-    summary?: string | null;
-    statSheetPhotoUrl?: string | null;
-    opponentStats?: Record<string, GameReportOpponentFirestoreRecord>;
-    [key: string]: unknown;
+  id: string;
+  summary?: string | null;
+  statSheetPhotoUrl?: string | null;
+  opponentStats?: Record<string, GameReportOpponentFirestoreRecord>;
+  [key: string]: unknown;
 };
 
 export type GameReportAggregatedStatsFirestoreRecord = {
-    id: string;
-    stats: GameReportStatsRecord;
-    timeMs: number;
-    didNotPlay: boolean;
-    participated: boolean;
-    participationStatus: string;
-    participationSource: string;
+  id: string;
+  stats: GameReportStatsRecord;
+  timeMs: number;
+  didNotPlay: boolean;
+  participated: boolean;
+  participationStatus: string;
+  participationSource: string;
 };
 
 export type GameReportTeamStatsFirestoreRecord = GameReportStatsRecord;
 
 export type GameReportEventFirestoreRecord = {
-    id: string;
-    text: string;
-    period: string;
-    clock: string;
-    timestamp?: unknown;
-    [key: string]: unknown;
+  id: string;
+  text: string;
+  period: string;
+  clock: string;
+  timestamp?: unknown;
+  [key: string]: unknown;
 };

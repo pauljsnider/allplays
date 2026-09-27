@@ -232,11 +232,17 @@ export function summarizeAthleteProfileCareer(seasons = []) {
         statTotals: {},
         statAverages: {}
     };
+    const playingTimeComplete = !seasons.some((season) => season?.playingTimeComplete === false);
+    const hasStatEvidence = seasons.some((season) => season?.statEvidence && typeof season.statEvidence === 'object');
+    const omittedOrIncompleteStatKeys = new Set();
 
     seasons.forEach((season) => {
         const gamesPlayed = Number(season?.gamesPlayed || 0);
         const totalTimeMs = Number(season?.totalTimeMs || 0);
         const statTotals = season?.statTotals || {};
+        (Array.isArray(season?.statEvidence?.omittedOrIncompleteStatKeys)
+            ? season.statEvidence.omittedOrIncompleteStatKeys
+            : []).forEach((statKey) => omittedOrIncompleteStatKeys.add(statKey));
 
         summary.gamesPlayed += gamesPlayed;
         summary.totalMinutes += totalTimeMs / 60000;
@@ -247,7 +253,16 @@ export function summarizeAthleteProfileCareer(seasons = []) {
         });
     });
 
-    summary.totalMinutes = Number(summary.totalMinutes.toFixed(1));
+    omittedOrIncompleteStatKeys.forEach((statKey) => delete summary.statTotals[statKey]);
+    summary.totalMinutes = playingTimeComplete ? Number(summary.totalMinutes.toFixed(1)) : null;
+    if (!playingTimeComplete) summary.playingTimeComplete = false;
+    if (hasStatEvidence) {
+        summary.statEvidence = {
+            complete: omittedOrIncompleteStatKeys.size === 0
+                && seasons.every((season) => season?.statEvidence?.complete !== false),
+            omittedOrIncompleteStatKeys: [...omittedOrIncompleteStatKeys].sort()
+        };
+    }
 
     Object.entries(summary.statTotals).forEach(([statKey, total]) => {
         summary.statAverages[statKey] = summary.gamesPlayed > 0

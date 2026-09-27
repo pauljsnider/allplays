@@ -1332,6 +1332,37 @@ describe('React app schedule service contract integration', () => {
         expect(updatePayload.createdBy).toBeUndefined();
     });
 
+    it('omits Diamond-pinned schedule fields while updating unrelated game details', async () => {
+        dbMocks.getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: []
+        });
+        dbMocks.updateGame.mockResolvedValue(undefined);
+        const coach = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach' };
+
+        await expect(updateScheduledGameForApp('team-1', 'game-1', {
+            opponent: 'Hawks',
+            startDate: new Date('2026-04-09T18:30:00Z'),
+            location: 'Diamond Field',
+            isHome: null,
+            statTrackerConfigId: null
+        }, coach, { preservePinnedDiamondFields: true }))
+            .resolves.toEqual({ updated: true, eventId: 'game-1' });
+
+        const updatePayload = dbMocks.updateGame.mock.calls[0][2];
+        expect(updatePayload).toEqual(expect.objectContaining({
+            type: 'game',
+            opponent: 'Hawks',
+            location: 'Diamond Field',
+            updatedBy: 'coach-1'
+        }));
+        expect(updatePayload).not.toHaveProperty('isHome');
+        expect(updatePayload).not.toHaveProperty('statTrackerConfigId');
+        expect(updatePayload).not.toHaveProperty('opponentTeamId');
+    });
+
     it('loads schedule tracker configs for staff game forms', async () => {
         dbMocks.getTeam.mockResolvedValue({
             id: 'team-1',

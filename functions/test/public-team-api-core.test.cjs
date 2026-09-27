@@ -15,6 +15,7 @@ const {
   sanitizePublicLocation,
   serializePublicCalendarEvent,
   serializePublicGame,
+  serializePublicDiamondOpponentStats,
   serializePublicOpponentStats,
   serializePublicTeamProfile
 } = require('../public-team-api-core.cjs');
@@ -474,6 +475,61 @@ test('opponent stats allow explicitly public custom definitions and reject priva
   });
 });
 
+test('exact Diamond opponent stats preserve only head-bound coverage-aware public values', () => {
+  const identity = {
+    diamondProjectionRevision: 12,
+    diamondStatConfigSnapshotHash: `sha256:${'b'.repeat(64)}`
+  };
+  const stats = serializePublicDiamondOpponentStats({
+    'opponent-1': {
+      name: 'Opponent One',
+      number: '9',
+      playerId: 'opponent-1',
+      h: 2,
+      innings_pitched: '1.2',
+      private_rating: 99,
+      privateNotes: 'must not survive',
+      diamondCoverage: { batting: 'complete', pitching: 'not_collected' },
+      diamondSourceRevision: 12
+    }
+  }, ['h', 'innings_pitched'], identity);
+
+  assert.deepEqual(stats, {
+    'opponent-1': {
+      name: 'Opponent One',
+      number: '9',
+      playerId: 'opponent-1',
+      h: 2,
+      innings_pitched: '1.2',
+      diamondCoverage: { batting: 'complete', pitching: 'not_collected' },
+      diamondSourceRevision: 12
+    }
+  });
+  assert.equal(JSON.stringify(stats).includes('private'), false);
+  assert.equal(serializePublicDiamondOpponentStats(undefined, ['h'], identity), null);
+  assert.equal(serializePublicDiamondOpponentStats(null, ['h'], identity), null);
+  assert.deepEqual(serializePublicDiamondOpponentStats({}, ['h'], identity), {});
+
+  for (const [label, malformed] of [
+    ['missing coverage', { diamondCoverage: undefined }],
+    ['partial coverage object', { diamondCoverage: { batting: 'invalid' } }],
+    ['stale revision', { diamondSourceRevision: 11 }],
+    ['string revision', { diamondSourceRevision: '12' }],
+    ['wrong player binding', { playerId: 'opponent-2' }]
+  ]) {
+    assert.equal(serializePublicDiamondOpponentStats({
+      'opponent-1': {
+        name: 'Opponent One',
+        playerId: 'opponent-1',
+        h: 2,
+        diamondCoverage: { batting: 'complete' },
+        diamondSourceRevision: 12,
+        ...malformed
+      }
+    }, ['h'], identity), null, label);
+  }
+});
+
 test('game results require completed status and both scores', () => {
   assert.equal(serializePublicGame({
     id: 'scheduled',
@@ -496,6 +552,173 @@ test('game results require completed status and both scores', () => {
     homeScore: 4,
     awayScore: 1
   }).result, 'loss');
+});
+
+test('public game projection exposes only the recognized Diamond engine discriminator', () => {
+  const baseGame = {
+    id: 'game-1',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z'
+  };
+
+  assert.equal(serializePublicGame({
+    ...baseGame,
+    trackingEngine: 'diamond-v2'
+  }).trackingEngine, 'diamond-v2');
+  assert.equal(Object.hasOwn(serializePublicGame({
+    ...baseGame,
+    trackingEngine: 'future-private-engine'
+  }), 'trackingEngine'), false);
+  assert.equal(Object.hasOwn(serializePublicGame(baseGame), 'trackingEngine'), false);
+});
+
+test('exact public game projections expose one complete sanitized Diamond identity or none', () => {
+  const identity = {
+    trackingEngine: 'diamond-v2',
+    statTrackerConfigId: 'baseball-public',
+    diamondProjectionStatus: 'current',
+    diamondProjectionComplete: true,
+    diamondScorebookInstanceId: '00000000-0000-4000-8000-000000000001',
+    diamondProjectionRevision: 12,
+    diamondProjectionCheckpointHash: `sha256:${'a'.repeat(64)}`,
+    diamondStatConfigSnapshotHash: `sha256:${'b'.repeat(64)}`,
+    diamondProjectionHash: `sha256:${'c'.repeat(64)}`
+  };
+  const identityKeys = Object.keys(identity).filter((key) => key !== 'trackingEngine');
+  const baseGame = {
+    id: 'game-1',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    ...identity,
+    opponentStats: {},
+    scorerUid: 'private-scorer',
+    privateNotes: 'private notes'
+  };
+
+  const genericProjection = serializePublicGame(baseGame);
+  assert.equal(genericProjection.trackingEngine, 'diamond-v2');
+  identityKeys.forEach((key) => assert.equal(Object.hasOwn(genericProjection, key), false, key));
+
+  const exactProjection = serializePublicGame(baseGame, { includeDiamondIdentity: true });
+  assert.deepEqual(exactProjection.opponentStats, {});
+  assert.deepEqual(
+    Object.fromEntries(identityKeys.map((key) => [key, exactProjection[key]])),
+    Object.fromEntries(identityKeys.map((key) => [key, identity[key]]))
+  );
+  assert.equal(JSON.stringify(exactProjection).includes('private-scorer'), false);
+  assert.equal(JSON.stringify(exactProjection).includes('private notes'), false);
+
+  for (const missingKey of identityKeys) {
+    const malformed = { ...baseGame };
+    delete malformed[missingKey];
+    const projection = serializePublicGame(malformed, { includeDiamondIdentity: true });
+    identityKeys.forEach((key) => {
+      assert.equal(Object.hasOwn(projection, key), false, `${missingKey} left ${key}`);
+    });
+  }
+
+  for (const opponentStats of [undefined, null]) {
+    const projection = serializePublicGame({ ...baseGame, opponentStats }, {
+      includeDiamondIdentity: true
+    });
+    identityKeys.forEach((key) => {
+      assert.equal(Object.hasOwn(projection, key), false, `missing opponent envelope left ${key}`);
+    });
+    assert.equal(Object.hasOwn(projection, 'diamondPublicTeamStats'), false);
+  }
+
+  for (const [label, malformedValue] of [
+    ['padded status', { diamondProjectionStatus: ' current' }],
+    ['uppercase status', { diamondProjectionStatus: 'CURRENT' }],
+    ['string revision', { diamondProjectionRevision: '12' }],
+    ['negative revision', { diamondProjectionRevision: -1 }],
+    ['uppercase instance', { diamondScorebookInstanceId: '00000000-0000-4000-8000-00000000000A' }],
+    ['uppercase hash', { diamondProjectionHash: `sha256:${'C'.repeat(64)}` }],
+    ['padded config id', { statTrackerConfigId: ' baseball-public' }],
+    ['slash config id', { statTrackerConfigId: 'baseball/public' }]
+  ]) {
+    const projection = serializePublicGame({ ...baseGame, ...malformedValue }, {
+      includeDiamondIdentity: true
+    });
+    identityKeys.forEach((key) => {
+      assert.equal(Object.hasOwn(projection, key), false, `${label} left ${key}`);
+    });
+  }
+});
+
+test('exact shared Diamond identity requires and sanitizes one canonical source binding', () => {
+  const sharedGamePath = 'organizations/org-1/sharedGames/shared-1';
+  const sharedGame = {
+    id: `shared_${encodeURIComponent(sharedGamePath)}`,
+    isSharedGame: true,
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    trackingEngine: 'diamond-v2',
+    statTrackerConfigId: 'baseball-public',
+    diamondProjectionStatus: 'current',
+    diamondProjectionComplete: true,
+    diamondScorebookInstanceId: '00000000-0000-4000-8000-000000000001',
+    diamondProjectionRevision: 12,
+    diamondProjectionCheckpointHash: `sha256:${'a'.repeat(64)}`,
+    diamondStatConfigSnapshotHash: `sha256:${'b'.repeat(64)}`,
+    diamondProjectionHash: `sha256:${'c'.repeat(64)}`,
+    diamondSourceTeamId: 'team-1',
+    diamondSourceGameId: 'source.game:1',
+    opponentStats: {}
+  };
+  const projection = serializePublicGame(sharedGame, {
+    includeDiamondIdentity: true,
+    sharedGamePath
+  });
+  assert.equal(projection.diamondSourceTeamId, 'team-1');
+  assert.equal(projection.diamondSourceGameId, 'source.game:1');
+
+  for (const invalidBinding of [
+    { diamondSourceTeamId: undefined },
+    { diamondSourceGameId: undefined },
+    { diamondSourceTeamId: ' team-1' },
+    { diamondSourceGameId: 'source/game' }
+  ]) {
+    const malformed = serializePublicGame({ ...sharedGame, ...invalidBinding }, {
+      includeDiamondIdentity: true,
+      sharedGamePath
+    });
+    assert.equal(Object.hasOwn(malformed, 'diamondScorebookInstanceId'), false);
+    assert.equal(Object.hasOwn(malformed, 'diamondSourceTeamId'), false);
+    assert.equal(Object.hasOwn(malformed, 'diamondSourceGameId'), false);
+  }
+
+  for (const [label, game, options] of [
+    ['unsupported shared root', sharedGame, {
+      includeDiamondIdentity: true,
+      sharedGamePath: 'leagues/league-1/sharedGames/shared-1'
+    }],
+    ['response id mismatch', { ...sharedGame, id: 'shared_wrong' }, {
+      includeDiamondIdentity: true,
+      sharedGamePath
+    }],
+    ['canonical forged shared marker', {
+      ...sharedGame,
+      id: 'canonical-game',
+      isSharedGame: true,
+      diamondSourceTeamId: 'attacker-team',
+      diamondSourceGameId: 'attacker-game'
+    }, { includeDiamondIdentity: true }]
+  ]) {
+    const malformed = serializePublicGame(game, options);
+    if (label === 'canonical forged shared marker') {
+      assert.equal(malformed.diamondScorebookInstanceId, sharedGame.diamondScorebookInstanceId);
+    } else {
+      assert.equal(Object.hasOwn(malformed, 'diamondScorebookInstanceId'), false, label);
+    }
+    assert.equal(Object.hasOwn(malformed, 'diamondSourceTeamId'), false, label);
+    assert.equal(Object.hasOwn(malformed, 'diamondSourceGameId'), false, label);
+    assert.equal(
+      malformed.isSharedGame,
+      options.sharedGamePath === sharedGamePath ? true : undefined,
+      label
+    );
+  }
 });
 
 test('public game projection exposes only a canonical replay for a consistent final lifecycle', () => {

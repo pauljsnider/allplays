@@ -60,10 +60,14 @@ describe('legacy game report YouTube replay management', () => {
         expect(html).toContain('if (!normalizeYouTubeReplayUrl(rawUrl))');
         expect(html).toContain('normalizedCandidates.some((candidate) => !candidate)');
         expect(html).toContain('return videoIds.size === 1 ? normalizedCandidates[0] : null;');
-        expect(html).toMatch(/buildYouTubeReplayVideo\(rawUrl, \{\s*title: replayTitle,\s*linkedBy: currentUser\.uid,\s*linkedAt: new Date\(\)\s*\}\)/);
+        expect(html).toContain('const actionContext = captureAuthBoundActionContext();');
+        expect(html).toContain("addAuthBoundEventListener(form, 'submit', async (event) => {");
+        expect(html).toMatch(/buildYouTubeReplayVideo\(rawUrl, \{\s*title: replayTitle,\s*linkedBy: actionContext\.uid,\s*linkedAt: new Date\(\)\s*\}\)/);
+        expect(html).toContain('if (!saved || !isAuthBoundActionCurrent(actionContext)) return;');
         expect(html).toContain("window.confirm('Replace the existing non-YouTube replay with this YouTube video?')");
         expect(html).toContain('const saved = await persistReplayVideo(replayVideo);');
         expect(html).toContain('const removed = await persistReplayVideo(null);');
+        expect(html).toContain('if (!removed || !isAuthBoundActionCurrent(actionContext)) return;');
         expect(html).toContain("saveButton.textContent = 'Replace replay';");
         expect(html).toContain("removeButton.classList.toggle('hidden', !canRemoveCurrentReplay());");
         expect(html).toContain('const linkedReplay = game.replayVideoFallbackDisabled === true');

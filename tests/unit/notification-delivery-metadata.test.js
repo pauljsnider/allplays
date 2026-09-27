@@ -135,7 +135,12 @@ describe('notification delivery metadata', () => {
             icon: '/img/logo_small.png',
             badge: '/img/logo_small.png'
         });
-        expect(firstSendPath).toContain('buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId, timeSensitive })');
+        expect(firstSendPath).toContain("const viewerRouteTeamId = hasViewerTeamId");
+        expect(firstSendPath).toContain("const viewerRouteGameId = hasViewerGameId");
+        expect(firstSendPath).toContain("const notificationRouteTeamId = hasNavigationTeamId");
+        expect(firstSendPath).toContain("const notificationRouteGameId = hasNavigationGameId");
+        expect(firstSendPath).toContain('buildNotificationDeliveryOptions({ category, teamId: notificationRouteTeamId, gameId: notificationRouteGameId, eventId: eventId || notificationRouteGameId, timeSensitive })');
+        expect(firstSendPath).toContain('appRoute = normalizedAppRouteOverride || buildNotificationAppRoute({ category, teamId: notificationRouteTeamId, gameId: notificationRouteGameId');
         expect(firstSendPath).toContain('const mergeWebpushOptions = typeof mergeNotificationWebpushOptions === \'function\'');
         expect(firstSendPath).toContain('if (!runtimeDeliveryOptions?.webpush) return baseWebpush;');
         expect(firstSendPath).toContain('...deliveryOptions');

@@ -18,11 +18,18 @@ function writeFile(filePath, contents = '') {
     fs.writeFileSync(filePath, contents);
 }
 
-function writeRuntimeConfig(artifactDir, appCheck) {
+function writeRuntimeConfig(artifactDir, appCheck, diamondScorebookUiEnabled = false) {
     writeFile(
         path.join(artifactDir, '.well-known', 'allplays-runtime-config.json'),
-        JSON.stringify({ appCheck })
+        JSON.stringify({ appCheck, diamondScorebookUiEnabled })
     );
+    const metaValue = diamondScorebookUiEnabled === true ? 'true' : 'false';
+    for (const page of ['edit-team.html', 'edit-schedule.html']) {
+        writeFile(
+            path.join(artifactDir, page),
+            `<!doctype html><html><head><meta name="allplays-diamond-scorebook-ui-enabled" content="${metaValue}"></head><body></body></html>`
+        );
+    }
 }
 
 function writeValidMobileAssociations(artifactDir) {
@@ -122,6 +129,55 @@ describe('Pages deployment artifact verification', () => {
         });
         expect(() => verifyPagesDeployArtifact(artifactDir))
             .toThrow(/must be paused without a site key or debug token/);
+    });
+
+    it('requires the exact staged Diamond UI value and defaults it dark', () => {
+        const artifactDir = makeArtifact();
+        writeFile(path.join(artifactDir, '.nojekyll'));
+        const pausedAppCheck = {
+            enabled: false,
+            isTokenAutoRefreshEnabled: true
+        };
+
+        writeRuntimeConfig(artifactDir, pausedAppCheck, true);
+        expect(() => verifyPagesDeployArtifact(artifactDir))
+            .toThrow(/Diamond scorebook UI flag does not match/);
+
+        expect(verifyPagesDeployArtifact(artifactDir, {
+            expectedDiamondScorebookUiEnabled: true
+        })).toBeUndefined();
+
+        writeRuntimeConfig(artifactDir, pausedAppCheck, false);
+        expect(() => verifyPagesDeployArtifact(artifactDir, {
+            expectedDiamondScorebookUiEnabled: 'TRUE'
+        })).not.toThrow();
+    });
+
+    it('requires both legacy launch pages to contain exactly one matching staged meta', () => {
+        const artifactDir = makeArtifact();
+        writeFile(path.join(artifactDir, '.nojekyll'));
+        const pausedAppCheck = {
+            enabled: false,
+            isTokenAutoRefreshEnabled: true
+        };
+
+        writeRuntimeConfig(artifactDir, pausedAppCheck, true);
+        writeFile(
+            path.join(artifactDir, 'edit-team.html'),
+            '<!doctype html><html><head></head><body></body></html>'
+        );
+        expect(() => verifyPagesDeployArtifact(artifactDir, {
+            expectedDiamondScorebookUiEnabled: true
+        })).toThrow(/edit-team\.html Diamond launch meta must appear exactly once/);
+
+        writeRuntimeConfig(artifactDir, pausedAppCheck, true);
+        writeFile(
+            path.join(artifactDir, 'edit-schedule.html'),
+            '<!doctype html><html><head><meta name="allplays-diamond-scorebook-ui-enabled" content="false"></head><body></body></html>'
+        );
+        expect(() => verifyPagesDeployArtifact(artifactDir, {
+            expectedDiamondScorebookUiEnabled: true
+        })).toThrow(/edit-schedule\.html Diamond launch meta must appear exactly once with content="true"/);
     });
 
     it('requires an enabled runtime config matching the expected public site key when rollout-ready', () => {

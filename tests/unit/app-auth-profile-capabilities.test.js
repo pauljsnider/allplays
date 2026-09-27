@@ -42,7 +42,7 @@ describe('React app auth/profile capability parity', () => {
         const appRoutes = readProjectFile('apps/app/src/App.tsx');
         const reloadRouting = readProjectFile('apps/app/src/lib/reloadRouting.ts');
 
-        expect(appRoutes).toContain('<Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />');
+        expect(appRoutes.replace(/\s/g, '')).toContain('<Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />'.replace(/\s/g, ''));
         expect(appRoutes).not.toContain("import { shouldReloadTeamsToHome } from './lib/reloadRouting';");
         expect(appRoutes).not.toContain('shouldDefaultReloadToHome');
         expect(appRoutes).not.toContain('isBrowserReload()');

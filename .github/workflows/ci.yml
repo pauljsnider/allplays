@@ -85,6 +85,9 @@ jobs:
             echo "No app performance measurement artifact to validate."
           fi
 
+      - name: Run Diamond scorebook acceptance gate
+        run: npm run test:diamond:ci
+
       - name: Run unit tests
         run: npm run test:unit:ci
 

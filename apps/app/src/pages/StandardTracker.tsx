@@ -29,6 +29,7 @@ import { readStandardTrackerSession, writeStandardTrackerSession } from '../lib/
 import { EventDetailPageSkeleton } from '../components/PageSkeletons';
 import { WORKFLOW_TIMING, startWorkflowTimer } from '../lib/workflowTiming';
 import type { AuthState } from '../lib/types';
+import { isLegacyTrackingEngine } from '../lib/trackingEngine';
 
 type TrackerStatus = {
   tone: 'success' | 'error' | 'info';
@@ -193,7 +194,14 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
           return;
         }
         const loadedEvent = detail.events.find((candidate) => candidate.teamId === decodedTeamId && candidate.id === decodedEventId) || detail.events[0] || null;
-        const canTrack = Boolean(loadedEvent && loadedEvent.type === 'game' && loadedEvent.isDbGame && !loadedEvent.isCancelled && loadedEvent.canUpdateScore);
+        // Only the established legacy aliases may use this mutable tracker.
+        // Diamond and unknown future engines fail closed before state loads.
+        const canTrack = Boolean(loadedEvent
+          && loadedEvent.type === 'game'
+          && loadedEvent.isDbGame
+          && !loadedEvent.isCancelled
+          && loadedEvent.canUpdateScore
+          && isLegacyTrackingEngine(loadedEvent.trackingEngine));
         if (!canTrack) {
           setEvent(loadedEvent);
           setConfig(null);

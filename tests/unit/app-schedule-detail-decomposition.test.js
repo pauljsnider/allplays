@@ -40,7 +40,7 @@ describe('ScheduleEventDetail decomposition', () => {
         expect(gameHubSource).toContain("from '../../components/schedule/PracticeAttendancePanel'");
         expect(gameHubSource).toContain("from '../../components/schedule/ReportMarkdownText'");
         expect(gameHubSource).toContain("from '../../components/schedule/ScoreStepper'");
-        expect(gameHubSource).toContain('<DeferredGameReportSections event={event} />');
+        expect(gameHubSource).toContain('<DeferredGameReportSections event={event} onRefreshEvent={onEventRefresh} />');
         expect(source).not.toMatch(/^function GameReportSections\b/m);
         expect(source).not.toMatch(/^function GameReportSectionContent\b/m);
         expect(source).not.toMatch(/^function PlayerSwitcher\b/m);

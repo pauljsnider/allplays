@@ -21,12 +21,22 @@ const TRACKERS = [
     }
 ];
 
-function buildDbStub({ scorekeeping, gameStatus = 'scheduled' }) {
+const LEGACY_ENGINE_TRACKERS = [
+    {
+        label: 'standard stat tracker',
+        path: '/track.html#teamId=team-1&gameId=game-1',
+        ready: '#game-title',
+        readyText: 'vs. Rockets'
+    },
+    TRACKERS[0]
+];
+
+function buildDbStub({ scorekeeping, gameStatus = 'scheduled', sport = 'Basketball', trackingEngine = null }) {
     return `
 const team = {
     id: 'team-1',
     name: 'Private Comets',
-    sport: 'Basketball',
+    sport: ${JSON.stringify(sport)},
     isPublic: false,
     isDelegatedTeamContext: true,
     delegatedAccess: { full: false, scorekeeping: ${scorekeeping}, streaming: false },
@@ -51,12 +61,13 @@ export async function getGame() {
         date: '2026-08-10T19:00:00.000Z',
         status: '${gameStatus}',
         liveStatus: '${gameStatus}',
+        trackingEngine: ${JSON.stringify(trackingEngine)},
         statTrackerConfigId: 'config-1',
         opponentStats: {}
     };
 }
 export async function getPlayers() { return [{ id: 'player-1', name: 'Avery', number: '4' }]; }
-export async function getConfigs() { return [{ id: 'config-1', name: 'Basketball', baseType: 'Basketball', columns: ['PTS'] }]; }
+export async function getConfigs() { return [{ id: 'config-1', name: ${JSON.stringify(`${sport} standard`)}, baseType: ${JSON.stringify(sport)}, columns: ['PTS'] }]; }
 export async function getMyRsvp() { return { userId: 'helper-1', response: 'going' }; }
 export async function logStatEvent() {}
 export async function updatePlayerStats() {}
@@ -187,4 +198,49 @@ for (const tracker of TRACKERS) {
             await expect(page).toHaveURL(/\/team\.html#teamId=team-1$/);
         });
     }
+}
+
+for (const [sport, trackingEngine] of [
+    ['Soccer', 'legacy'],
+    ['Basketball', 'standard'],
+    ['Baseball', 'legacy-v1'],
+    ['Baseball', 'classic']
+]) {
+    for (const tracker of LEGACY_ENGINE_TRACKERS) {
+        test(`${sport} ${trackingEngine} boots the ${tracker.label} as a recognized legacy workflow`, async ({ page, baseURL }) => {
+            await installScenario(page, { scorekeeping: true, sport, trackingEngine });
+            const pageErrors = [];
+            page.on('pageerror', (error) => pageErrors.push(error.message));
+
+            await page.goto(`${baseURL}${tracker.path}`, { waitUntil: 'domcontentloaded' });
+            await page.locator(tracker.ready).waitFor({ state: 'visible' });
+
+            expect(pageErrors).toEqual([]);
+            await expect(page.locator(tracker.ready)).toHaveText(tracker.readyText);
+        });
+    }
+}
+
+for (const tracker of LEGACY_ENGINE_TRACKERS) {
+    test(`unknown engines fail the ${tracker.label} closed before mutable state loads`, async ({ page, baseURL }) => {
+        await installScenario(page, { scorekeeping: true, sport: 'Soccer', trackingEngine: 'future-engine' });
+        await page.route(/\/edit-schedule\.html(?:\?.*)?$/, (route) => route.fulfill({
+            status: 200,
+            contentType: 'text/html',
+            body: '<!doctype html><title>Schedule</title>'
+        }));
+        const dialogs = [];
+        const pageErrors = [];
+        page.on('pageerror', (error) => pageErrors.push(error.message));
+        page.on('dialog', async (dialog) => {
+            dialogs.push(dialog.message());
+            await dialog.accept();
+        });
+
+        await page.goto(`${baseURL}${tracker.path}`, { waitUntil: 'domcontentloaded' });
+        await expect.poll(() => dialogs).toContain('This game uses a newer scoring engine that this tracker cannot edit.');
+
+        expect(pageErrors).toEqual([]);
+        await expect(page).toHaveURL(/\/edit-schedule\.html#teamId=team-1$/);
+    });
 }

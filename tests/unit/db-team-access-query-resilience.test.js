@@ -78,6 +78,13 @@ function createTeamDoc(id, data) {
   };
 }
 
+function createSharedGameDoc(id, data) {
+  return {
+    ...createTeamDoc(id, data),
+    ref: { path: `leagues/league-1/sharedGames/${id}` }
+  };
+}
+
 function getWhereConstraint(queryValue) {
   return queryValue.constraints.find((constraint) => constraint?.field);
 }
@@ -92,7 +99,7 @@ const {
   getGameDayTeamContext,
   getTeams,
   getUserTeamsWithAccess
-} = await import('../../js/db.js?v=4433195');
+} = await import('../../js/db.js?v=4433199');
 
 describe('team access query resilience', () => {
   beforeEach(() => {
@@ -358,6 +365,132 @@ describe('game access query resilience', () => {
     };
   });
 
+  it('preserves ordinary local game reads when one shared-game query is incomplete', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    firebaseMocks.getDocs.mockImplementation(async (queryValue) => {
+      const constraint = getWhereConstraint(queryValue);
+      if (constraint?.field === 'homeTeamId') throw new Error('Shared home query unavailable.');
+      if (constraint?.field === 'awayTeamId') return { docs: [], metadata: { fromCache: true } };
+      return {
+        docs: [createTeamDoc('local-game', { opponent: 'Falcons', date: new Date('2026-08-01T18:00:00Z') })],
+        metadata: { fromCache: true }
+      };
+    });
+
+    await expect(getGames('team-1')).resolves.toEqual([
+      expect.objectContaining({ id: 'local-game', opponent: 'Falcons' })
+    ]);
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('rejects a completeness-required read when the local game snapshot is cached and empty', async () => {
+    firebaseMocks.getDocs.mockResolvedValue({ docs: [], metadata: { fromCache: true } });
+
+    await expect(getGames('team-1', { requireCompleteSharedGames: true })).rejects.toMatchObject({
+      code: 'allplays/game-inventory-cache-only',
+      message: 'Game inventory was loaded only from the local cache.'
+    });
+    expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects cached nonempty local games before a later server read expands the inventory', async () => {
+    let localReadCount = 0;
+    firebaseMocks.getDocs.mockImplementation(async (queryValue) => {
+      const constraint = getWhereConstraint(queryValue);
+      if (constraint?.field === 'homeTeamId' || constraint?.field === 'awayTeamId') {
+        return { docs: [], metadata: { fromCache: false } };
+      }
+      localReadCount += 1;
+      if (localReadCount === 1) {
+        return {
+          docs: [createTeamDoc('cached-game', { opponent: 'Falcons', date: new Date('2026-08-01T18:00:00Z') })],
+          metadata: { fromCache: true }
+        };
+      }
+      return {
+        docs: [
+          createTeamDoc('cached-game', { opponent: 'Falcons', date: new Date('2026-08-01T18:00:00Z') }),
+          createTeamDoc('server-game', { opponent: 'Owls', date: new Date('2026-08-02T18:00:00Z') })
+        ],
+        metadata: { fromCache: false }
+      };
+    });
+
+    await expect(getGames('team-1', { requireCompleteSharedGames: true })).rejects.toMatchObject({
+      code: 'allplays/game-inventory-cache-only'
+    });
+    await expect(getGames('team-1', { requireCompleteSharedGames: true })).resolves.toEqual([
+      expect.objectContaining({ id: 'cached-game' }),
+      expect.objectContaining({ id: 'server-game' })
+    ]);
+  });
+
+  it('rejects a completeness-required read when an empty shared-game snapshot is cached', async () => {
+    firebaseMocks.getDocs.mockImplementation(async (queryValue) => {
+      const constraint = getWhereConstraint(queryValue);
+      if (constraint?.field === 'homeTeamId') return { docs: [], metadata: { fromCache: true } };
+      return { docs: [], metadata: { fromCache: false } };
+    });
+
+    await expect(getGames('team-1', { requireCompleteSharedGames: true })).rejects.toMatchObject({
+      code: 'allplays/game-inventory-cache-only'
+    });
+  });
+
+  it('rejects cached nonempty shared games before a later server read expands the inventory', async () => {
+    let homeSharedReadCount = 0;
+    firebaseMocks.getDocs.mockImplementation(async (queryValue) => {
+      const constraint = getWhereConstraint(queryValue);
+      if (constraint?.field === 'homeTeamId') {
+        homeSharedReadCount += 1;
+        const sharedGames = [
+          createSharedGameDoc('shared-1', {
+            homeTeamId: 'team-1',
+            awayTeamId: 'team-2',
+            awayTeamName: 'Falcons',
+            date: new Date('2026-08-02T18:00:00Z')
+          })
+        ];
+        if (homeSharedReadCount > 1) {
+          sharedGames.push(createSharedGameDoc('shared-2', {
+            homeTeamId: 'team-1',
+            awayTeamId: 'team-3',
+            awayTeamName: 'Owls',
+            date: new Date('2026-08-03T18:00:00Z')
+          }));
+        }
+        return {
+          docs: sharedGames,
+          metadata: { fromCache: homeSharedReadCount === 1 }
+        };
+      }
+      if (constraint?.field === 'awayTeamId') return { docs: [], metadata: { fromCache: false } };
+      return { docs: [], metadata: { fromCache: false } };
+    });
+
+    await expect(getGames('team-1', { requireCompleteSharedGames: true })).rejects.toMatchObject({
+      code: 'allplays/game-inventory-cache-only'
+    });
+    await expect(getGames('team-1', { requireCompleteSharedGames: true })).resolves.toEqual([
+      expect.objectContaining({ sharedGameId: 'shared-1', opponent: 'Falcons' }),
+      expect.objectContaining({ sharedGameId: 'shared-2', opponent: 'Owls' })
+    ]);
+  });
+
+  it('fails a completeness-required game read when any shared-game query is incomplete', async () => {
+    firebaseMocks.getDocs.mockImplementation(async (queryValue) => {
+      const constraint = getWhereConstraint(queryValue);
+      if (constraint?.field === 'homeTeamId') throw new Error('Shared home query unavailable.');
+      if (constraint?.field === 'awayTeamId') return { docs: [] };
+      return { docs: [createTeamDoc('local-game', { opponent: 'Falcons', date: new Date('2026-08-01T18:00:00Z') })] };
+    });
+
+    await expect(getGames('team-1', { requireCompleteSharedGames: true })).rejects.toThrow(
+      'Shared home query unavailable.'
+    );
+  });
+
   it('falls back to a sanitized public schedule projection when canonical reads are denied', async () => {
     firebaseMocks.getDocs.mockRejectedValue(Object.assign(new Error('denied'), {
       code: 'firestore/permission-denied'
@@ -510,6 +643,10 @@ describe('game access query resilience', () => {
   });
 
   it('falls back to a sanitized public game detail when canonical get is denied', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const checkpointHash = `sha256:${'a'.repeat(64)}`;
+    const configHash = `sha256:${'b'.repeat(64)}`;
+    const projectionHash = `sha256:${'c'.repeat(64)}`;
     firebaseMocks.getDoc.mockRejectedValue(Object.assign(new Error('denied'), {
       code: 'permission-denied'
     }));
@@ -524,26 +661,385 @@ describe('game access query resilience', () => {
           teamScore: 4,
           opponentScore: 5,
           status: 'completed',
+          trackingEngine: 'diamond-v2',
+          statTrackerConfigId: 'baseball-public',
+          diamondProjectionStatus: 'current',
+          diamondProjectionComplete: true,
+          diamondScorebookInstanceId: instanceId,
+          diamondProjectionRevision: 12,
+          diamondProjectionCheckpointHash: checkpointHash,
+          diamondStatConfigSnapshotHash: configHash,
+          diamondProjectionHash: projectionHash,
+          opponentStats: {},
+          diamondPublicTeamStats: {
+            trackingEngine: 'diamond-v2',
+            projectionSchemaVersion: 1,
+            sourceRevision: 12,
+            checkpointHash,
+            coverage: { batting: 'complete' },
+            publicStatIds: ['r'],
+            side: 'home',
+            complete: true,
+            stats: { r: 4 },
+            observedStats: {},
+            statCoverage: { r: 'complete' },
+            teamId: 'team-1',
+            diamondGameId: 'game-2',
+            instanceId,
+            diamondScorebookInstanceId: instanceId,
+            projectionGeneration: instanceId,
+            statConfigSnapshotHash: configHash,
+            projectionHash
+          },
           liveResetAt: '2026-08-02T18:15:00.000Z',
           liveResetEventId: 'reset-public-2',
-          isPublicProjection: false
+          isPublicProjection: false,
+          privateNotes: 'must not survive the mapper'
         }
       }
     });
 
-    await expect(getGame('team-1', 'game-2')).resolves.toEqual(expect.objectContaining({
+    const projected = await getGame('team-1', 'game-2');
+    expect(projected).toEqual(expect.objectContaining({
       id: 'game-2',
       teamId: 'team-1',
       homeScore: 5,
       awayScore: 4,
+      trackingEngine: 'diamond-v2',
+      statTrackerConfigId: 'baseball-public',
+      diamondProjectionStatus: 'current',
+      diamondProjectionComplete: true,
+      diamondScorebookInstanceId: instanceId,
+      diamondProjectionRevision: 12,
+      diamondProjectionCheckpointHash: checkpointHash,
+      diamondStatConfigSnapshotHash: configHash,
+      diamondProjectionHash: projectionHash,
+      diamondPublicTeamStats: expect.objectContaining({
+        teamId: 'team-1',
+        diamondGameId: 'game-2',
+        stats: { r: 4 }
+      }),
       liveResetAt: new Date('2026-08-02T18:15:00.000Z'),
       liveResetEventId: 'reset-public-2',
       isPublicProjection: true
     }));
+    expect(projected).not.toHaveProperty('privateNotes');
     expect(firebaseMocks.getPublicGameProjection).toHaveBeenCalledWith({
       teamId: 'team-1',
       gameId: 'game-2'
     });
+  });
+
+  it('preserves only a complete public Diamond head and canonical shared-source binding', async () => {
+    const gameId = `shared_${encodeURIComponent('organizations/org-1/sharedGames/shared-1')}`;
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const completeItem = {
+      id: gameId,
+      startsAt: '2026-08-02T18:00:00.000Z',
+      opponent: 'Rockets',
+      status: 'completed',
+      trackingEngine: 'diamond-v2',
+      isSharedGame: true,
+      statTrackerConfigId: 'baseball-public',
+      diamondProjectionStatus: 'current',
+      diamondProjectionComplete: true,
+      diamondScorebookInstanceId: instanceId,
+      diamondProjectionRevision: 12,
+      diamondProjectionCheckpointHash: `sha256:${'a'.repeat(64)}`,
+      diamondStatConfigSnapshotHash: `sha256:${'b'.repeat(64)}`,
+      diamondProjectionHash: `sha256:${'c'.repeat(64)}`,
+      diamondSourceTeamId: 'team-1',
+      diamondSourceGameId: 'source.game:1',
+      opponentStats: {
+        'opponent-1': {
+          name: 'Opponent One',
+          number: '9',
+          playerId: 'opponent-1',
+          h: 2,
+          privateNotes: 'must not survive',
+          diamondCoverage: { batting: 'complete', pitching: 'not_collected' },
+          diamondSourceRevision: 12
+        }
+      },
+      diamondPublicTeamStats: {
+        trackingEngine: 'diamond-v2',
+        projectionSchemaVersion: 1,
+        sourceRevision: 12,
+        checkpointHash: `sha256:${'a'.repeat(64)}`,
+        coverage: { batting: 'complete' },
+        publicStatIds: ['r'],
+        side: 'home',
+        complete: true,
+        stats: { r: 4 },
+        observedStats: {},
+        statCoverage: { r: 'complete' },
+        teamId: 'team-1',
+        diamondGameId: 'source.game:1',
+        instanceId,
+        diamondScorebookInstanceId: instanceId,
+        projectionGeneration: instanceId,
+        statConfigSnapshotHash: `sha256:${'b'.repeat(64)}`,
+        projectionHash: `sha256:${'c'.repeat(64)}`
+      }
+    };
+    firebaseMocks.getDoc.mockRejectedValue(Object.assign(new Error('denied'), {
+      code: 'permission-denied'
+    }));
+    firebaseMocks.getPublicGameProjection.mockResolvedValue({ data: { item: completeItem } });
+
+    await expect(getGame('team-1', gameId)).resolves.toEqual(expect.objectContaining({
+      id: gameId,
+      isPublicProjection: true,
+      isSharedGame: true,
+      diamondScorebookInstanceId: instanceId,
+      diamondProjectionRevision: 12,
+      diamondSourceTeamId: 'team-1',
+      diamondSourceGameId: 'source.game:1',
+      opponentStats: {
+        'opponent-1': {
+          name: 'Opponent One',
+          number: '9',
+          playerId: 'opponent-1',
+          h: 2,
+          diamondCoverage: { batting: 'complete', pitching: 'not_collected' },
+          diamondSourceRevision: 12
+        }
+      },
+      diamondPublicTeamStats: expect.objectContaining({
+        teamId: 'team-1',
+        diamondGameId: 'source.game:1',
+        stats: { r: 4 }
+      })
+    }));
+
+    const malformedItem = { ...completeItem };
+    delete malformedItem.diamondProjectionHash;
+    firebaseMocks.getPublicGameProjection.mockResolvedValue({ data: { item: malformedItem } });
+    const malformed = await getGame('team-1', gameId);
+    expect(malformed.trackingEngine).toBe('diamond-v2');
+    [
+      'statTrackerConfigId',
+      'diamondProjectionStatus',
+      'diamondProjectionComplete',
+      'diamondScorebookInstanceId',
+      'diamondProjectionRevision',
+      'diamondProjectionCheckpointHash',
+      'diamondStatConfigSnapshotHash',
+      'diamondProjectionHash',
+      'diamondSourceTeamId',
+      'diamondSourceGameId',
+      'diamondPublicTeamStats'
+    ].forEach((key) => expect(malformed).not.toHaveProperty(key));
+
+    const malformedEnvelopes = [
+      ['wrong nested team', {
+        diamondPublicTeamStats: { ...completeItem.diamondPublicTeamStats, teamId: 'team-2' }
+      }],
+      ['wrong nested game', {
+        diamondPublicTeamStats: { ...completeItem.diamondPublicTeamStats, diamondGameId: 'other-game' }
+      }],
+      ['wrong nested head', {
+        diamondPublicTeamStats: {
+          ...completeItem.diamondPublicTeamStats,
+          projectionHash: `sha256:${'d'.repeat(64)}`
+        }
+      }],
+      ['nested private field', {
+        diamondPublicTeamStats: {
+          ...completeItem.diamondPublicTeamStats,
+          privateNotes: 'must not survive'
+        }
+      }],
+      ['stale opponent evidence', {
+        opponentStats: {
+          ...completeItem.opponentStats,
+          'opponent-1': {
+            ...completeItem.opponentStats['opponent-1'],
+            diamondSourceRevision: 11
+          }
+        }
+      }],
+      ['missing opponent evidence', { opponentStats: undefined }],
+      ['null opponent evidence', { opponentStats: null }],
+      ['string revision', { diamondProjectionRevision: '12' }],
+      ['uppercase instance', {
+        diamondScorebookInstanceId: '00000000-0000-4000-8000-00000000000A'
+      }],
+      ['padded status', { diamondProjectionStatus: ' current' }]
+    ];
+    for (const [label, mutation] of malformedEnvelopes) {
+      firebaseMocks.getPublicGameProjection.mockResolvedValue({
+        data: { item: { ...completeItem, ...mutation } }
+      });
+      const malformedEnvelope = await getGame('team-1', gameId);
+      [
+        'statTrackerConfigId',
+        'diamondProjectionStatus',
+        'diamondProjectionComplete',
+        'diamondScorebookInstanceId',
+        'diamondProjectionRevision',
+        'diamondProjectionCheckpointHash',
+        'diamondStatConfigSnapshotHash',
+        'diamondProjectionHash',
+        'diamondSourceTeamId',
+        'diamondSourceGameId',
+        'diamondPublicTeamStats'
+      ].forEach((key) => expect(malformedEnvelope, label).not.toHaveProperty(key));
+      expect(malformedEnvelope.opponentStats, label).toEqual({});
+    }
+
+    const longSharedPath = `organizations/${'o'.repeat(128)}/sharedGames/${'g'.repeat(128)}`;
+    const longGameId = `shared_${encodeURIComponent(longSharedPath)}`;
+    const longSourceGameId = 's'.repeat(128);
+    firebaseMocks.getPublicGameProjection.mockResolvedValue({
+      data: {
+        item: {
+          ...completeItem,
+          id: longGameId,
+          diamondSourceGameId: longSourceGameId,
+          diamondPublicTeamStats: {
+            ...completeItem.diamondPublicTeamStats,
+            diamondGameId: longSourceGameId
+          }
+        }
+      }
+    });
+    await expect(getGame('team-1', longGameId)).resolves.toEqual(expect.objectContaining({
+      id: longGameId,
+      diamondSourceGameId: longSourceGameId,
+      diamondProjectionComplete: true
+    }));
+
+    firebaseMocks.getPublicGameProjection.mockResolvedValue({
+      data: { item: { ...completeItem, id: 'shared_wrong' } }
+    });
+    await expect(getGame('team-1', gameId)).rejects.toMatchObject({
+      code: 'public-game-projection-mismatch'
+    });
+  });
+
+  it('hydrates direct public source-owned shared Diamond report reads without changing default private reads', async () => {
+    const sharedPath = 'organizations/org-1/sharedGames/shared-1';
+    const gameId = `shared_${encodeURIComponent(sharedPath)}`;
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const checkpointHash = `sha256:${'a'.repeat(64)}`;
+    const configHash = `sha256:${'b'.repeat(64)}`;
+    const projectionHash = `sha256:${'c'.repeat(64)}`;
+    const directData = {
+      type: 'game',
+      date: '2026-08-02T18:00:00.000Z',
+      visibility: 'public',
+      homeTeamId: 'team-1',
+      awayTeamId: 'team-2',
+      trackingEngine: 'diamond-v2',
+      diamondSourceTeamId: 'team-1',
+      diamondSourceGameId: 'source.game:1'
+    };
+    const projectedItem = {
+      id: gameId,
+      startsAt: '2026-08-02T18:00:00.000Z',
+      opponent: 'Rockets',
+      status: 'completed',
+      trackingEngine: 'diamond-v2',
+      isSharedGame: true,
+      statTrackerConfigId: 'baseball-public',
+      diamondProjectionStatus: 'current',
+      diamondProjectionComplete: true,
+      diamondScorebookInstanceId: instanceId,
+      diamondProjectionRevision: 12,
+      diamondProjectionCheckpointHash: checkpointHash,
+      diamondStatConfigSnapshotHash: configHash,
+      diamondProjectionHash: projectionHash,
+      diamondSourceTeamId: 'team-1',
+      diamondSourceGameId: 'source.game:1',
+      opponentStats: {},
+      diamondPublicTeamStats: {
+        trackingEngine: 'diamond-v2',
+        projectionSchemaVersion: 1,
+        sourceRevision: 12,
+        checkpointHash,
+        coverage: { batting: 'complete' },
+        publicStatIds: ['r'],
+        side: 'home',
+        complete: true,
+        stats: { r: 4 },
+        observedStats: {},
+        statCoverage: { r: 'complete' },
+        teamId: 'team-1',
+        diamondGameId: 'source.game:1',
+        instanceId,
+        diamondScorebookInstanceId: instanceId,
+        projectionGeneration: instanceId,
+        statConfigSnapshotHash: configHash,
+        projectionHash
+      }
+    };
+
+    for (const accessRole of ['manager', 'parent']) {
+      firebaseMocks.auth.currentUser = { uid: `${accessRole}-1`, email: `${accessRole}@example.com` };
+      firebaseMocks.getDoc.mockResolvedValue({
+        id: 'shared-1',
+        exists: () => true,
+        data: () => ({ ...directData, accessRole })
+      });
+      firebaseMocks.getPublicGameProjection.mockResolvedValue({ data: { item: projectedItem } });
+
+      const projected = await getGame('team-1', gameId, { exactPublicDiamondReport: true });
+      expect(projected, accessRole).toEqual(expect.objectContaining({
+        id: gameId,
+        isPublicProjection: true,
+        diamondProjectionComplete: true,
+        diamondSourceTeamId: 'team-1',
+        diamondSourceGameId: 'source.game:1'
+      }));
+    }
+    expect(firebaseMocks.getPublicGameProjection).toHaveBeenCalledTimes(2);
+
+    firebaseMocks.getPublicGameProjection.mockClear();
+    firebaseMocks.getDoc.mockResolvedValue({
+      id: 'shared-1',
+      exists: () => true,
+      data: () => {
+        const unmarkedPublicTeamGame = { ...directData };
+        delete unmarkedPublicTeamGame.visibility;
+        return unmarkedPublicTeamGame;
+      }
+    });
+    firebaseMocks.getPublicGameProjection.mockResolvedValue({ data: { item: projectedItem } });
+    await expect(getGame('team-1', gameId, { exactPublicDiamondReport: true })).resolves.toEqual(
+      expect.objectContaining({ isPublicProjection: true, diamondProjectionComplete: true })
+    );
+    expect(firebaseMocks.getPublicGameProjection).toHaveBeenCalledTimes(1);
+
+    firebaseMocks.getPublicGameProjection.mockResolvedValue({ data: { item: null } });
+    await expect(getGame('team-1', gameId, { exactPublicDiamondReport: true })).resolves.toEqual(
+      expect.objectContaining({ isPublicProjection: false, trackingEngine: 'diamond-v2' })
+    );
+
+    firebaseMocks.getPublicGameProjection.mockClear();
+    firebaseMocks.getDoc.mockResolvedValue({
+      id: 'shared-1',
+      exists: () => true,
+      data: () => ({ ...directData, visibility: 'private' })
+    });
+    const privateGame = await getGame('team-1', gameId, { exactPublicDiamondReport: true });
+    expect(privateGame).toEqual(expect.objectContaining({
+      isPublicProjection: false,
+      visibility: 'private'
+    }));
+    expect(firebaseMocks.getPublicGameProjection).not.toHaveBeenCalled();
+
+    firebaseMocks.getDoc.mockResolvedValue({
+      id: 'shared-1',
+      exists: () => true,
+      data: () => ({ ...directData, diamondSourceTeamId: 'team-2' })
+    });
+    const foreignGame = await getGame('team-1', gameId, { exactPublicDiamondReport: true });
+    expect(foreignGame).toEqual(expect.objectContaining({
+      isPublicProjection: false,
+      diamondSourceTeamId: 'team-2'
+    }));
+    expect(firebaseMocks.getPublicGameProjection).not.toHaveBeenCalled();
   });
 
   it('does not trust a stored public-projection marker on a canonical game read', async () => {

@@ -1,4 +1,4 @@
-import { checkAuth } from '../auth.js?v=4433199';
+import { checkAuth } from '../auth.js?v=4433203';
 import {
     getTeam,
     getUserProfile,
@@ -22,9 +22,10 @@ import {
     archiveCertificate,
     canAccessCertificates,
     canViewSavedCertificate
-} from '../db.js?v=4433195';
-import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443371';
-import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=443347';
+} from '../db.js?v=4433199';
+import { loadCompleteCertificateNarrativeStats } from '../diamond-legacy-game-context.js?v=1';
+import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443375';
+import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=443350';
 import { TEMPLATES } from './templates.js?v=2';
 import { CERTIFICATE_FONT_OPTIONS, renderCertificate, createPreviewDraft, resolveColors, getContrastWarning } from './renderer.js?v=2';
 import { buildDefaultSigners, normalizeSigners } from './signers.js?v=2';
@@ -35,7 +36,7 @@ import {
     generateDescriptionsForDrafts,
     selectRecentCompletedGames,
     truncateCertificateDescription
-} from './aiDescriptions.js?v=4';
+} from './aiDescriptions.js?v=5';
 import {
     downloadCertificatePng,
     downloadCertificateZip,
@@ -1166,17 +1167,26 @@ async function generateTeamCertificates() {
         showAlert(`Generating descriptions for ${state.drafts.length} certificates. Completed rows will fill in as they finish.`, 'info');
 
         const descriptionRun = (async () => {
-            const recentGames = selectRecentCompletedGames(state.games, state.shared.statsWindow);
-            const totalsByPlayer = state.demoMode
-                ? getDemoData().totalsByPlayer
-                : await getAggregatedStatsForGames(state.teamId, recentGames.map((game) => game.id));
+            const narrativeGames = state.demoMode
+                ? state.games
+                : await getGames(state.teamId, { requireCompleteSharedGames: true });
+            const recentGames = selectRecentCompletedGames(narrativeGames, state.shared.statsWindow);
+            const narrativeStats = state.demoMode
+                ? { totalsByPlayer: getDemoData().totalsByPlayer, statsEvidenceByPlayer: {}, promptEvidence: null }
+                : await loadCompleteCertificateNarrativeStats({
+                    teamId: state.teamId,
+                    games: recentGames,
+                    loadClassicAggregatedStats: getAggregatedStatsForGames
+                });
             const demoDescription = "proved to be a composed and reliable mid-fielder who reads the game exceptionally well. Her smart positioning, hustle in midfield, and support in transition made her a dependable two-way player and a key part of the team's defensive success!";
             return generateDescriptionsForDrafts({
                 drafts: state.drafts,
                 team: state.team,
                 shared: state.shared,
-                games: state.games,
-                totalsByPlayer,
+                games: narrativeGames,
+                totalsByPlayer: narrativeStats.totalsByPlayer,
+                statsEvidenceByPlayer: narrativeStats.statsEvidenceByPlayer,
+                statsPromptEvidence: narrativeStats.promptEvidence,
                 generator: state.demoMode
                     ? async ({ player }) => player.name === 'Vivian Karpuk' ? demoDescription : `${player.name} showed commitment, energy, and a team-first approach throughout the season while making important contributions in key moments.`
                     : generateCertificateDescription,
@@ -1960,17 +1970,26 @@ async function runDraftRegeneration(draftIds) {
     renderReviewGrid();
 
     try {
-        const recentGames = selectRecentCompletedGames(state.games, state.shared.statsWindow);
-        const totalsByPlayer = state.demoMode
-            ? getDemoData().totalsByPlayer
-            : await getAggregatedStatsForGames(state.teamId, recentGames.map((game) => game.id));
+        const narrativeGames = state.demoMode
+            ? state.games
+            : await getGames(state.teamId, { requireCompleteSharedGames: true });
+        const recentGames = selectRecentCompletedGames(narrativeGames, state.shared.statsWindow);
+        const narrativeStats = state.demoMode
+            ? { totalsByPlayer: getDemoData().totalsByPlayer, statsEvidenceByPlayer: {}, promptEvidence: null }
+            : await loadCompleteCertificateNarrativeStats({
+                teamId: state.teamId,
+                games: recentGames,
+                loadClassicAggregatedStats: getAggregatedStatsForGames
+            });
         const progressLabel = drafts.length === 1 ? 'Regenerating description' : 'Regenerating descriptions';
         const results = await generateDescriptionsForDrafts({
             drafts,
             team: state.team,
             shared: state.shared,
-            games: state.games,
-            totalsByPlayer,
+            games: narrativeGames,
+            totalsByPlayer: narrativeStats.totalsByPlayer,
+            statsEvidenceByPlayer: narrativeStats.statsEvidenceByPlayer,
+            statsPromptEvidence: narrativeStats.promptEvidence,
             generator: state.demoMode
                 ? async ({ player }) => `${player.name} continued to stand out with reliable effort, smart decisions, and a team-first attitude that made a clear impact throughout the season.`
                 : generateCertificateDescription,

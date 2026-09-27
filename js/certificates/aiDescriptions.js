@@ -98,7 +98,7 @@ function summarizeGames(games = []) {
     }).join('\n').slice(0, PROMPT_CONTEXT_LIMIT).trim();
 }
 
-export function buildCertificateDescriptionPrompt({ team = {}, player = {}, seasonLabel = '', tone = 'celebratory and specific', games = [], stats = {} } = {}) {
+export function buildCertificateDescriptionPrompt({ team = {}, player = {}, seasonLabel = '', tone = 'celebratory and specific', games = [], stats = {}, statsEvidence = null } = {}) {
     const safePlayer = {
         name: sanitizePromptValue(player.name || player.playerName || 'Player', 120) || 'Player',
         number: sanitizePromptValue(player.number || player.playerNumber || '', 24),
@@ -108,6 +108,20 @@ export function buildCertificateDescriptionPrompt({ team = {}, player = {}, seas
     const sport = sanitizePromptValue(team.sport || 'team sport', 80) || 'team sport';
     const safeSeason = sanitizePromptValue(seasonLabel || 'season', 120) || 'season';
     const safeTone = sanitizePromptValue(tone || 'celebratory and specific', 160) || 'celebratory and specific';
+    const omittedStatKeys = Array.isArray(statsEvidence?.player?.omittedOrIncompleteStatKeys)
+        ? statsEvidence.player.omittedOrIncompleteStatKeys
+            .map((key) => sanitizePromptValue(key, 64))
+            .filter(Boolean)
+            .slice(0, 64)
+        : [];
+    const statEvidenceLines = statsEvidence?.context?.visibility === 'public'
+        ? [
+            'Stat evidence boundary: Diamond values below are complete public projection values only.',
+            omittedStatKeys.length
+                ? `Unknown Diamond counters excluded from totals: ${omittedStatKeys.join(', ')}. Never infer these as zero or absent.`
+                : 'No incomplete public Diamond counters were included in these totals.'
+        ]
+        : [];
 
     return [
         'Write one youth-sports award certificate paragraph.',
@@ -120,6 +134,7 @@ export function buildCertificateDescriptionPrompt({ team = {}, player = {}, seas
         `Season: ${safeSeason}.`,
         `Player: ${safePlayer.name}${safePlayer.number ? `, jersey #${safePlayer.number}` : ''}.`,
         ...(safePlayer.customDescriptionHint ? [`Custom highlight: ${safePlayer.customDescriptionHint}.`] : []),
+        ...statEvidenceLines,
         `Recent stat totals: ${summarizeStats(stats)}.`,
         `Recent game context:\n${summarizeGames(games) || 'No completed game summaries available.'}`,
         'Use stat totals only as private context to infer strengths and playing style. Do not mention exact stat numbers, totals, scores, dates, opponent names, or opposing team names.',
@@ -154,7 +169,7 @@ export async function generateCertificateDescription(context) {
     return truncateCertificateDescription(text);
 }
 
-export async function generateDescriptionsForDrafts({ drafts = [], team = {}, shared = {}, games = [], totalsByPlayer = {}, generator = generateCertificateDescription, concurrency = 2, onResult = null } = {}) {
+export async function generateDescriptionsForDrafts({ drafts = [], team = {}, shared = {}, games = [], totalsByPlayer = {}, statsEvidenceByPlayer = {}, statsPromptEvidence = null, generator = generateCertificateDescription, concurrency = 2, onResult = null } = {}) {
     const recentGames = selectRecentCompletedGames(games, shared.statsWindow || 10);
     const results = new Map();
     let index = 0;
@@ -186,6 +201,12 @@ export async function generateDescriptionsForDrafts({ drafts = [], team = {}, sh
                 customDescriptionHint: draft.customDescriptionHint
             };
             const stats = totalsByPlayer[draft.playerId] || {};
+            const statsEvidence = statsPromptEvidence
+                ? {
+                    context: statsPromptEvidence,
+                    player: statsEvidenceByPlayer[draft.playerId] || null
+                }
+                : null;
             const hasStats = Object.keys(stats).some((key) => Number(stats[key] || 0) !== 0);
             if (!hasStats) {
                 await recordResult(draft, {
@@ -204,7 +225,8 @@ export async function generateDescriptionsForDrafts({ drafts = [], team = {}, sh
                     seasonLabel: shared.seasonLabel,
                     tone: shared.descriptionTone,
                     games: recentGames,
-                    stats
+                    stats,
+                    ...(statsEvidence ? { statsEvidence } : {})
                 });
                 await recordResult(draft, {
                     status: 'ready',

@@ -16,12 +16,17 @@ const nativeCallableMock = vi.hoisted(() => ({
   callNativeFirebaseFunction: vi.fn()
 }));
 
+const diamondScorebookMock = vi.hoisted(() => ({
+  cancelDiamondGame: vi.fn()
+}));
+
 vi.mock('@capacitor/core', () => ({
   Capacitor: capacitorCoreMock,
   CapacitorHttp: { post: capacitorCoreMock.httpPost }
 }));
 
 vi.mock('./nativeCallable', () => nativeCallableMock);
+vi.mock('./diamondScorebookService', () => diamondScorebookMock);
 
 const mocks = vi.hoisted(() => {
   const transactionSet = vi.fn();
@@ -54,6 +59,7 @@ vi.mock('./adapters/legacyScheduleDb', () => ({
   claimOpenOfficiatingSlot: vi.fn(),
   getGame: vi.fn(),
   getGames: vi.fn(),
+  getLiveEvents: vi.fn(),
   getPracticePacketCompletions: vi.fn(),
   getPracticeSession: vi.fn(),
   getPracticeSessionByEvent: vi.fn(),
@@ -242,14 +248,14 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getDelegatedTeamContext, getGame, getGames, getMyRsvps, getOfficialLinkedTeamIds, getPlayers, getPracticeSession, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
+import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getDelegatedTeamContext, getGame, getGames, getLiveEvents, getMyRsvps, getOfficialLinkedTeamIds, getPlayers, getPracticeSession, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, getCalendarEventTrackingId, isTeamActive, isTrackedCalendarEvent, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventDocument, mapScheduleEventRecord } from './firestore/mappers';
 import { loadManagedTeamsFromNativeCallable, loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, linkGameYouTubeReplayForApp, loadHomeScoringPlayers, loadOfficialAssignments, loadOfficialAssignmentsAccess, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, removeGameReplayForApp, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, linkGameYouTubeReplayForApp, loadGameDayLiveEventsForApp, loadHomeScoringPlayers, loadOfficialAssignments, loadOfficialAssignmentsAccess, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, removeGameReplayForApp, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -303,6 +309,35 @@ it('keeps schedule workflows behind typed legacy adapters', () => {
 });
 
 describe('native scoring roster fallback', () => {
+  it('caps native fallback active-game live events at 20', async () => {
+    const previousWindow = (globalThis as any).window;
+    const previousFetch = globalThis.fetch;
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(getLiveEvents).mockRejectedValueOnce(new Error('SDK live events unavailable'));
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    (globalThis as any).fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        documents: Array.from({ length: 25 }, (_, index) => ({
+          name: `projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/liveEvents/event-${index + 1}`,
+          fields: { sequence: { integerValue: String(index + 1) } }
+        }))
+      })
+    });
+
+    try {
+      const events = await loadGameDayLiveEventsForApp('team-1', 'game-1');
+
+      expect(events).toHaveLength(20);
+      expect(events.map((event: any) => event.id)).toEqual(
+        Array.from({ length: 20 }, (_, index) => `event-${index + 1}`)
+      );
+    } finally {
+      (globalThis as any).window = previousWindow;
+      globalThis.fetch = previousFetch;
+    }
+  });
+
   it('includes later-page players in the home scoring model', async () => {
     const previousWindow = (globalThis as any).window;
     const previousFetch = globalThis.fetch;
@@ -648,6 +683,71 @@ describe('parent schedule child scope', () => {
     expect(schedule.children).toEqual([
       { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee', isLinkedParentChild: true }
     ]);
+  });
+
+  it('preserves canonical Diamond stat snapshot evidence in linked-player list and targeted detail events', async () => {
+    const snapshotHash = `sha256:${'d'.repeat(64)}`;
+    const canonicalGame = {
+      id: 'diamond-game-1',
+      type: 'game',
+      date: new Date('2026-09-06T18:00:00.000Z'),
+      opponent: 'Owls',
+      location: 'Field 1',
+      status: 'completed',
+      trackingEngine: 'diamond-v2',
+      diamondScorebookInstanceId: '00000000-0000-4000-8000-000000000001',
+      diamondProjectionStatus: 'current',
+      diamondProjectionComplete: true,
+      diamondProjectionRevision: 8,
+      diamondProjectionCheckpointHash: `sha256:${'a'.repeat(64)}`,
+      statTrackerConfigId: 'baseball',
+      diamondStatConfigSnapshotHash: snapshotHash,
+      diamondProjectionHash: `sha256:${'c'.repeat(64)}`,
+      isPublicProjection: false
+    };
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Avery Lee', teamName: 'Bears' }]
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', active: true } as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('player-1', { name: 'Avery Lee', active: true }) as any);
+    vi.mocked(getGames).mockResolvedValue([canonicalGame] as any);
+    vi.mocked(getGame).mockResolvedValue(canonicalGame as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+
+    const playerSchedule = await loadParentPlayerSchedule(parentUser, {
+      teamId: 'team-1',
+      playerId: 'player-1',
+      hydrateDetails: false
+    });
+    const targetedDetail = await loadParentScheduleEventDetail(parentUser, {
+      teamId: 'team-1',
+      eventId: 'diamond-game-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(playerSchedule.events[0]).toMatchObject({
+      id: 'diamond-game-1',
+      statTrackerConfigId: 'baseball',
+      diamondStatConfigSnapshotHash: snapshotHash,
+      diamondProjectionStatus: 'current',
+      diamondProjectionComplete: true,
+      diamondProjectionRevision: 8,
+      diamondProjectionCheckpointHash: `sha256:${'a'.repeat(64)}`,
+      diamondProjectionHash: `sha256:${'c'.repeat(64)}`,
+      isPublicProjection: false
+    });
+    expect(targetedDetail.events[0]).toMatchObject({
+      id: 'diamond-game-1',
+      statTrackerConfigId: 'baseball',
+      diamondStatConfigSnapshotHash: snapshotHash,
+      diamondProjectionStatus: 'current',
+      diamondProjectionComplete: true,
+      diamondProjectionRevision: 8,
+      diamondProjectionCheckpointHash: `sha256:${'a'.repeat(64)}`,
+      diamondProjectionHash: `sha256:${'c'.repeat(64)}`,
+      isPublicProjection: false
+    });
   });
 
   it('uses scoped staff discovery and excludes inactive affiliated teams', async () => {
@@ -2073,7 +2173,9 @@ describe('parent game route resolution', () => {
     vi.mocked(getGame).mockImplementation(async (teamId: string, gameId: string) => (
       teamId === 'team-bravo' && gameId === reversibleGameId
         ? { id: gameId, type: 'game', date: new Date('2026-06-25T18:00:00.000Z') }
-        : null
+        : teamId === 'team-bravo' && gameId === 'source-game-1'
+          ? { id: gameId, type: 'game', title: 'Colliding local game', date: new Date('2026-06-26T18:00:00.000Z') }
+          : null
     ));
     vi.mocked(getMyRsvps).mockResolvedValue([]);
 
@@ -2085,6 +2187,40 @@ describe('parent game route resolution', () => {
     expect(result.events).toHaveLength(1);
     expect(result.events[0].id).toBe(opaqueGameId);
     expect(getMyRsvps).toHaveBeenCalledWith('team-bravo', reversibleGameId, 'parent-1', ['child-2']);
+  });
+
+  it('opens a shared notification route through the recipient team without source-team access', async () => {
+    const sharedGamePath = 'organizations/org-1/sharedGames/shared-1';
+    const reversibleGameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [
+        { teamId: 'team-bravo', playerId: 'child-2', playerName: 'Blake' }
+      ]
+    } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false });
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => (
+      teamId === 'team-bravo'
+        ? { id: 'team-bravo', name: 'Bravo', active: true }
+        : null
+    ) as any);
+    vi.mocked(getGame).mockImplementation(async (teamId: string, gameId: string) => (
+      teamId === 'team-bravo' && gameId === reversibleGameId
+        ? { id: gameId, type: 'game', date: new Date('2026-06-25T18:00:00.000Z') }
+        : null
+    ));
+    vi.mocked(getMyRsvps).mockResolvedValue([]);
+
+    const result = await loadParentScheduleEventDetail(
+      routeUser,
+      { teamId: 'team-bravo', eventId: reversibleGameId, sharedGamePath }
+    );
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toMatchObject({ id: reversibleGameId, teamId: 'team-bravo' });
+    expect(getGame).toHaveBeenCalledTimes(1);
+    expect(getGame).toHaveBeenCalledWith('team-bravo', reversibleGameId);
+    expect(getGame).not.toHaveBeenCalledWith('team-bravo', 'source-game-1');
+    expect(getGame).not.toHaveBeenCalledWith('team-alpha', expect.anything());
   });
 });
 
@@ -4964,6 +5100,16 @@ describe('native parent schedule Firestore mapping', () => {
           location: { stringValue: 'Main Gym' },
           opponent: { stringValue: 'Tigers' },
           status: { stringValue: 'scheduled' },
+          trackingEngine: { stringValue: 'diamond-v2' },
+          diamondScorebookInstanceId: { stringValue: '00000000-0000-4000-8000-000000000001' },
+          diamondProjectionStatus: { stringValue: 'current' },
+          diamondProjectionComplete: { booleanValue: true },
+          diamondProjectionRevision: { integerValue: '8' },
+          diamondProjectionCheckpointHash: { stringValue: `sha256:${'a'.repeat(64)}` },
+          statTrackerConfigId: { stringValue: 'baseball' },
+          diamondStatConfigSnapshotHash: { stringValue: `sha256:${'e'.repeat(64)}` },
+          diamondProjectionHash: { stringValue: `sha256:${'c'.repeat(64)}` },
+          isPublicProjection: { booleanValue: true },
           liveClockMs: { integerValue: '120000' },
           liveClockRunning: { booleanValue: true },
           assignments: {
@@ -5010,7 +5156,16 @@ describe('native parent schedule Firestore mapping', () => {
       liveClockMs: 120000,
       liveClockRunning: true,
       openAssignmentCount: 1,
-      sourceType: 'registration'
+      sourceType: 'registration',
+      trackingEngine: 'diamond-v2',
+      statTrackerConfigId: 'baseball',
+      diamondStatConfigSnapshotHash: `sha256:${'e'.repeat(64)}`,
+      diamondProjectionStatus: 'current',
+      diamondProjectionComplete: true,
+      diamondProjectionRevision: 8,
+      diamondProjectionCheckpointHash: `sha256:${'a'.repeat(64)}`,
+      diamondProjectionHash: `sha256:${'c'.repeat(64)}`,
+      isPublicProjection: false
     });
     expect(result.events[0].date).toEqual(new Date('2026-06-20T18:00:00.000Z'));
   });
@@ -6235,6 +6390,36 @@ describe('team schedule game windowing (#2034)', () => {
     });
   });
 
+  it('preserves trusted public-projection provenance and canonical stat hash fields in mapped game rows', () => {
+    const mapped = mapScheduleEventRecord({
+      id: 'projected-game-1',
+      type: 'game',
+      date: new Date('2026-09-01T18:00:00.000Z'),
+      trackingEngine: 'diamond-v2',
+      diamondScorebookInstanceId: '00000000-0000-4000-8000-000000000001',
+      diamondProjectionStatus: 'current',
+      diamondProjectionComplete: true,
+      diamondProjectionRevision: 8,
+      diamondProjectionCheckpointHash: `sha256:${'a'.repeat(64)}`,
+      diamondStatConfigSnapshotHash: `sha256:${'f'.repeat(64)}`,
+      diamondProjectionHash: `sha256:${'c'.repeat(64)}`,
+      isPublicProjection: true
+    });
+
+    expect(mapped).toMatchObject({
+      id: 'projected-game-1',
+      trackingEngine: 'diamond-v2',
+      diamondScorebookInstanceId: '00000000-0000-4000-8000-000000000001',
+      diamondProjectionStatus: 'current',
+      diamondProjectionComplete: true,
+      diamondProjectionRevision: 8,
+      diamondProjectionCheckpointHash: `sha256:${'a'.repeat(64)}`,
+      diamondStatConfigSnapshotHash: `sha256:${'f'.repeat(64)}`,
+      diamondProjectionHash: `sha256:${'c'.repeat(64)}`,
+      isPublicProjection: true
+    });
+  });
+
   it('preserves raw replay evidence and shared-game identity while mapping schedule records', () => {
     const rawReplayVideo = { provider: 'vimeo', publicUrl: 'https://vimeo.com/12345' };
     const mapped = mapScheduleEventRecord({
@@ -7236,6 +7421,59 @@ describe('cancelScheduledGameForApp', () => {
   beforeEach(() => {
     (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
     vi.clearAllMocks();
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+    diamondScorebookMock.cancelDiamondGame.mockResolvedValue({
+      outcome: 'accepted',
+      revision: 4,
+      eventId: 'event-4',
+      snapshot: null,
+      completeness: { status: 'partial', authoritativeRevision: 4, families: {}, omissions: [] }
+    });
+  });
+
+  it('uses the canonical Diamond command and never writes cancellation fields or falls back to REST', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+
+    await cancelScheduledGameForApp(
+      {
+        ...event,
+        trackingEngine: 'diamond-v2',
+        isTeamAdmin: true,
+        sharedScheduleOpponentTeamId: 'team-2'
+      },
+      user
+    );
+
+    expect(diamondScorebookMock.cancelDiamondGame).toHaveBeenCalledWith({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      reason: 'Cancelled from schedule management.'
+    });
+    expect(vi.mocked(updateGame)).not.toHaveBeenCalled();
+    expect(capacitorCoreMock.httpPost).not.toHaveBeenCalled();
+    expect(nativeCallableMock.callNativeFirebaseFunction).not.toHaveBeenCalled();
+    expect(vi.mocked(postChatMessage)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(postSharedGameCancellationNotification)).not.toHaveBeenCalled();
+  });
+
+  it('does not post cancellation chat when the canonical Diamond command is not confirmed', async () => {
+    diamondScorebookMock.cancelDiamondGame.mockRejectedValueOnce(new Error('The scorebook could not confirm this request.'));
+
+    await expect(
+      cancelScheduledGameForApp({ ...event, trackingEngine: 'diamond-v2', isTeamAdmin: true }, user)
+    ).rejects.toThrow('could not confirm');
+
+    expect(vi.mocked(updateGame)).not.toHaveBeenCalled();
+    expect(vi.mocked(postChatMessage)).not.toHaveBeenCalled();
+  });
+
+  it('requires manager access for Diamond cancellation even when the caller can keep score', async () => {
+    await expect(
+      cancelScheduledGameForApp({ ...event, trackingEngine: 'diamond-v2', isTeamAdmin: false }, user)
+    ).rejects.toThrow('Team owner or admin access');
+
+    expect(diamondScorebookMock.cancelDiamondGame).not.toHaveBeenCalled();
+    expect(vi.mocked(updateGame)).not.toHaveBeenCalled();
   });
 
   it('does not request a counterpart notice for a linked opponent without reciprocal shared-game metadata', async () => {

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ExternalLink } from 'lucide-react';
+import { getCoverageAwareStatValue, type CoverageAwareStatPresentation } from '../../lib/adapters/legacyDiamondStatPresentation';
 import { useLiveGameAnnouncer } from '../../lib/liveGameAnnouncer';
 import { getPublicPlayerHref } from '../../lib/scheduleHub';
 import type { GameReportData, GameReportInsight, GameReportPlay, GameReportPlayerRow } from '../../lib/gameReportService';
@@ -9,12 +10,61 @@ import { ReportMarkdownText } from './ReportMarkdownText';
 export type GameReportSectionId = 'summary' | 'players' | 'plays' | 'opponent' | 'insights' | 'media';
 
 export function GameReportSectionContent({ report, activeSection }: { report: GameReportData; activeSection: GameReportSectionId }) {
-  if (activeSection === 'players') return <PlayerPerformanceSection report={report} />;
-  if (activeSection === 'plays') return <PlayByPlaySection plays={report.plays} />;
-  if (activeSection === 'opponent') return <OpponentStatsSection report={report} />;
-  if (activeSection === 'insights') return <ReportInsightsSection report={report} />;
-  if (activeSection === 'media') return <ReportMediaSection report={report} />;
-  return <MatchSummarySection report={report} />;
+  const content =
+    activeSection === 'players' ? (
+      <PlayerPerformanceSection report={report} />
+    ) : activeSection === 'plays' ? (
+      <PlayByPlaySection plays={report.plays} />
+    ) : activeSection === 'opponent' ? (
+      <OpponentStatsSection report={report} />
+    ) : activeSection === 'insights' ? (
+      <ReportInsightsSection report={report} />
+    ) : activeSection === 'media' ? (
+      <ReportMediaSection report={report} />
+    ) : (
+      <MatchSummarySection report={report} />
+    );
+
+  if (!report.diamond?.isDiamond) return content;
+
+  return (
+    <div className="space-y-3">
+      <DiamondProjectionNotice report={report} />
+      {content}
+    </div>
+  );
+}
+
+function DiamondProjectionNotice({ report }: { report: GameReportData }) {
+  const projection = report.diamond;
+  if (!projection?.isDiamond) return null;
+  const revisions = projection.sourceRevisions.length ? `Stats rev ${projection.sourceRevisions.join(', ')}` : 'Stats revision unavailable';
+  const ledgerRevision =
+    projection.authoritativeRevision === null ? 'Ledger revision unavailable' : `Ledger rev ${projection.authoritativeRevision}`;
+  const visibilityLabel = projection.statVisibility === 'manager-internal' ? 'Manager internal stats' : 'Public stats';
+
+  return (
+    <div
+      className={`rounded-xl border px-3 py-2.5 ${projection.pending ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-sky-200 bg-sky-50 text-sky-950'}`}
+      role="status"
+      aria-label="Diamond scorebook report status"
+    >
+      <div className="text-xs font-black tracking-[0.04em] uppercase">Diamond scorebook · {visibilityLabel} · Read only</div>
+      <div className="mt-0.5 text-xs font-semibold">
+        {projection.pending
+          ? 'Stats projection is pending. Unavailable values remain an em dash instead of being counted as zero.'
+          : 'Stats are derived from the authoritative play ledger. Corrections must be made in the scorebook.'}
+      </div>
+      <div className="mt-1 text-[11px] font-bold opacity-75">
+        {ledgerRevision} · {revisions}
+      </div>
+      {projection.requestedStatVisibility === 'manager-internal' && projection.statVisibility !== 'manager-internal' ? (
+        <div className="mt-1 text-[11px] font-bold">
+          Internal projection unavailable; showing the last complete public projection. Refresh to retry.
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function MatchSummarySection({ report }: { report: GameReportData }) {
@@ -27,7 +77,7 @@ function MatchSummarySection({ report }: { report: GameReportData }) {
         <DetailRow label="Plays" value={String(report.plays.length)} />
       </div>
       <div className="rounded-xl border border-gray-200 bg-white p-3">
-        <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">Match Summary</div>
+        <div className="text-[11px] font-extrabold tracking-[0.04em] text-gray-500 uppercase">Match Summary</div>
         {report.summary ? (
           <ReportMarkdownText text={report.summary} />
         ) : (
@@ -53,7 +103,7 @@ function PlayerPerformanceSection({ report }: { report: GameReportData }) {
 
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 px-1 text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 px-1 text-[11px] font-extrabold tracking-[0.04em] text-gray-500 uppercase">
         <span>Player</span>
         <span>Stats</span>
       </div>
@@ -63,6 +113,7 @@ function PlayerPerformanceSection({ report }: { report: GameReportData }) {
           player={player}
           statKeys={statKeys}
           statLabels={report.statLabels}
+          statDefinitions={report.statDefinitions}
           hasPlayingTime={report.hasPlayingTime}
           teamId={report.team.id || ''}
           gameId={report.game.id || ''}
@@ -79,7 +130,9 @@ function PlayerPerformanceSection({ report }: { report: GameReportData }) {
           >
             <div>
               <div className="text-sm font-black text-gray-950">Other rostered players</div>
-              <div className="mt-0.5 text-xs font-semibold text-gray-500">Show the full roster, including players without participation records for this game.</div>
+              <div className="mt-0.5 text-xs font-semibold text-gray-500">
+                Show the full roster, including players without participation records for this game.
+              </div>
             </div>
             <span className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-black text-gray-700">
               {showFullRoster ? 'Hide full roster' : `Show full roster (${deferredPlayers.length})`}
@@ -93,6 +146,7 @@ function PlayerPerformanceSection({ report }: { report: GameReportData }) {
                   player={player}
                   statKeys={statKeys}
                   statLabels={report.statLabels}
+                  statDefinitions={report.statDefinitions}
                   hasPlayingTime={report.hasPlayingTime}
                   teamId={report.team.id || ''}
                   gameId={report.game.id || ''}
@@ -106,38 +160,78 @@ function PlayerPerformanceSection({ report }: { report: GameReportData }) {
   );
 }
 
-function PlayerPerformanceRow({ player, statKeys, statLabels, hasPlayingTime, teamId, gameId }: {
+function PlayerPerformanceRow({
+  player,
+  statKeys,
+  statLabels,
+  statDefinitions,
+  hasPlayingTime,
+  teamId,
+  gameId
+}: {
   player: GameReportPlayerRow;
   statKeys: string[];
   statLabels: Record<string, string>;
+  statDefinitions?: Record<string, Record<string, unknown>>;
   hasPlayingTime: boolean;
   teamId: string;
   gameId: string;
 }) {
-  return (
-    <a href={getPublicPlayerHref(teamId, gameId, player.playerId)} className="block rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-10 w-10 flex-none items-center justify-center overflow-hidden rounded-full bg-gray-100 text-sm font-black text-gray-500">
-            {player.photoUrl ? <AvatarImage src={player.photoUrl} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" fallback={player.playerName.slice(0, 1)} /> : player.playerName.slice(0, 1)}
-          </div>
-          <div className="min-w-0">
-            <div className="truncate text-sm font-black text-gray-950">#{player.number} {player.playerName}</div>
-            <div className="mt-0.5 flex items-center gap-2 text-xs font-semibold text-gray-500">
-              {player.didNotPlay ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase text-amber-800">DNP</span> : null}
-              {hasPlayingTime && !player.didNotPlay ? <span>{formatDuration(player.timeMs)} min</span> : null}
-            </div>
-          </div>
+  const content = (
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex h-10 w-10 flex-none items-center justify-center overflow-hidden rounded-full bg-gray-100 text-sm font-black text-gray-500">
+          {player.photoUrl ? (
+            <AvatarImage
+              src={player.photoUrl}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              className="h-full w-full object-cover"
+              fallback={player.playerName.slice(0, 1)}
+            />
+          ) : (
+            player.playerName.slice(0, 1)
+          )}
         </div>
-        <div className="flex flex-none flex-wrap justify-end gap-1.5">
-          {statKeys.map((key) => (
-            <span key={key} className="min-w-11 rounded-lg bg-gray-50 px-2 py-1 text-center">
-              <span className="block text-[10px] font-black uppercase text-gray-400">{statLabels[key] || key.toUpperCase()}</span>
-              <span className="block text-sm font-black tabular-nums text-gray-900">{player.didNotPlay ? '-' : String(player.stats[key] || 0)}</span>
-            </span>
-          ))}
+        <div className="min-w-0">
+          <div className="truncate text-sm font-black text-gray-950">
+            #{player.number} {player.playerName}
+          </div>
+          <div className="mt-0.5 flex items-center gap-2 text-xs font-semibold text-gray-500">
+            {player.didNotPlay ? (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-800 uppercase">DNP</span>
+            ) : null}
+            {hasPlayingTime && !player.didNotPlay ? <span>{formatDuration(player.timeMs)} min</span> : null}
+          </div>
         </div>
       </div>
+      <div className="flex flex-none flex-wrap justify-end gap-1.5">
+        {statKeys.map((key) => (
+          <span key={key} className="min-w-11 rounded-lg bg-gray-50 px-2 py-1 text-center">
+            <span className="block text-[10px] font-black text-gray-400 uppercase">{statLabels[key] || key.toUpperCase()}</span>
+            <CoverageAwareStatValue
+              presentation={player.statPresentation}
+              stats={player.stats}
+              statKey={key}
+              definition={statDefinitions?.[key]}
+              didNotPlay={player.didNotPlay}
+            />
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+
+  const rowClassName = 'block rounded-xl border border-gray-200 bg-white p-3';
+  if (player.canOpenProfile === false) return <div className={rowClassName}>{content}</div>;
+
+  return (
+    <a
+      href={getPublicPlayerHref(teamId, gameId, player.playerId)}
+      className={`${rowClassName} hover:border-primary-200 hover:bg-primary-50 transition`}
+    >
+      {content}
     </a>
   );
 }
@@ -153,11 +247,16 @@ function PlayByPlaySection({ plays }: { plays: GameReportPlay[] }) {
     <div className="space-y-3">
       <div className="max-h-[430px] space-y-2 overflow-y-auto pr-1" aria-label="Play-by-play log">
         {plays.map((play) => (
-          <div key={play.id || `${play.period}-${play.clock}-${play.text}`} className="rounded-r-xl border-l-4 border-primary-500 bg-gray-50 px-3 py-2.5">
+          <div
+            key={play.id || `${play.period}-${play.clock}-${play.text}`}
+            className="border-primary-500 rounded-r-xl border-l-4 bg-gray-50 px-3 py-2.5"
+          >
             <div className="flex items-start gap-2">
-              <span className="mt-0.5 inline-flex min-h-6 flex-none items-center rounded-md bg-primary-600 px-2 text-[11px] font-black text-white">{play.period}</span>
+              <span className="bg-primary-600 mt-0.5 inline-flex min-h-6 flex-none items-center rounded-md px-2 text-[11px] font-black text-white">
+                {play.period}
+              </span>
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold leading-5 text-gray-900">{play.text}</div>
+                <div className="text-sm leading-5 font-semibold text-gray-900">{play.text}</div>
                 <div className="mt-1 flex gap-2 text-xs font-semibold text-gray-500">
                   {play.clock ? <span className="font-mono">{play.clock}</span> : null}
                   {play.timestamp ? <span>{formatReportTime(play.timestamp)}</span> : null}
@@ -171,7 +270,7 @@ function PlayByPlaySection({ plays }: { plays: GameReportPlay[] }) {
       <div className="rounded-xl border border-gray-200 bg-gray-50 p-3" aria-label="Play-by-play audio controls">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-700">Audio announcements</div>
+            <div className="text-xs font-black tracking-[0.04em] text-gray-700 uppercase">Audio announcements</div>
             <div className="text-xs font-semibold text-gray-500">
               {supported
                 ? paused
@@ -204,12 +303,14 @@ function OpponentStatsSection({ report }: { report: GameReportData }) {
   return (
     <div className="overflow-x-auto rounded-xl border border-gray-200">
       <table className="w-full min-w-[520px] text-sm">
-        <thead className="bg-gray-50 text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">
+        <thead className="bg-gray-50 text-[11px] font-black tracking-[0.04em] text-gray-500 uppercase">
           <tr>
             <th className="px-3 py-3 text-left">#</th>
             <th className="px-3 py-3 text-left">Player</th>
             {report.opponentStatKeys.map((key) => (
-              <th key={key} className="px-3 py-3 text-center">{report.opponentStatLabels[key] || key.toUpperCase()}</th>
+              <th key={key} className="px-3 py-3 text-center">
+                {report.opponentStatLabels[key] || key.toUpperCase()}
+              </th>
             ))}
           </tr>
         </thead>
@@ -219,7 +320,15 @@ function OpponentStatsSection({ report }: { report: GameReportData }) {
               <td className="px-3 py-3 font-mono font-bold text-gray-500">{row.number}</td>
               <td className="px-3 py-3 font-bold text-gray-900">{row.name}</td>
               {report.opponentStatKeys.map((key) => (
-                <td key={key} className="px-3 py-3 text-center font-mono font-bold text-gray-700">{String(row.stats[key] || 0)}</td>
+                <td key={key} className="px-3 py-3 text-center font-mono font-bold text-gray-700">
+                  <CoverageAwareStatValue
+                    presentation={row.statPresentation}
+                    stats={row.stats}
+                    statKey={key}
+                    definition={report.opponentStatDefinitions?.[key]}
+                    inline
+                  />
+                </td>
               ))}
             </tr>
           ))}
@@ -235,22 +344,35 @@ function ReportMediaSection({ report }: { report: GameReportData }) {
   const hasTeamStats = teamStatKeys.length > 0;
   const hasMedia = highlightClips.length > 0 || Boolean(report.statSheetPhotoUrl) || hasTeamStats;
   if (!hasMedia) {
-    return <EmptyReportState title="No report media yet" detail="Highlights, stat sheet photos, and team totals appear after the game is finalized." />;
+    return (
+      <EmptyReportState
+        title="No report media yet"
+        detail="Highlights, stat sheet photos, and team totals appear after the game is finalized."
+      />
+    );
   }
 
   return (
     <div className="space-y-3">
       {highlightClips.length ? (
         <div className="space-y-2">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">Highlights</div>
+          <div className="text-[11px] font-extrabold tracking-[0.04em] text-gray-500 uppercase">Highlights</div>
           {highlightClips.map((clip, index) => (
-            <a key={`${clip.url}-${index}`} href={clip.url} target="_blank" rel="noreferrer" className="block rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50">
+            <a
+              key={`${clip.url}-${index}`}
+              href={clip.url}
+              target="_blank"
+              rel="noreferrer"
+              className="hover:border-primary-200 hover:bg-primary-50 block rounded-xl border border-gray-200 bg-white p-3 transition"
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="truncate text-sm font-black text-gray-950">{clip.description || clip.title}</div>
-                  <div className="mt-1 text-xs font-semibold text-gray-500">{[clip.period, clip.gameTime].filter(Boolean).join(' · ') || 'Replay clip'}</div>
+                  <div className="mt-1 text-xs font-semibold text-gray-500">
+                    {[clip.period, clip.gameTime].filter(Boolean).join(' · ') || 'Replay clip'}
+                  </div>
                 </div>
-                <ExternalLink className="mt-0.5 h-4 w-4 flex-none text-primary-600" aria-hidden="true" />
+                <ExternalLink className="text-primary-600 mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
               </div>
             </a>
           ))}
@@ -258,25 +380,38 @@ function ReportMediaSection({ report }: { report: GameReportData }) {
       ) : null}
 
       {report.statSheetPhotoUrl ? (
-        <a href={report.statSheetPhotoUrl} target="_blank" rel="noreferrer" className="block rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50">
+        <a
+          href={report.statSheetPhotoUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="hover:border-primary-200 hover:bg-primary-50 block rounded-xl border border-gray-200 bg-white p-3 transition"
+        >
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-black text-gray-950">Score sheet photo</div>
               <div className="mt-0.5 text-xs font-semibold text-gray-500">Open the uploaded stat sheet from game.html.</div>
             </div>
-            <ExternalLink className="h-4 w-4 flex-none text-primary-600" aria-hidden="true" />
+            <ExternalLink className="text-primary-600 h-4 w-4 flex-none" aria-hidden="true" />
           </div>
         </a>
       ) : null}
 
       {hasTeamStats ? (
         <div className="rounded-xl border border-gray-200 bg-white p-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">Team stats</div>
+          <div className="text-[11px] font-extrabold tracking-[0.04em] text-gray-500 uppercase">Team stats</div>
           <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
             {teamStatKeys.slice(0, 8).map((key) => (
               <div key={key} className="rounded-lg bg-gray-50 p-2 text-center">
-                <div className="text-[10px] font-black uppercase text-gray-500">{report.teamStatLabels[key] || key.toUpperCase()}</div>
-                <div className="mt-1 text-lg font-black tabular-nums text-gray-950">{String(report.teamStats[key] || 0)}</div>
+                <div className="text-[10px] font-black text-gray-500 uppercase">{report.teamStatLabels[key] || key.toUpperCase()}</div>
+                <div className="mt-1 text-lg font-black text-gray-950 tabular-nums">
+                  <CoverageAwareStatValue
+                    presentation={report.teamStatPresentation}
+                    stats={report.teamStats}
+                    statKey={key}
+                    definition={report.teamStatDefinitions?.[key]}
+                    inline
+                  />
+                </div>
               </div>
             ))}
           </div>
@@ -287,27 +422,34 @@ function ReportMediaSection({ report }: { report: GameReportData }) {
 }
 
 function ReportInsightsSection({ report }: { report: GameReportData }) {
-  const hasInsights = report.teamInsights.length || report.playerInsightRows.length;
+  const hasInsights = report.publishedAiRecap || report.teamInsights.length || report.playerInsightRows.length;
   if (!hasInsights) {
-    return <EmptyReportState title="No insights yet" detail={report.emptyInsightsMessage || 'Insights populate after the game is finalized.'} />;
+    return (
+      <EmptyReportState title="No insights yet" detail={report.emptyInsightsMessage || 'Insights populate after the game is finalized.'} />
+    );
   }
 
   return (
     <div className="space-y-3">
+      {report.publishedAiRecap ? <PublishedDiamondAiRecap recap={report.publishedAiRecap} /> : null}
       {report.teamInsights.length ? (
         <div className="space-y-2">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">Team insights</div>
-          {report.teamInsights.map((insight) => <InsightCard key={`${insight.title}-${insight.body}`} insight={insight} />)}
+          <div className="text-[11px] font-extrabold tracking-[0.04em] text-gray-500 uppercase">Team insights</div>
+          {report.teamInsights.map((insight) => (
+            <InsightCard key={`${insight.title}-${insight.body}`} insight={insight} />
+          ))}
         </div>
       ) : null}
       {report.playerInsightRows.length ? (
         <div className="space-y-2">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">Player insights</div>
+          <div className="text-[11px] font-extrabold tracking-[0.04em] text-gray-500 uppercase">Player insights</div>
           {report.playerInsightRows.map((entry) => (
             <div key={entry.playerId} className="rounded-xl border border-gray-200 bg-white p-3">
               <div className="text-sm font-black text-gray-950">{entry.playerName}</div>
               <div className="mt-2 space-y-2">
-                {entry.insights.map((insight) => <InsightCard key={`${entry.playerId}-${insight.title}-${insight.body}`} insight={insight} compact />)}
+                {entry.insights.map((insight) => (
+                  <InsightCard key={`${entry.playerId}-${insight.title}-${insight.body}`} insight={insight} compact />
+                ))}
               </div>
             </div>
           ))}
@@ -317,12 +459,79 @@ function ReportInsightsSection({ report }: { report: GameReportData }) {
   );
 }
 
+function PublishedDiamondAiRecap({ recap }: { recap: NonNullable<GameReportData['publishedAiRecap']> }) {
+  if (!recap.current) {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-950" role="status">
+        <div className="text-xs font-black tracking-[0.04em] uppercase">AI recap needs regeneration</div>
+        <p className="mt-1 text-xs leading-5 font-semibold">
+          A scorebook correction changed revision {recap.sourceRevision}. The old recap is hidden until a manager publishes a new cited
+          draft.
+        </p>
+      </div>
+    );
+  }
+
+  const coverage = Object.entries(recap.coverage)
+    .map(([family, status]) => `${family}: ${status.replace('_', ' ')}`)
+    .join(' · ');
+  return (
+    <section className="rounded-xl border border-violet-200 bg-violet-50 p-3" aria-labelledby="published-diamond-ai-recap">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 id="published-diamond-ai-recap" className="text-sm font-black text-violet-950">
+          Published AI recap
+        </h4>
+        <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black tracking-wide text-violet-700 uppercase">
+          Source rev {recap.sourceRevision}
+        </span>
+      </div>
+      <ReportMarkdownText text={recap.recap.text} />
+      <AiEvidence citations={recap.recap.citations} />
+      {recap.insights.length ? (
+        <div className="mt-3 space-y-2">
+          {recap.insights.map((insight, index) => (
+            <div key={`${index}:${insight.text}`} className="rounded-lg border border-violet-100 bg-white p-3">
+              <div className="text-xs font-black tracking-wide text-violet-700 uppercase">AI insight {index + 1}</div>
+              <ReportMarkdownText text={insight.text} compact />
+              <AiEvidence citations={insight.citations} />
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {coverage ? <p className="mt-3 text-[11px] font-semibold text-violet-800">Coverage · {coverage}</p> : null}
+      {recap.dataQualityNotes.length ? (
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-[11px] font-semibold text-violet-800">
+          {recap.dataQualityNotes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+function AiEvidence({ citations }: { citations: Array<{ eventId: string; revision: number }> }) {
+  return (
+    <div className="mt-2 flex flex-wrap gap-1" aria-label="AI recap play evidence">
+      {citations.map((citation) => (
+        <span
+          key={`${citation.eventId}:${citation.revision}`}
+          className="rounded-full border border-violet-200 bg-violet-100 px-2 py-0.5 text-[10px] font-black text-violet-800"
+        >
+          Play rev {citation.revision}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function InsightCard({ insight, compact = false }: { insight: GameReportInsight; compact?: boolean }) {
-  const toneClass = insight.tone === 'positive'
-    ? 'border-emerald-200 bg-emerald-50'
-    : insight.tone === 'warning'
-      ? 'border-amber-200 bg-amber-50'
-      : 'border-gray-200 bg-gray-50';
+  const toneClass =
+    insight.tone === 'positive'
+      ? 'border-emerald-200 bg-emerald-50'
+      : insight.tone === 'warning'
+        ? 'border-amber-200 bg-amber-50'
+        : 'border-gray-200 bg-gray-50';
   return (
     <div className={`rounded-xl border px-3 ${compact ? 'py-2' : 'py-3'} ${toneClass}`}>
       <div className="text-sm font-black text-gray-950">{insight.title || 'Insight'}</div>
@@ -332,7 +541,43 @@ function InsightCard({ insight, compact = false }: { insight: GameReportInsight;
 }
 
 export function getRecordedTeamStatKeys(report: GameReportData) {
+  if (report.diamond?.isDiamond) return report.teamStatKeys || [];
   return (report.teamStatKeys || []).filter((key) => hasRecordedTeamStatValue(report, key));
+}
+
+function CoverageAwareStatValue({
+  presentation,
+  stats,
+  statKey,
+  definition,
+  didNotPlay = false,
+  inline = false
+}: {
+  presentation?: CoverageAwareStatPresentation;
+  stats: Record<string, unknown>;
+  statKey: string;
+  definition?: Record<string, unknown>;
+  didNotPlay?: boolean;
+  inline?: boolean;
+}) {
+  if (didNotPlay) return <span className={inline ? '' : 'block text-sm font-black text-gray-900 tabular-nums'}>-</span>;
+  if (!presentation?.isDiamond) {
+    const legacyValue = stats?.[statKey];
+    return <span className={inline ? '' : 'block text-sm font-black text-gray-900 tabular-nums'}>{String(legacyValue || 0)}</span>;
+  }
+
+  const displayed = getCoverageAwareStatValue(presentation, stats, statKey, definition || {});
+  return (
+    <span
+      className={inline ? 'inline-flex flex-col items-center' : 'flex flex-col items-center text-sm font-black text-gray-900 tabular-nums'}
+      aria-label={
+        displayed.observed ? `${displayed.text}, observed from partial tracking` : displayed.available ? displayed.text : 'Not collected'
+      }
+    >
+      <span>{displayed.text}</span>
+      {displayed.observed ? <span className="text-[8px] font-black tracking-wide text-amber-700 uppercase">Observed</span> : null}
+    </span>
+  );
 }
 
 function hasRecordedTeamStatValue(report: GameReportData, key: string) {
@@ -354,7 +599,7 @@ function EmptyReportState({ title, detail }: { title: string; detail: string }) 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-      <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">{label}</div>
+      <div className="text-[11px] font-extrabold tracking-[0.04em] text-gray-500 uppercase">{label}</div>
       <div className="mt-1 text-sm font-black text-gray-950">{value}</div>
     </div>
   );

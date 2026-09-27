@@ -104,12 +104,15 @@ jobs:
           done
 
       - name: Build React app
+        env:
+          VITE_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
         run: npm run app:build
 
       - name: Stage exact GitHub Pages artifact
         env:
           ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
           ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
+          ALLPLAYS_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
           ALLPLAYS_FIREBASE_RUNTIME_TARGET: preview-smoke
         run: node scripts/stage-pages-bundle.mjs "$RUNNER_TEMP/allplays-pages"
 
@@ -117,6 +120,8 @@ jobs:
         run: python3 -m http.server 4173 --directory "$RUNNER_TEMP/allplays-pages" >/tmp/allplays-preview-smoke.log 2>&1 &
 
       - name: Start React app dev server
+        env:
+          VITE_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
         run: |
           mkdir -p apps/app/public/.well-known
           cp \
@@ -180,6 +185,7 @@ jobs:
           SMOKE_APP_BOOT_URL: http://127.0.0.1:4173/app/
           SMOKE_EXPECTED_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
           SMOKE_EXPECTED_APP_CHECK_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
+          SMOKE_EXPECTED_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
           SMOKE_EXPECTED_FIREBASE_RUNTIME_TARGET: preview-smoke
           SMOKE_PAGES_STAGED_ARTIFACT: 'true'
           SMOKE_PARENT_EMAIL: ${{ vars.SMOKE_PARENT_EMAIL }}

@@ -614,15 +614,16 @@
             createPracticeSession, updatePracticeSession,
             getPracticeSessionByEvent, upsertPracticeSessionForEvent, updatePracticeAttendance, getPracticeSessions, getPracticePacketCompletions,
             savePracticeTemplate, getPracticeTemplates, deletePracticeTemplate
-        } from './js/db.js?v=4433195';
-        import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from './js/utils.js?v=443371';
-        import { requireAuth } from './js/auth.js?v=4433199';
-        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443347';
+        } from './js/db.js?v=4433199';
+        import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from './js/utils.js?v=443375';
+        import { requireAuth } from './js/auth.js?v=4433203';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443350';
         import { DRILL_TYPES, DRILL_LEVELS, DRILL_TYPE_COLORS, getAllSkillTags } from './js/drill-constants.js?v=1';
         import { getStarterDrillById, getStarterDrills } from './js/practice-starter-drills.js?v=1';
         import { mergeUniqueDrills, linkifySafeText, parseMarkdown } from './js/drills-issue28-helpers.js?v=3';
         import { appendLivePracticeNote } from './js/drills-live-practice-notes.js?v=1';
         import { createSafeImageElement, resolveSafeDrillDiagramUrl } from './js/safe-image-url.js?v=1';
+        import { loadCompleteAiGameContext } from './js/diamond-legacy-game-context.js?v=1';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { getApp } from './js/vendor/firebase-app.js';
 
@@ -644,6 +645,7 @@
             aiDrillUniverseLoadedAt: 0,
             lastPracticeSeed: null,
             gameIntelligence: null,
+            contextRailEvidence: null,
             chatAvatarCache: new Map(),
             chatAvatarHydrating: false,
             formAiHistory: [],
@@ -1132,6 +1134,51 @@
         }
 
         // ==================== CONTEXT RAIL ====================
+        function hasDiamondContextMarker(game) {
+            return game?.trackingEngine === 'diamond-v2'
+                || typeof game?.diamondScorebookInstanceId === 'string'
+                || typeof game?.diamondSourceGameId === 'string';
+        }
+
+        function readKnownGameScore(game, field) {
+            const value = game?.[field];
+            if (value === null || value === undefined || value === '') return null;
+            const numeric = Number(value);
+            return Number.isFinite(numeric) ? numeric : null;
+        }
+
+        function summarizeKnownGameScores(games) {
+            const rows = (games || []).map((game) => ({
+                homeScore: readKnownGameScore(game, 'homeScore'),
+                awayScore: readKnownGameScore(game, 'awayScore')
+            }));
+            if (rows.some((row) => row.homeScore === null || row.awayScore === null)) {
+                return {
+                    complete: false,
+                    absenceConfirmed: false,
+                    record: null,
+                    avgGf: null,
+                    avgGa: null,
+                    instructions: 'Missing scores are unknown and must not be treated as zero.'
+                };
+            }
+            const goalsFor = rows.reduce((sum, row) => sum + row.homeScore, 0);
+            const goalsAgainst = rows.reduce((sum, row) => sum + row.awayScore, 0);
+            const record = rows.reduce((summary, row) => {
+                if (row.homeScore > row.awayScore) summary.w += 1;
+                else if (row.homeScore < row.awayScore) summary.l += 1;
+                else summary.d += 1;
+                return summary;
+            }, { w: 0, l: 0, d: 0 });
+            return {
+                complete: true,
+                absenceConfirmed: rows.length === 0,
+                record,
+                avgGf: rows.length ? (goalsFor / rows.length).toFixed(1) : null,
+                avgGa: rows.length ? (goalsAgainst / rows.length).toFixed(1) : null
+            };
+        }
+
         async function loadContextRail() {
             try {
                 const games = await getGames(state.teamId);
@@ -1152,22 +1199,52 @@
                     narrativePanel.innerHTML = '<p class="text-xs text-gray-400 italic">No recent game narratives available.</p>';
                     focusPanel.innerHTML = '<p class="text-xs text-gray-400 italic">Need recent games to recommend focus.</p>';
                     state.gameIntelligence = null;
+                    state.contextRailEvidence = { complete: null, absenceConfirmed: false, source: 'cache-capable-schedule-context' };
                     return;
                 }
                 container.innerHTML = recent.map(g => {
                     const d = g.date?.toDate ? g.date.toDate() : new Date(g.date);
                     const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                    const hs = g.homeScore || 0, as = g.awayScore || 0;
+                    const knownHomeScore = readKnownGameScore(g, 'homeScore');
+                    const knownAwayScore = readKnownGameScore(g, 'awayScore');
+                    const diamondScoreUnavailable = hasDiamondContextMarker(g)
+                        && (knownHomeScore === null || knownAwayScore === null);
+                    const hs = knownHomeScore ?? 0, as = knownAwayScore ?? 0;
                     const result = hs > as ? 'W' : hs < as ? 'L' : 'D';
                     const resultColor = result === 'W' ? 'text-green-600' : result === 'L' ? 'text-red-600' : 'text-yellow-600';
                     return `<div class="bg-gray-50 rounded-lg p-3 border border-gray-100">
                         <div class="flex items-center justify-between mb-1">
                             <span class="text-xs font-semibold text-gray-700">${escapeHtml(g.opponent || 'Unknown')}</span>
-                            <span class="text-xs font-bold ${resultColor}">${result} ${hs}-${as}</span>
+                            ${diamondScoreUnavailable
+                                ? '<span class="text-xs font-semibold text-gray-400">Score unavailable</span>'
+                                : `<span class="text-xs font-bold ${resultColor}">${result} ${hs}-${as}</span>`}
                         </div>
                         <p class="text-xs text-gray-500">${dateStr}${g.summary ? ' &middot; ' + escapeHtml(g.summary.substring(0, 80)) : ''}</p>
                     </div>`;
                 }).join('');
+
+                const unvalidatedDiamondGames = recent.filter(hasDiamondContextMarker);
+                if (unvalidatedDiamondGames.length > 0) {
+                    const foreignSharedGame = unvalidatedDiamondGames.find((game) => game?.isSharedGame === true
+                        && typeof game?.diamondSourceTeamId === 'string'
+                        && game.diamondSourceTeamId !== state.teamId);
+                    state.gameIntelligence = null;
+                    state.contextRailEvidence = {
+                        complete: false,
+                        accessible: !foreignSharedGame,
+                        absenceConfirmed: false,
+                        retryable: !foreignSharedGame,
+                        reason: foreignSharedGame ? 'shared-game-source-not-owned' : 'diamond-context-not-validated',
+                        instructions: 'Diamond trends and narratives are unavailable until the complete public projection is validated.'
+                    };
+                    trends.innerHTML = `<p class="text-xs text-gray-400 italic">${foreignSharedGame
+                        ? 'Diamond trends are unavailable because this shared scorebook belongs to the other team.'
+                        : 'Diamond trends will be available after a complete stats refresh.'}</p>`;
+                    playersPanel.innerHTML = renderPlayerHighlights(recent);
+                    narrativePanel.innerHTML = '<p class="text-xs text-gray-400 italic">Narrative analysis unavailable until Diamond evidence is complete.</p>';
+                    focusPanel.innerHTML = '<p class="text-xs text-gray-400 italic">Focus recommendation unavailable until Diamond evidence is complete.</p>';
+                    return;
+                }
 
                 const gf = recent.reduce((s, g) => s + (g.homeScore || 0), 0);
                 const ga = recent.reduce((s, g) => s + (g.awayScore || 0), 0);
@@ -1195,6 +1272,7 @@
                     </div>
                 `;
                 playersPanel.innerHTML = renderPlayerHighlights(recent);
+                state.contextRailEvidence = { complete: null, absenceConfirmed: false, source: 'cache-capable-classic-context' };
                 if (state.gameIntelligence) {
                     renderGameIntelligencePanels(state.gameIntelligence, trends);
                     return;
@@ -3765,6 +3843,7 @@ Hard constraints:
 - Plan scope is "${planScope}".
 - If plan scope is "full-session", include warm-up and cool-down considerations.
 - Prefer drills that match recent negative trends from recent games.
+- Diamond stats contain only complete public counters. Omitted or incomplete counters are unknown, never zero; honor truncation evidence.
 
 You may optionally wrap drill blocks in structure containers (warmup, stations, scrimmage, cooldown, custom).
 Structure blocks group drills into logical practice phases. Use them when building full-session plans.
@@ -3819,6 +3898,7 @@ Rules:
 - Answer the coach's question directly.
 - Do NOT propose drills unless the coach explicitly asks for a plan.
 - If the answer is uncertain or missing in context, say what is missing.
+- Diamond stats contain only complete public counters. Omitted or incomplete counters are unknown, never zero; honor truncation evidence.
 - Keep answers concise and practical.
 
 Return ONLY valid JSON:
@@ -3910,25 +3990,22 @@ ${userPrompt}
                     duration: d.setup?.duration || null
                 }));
 
-            const recentGameContext = (state.recentGames || []).map(g => ({
+            const rawGameContext = await ensureRawGameContext();
+            const completeRecentGames = rawGameContext.inventory.recentGames;
+            const completeRecentWindow = rawGameContext.inventory.recentWindow;
+            const recentGameContext = completeRecentGames.map(g => ({
                 opponent: g.opponent || 'Unknown',
-                score: `${g.homeScore || 0}-${g.awayScore || 0}`,
+                score: readKnownGameScore(g, 'homeScore') !== null && readKnownGameScore(g, 'awayScore') !== null
+                    ? `${readKnownGameScore(g, 'homeScore')}-${readKnownGameScore(g, 'awayScore')}`
+                    : null,
+                scoreEvidenceComplete: readKnownGameScore(g, 'homeScore') !== null
+                    && readKnownGameScore(g, 'awayScore') !== null,
                 summary: g.summary || '',
-                date: (g.date?.toDate ? g.date.toDate() : new Date(g.date)).toISOString().split('T')[0]
+                date: g.date || null
             }));
-            const recentGamesRaw = (state.recentGames || []).map(g => normalizeForAiPayload(g, 0));
-            const recentWindowRaw = (state.allGames || []).slice(-10).reverse().map(g => normalizeForAiPayload(g, 0));
+            const recentGamesRaw = completeRecentGames;
+            const recentWindowRaw = completeRecentWindow;
             const scoringLeaders = deriveScoringLeaders(recentWindowRaw);
-            let rawGameContext = {
-                recentGameIds: [],
-                aggregatedStatsByPlayer: {},
-                recentEventsByGame: {}
-            };
-            try {
-                rawGameContext = await ensureRawGameContext();
-            } catch (err) {
-                console.warn('AI context: unable to load raw game context:', err);
-            }
 
             let drillUniverse = [];
             try {
@@ -3988,7 +4065,7 @@ ${userPrompt}
                 recentWindowRaw,
                 scoringLeaders,
                 rawGameContext,
-                gameIntelligence: state.gameIntelligence || null,
+                gameIntelligence: rawGameContext.gameIntelligence,
                 drillLibraryShortlist: libraryShortlist,
                 drillLibraryTotalCount: drillUniverse.length,
                 drillLibraryCatalog: drillCatalog,
@@ -3998,36 +4075,71 @@ ${userPrompt}
 
         async function ensureRawGameContext() {
             if (state.aiRawGameContext) return state.aiRawGameContext;
-            const recentWindow = (state.allGames || []).slice(-10);
-            const recentIds = recentWindow.map(g => g.id).filter(Boolean);
-            let aggregatedStats = {};
-            try {
-                aggregatedStats = recentIds.length > 0
-                    ? await getAggregatedStatsForGames(state.teamId, recentIds)
-                    : {};
-            } catch (err) {
-                console.warn('Failed to load aggregated stats for AI context:', err);
+            const games = await getGames(state.teamId, { requireCompleteSharedGames: true });
+            const allGames = games.filter((game) => game?.type !== 'practice');
+            const recentWindow = allGames.slice(-10);
+            const eventGames = allGames.slice(-3).reverse();
+            const loaded = await loadCompleteAiGameContext({
+                teamId: state.teamId,
+                statsGames: recentWindow.filter((game) => game?.id),
+                eventGames: eventGames.filter((game) => game?.id),
+                loadClassicAggregatedStats: getAggregatedStatsForGames,
+                loadClassicGameEvents: getGameEvents,
+                eventLimit: 40
+            });
+            const scoreContext = summarizeKnownGameScores(eventGames);
+            const hasDiamondGames = eventGames.some(hasDiamondContextMarker);
+            let validatedGameIntelligence = state.gameIntelligence;
+            if (hasDiamondGames && eventGames.length > 0 && scoreContext.complete) {
+                const derivedSignals = computePatternSignals(eventGames);
+                const playerTrend = extractPlayerTrendSnapshot(eventGames);
+                validatedGameIntelligence = await evaluateGameIntelligence(eventGames, {
+                    record: scoreContext.record,
+                    avgGf: scoreContext.avgGf,
+                    avgGa: scoreContext.avgGa,
+                    signals: derivedSignals,
+                    playerTrend
+                });
+            } else if (!validatedGameIntelligence && eventGames.length > 0 && scoreContext.complete) {
+                validatedGameIntelligence = {
+                    record: scoreContext.record,
+                    averageGoalsFor: Number(scoreContext.avgGf),
+                    averageGoalsAgainst: Number(scoreContext.avgGa),
+                    signals: computePatternSignals(eventGames),
+                    playerTrend: extractPlayerTrendSnapshot(eventGames)
+                };
+            } else if (!scoreContext.complete) {
+                validatedGameIntelligence = null;
             }
-
-            const eventGames = (state.recentGames || []).slice(0, 3);
-            const eventsByGame = {};
-            await Promise.all(eventGames.map(async (g) => {
-                if (!g?.id) return;
-                try {
-                    const events = await getGameEvents(state.teamId, g.id, { limit: 40 });
-                    eventsByGame[g.id] = normalizeForAiPayload(events, 0);
-                } catch (err) {
-                    console.warn('Failed to load game events for AI context:', g.id, err);
-                    eventsByGame[g.id] = [];
-                }
-            }));
-
-            state.aiRawGameContext = {
-                recentGameIds: recentIds,
-                aggregatedStatsByPlayer: normalizeForAiPayload(aggregatedStats, 0),
-                recentEventsByGame: eventsByGame
+            const completeContext = {
+                recentGameIds: loaded.recentGameIds,
+                aggregatedStatsByPlayer: normalizeForAiPayload(loaded.aggregatedStatsByPlayer, 0),
+                diamondPlayerStatsByGame: normalizeForAiPayload(loaded.diamondPlayerStatsByGame, 0),
+                recentEventsByGame: normalizeForAiPayload(loaded.recentEventsByGame, 0),
+                evidence: normalizeForAiPayload(loaded.evidence, 0),
+                scoreEvidence: normalizeForAiPayload(scoreContext, 0),
+                inventory: {
+                    complete: true,
+                    recentGames: eventGames.map((game) => normalizeForAiPayload(game, 0)),
+                    recentWindow: [...recentWindow].reverse().map((game) => normalizeForAiPayload(game, 0))
+                },
+                gameIntelligence: normalizeForAiPayload(validatedGameIntelligence, 0)
             };
-            return state.aiRawGameContext;
+            if (scoreContext.complete) state.aiRawGameContext = completeContext;
+            state.contextRailEvidence = {
+                complete: scoreContext.complete,
+                statsAndEventsComplete: true,
+                accessible: true,
+                absenceConfirmed: scoreContext.complete && loaded.evidence?.stats?.absenceConfirmed === true,
+                scoreEvidenceComplete: scoreContext.complete,
+                source: 'validated-mixed-engine-context'
+            };
+            if (hasDiamondGames && validatedGameIntelligence) {
+                state.gameIntelligence = validatedGameIntelligence;
+                renderGameIntelligencePanels(validatedGameIntelligence, document.getElementById('context-trends'));
+                await persistGameIntelligenceContext();
+            }
+            return completeContext;
         }
 
         function normalizeForAiPayload(value, depth = 0) {

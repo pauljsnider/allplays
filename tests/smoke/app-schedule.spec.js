@@ -59,6 +59,11 @@ async function mockScheduleModules(page, options = {}) {
     const gameTournament = options.gameTournament || null;
     const gameMyRsvp = options.gameMyRsvp || 'not_responded';
     const gameMyRsvpNote = options.gameMyRsvpNote || '';
+    const gameTrackingEngine = options.gameTrackingEngine || null;
+    const gameIsHome = Object.prototype.hasOwnProperty.call(options, 'gameIsHome') ? options.gameIsHome : true;
+    const gameStatTrackerConfigId = Object.prototype.hasOwnProperty.call(options, 'gameStatTrackerConfigId')
+        ? options.gameStatTrackerConfigId
+        : 'tracker-config-1';
     const extraUpcomingEvents = Array.from({ length: options.extraUpcomingEvents || 0 }, (_, index) => {
         const day = String(index + 1).padStart(2, '0');
         return `baseEvent({ eventKey: 'bulk-upcoming-${index}', id: 'bulk-upcoming-${index}', childId: 'player-1', childName: 'Pat', date: new Date('2030-06-${day}T18:00:00Z'), opponent: 'Team ${index + 1}', location: 'Field ${index + 1}' })`;
@@ -174,6 +179,7 @@ async function mockScheduleModules(page, options = {}) {
                         id: overrides.id,
                         teamId: 'team-1',
                         teamName: 'Bears',
+                        gamePlan: ${JSON.stringify(options.gamePlan || null)},
                         type: overrides.type || 'game',
                         date: overrides.date,
                         endDate: overrides.endDate || new Date(overrides.date.getTime() + 60 * 60 * 1000),
@@ -189,7 +195,8 @@ async function mockScheduleModules(page, options = {}) {
                         isDbGame: overrides.isDbGame !== false,
                         isCancelled: false,
                         canUpdateScore: overrides.canUpdateScore !== false,
-                        statTrackerConfigId: overrides.statTrackerConfigId || 'tracker-config-1',
+                        statTrackerConfigId: overrides.statTrackerConfigId ?? ${JSON.stringify(gameStatTrackerConfigId)},
+                        trackingEngine: overrides.trackingEngine ?? ${JSON.stringify(gameTrackingEngine)},
                         status: overrides.status || 'scheduled',
                         liveStatus: overrides.liveStatus || null,
                         rawReplayLifecycle: overrides.rawReplayLifecycle ?? {
@@ -199,7 +206,7 @@ async function mockScheduleModules(page, options = {}) {
                         },
                         homeScore: overrides.homeScore ?? null,
                         awayScore: overrides.awayScore ?? null,
-                        isHome: true,
+                        isHome: overrides.isHome !== undefined ? overrides.isHome : ${JSON.stringify(gameIsHome)},
                         kitColor: 'Blue',
                         arrivalTime: null,
                         notes: overrides.notes || null,
@@ -391,8 +398,8 @@ async function mockScheduleModules(page, options = {}) {
                     };
                 }
 
-                export async function updateScheduledGameForApp(teamId, gameId, input, user) {
-                    window.__scheduleCalls.gameUpdates = (window.__scheduleCalls.gameUpdates || []).concat({ teamId, gameId, input, userId: user?.uid || null });
+                export async function updateScheduledGameForApp(teamId, gameId, input, user, updateOptions) {
+                    window.__scheduleCalls.gameUpdates = (window.__scheduleCalls.gameUpdates || []).concat({ teamId, gameId, input, userId: user?.uid || null, updateOptions: updateOptions || null });
                     return { success: true };
                 }
 
@@ -745,7 +752,7 @@ async function mockScheduleModules(page, options = {}) {
 
                 export async function loadGameDayLiveEventsForApp(teamId, gameId) {
                     window.__scheduleCalls.liveEvents = (window.__scheduleCalls.liveEvents || []).concat({ action: 'load', teamId, gameId });
-                    return [];
+                    return ${JSON.stringify(options.liveEvents || [])};
                 }
 
                 export async function saveGameDaySubstitutionForApp(teamId, gameId, user, payload) {
@@ -1612,6 +1619,48 @@ test('mobile game-day score tray stays above the bottom nav while deeper panels 
     expect(await page.evaluate(() => window.__scheduleCalls.liveScoreEvents)).toHaveLength(1);
 });
 
+test('substitution live logs survive delayed helper initialization', async ({ page, baseURL }) => {
+    const errors = captureUnexpectedPageErrors(page);
+    await page.addInitScript(() => {
+        window.__ALLPLAYS_CONFIG__ = {
+            firebase: { apiKey: 'demo-api-key', authDomain: 'demo-allplays.firebaseapp.com', projectId: 'demo-allplays', messagingSenderId: '1234567890', appId: '1:1234567890:web:allplayssmoke' },
+            appCheck: { enabled: false },
+            diamondScorebookUiEnabled: false
+        };
+    });
+    await mockScheduleModules(page, {
+        isCoach: true,
+        staffManageable: true,
+        gamePlan: { formationId: 'basketball-5v5', numPeriods: 4, periodDuration: 8, lineups: { 'Q1-pg': 'player-1' }, isPublished: true },
+        liveEvents: [{ eventId: 'score-1', type: 'score_update', description: 'Bears 2 - Wolves 0', createdAt: '2026-05-20T11:00:00Z' }]
+    });
+    let releaseHelper;
+    const helperGate = new Promise((resolve) => { releaseHelper = resolve; });
+    let helperRequested = false;
+    await page.route(/\/src\/lib\/adapters\/legacyScheduleHelpers\.ts(\?.*)?$/, async (route) => {
+        helperRequested = true;
+        await helperGate;
+        await route.continue();
+    });
+    try {
+        await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=game'), { waitUntil: 'domcontentloaded' });
+        await expect(async () => {
+            expect(errors).toEqual([]);
+            await expect(page.getByRole('button', { name: 'Live substitutions', exact: true })).toBeVisible({ timeout: 1000 });
+        }).toPass({ timeout: 10000 });
+        await page.getByRole('button', { name: 'Live substitutions', exact: true }).click({ timeout: 3000 });
+        await expect.poll(() => helperRequested).toBe(true);
+        expect(errors).toEqual([]);
+        await expect(page.getByText('Bears 2 - Wolves 0', { exact: true })).toBeVisible();
+        releaseHelper();
+        await expect(page.getByRole('combobox', { name: 'Out', exact: true })).toBeEnabled();
+        expect(errors).toEqual([]);
+        await expect(page.getByText('Bears 2 - Wolves 0', { exact: true })).toBeVisible();
+    } finally {
+        releaseHelper();
+    }
+});
+
 test('landscape mobile shell keeps the game-day score tray fixed above navigation', async ({ page, baseURL }) => {
     await page.setViewportSize({ width: 844, height: 390 });
     await mockScheduleModules(page, {
@@ -1844,6 +1893,56 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
         { eventKey: 'game-1-player-2', childId: 'player-2', userId: 'user-1', response: 'going', note: 'Arriving after school pickup.' }
     ]);
     await expect(page.getByText('2 children marked going.')).toBeVisible();
+});
+
+test('app Diamond schedule editor locks pinned fields across authenticated reloads and saves other edits', async ({ page, baseURL }) => {
+    const pageErrors = captureUnexpectedPageErrors(page);
+    await page.addInitScript(() => {
+        window.__ALLPLAYS_CONFIG__ = {
+            firebase: {
+                apiKey: 'demo-api-key',
+                authDomain: 'demo-allplays.firebaseapp.com',
+                projectId: 'demo-allplays',
+                messagingSenderId: '1234567890',
+                appId: '1:1234567890:web:allplayssmoke'
+            },
+            appCheck: { enabled: false }
+        };
+    });
+    await mockScheduleModules(page, {
+        staffManageable: true,
+        gameTrackingEngine: 'diamond-v2',
+        gameIsHome: true,
+        gameStatTrackerConfigId: 'tracker-config-1'
+    });
+    const url = appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=game');
+
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await waitForScheduleRoute(page, page.getByRole('heading', { name: 'Game hub' }));
+    await page.getByRole('button', { name: 'Edit game' }).click();
+
+    await expect(page.getByLabel('Home / away')).toBeDisabled();
+    await expect(page.getByLabel('Tracker config')).toBeDisabled();
+    await expect(page.getByText('Home/away and tracker config are locked after Diamond activation.')).toBeVisible();
+
+    await page.getByLabel('Location').fill('Diamond Field');
+    await page.getByRole('button', { name: 'Save game' }).click();
+    await expect(page.getByText('Game schedule was updated.')).toBeVisible();
+
+    expect(await page.evaluate(() => window.__scheduleCalls.gameUpdates[0])).toMatchObject({
+        teamId: 'team-1',
+        gameId: 'game-1',
+        input: { location: 'Diamond Field' },
+        userId: 'user-1',
+        updateOptions: { preservePinnedDiamondFields: true }
+    });
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await waitForScheduleRoute(page, page.getByRole('heading', { name: 'Game hub' }));
+    await page.getByRole('button', { name: 'Edit game' }).click();
+    await expect(page.getByLabel('Home / away')).toBeDisabled();
+    await expect(page.getByLabel('Tracker config')).toBeDisabled();
+    expect(pageErrors).toEqual([]);
 });
 
 test('app completed-game manager links, replaces, and removes a YouTube replay', async ({ page, baseURL }) => {

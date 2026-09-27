@@ -12,6 +12,34 @@ const MAX_EVENTS_PER_TEAM = 50;
 const MAX_TRACKED_CALENDAR_EVENTS_PER_TEAM = 5000;
 const MAX_CALENDAR_PROJECTION_PAGES = 20;
 const MAX_PLAYER_STATS = 60;
+const MAX_DIAMOND_PUBLIC_PLAYER_STATS = 50;
+const MAX_DIAMOND_STAT_KEYS = 256;
+const MAX_DIAMOND_LOAD_ATTEMPTS = 2;
+const DIAMOND_UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DIAMOND_SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const DIAMOND_SAFE_RESOURCE_ID = /^[^/]{1,128}$/u;
+const DIAMOND_SAFE_STAT_KEY = /^[a-z0-9][a-z0-9_]{0,63}$/;
+const DIAMOND_INNINGS_PITCHED_VALUE = /^(?:0|[1-9][0-9]*)\.[012]$/;
+const DIAMOND_COVERAGE_STATUSES = new Set(['complete', 'partial', 'not_collected']);
+const DIAMOND_PLAYER_STAT_IDS = new Set(`
+g gs pa ab r h 1b 2b 3b hr tb rbi bb ibb hbp so sf sh roe fc gidp
+avg obp slg ops bb_rate strikeout_rate sb cs pickoffs br_advances br_outs stolen_base_rate
+p_app p_gs w l sv bf ip_outs p_h p_r er p_bb p_ibb p_hbp p_so p_hr wp balk_illegal_pitch
+inherited_runners inherited_scored pitches strikes first_pitch_strikes innings_pitched era whip
+strikeout_walk_ratio strike_rate first_pitch_strike_rate defensive_outs po a e dp tp pb fp fpct chances
+`.trim().split(/\s+/));
+const DIAMOND_DERIVED_PLAYER_STAT_IDS = new Set(`
+avg obp slg ops bb_rate strikeout_rate stolen_base_rate innings_pitched era whip
+strikeout_walk_ratio strike_rate first_pitch_strike_rate fpct chances
+`.trim().split(/\s+/));
+const DIAMOND_PUBLIC_PLAYER_DOCUMENT_KEYS = new Set([
+    'schemaVersion', 'trackingEngine', 'projectionSchemaVersion', 'playerId', 'playerName', 'playerNumber',
+    'participated', 'participationStatus', 'participationSource', 'didNotPlay', 'sourceRevision',
+    'checkpointHash', 'coverage', 'complete', 'publicStatIds', 'stats', 'observedStats', 'derivedStats',
+    'observedDerivedStats', 'statCoverage', 'statSources', 'sourcePlayIds', 'unavailableDerivedStats',
+    'missingStatFamilies', 'teamId', 'diamondGameId', 'instanceId', 'diamondScorebookInstanceId',
+    'projectionGeneration', 'statConfigSnapshotHash', 'projectionHash'
+]);
 const GENERIC_CALENDAR_DISCRIMINATORS = new Set([
     '', 'tbd', 'unknown', 'practice', 'game', 'training', 'workout', 'scrimmage'
 ]);
@@ -570,6 +598,196 @@ const GAME_SUMMARY_FIELDS = [
     'homeScore', 'awayScore', 'isHome', 'summary', 'aiSummary', 'result'
 ];
 
+function isPlainRecord(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+}
+
+function isExactDiamondResourceId(value) {
+    return typeof value === 'string'
+        && value === value.trim()
+        && DIAMOND_SAFE_RESOURCE_ID.test(value)
+        && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function diamondProjectionIdentity(game) {
+    if (cleanString(game?.trackingEngine).trim().toLowerCase() !== 'diamond-v2') return null;
+    const status = cleanString(game?.diamondProjectionStatus).trim().toLowerCase();
+    const instanceId = cleanString(game?.diamondScorebookInstanceId).trim();
+    const sourceRevision = Number(game?.diamondProjectionRevision);
+    const checkpointHash = cleanString(game?.diamondProjectionCheckpointHash).trim();
+    const statConfigSnapshotHash = cleanString(game?.diamondStatConfigSnapshotHash).trim();
+    const projectionHash = cleanString(game?.diamondProjectionHash).trim();
+    if (
+        !['current', 'complete'].includes(status)
+        || game?.diamondProjectionComplete !== true
+        || !DIAMOND_UUID_V4_PATTERN.test(instanceId)
+        || !Number.isSafeInteger(sourceRevision)
+        || sourceRevision < 0
+        || !DIAMOND_SHA256_PATTERN.test(checkpointHash)
+        || !DIAMOND_SHA256_PATTERN.test(statConfigSnapshotHash)
+        || !DIAMOND_SHA256_PATTERN.test(projectionHash)
+    ) return null;
+    return { instanceId, sourceRevision, checkpointHash, statConfigSnapshotHash, projectionHash };
+}
+
+function isStrictSortedStringArray(value, { maximum = MAX_DIAMOND_STAT_KEYS, allowed = null } = {}) {
+    if (!Array.isArray(value) || value.length > maximum) return false;
+    return value.every((entry, index) => (
+        typeof entry === 'string'
+        && entry.length > 0
+        && entry.length <= 128
+        && entry === entry.trim()
+        && (!allowed || allowed.has(entry))
+        && (index === 0 || value[index - 1].localeCompare(entry) < 0)
+    ));
+}
+
+function isStrictDiamondStatValue(key, value) {
+    if (key === 'innings_pitched') {
+        return typeof value === 'string'
+            && value.length <= 32
+            && DIAMOND_INNINGS_PITCHED_VALUE.test(value);
+    }
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function isStrictDiamondStatMap(value, publicStatIds, expectedCoverage) {
+    return isPlainRecord(value)
+        && Object.keys(value).length <= MAX_DIAMOND_STAT_KEYS
+        && Object.entries(value).every(([key, statValue]) => (
+            DIAMOND_SAFE_STAT_KEY.test(key)
+            && publicStatIds.has(key)
+            && expectedCoverage.has(key)
+            && isStrictDiamondStatValue(key, statValue)
+        ));
+}
+
+function projectDiamondPublicPlayer(entry, identity, teamId, gameId) {
+    const data = entry?.data;
+    if (
+        !isExactDiamondResourceId(entry?.id)
+        || !isPlainRecord(data)
+        || Object.keys(data).some((key) => !DIAMOND_PUBLIC_PLAYER_DOCUMENT_KEYS.has(key))
+        || data.schemaVersion !== 1
+        || data.trackingEngine !== 'diamond-v2'
+        || data.projectionSchemaVersion !== 1
+        || data.complete !== true
+        || data.playerId !== entry.id
+        || data.teamId !== teamId
+        || data.diamondGameId !== gameId
+        || data.instanceId !== identity.instanceId
+        || data.diamondScorebookInstanceId !== identity.instanceId
+        || data.projectionGeneration !== identity.instanceId
+        || data.sourceRevision !== identity.sourceRevision
+        || data.checkpointHash !== identity.checkpointHash
+        || data.statConfigSnapshotHash !== identity.statConfigSnapshotHash
+        || data.projectionHash !== identity.projectionHash
+        || typeof data.playerName !== 'string'
+        || data.playerName.length > 160
+        || typeof data.playerNumber !== 'string'
+        || data.playerNumber.length > 32
+        || typeof data.participated !== 'boolean'
+        || data.participationSource !== 'diamond-v2'
+        || !['appeared', 'did-not-appear'].includes(data.participationStatus)
+        || (data.participated && data.participationStatus !== 'appeared')
+        || (!data.participated && data.participationStatus !== 'did-not-appear')
+        || (data.participated && Object.hasOwn(data, 'didNotPlay'))
+        || (!data.participated && data.didNotPlay !== true)
+        || !isStrictSortedStringArray(data.publicStatIds, { allowed: DIAMOND_PLAYER_STAT_IDS })
+    ) return null;
+
+    const publicStatIds = new Set(data.publicStatIds);
+    if (
+        !isPlainRecord(data.statCoverage)
+        || Object.keys(data.statCoverage).length !== publicStatIds.size
+        || Object.entries(data.statCoverage).some(([key, status]) => !publicStatIds.has(key) || !DIAMOND_COVERAGE_STATUSES.has(status))
+    ) return null;
+    const completeStatIds = new Set(data.publicStatIds.filter((key) => data.statCoverage[key] === 'complete'));
+    const partialStatIds = new Set(data.publicStatIds.filter((key) => data.statCoverage[key] === 'partial'));
+    if (
+        !isStrictDiamondStatMap(data.stats, publicStatIds, completeStatIds)
+        || !isStrictDiamondStatMap(data.derivedStats, publicStatIds, completeStatIds)
+        || !isStrictDiamondStatMap(data.observedStats, publicStatIds, partialStatIds)
+        || !isStrictDiamondStatMap(data.observedDerivedStats, publicStatIds, partialStatIds)
+        || [...Object.keys(data.stats), ...Object.keys(data.derivedStats)].some((key) => (
+            Object.hasOwn(data.observedStats, key) || Object.hasOwn(data.observedDerivedStats, key)
+        ))
+        || !isPlainRecord(data.coverage)
+        || Object.keys(data.coverage).length > 32
+        || Object.entries(data.coverage).some(([family, status]) => (
+            !DIAMOND_SAFE_STAT_KEY.test(family) || !DIAMOND_COVERAGE_STATUSES.has(status)
+        ))
+        || !isPlainRecord(data.statSources)
+        || Object.keys(data.statSources).some((key) => !publicStatIds.has(key))
+        || !Object.values(data.statSources).every((ids) => isStrictSortedStringArray(ids, { maximum: 5000 }))
+        || !isStrictSortedStringArray(data.sourcePlayIds, { maximum: 5000 })
+        || !isStrictSortedStringArray(data.unavailableDerivedStats, { allowed: DIAMOND_DERIVED_PLAYER_STAT_IDS })
+        || !isStrictSortedStringArray(data.missingStatFamilies, { maximum: 32 })
+    ) return null;
+    const expectedSourcePlayIds = [...new Set(Object.values(data.statSources).flat())].sort();
+    if (
+        expectedSourcePlayIds.length !== data.sourcePlayIds.length
+        || expectedSourcePlayIds.some((sourcePlayId, index) => sourcePlayId !== data.sourcePlayIds[index])
+    ) return null;
+
+    const completeStats = { ...data.stats, ...data.derivedStats };
+    const completeStatKeys = Object.keys(completeStats).sort();
+    return {
+        playerId: entry.id,
+        playerName: data.playerName || null,
+        playerNumber: data.playerNumber || null,
+        participated: data.participated,
+        stats: completeStats,
+        completeStatKeys,
+        omittedOrIncompleteStatKeys: data.publicStatIds.filter((key) => !completeStatKeys.includes(key))
+    };
+}
+
+async function loadCompleteDiamondPublicPlayerStats(db, teamId, gameId, game) {
+    const identity = diamondProjectionIdentity(game);
+    if (!identity || !isExactDiamondResourceId(teamId) || !isExactDiamondResourceId(gameId)) {
+        throw new DomainError('unavailable', 'Complete public Diamond player stats are temporarily unavailable.');
+    }
+    const collectionPath = `teams/${teamId}/games/${gameId}/diamondStatGenerations/${identity.instanceId}/publicPlayerStats`;
+    for (let attempt = 0; attempt < MAX_DIAMOND_LOAD_ATTEMPTS; attempt += 1) {
+        try {
+            const snapshot = await db.collection(collectionPath)
+                .limit(MAX_DIAMOND_PUBLIC_PLAYER_STATS + 1)
+                .get();
+            if (!snapshot || !Array.isArray(snapshot.docs) || snapshot.docs.length > MAX_DIAMOND_PUBLIC_PLAYER_STATS) {
+                throw new Error('Diamond public player stats exceeded the bounded result.');
+            }
+            const seenPlayerIds = new Set();
+            const playerStats = snapshot.docs.map((doc) => {
+                const entry = { id: doc.id, data: doc.data() || {} };
+                if (seenPlayerIds.has(entry.id)) throw new Error('Diamond public player stats contained a duplicate player.');
+                seenPlayerIds.add(entry.id);
+                const projected = projectDiamondPublicPlayer(entry, identity, teamId, gameId);
+                if (!projected) throw new Error('Diamond public player stats did not match the current generation.');
+                return projected;
+            });
+            return {
+                playerStats,
+                evidence: {
+                    complete: true,
+                    visibility: 'public',
+                    source: 'diamond-public-projection',
+                    absenceConfirmed: playerStats.length === 0,
+                    truncated: false,
+                    generationBound: true,
+                    instructions: 'Omitted or incomplete Diamond counters are unknown, never zero. Do not infer absence unless absenceConfirmed is true.'
+                }
+            };
+        } catch {
+            // Retry one complete, exact-generation read. Never retain a partial
+            // or denied response as an empty authoritative result.
+        }
+    }
+    throw new DomainError('unavailable', 'Complete public Diamond player stats are temporarily unavailable.');
+}
+
 export async function getGameSummary(db, context, { teamId, gameId } = {}) {
     const entry = requireTeamAccess(context, teamId);
     if (typeof gameId !== 'string' || !gameId) {
@@ -586,31 +804,40 @@ export async function getGameSummary(db, context, { teamId, gameId } = {}) {
     }
     game.rsvpSummary = whitelistRsvpSummary(data.rsvpSummary);
 
-    let statsSnap = { docs: [] };
-    try {
-        statsSnap = await db.collection(`teams/${teamId}/games/${gameId}/aggregatedStats`)
-            .limit(MAX_PLAYER_STATS)
-            .get();
-    } catch (error) {
-        if (!(error instanceof DomainError && error.code === 'permission_denied')) throw error;
+    let playerStats;
+    let playerStatsEvidence = null;
+    if (cleanString(data.trackingEngine).trim().toLowerCase() === 'diamond-v2') {
+        const projected = await loadCompleteDiamondPublicPlayerStats(db, teamId, gameId, data);
+        playerStats = projected.playerStats;
+        playerStatsEvidence = projected.evidence;
+    } else {
+        let statsSnap = { docs: [] };
+        try {
+            statsSnap = await db.collection(`teams/${teamId}/games/${gameId}/aggregatedStats`)
+                .limit(MAX_PLAYER_STATS)
+                .get();
+        } catch (error) {
+            if (!(error instanceof DomainError && error.code === 'permission_denied')) throw error;
+        }
+        playerStats = statsSnap.docs.map((doc) => {
+            const player = doc.data() || {};
+            const stats = player.stats && typeof player.stats === 'object' && !Array.isArray(player.stats)
+                ? player.stats
+                : {};
+            return {
+                playerId: doc.id,
+                playerName: cleanString(player.playerName) || null,
+                playerNumber: player.playerNumber ?? null,
+                stats: Object.fromEntries(Object.entries(stats)
+                    .filter(([, value]) => typeof value === 'number'))
+            };
+        });
     }
-    const playerStats = statsSnap.docs.map((doc) => {
-        const player = doc.data() || {};
-        const stats = player.stats && typeof player.stats === 'object' && !Array.isArray(player.stats)
-            ? player.stats
-            : {};
-        return {
-            playerId: doc.id,
-            playerName: cleanString(player.playerName) || null,
-            playerNumber: player.playerNumber ?? null,
-            stats: Object.fromEntries(Object.entries(stats)
-                .filter(([, value]) => typeof value === 'number'))
-        };
-    });
 
     return {
         game,
         playerStats,
+        ...(playerStatsEvidence ? { playerStatsEvidence } : {}),
         deepLink: gameDeepLink(teamId, gameId, { replay: true })
     };
 }
