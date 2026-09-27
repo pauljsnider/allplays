@@ -382,15 +382,19 @@ describe('native scoring roster fallback', () => {
           name: `projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/liveEvents/event-${start + index}`,
           fields: { sequence: { integerValue: String(start + index) } }
         })),
-        ...(start === 1 ? { nextPageToken: 'second-page' } : {})
+        ...(start === 1
+          ? { nextPageToken: 'second-page' }
+          : start === 11
+            ? { nextPageToken: 'third-page' }
+            : {})
       })
     });
     (globalThis as any).fetch = vi.fn()
       .mockResolvedValueOnce(page(1, 10))
-      .mockResolvedValueOnce(page(11, 2));
+      .mockResolvedValueOnce(page(11, 15));
 
     try {
-      await expect(loadGameDayLiveEventsForApp('team-1', 'game-1')).resolves.toHaveLength(12);
+      await expect(loadGameDayLiveEventsForApp('team-1', 'game-1')).resolves.toHaveLength(20);
       expect(globalThis.fetch).toHaveBeenCalledTimes(2);
     } finally {
       (globalThis as any).window = previousWindow;
