@@ -15,7 +15,8 @@ function createScenario(overrides = {}) {
         team: {
             id: 'team-1',
             name: 'Comets',
-            sport: 'Basketball'
+            sport: 'Basketball',
+            delegatedAccess: { scorekeeping: true }
         },
         game: {
             id: 'game-1',
@@ -156,6 +157,10 @@ async function installModuleMocks(page) {
                 };
             }
             return null;
+        }
+
+        export async function getGameDayTeamContext() {
+            return clone(loadStore().team);
         }
 
         export async function getTeams() {

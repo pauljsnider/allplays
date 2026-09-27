@@ -16,6 +16,8 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import {
     DomainError,
+    loadManagedTeamsFromCallable,
+    loadPublicTeamCalendarProjection,
     resolveUserContext,
     listMyTeams,
     getFamilySchedule,
@@ -143,6 +145,9 @@ function renderSignInPage({ clientId, redirectUri, codeChallenge, state, scope, 
         p { color: #94a3b8; font-size: 0.875rem; margin: 0 0 1.25rem; }
         label { display: block; font-size: 0.8rem; margin: 0.75rem 0 0.25rem; color: #cbd5e1; }
         input[type=email], input[type=password] { width: 100%; box-sizing: border-box; padding: 0.6rem; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; }
+        .terms { display: flex; align-items: flex-start; gap: 0.5rem; margin-top: 1rem; font-size: 0.8rem; color: #cbd5e1; }
+        .terms input { margin-top: 0.15rem; }
+        .terms a { color: #38bdf8; }
         button { margin-top: 1.25rem; width: 100%; padding: 0.7rem; border: 0; border-radius: 8px; background: #38bdf8; color: #0f172a; font-weight: 600; cursor: pointer; }
         .error { background: #7f1d1d; color: #fecaca; padding: 0.6rem; border-radius: 8px; font-size: 0.8rem; margin-bottom: 0.5rem; }
     </style>
@@ -158,6 +163,10 @@ function renderSignInPage({ clientId, redirectUri, codeChallenge, state, scope, 
             <input id="email" name="email" type="email" autocomplete="username" required>
             <label for="password">Password</label>
             <input id="password" name="password" type="password" autocomplete="current-password" required>
+            <label class="terms">
+                <input id="terms" name="terms_agree" type="checkbox" value="yes" required>
+                <span>I agree to the <a href="https://allplays.ai/terms.html" target="_blank" rel="noreferrer">Terms</a> and <a href="https://allplays.ai/privacy.html" target="_blank" rel="noreferrer">Privacy Policy</a>.</span>
+            </label>
             <button type="submit">Sign in &amp; approve</button>
         </form>
     </div>
@@ -182,7 +191,20 @@ function buildServer(identity) {
 
     const run = (handler) => async (args) => {
         try {
-            const context = await resolveUserContext(db, identity);
+            let managedTeamResult;
+            try {
+                managedTeamResult = await loadManagedTeamsFromCallable({
+                    projectId: PROJECT_ID,
+                    idToken: identity.idToken
+                });
+            } catch (error) {
+                if (!(error instanceof DomainError) || error.code !== 'not_found') throw error;
+                managedTeamResult = { teams: null, isPartial: false };
+            }
+            if (managedTeamResult.isPartial) {
+                throw new DomainError('unavailable', 'Managed team discovery returned incomplete results.');
+            }
+            const context = await resolveUserContext(db, identity, { managedTeams: managedTeamResult.teams });
             return toolResult(await handler(context, args));
         } catch (error) {
             return toolError(error);
@@ -204,14 +226,22 @@ function buildServer(identity) {
             endDate: z.string().optional().describe('ISO date, inclusive. Defaults to startDate + 7 days.')
         },
         annotations: { readOnlyHint: true }
-    }, run((context, args) => getFamilySchedule(db, context, args)));
+    }, run((context, args) => getFamilySchedule(db, context, args, new Date(), {
+        loadCalendarProjection: ({ teamId, startDate, endDate }) => loadPublicTeamCalendarProjection({
+            projectId: PROJECT_ID,
+            idToken: identity.idToken,
+            teamId,
+            startDate,
+            endDate
+        })
+    })));
 
     server.registerTool('get_game_summary', {
         title: 'Get game summary',
         description: 'Score, status, summary, and aggregated player statistics for one game on a team the user belongs to.',
         inputSchema: {
             teamId: z.string().describe('Team id from get_profile'),
-            gameId: z.string().describe('Game id from list_schedule')
+            gameId: z.string().describe('Non-imported gameId from list_schedule. Imported calendar events have no gameId and do not support game summaries.')
         },
         annotations: { readOnlyHint: true }
     }, run((context, args) => getGameSummary(db, context, args)));
@@ -270,6 +300,17 @@ app.post('/oauth/authorize', async (req, res) => {
             code_challenge: params.code_challenge,
             code_challenge_method: 'S256'
         });
+        // Require explicit agreement to the Terms and Privacy Policy before any
+        // credential is checked or a grant is created.
+        if (params.terms_agree !== 'yes') {
+            res.status(400).type('html').send(renderSignInPage({
+                clientId, redirectUri, codeChallenge,
+                state: params.state,
+                scope: params.scope,
+                error: 'You must agree to the Terms and Privacy Policy to continue.'
+            }));
+            return;
+        }
         // Only Firebase's sign-in response may create a grant. In particular,
         // do not persist an unverified refresh_token posted to this public route.
         const signedIn = await firebaseSignIn(String(params.email || ''), String(params.password || ''));

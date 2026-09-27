@@ -5,7 +5,8 @@ import { pathToFileURL } from 'node:url';
 import { getPublicSmokePages } from '../tests/smoke/page-registry.js';
 import {
     createAppCheckRuntimeConfig,
-    isAppCheckEnforcementReady
+    isAppCheckEnforcementReady,
+    isDiamondScorebookUiRolloutEnabled
 } from './stage-pages-bundle.mjs';
 
 const runtimeConfigPath = '/.well-known/allplays-runtime-config.json';
@@ -26,9 +27,15 @@ export function getExpectedRuntimeConfig({
     siteKey = process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY,
     enforcementReady = isAppCheckEnforcementReady(
         process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY
+    ),
+    diamondScorebookUiEnabled = isDiamondScorebookUiRolloutEnabled(
+        process.env.ALLPLAYS_DIAMOND_SCOREBOOK_UI_ENABLED
     )
 } = {}) {
-    return createAppCheckRuntimeConfig(siteKey, { enforcementReady });
+    return createAppCheckRuntimeConfig(siteKey, {
+        enforcementReady,
+        diamondScorebookUiEnabled
+    });
 }
 
 export function configuredHeadersFor(path, config = firebaseConfig) {
@@ -78,9 +85,73 @@ function fail(url, message) {
     throw new Error(`${url}: ${message}`);
 }
 
+function parseHstsDirectives(value) {
+    const directives = new Map();
+    for (const directive of value.split(';').map((part) => part.trim()).filter(Boolean)) {
+        const [name, ...rest] = directive.split('=');
+        const normalizedName = name.toLowerCase();
+        if (directives.has(normalizedName)) {
+            throw new Error(`duplicate directive "${normalizedName}"`);
+        }
+        directives.set(
+            normalizedName,
+            rest.length > 0 ? rest.join('=').trim().toLowerCase() : true
+        );
+    }
+    return directives;
+}
+
+function validateHstsHeader(url, observed, expected) {
+    let observedDirectives;
+    try {
+        observedDirectives = parseHstsDirectives(observed);
+    } catch (error) {
+        fail(
+            url,
+            `header "Strict-Transport-Security" rejected ${error.message} in observed "${observed}"`
+        );
+    }
+    const expectedDirectives = parseHstsDirectives(expected);
+    const observedMaxAgeValue = observedDirectives.get('max-age');
+    const expectedMaxAgeValue = expectedDirectives.get('max-age');
+    const observedMaxAge = typeof observedMaxAgeValue === 'string'
+        && /^\d+$/.test(observedMaxAgeValue)
+        ? Number(observedMaxAgeValue)
+        : Number.NaN;
+    const expectedMaxAge = typeof expectedMaxAgeValue === 'string'
+        && /^\d+$/.test(expectedMaxAgeValue)
+        ? Number(expectedMaxAgeValue)
+        : Number.NaN;
+
+    if (
+        !Number.isSafeInteger(observedMaxAge)
+        || !Number.isSafeInteger(expectedMaxAge)
+        || observedMaxAge < expectedMaxAge
+    ) {
+        fail(
+            url,
+            `header "Strict-Transport-Security" expected max-age at least ${expectedMaxAge} but observed "${observed}"`
+        );
+    }
+
+    for (const [name, value] of expectedDirectives) {
+        if (name === 'max-age') continue;
+        if (observedDirectives.get(name) !== value) {
+            fail(
+                url,
+                `header "Strict-Transport-Security" expected directive "${name}" but observed "${observed}"`
+            );
+        }
+    }
+}
+
 function validateHeaders(url, response, expectedHeaders) {
     for (const [name, expected] of expectedHeaders) {
         const observed = response.headers.get(name)?.trim() ?? '<missing>';
+        if (name.toLowerCase() === 'strict-transport-security') {
+            validateHstsHeader(url, observed, expected);
+            continue;
+        }
         if (observed !== expected) {
             fail(
                 url,
@@ -98,6 +169,11 @@ function htmlContainsSelector(html, selector) {
     if (/^#[A-Za-z][\w:-]*$/.test(selector)) {
         const id = escapeRegExp(selector.slice(1));
         return new RegExp(`\\bid\\s*=\\s*["']${id}["']`, 'i').test(html);
+    }
+    const attributePresence = selector.match(/^\[([A-Za-z_:][\w:.-]*)\]$/);
+    if (attributePresence) {
+        const attribute = escapeRegExp(attributePresence[1]);
+        return new RegExp(`<[^>]*\\s${attribute}(?:\\s|=|/?>)`, 'i').test(html);
     }
     if (/^[A-Za-z][\w-]*$/.test(selector)) {
         return new RegExp(`<${escapeRegExp(selector)}\\b`, 'i').test(html);

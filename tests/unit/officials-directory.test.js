@@ -10,6 +10,8 @@ describe('officials directory workflow', () => {
         const source = readSource('js/db.js');
 
         expect(source).toContain('export function normalizeOfficialDraft');
+        expect(source).toContain('emailLower: normalizeOfficialLinkEmail(email) || null');
+        expect(source).toContain('phoneDigits: normalizeOfficialLinkPhone(phone) || null');
         expect(source).toContain('export async function getOfficials(teamId)');
         expect(source).toContain('collection(db, `teams/${teamId}/officials`)');
         expect(source).toContain('export async function addOfficial(teamId, officialData)');

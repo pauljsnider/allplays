@@ -160,6 +160,132 @@ describe('Teams empty state', () => {
     cleanup();
   });
 
+  it('renders a verified streamed team while complete scope discovery is still pending', async () => {
+    const completeLoad = deferred<ReturnType<typeof makeTeamSummaryBootstrap>>();
+    const streamedHome: ParentHomeModel = {
+      ...emptyHome,
+      teams: [{
+        teamId: 'team-streamed',
+        teamName: 'Streamed Stars',
+        role: 'Coach',
+        sport: null,
+        photoUrl: null,
+        players: [],
+        nextEvent: null,
+        eventCount: 0,
+        upcomingEventCount: 0,
+        unreadCount: 0,
+        openActions: 0
+      }],
+      metrics: { ...emptyHome.metrics, teams: 1 }
+    };
+    homeServiceMocks.loadParentTeamsSummaryBootstrap.mockImplementationOnce(async (_user, options) => {
+      options?.onPartial?.(streamedHome);
+      return completeLoad.promise;
+    });
+
+    renderTeams();
+
+    expect(await screen.findByRole('link', { name: 'Open Streamed Stars' })).toHaveAttribute(
+      'href',
+      '/teams/team-streamed'
+    );
+    expect(screen.queryByText('Loading teams')).toBeNull();
+
+    completeLoad.resolve(makeTeamSummaryBootstrap(streamedHome));
+    await waitFor(() => expect(homeServiceMocks.loadParentHomeSummary).toHaveBeenCalledTimes(1));
+  });
+
+  it('preserves a streamed team if slower complete scope discovery fails', async () => {
+    const streamedHome: ParentHomeModel = {
+      ...emptyHome,
+      teams: [{
+        teamId: 'team-streamed',
+        teamName: 'Streamed Stars',
+        role: 'Coach',
+        sport: null,
+        photoUrl: null,
+        players: [],
+        nextEvent: null,
+        eventCount: 0,
+        upcomingEventCount: 0,
+        unreadCount: 0,
+        openActions: 0
+      }],
+      metrics: { ...emptyHome.metrics, teams: 1 }
+    };
+    homeServiceMocks.loadParentTeamsSummaryBootstrap.mockImplementationOnce(async (_user, options) => {
+      options?.onPartial?.(streamedHome);
+      throw new Error('Family scope timed out');
+    });
+
+    renderTeams();
+
+    expect(await screen.findByRole('link', { name: 'Open Streamed Stars' })).toBeVisible();
+    expect(screen.queryByText('Teams could not load')).toBeNull();
+    expect(screen.getByText('Unable to load teams while offline. Check your connection and try again.')).toBeVisible();
+  });
+
+  it('merges a streamed refresh slice without erasing the existing chooser when completion fails', async () => {
+    const existingHome: ParentHomeModel = {
+      ...emptyHome,
+      teams: [{
+        teamId: 'team-existing',
+        teamName: 'Existing Eagles',
+        role: 'Parent',
+        sport: 'Soccer',
+        photoUrl: null,
+        players: [{
+          teamId: 'team-existing',
+          teamName: 'Existing Eagles',
+          playerId: 'player-1',
+          playerName: 'Alex Eagle'
+        }],
+        nextEvent: null,
+        eventCount: 2,
+        upcomingEventCount: 1,
+        unreadCount: 1,
+        openActions: 1
+      }],
+      metrics: { ...emptyHome.metrics, teams: 1, players: 1, unreadMessages: 1 }
+    };
+    const streamedHome: ParentHomeModel = {
+      ...emptyHome,
+      teams: [{
+        teamId: 'team-streamed',
+        teamName: 'Streamed Stars',
+        role: 'Coach',
+        sport: null,
+        photoUrl: null,
+        players: [],
+        nextEvent: null,
+        eventCount: 0,
+        upcomingEventCount: 0,
+        unreadCount: 0,
+        openActions: 0
+      }],
+      metrics: { ...emptyHome.metrics, teams: 1 }
+    };
+    homeServiceMocks.loadParentTeamsSummaryBootstrap
+      .mockResolvedValueOnce(makeTeamSummaryBootstrap(existingHome))
+      .mockImplementationOnce(async (_user, options) => {
+        options?.onPartial?.(streamedHome);
+        throw new Error('Family scope timed out');
+      });
+    homeServiceMocks.loadParentHomeSummary.mockResolvedValueOnce(existingHome);
+
+    renderTeams();
+    expect(await screen.findByRole('link', { name: 'Open Existing Eagles' })).toBeVisible();
+    await waitFor(() => expect(homeServiceMocks.loadParentHomeSummary).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh teams' }));
+
+    expect(await screen.findByRole('link', { name: 'Open Streamed Stars' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Open Existing Eagles' })).toBeVisible();
+    expect(screen.getByText('Alex Eagle')).toBeVisible();
+    expect(screen.queryByText('Teams could not load')).toBeNull();
+  });
+
   it('opens the native Browse Teams route from the empty state recovery action', async () => {
     renderTeams();
 
@@ -205,7 +331,8 @@ describe('Teams empty state', () => {
         photoUrl: null,
         players: [{ teamId: 'team-fast', teamName: 'Fast Falcons', playerId: 'player-1', playerName: 'Avery Ace' }],
         nextEvent: null,
-        eventCount: 2,
+        eventCount: 4,
+        upcomingEventCount: 2,
         unreadCount: 1,
         openActions: 0
       }],
@@ -227,6 +354,72 @@ describe('Teams empty state', () => {
     expect(screen.queryByText('No teams available')).toBeNull();
   });
 
+  it('does not let a nonempty enrichment subset erase an authoritative fast team', async () => {
+    const authoritativeTeam = {
+      teamId: 'team-authoritative', teamName: 'Authoritative Aces', role: 'Coach' as const, sport: 'Soccer', photoUrl: null,
+      players: [], nextEvent: null, eventCount: 0, upcomingEventCount: 0, unreadCount: 0, openActions: 0
+    };
+    const otherTeam = {
+      teamId: 'team-other', teamName: 'Other Owls', role: 'Coach' as const, sport: 'Soccer', photoUrl: null,
+      players: [], nextEvent: null, eventCount: 0, upcomingEventCount: 0, unreadCount: 0, openActions: 0
+    };
+    const fastHome = {
+      ...emptyHome,
+      teams: [authoritativeTeam, otherTeam],
+      metrics: { ...emptyHome.metrics, teams: 2 }
+    };
+    const incompleteEnrichment = {
+      ...emptyHome,
+      teams: [{ ...otherTeam, eventCount: 2 }],
+      metrics: { ...emptyHome.metrics, teams: 1 }
+    };
+    homeServiceMocks.loadParentTeamsSummaryBootstrap.mockResolvedValueOnce(makeTeamSummaryBootstrap(fastHome));
+    homeServiceMocks.loadParentHomeSummary.mockResolvedValueOnce(incompleteEnrichment);
+
+    renderTeams();
+
+    expect(await screen.findByRole('link', { name: 'Open Authoritative Aces' })).toBeTruthy();
+    await waitFor(() => expect(homeServiceMocks.loadParentHomeSummary).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('link', { name: 'Open Authoritative Aces' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open Other Owls' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '2 teams ready' })).toBeTruthy();
+  });
+
+  it('preserves the complete team chooser when a refresh returns incomplete access', async () => {
+    const completeHome = {
+      players: [],
+      teams: [
+        {
+          teamId: 'team-1', teamName: 'Vipers', role: 'Coach' as const, sport: 'Soccer', photoUrl: null,
+          players: [], nextEvent: null, eventCount: 0, upcomingEventCount: 0, unreadCount: 0, openActions: 0
+        },
+        {
+          teamId: 'team-2', teamName: 'Current', role: 'Coach' as const, sport: 'Soccer', photoUrl: null,
+          players: [], nextEvent: null, eventCount: 0, upcomingEventCount: 0, unreadCount: 0, openActions: 0
+        }
+      ],
+      upcomingEvents: [],
+      actionItems: [],
+      fees: [],
+      metrics: { players: 0, teams: 2, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+    };
+    homeServiceMocks.loadParentTeamsSummaryBootstrap
+      .mockResolvedValueOnce(makeTeamSummaryBootstrap(completeHome))
+      .mockRejectedValueOnce(new Error('Team access discovery is incomplete'));
+    homeServiceMocks.loadParentHomeSummary.mockResolvedValueOnce(completeHome);
+
+    renderTeams();
+
+    expect(await screen.findByRole('heading', { name: '2 teams ready' })).toBeTruthy();
+    await waitFor(() => expect(homeServiceMocks.loadParentHomeSummary).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh teams' }));
+
+    expect(await screen.findByText('Unable to refresh teams. Showing the last loaded teams. Try again.')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open Vipers' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open Current' })).toBeTruthy();
+    expect(screen.queryByText('No teams linked yet')).toBeNull();
+  });
+
   it('reuses the fast summary scope when loading the enriched team cards', async () => {
     const fastTeamHome = {
       players: [],
@@ -238,7 +431,8 @@ describe('Teams empty state', () => {
         photoUrl: null,
         players: [{ teamId: 'team-fast', teamName: 'Fast Falcons', playerId: 'player-1', playerName: 'Avery Ace' }],
         nextEvent: null,
-        eventCount: 0,
+        eventCount: 3,
+        upcomingEventCount: 0,
         unreadCount: 1,
         openActions: 0
       }],
@@ -259,7 +453,8 @@ describe('Teams empty state', () => {
       ...fastTeamHome,
       teams: [{
         ...fastTeamHome.teams[0],
-        eventCount: 2
+        eventCount: 2,
+        upcomingEventCount: 2
       }]
     });
 
@@ -311,7 +506,8 @@ describe('Teams launcher navigation', () => {
         photoUrl: null,
         players: [{ teamId: 'team-fast', teamName: 'Fast Falcons', playerId: 'player-1', playerName: 'Avery Ace' }],
         nextEvent: null,
-        eventCount: 2,
+        eventCount: 4,
+        upcomingEventCount: 2,
         unreadCount: 1,
         openActions: 0
       },
@@ -323,7 +519,8 @@ describe('Teams launcher navigation', () => {
         photoUrl: null,
         players: [],
         nextEvent: null,
-        eventCount: 0,
+        eventCount: 3,
+        upcomingEventCount: 0,
         unreadCount: 0,
         openActions: 0
       }
@@ -390,9 +587,10 @@ describe('Teams launcher navigation', () => {
     expect(selectedRow).not.toBeNull();
 
     expect(within(selectedRow!).getByText('1 player')).toBeTruthy();
-    expect(within(selectedRow!).getByText('2 events')).toBeTruthy();
+    expect(within(selectedRow!).getByText('2 upcoming')).toBeTruthy();
     expect(within(selectedRow!).getByText('1 unread')).toBeTruthy();
     expect(within(selectedRow!).getAllByRole('link')).toEqual([fastFalcons]);
+    expect(within(screen.getByRole('link', { name: 'Open Slow Sharks' }).closest('article')!).getByText('0 upcoming')).toBeTruthy();
   });
 });
 
@@ -406,6 +604,7 @@ describe('Teams single-team navigation', () => {
     players: [{ teamId: 'team-solo', teamName: 'Solo Bears', playerId: 'player-1', playerName: 'Alex Star' }],
     nextEvent: null,
     eventCount: 3,
+    upcomingEventCount: 3,
     unreadCount: 0,
     openActions: 0
   };

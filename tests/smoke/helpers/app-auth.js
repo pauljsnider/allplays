@@ -2,7 +2,6 @@ import { expect } from '@playwright/test';
 
 export const AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS = 240_000;
 const AUTHENTICATED_CONTEXT_CLOSE_TIMEOUT_MS = 5_000;
-
 const sensitivePatterns = [
     /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
     /\b(?:oobCode|code|token|apiKey|recipientId|registrationId)=([^&#\s]+)/gi,
@@ -70,8 +69,14 @@ function safePageLabel(pageUrl) {
     }
 }
 
-export function collectAppRuntimeIssues(page, secrets = []) {
+export function collectAppRuntimeIssues(page, secrets = [], {
+    includeApiFailures = false,
+    isControlledNavigation = () => false
+} = {}) {
     const issues = [];
+    const monitoredResourceTypes = new Set(includeApiFailures
+        ? ['document', 'script', 'stylesheet', 'xhr', 'fetch', 'image', 'media', 'font']
+        : ['document', 'script', 'stylesheet']);
     page.on('pageerror', (error) => {
         issues.push(`pageerror:${redactSmokeDiagnostic(error.message, secrets)}`);
     });
@@ -82,11 +87,14 @@ export function collectAppRuntimeIssues(page, secrets = []) {
         issues.push(`console:${redactSmokeDiagnostic(text, secrets)}`);
     });
     page.on('requestfailed', (request) => {
-        if (!['document', 'script', 'stylesheet'].includes(request.resourceType())) return;
-        issues.push(`asset:${request.failure()?.errorText || 'failed'}:${safeRequestLabel(request.url())}`);
+        if (!monitoredResourceTypes.has(request.resourceType())) return;
+        const errorText = request.failure()?.errorText || 'failed';
+        if (/ERR_ABORTED/i.test(errorText) && isControlledNavigation()) return;
+        const kind = includeApiFailures ? 'network' : 'asset';
+        issues.push(`${kind}:${errorText}:${safeRequestLabel(request.url())}`);
     });
     page.on('response', (response) => {
-        if (!['document', 'script', 'stylesheet'].includes(response.request().resourceType())) return;
+        if (!monitoredResourceTypes.has(response.request().resourceType())) return;
         if (response.status() >= 400) {
             issues.push(`response:${response.status()}:${safeRequestLabel(response.url())}`);
         }

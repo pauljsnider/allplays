@@ -35,6 +35,12 @@ test('removes a stale public profile when an Auth identity becomes unverified', 
     { emailVerified: true }
   ), false);
   assert.equal(deleteCalls, 1);
+
+  assert.equal(await removePublicProfileForIneligibleAuth(
+    publicProfileRef,
+    { emailVerified: true, userDisabled: true }
+  ), true);
+  assert.equal(deleteCalls, 2);
 });
 
 test('Auth deletion removes profile state and every indexed staff or parent recipient', async () => {
@@ -237,7 +243,7 @@ test('scheduled sweep reconciles unchanged-email revocation and a missed Auth-de
   const reconciledUserIds = [];
   const synchronizedIdentityUserIds = [];
   const syncedUserIds = [];
-  const profileDocs = ['verified-user', 'unverified-user', 'missing-user'].map((id) => ({
+  const profileDocs = ['verified-user', 'unverified-user', 'disabled-user', 'missing-user'].map((id) => ({
     id,
     ref: {
       delete: async () => deletedUserIds.push(id)
@@ -256,7 +262,8 @@ test('scheduled sweep reconciles unchanged-email revocation and a missed Auth-de
       }
       return {
         email: 'unchanged@example.com',
-        emailVerified: userId === 'verified-user'
+        emailVerified: ['verified-user', 'disabled-user'].includes(userId),
+        disabled: userId === 'disabled-user'
       };
     }
   };
@@ -274,7 +281,9 @@ test('scheduled sweep reconciles unchanged-email revocation and a missed Auth-de
       reconciledUserIds.push([userId, authIdentity]);
       return {
         affectedStaffTeamIds: ['former-team', 'current-team'],
-        isIneligible: authIdentity.userMissing === true || authIdentity.emailVerified !== true
+        isIneligible: authIdentity.userMissing === true ||
+          authIdentity.userDisabled === true ||
+          authIdentity.emailVerified !== true
       };
     },
     syncReconciledIdentity: async (userId, authIdentity, reconciliation) => {
@@ -286,27 +295,30 @@ test('scheduled sweep reconciles unchanged-email revocation and a missed Auth-de
     batchSize: 10
   });
 
-  assert.deepEqual(await handler(), { scanned: 3, removed: 2 });
-  assert.deepEqual(deletedUserIds.sort(), ['missing-user', 'unverified-user']);
+  assert.deepEqual(await handler(), { scanned: 4, removed: 3 });
+  assert.deepEqual(deletedUserIds.sort(), ['disabled-user', 'missing-user', 'unverified-user']);
   assert.deepEqual(reconciledUserIds.map(([userId]) => userId), [
     'verified-user',
     'unverified-user',
+    'disabled-user',
     'missing-user'
   ]);
   assert.deepEqual(synchronizedIdentityUserIds.map(([userId]) => userId), [
     'verified-user',
     'unverified-user',
+    'disabled-user',
     'missing-user'
   ]);
   assert.deepEqual(
     synchronizedIdentityUserIds.map(([, , reconciliation]) => reconciliation.isIneligible),
-    [false, true, true]
+    [false, true, true, true]
   );
   assert.deepEqual(syncedUserIds, [['verified-user', {
     email: 'unchanged@example.com',
     displayName: null,
     photoUrl: null,
-    emailVerified: true
+    emailVerified: true,
+    userDisabled: false
   }, {
     affectedStaffTeamIds: ['former-team', 'current-team'],
     isIneligible: false

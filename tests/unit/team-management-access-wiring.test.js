@@ -6,11 +6,14 @@ function readRepoFile(relativePath) {
 }
 
 describe('team management page access wiring', () => {
-    it('loads all active teams for platform admins on the dashboard', () => {
+    it('loads dashboard staff and parent teams through one bounded server-authoritative request', () => {
         const html = readRepoFile('dashboard.html');
-        expect(html).toContain('import { getTeams, getUserTeamsWithAccess');
-        expect(html).toContain('const canManageAllTeams = user.isAdmin === true;');
-        expect(html).toContain('canManageAllTeams\n                        ? getTeams({ includePrivate: true })\n                        : getUserTeamsWithAccess(user.uid, user.email || profile?.email)');
+        expect(html).toContain("import { loadDashboardTeams } from './js/dashboard-team-load.js?v=4';");
+        expect(html).toContain('const { fullAccessTeams: coachTeams, parentTeams } = await loadDashboardTeams({');
+        expect(html).toContain('includeAllTeams: user.isAdmin === true,');
+        expect(html).toContain('timeoutMs: 10000');
+        expect(html).not.toContain('getTeams({ includePrivate: true })');
+        expect(html).not.toContain('getParentTeams(user.uid');
     });
 
     it('backs dashboard platform-admin access with protected Firestore admin state', () => {
@@ -23,23 +26,31 @@ describe('team management page access wiring', () => {
         expect(rules).toContain("(isOwner(userId) && isOwnerUserCreatePayloadValid(request.resource.data))");
         expect(rules).toContain("(isOwner(userId) && isOwnerUserUpdatePayloadValid())");
         expect(rules).toContain("(isOwner(userId) && resource.data.get('isAdmin', false) != true)");
-        expect(rules).toContain('canReadTeamDocument(resource.data)');
+        expect(rules).toContain('canReadTeamDocument(teamId, resource.data)');
     });
 
-    it('prefers auth email before profile fallback when loading non-admin dashboard team access', () => {
+    it('does not restore dashboard team access from a mutable profile email', () => {
         const html = readRepoFile('dashboard.html');
-        expect(html).toContain('getUserTeamsWithAccess(user.uid, user.email || profile?.email)');
+        expect(html).not.toContain('getUserTeamsWithAccess(');
+        expect(html).not.toContain('getUserTeamsWithAccess(user.uid, user.email || profile?.email)');
+    });
+
+    it('uses only the authenticated email for calendar team discovery and admin checks', () => {
+        const html = readRepoFile('calendar.html');
+        expect(html).toContain('const email = user.email || null;');
+        expect(html).toContain('getUserTeamsWithAccess(user.uid, email)');
+        expect(html).not.toContain('const email = user.email || profile?.email;');
     });
 
     it('uses shared full-access helper in edit roster page', () => {
         const html = readRepoFile('edit-roster.html');
-        expect(html).toContain("from './js/team-access.js'");
+        expect(html).toContain("from './js/team-access.js?v=44338'");
         expect(html).toContain('hasFullTeamAccess(');
     });
 
     it('uses shared full-access helper in edit team page', () => {
         const html = readRepoFile('edit-team.html');
-        expect(html).toContain("from './js/team-access.js?v=4'");
+        expect(html).toContain("from './js/team-access.js?v=44338'");
         expect(html).toContain('hasFullTeamAccess(');
     });
 
@@ -61,7 +72,7 @@ describe('team management page access wiring', () => {
 
     it('uses shared full-access helper in edit config page', () => {
         const html = readRepoFile('edit-config.html');
-        expect(html).toContain("from './js/edit-config-access.js?v=2'");
+        expect(html).toContain("from './js/edit-config-access.js?v=44335'");
         expect(html).toContain('getEditConfigAccessDecision(');
     });
 });

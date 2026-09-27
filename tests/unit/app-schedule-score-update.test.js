@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('@capacitor/core', () => ({
+    Capacitor: { isNativePlatform: () => false, getPlatform: () => 'ios' }
+}));
+
 const dbMocks = vi.hoisted(() => {
     const transactionSet = vi.fn();
     const transactionGet = vi.fn();

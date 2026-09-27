@@ -1,20 +1,28 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, CalendarDays, Loader2, MapPin, RefreshCw, ShieldCheck, Trophy, Users } from 'lucide-react';
+import { AlertCircle, CalendarDays, Loader2, MapPin, PlayCircle, Radio, RefreshCw, ShieldCheck, Trophy, Users } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { formatShortDate, formatTimeOfDay } from '../lib/datetime';
 import { getScheduleLocationLabel } from '../lib/scheduleLogic';
 import {
   FamilyShareTokenError,
+  isFamilyShareCompletedGame,
   loadFamilyShareView,
+  resolveFamilyShareWatchCta,
   type FamilyShareEvent,
   type FamilyShareViewModel
 } from '../lib/familyShareViewerService';
+
+type FamilyShareErrorState = {
+  title: string;
+  detail: string;
+  retryable?: boolean;
+};
 
 export function FamilyShare() {
   const { token = '' } = useParams();
   const [model, setModel] = useState<FamilyShareViewModel | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<{ title: string; detail: string } | null>(null);
+  const [error, setError] = useState<FamilyShareErrorState | null>(null);
 
   const refresh = useCallback(() => {
     let active = true;
@@ -58,6 +66,12 @@ export function FamilyShare() {
           </div>
           <h1 className="mt-3 text-2xl font-black text-gray-950">{state.title}</h1>
           <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">{state.detail}</p>
+          {state.retryable ? (
+            <button type="button" className="primary-button mx-auto mt-5 w-fit justify-center text-xs" onClick={() => { refresh(); }}>
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              Retry family page
+            </button>
+          ) : null}
           <Link to="/home" className="secondary-button mx-auto mt-5 w-fit justify-center text-xs">Open ALL PLAYS</Link>
         </section>
       </div>
@@ -115,7 +129,7 @@ function FamilyShareContent({ model, onRefresh }: { model: FamilyShareViewModel;
             {model.children.length ? model.children.map((child) => (
               <div key={`${child.teamId}-${child.playerId}`} className="flex min-w-0 items-center gap-3 rounded-xl border border-gray-200 p-3">
                 <div className="flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-full bg-primary-50 text-sm font-black text-primary-700">
-                  {child.playerPhotoUrl ? <img src={child.playerPhotoUrl} alt="" className="h-full w-full object-cover" /> : (child.playerName.charAt(0) || 'P')}
+                  {child.playerPhotoUrl ? <img src={child.playerPhotoUrl} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" /> : (child.playerName.charAt(0) || 'P')}
                 </div>
                 <div className="min-w-0">
                   <div className="truncate text-sm font-black text-gray-950">{child.playerName}</div>
@@ -174,8 +188,11 @@ function Metric({ label, value, icon: Icon }: { label: string; value: string | n
 
 function FamilyEventRow({ event, compact = false }: { event: FamilyShareEvent; compact?: boolean }) {
   const title = getFamilyEventTitle(event);
-  const score = event.homeScore !== null || event.awayScore !== null ? `${event.homeScore ?? '-'}-${event.awayScore ?? '-'}` : '';
+  const score = isFamilyShareCompletedGame(event) && (event.homeScore !== null || event.awayScore !== null)
+    ? `${event.homeScore ?? '-'}-${event.awayScore ?? '-'}`
+    : '';
   const childNames = event.childNames.join(', ');
+  const watchCta = resolveFamilyShareWatchCta(event);
 
   return (
     <article className="rounded-xl border border-gray-200 p-3">
@@ -200,6 +217,22 @@ function FamilyEventRow({ event, compact = false }: { event: FamilyShareEvent; c
           {event.sourceLabel ? <span>{event.sourceLabel}</span> : null}
         </div>
       ) : null}
+      {watchCta ? (
+        <a
+          href={watchCta.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`${watchCta.label}: ${title}`}
+          className={`mt-3 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-black transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${watchCta.kind === 'live'
+            ? 'bg-rose-50 text-rose-700 hover:bg-rose-100 focus-visible:outline-rose-600'
+            : 'bg-teal-50 text-teal-700 hover:bg-teal-100 focus-visible:outline-teal-600'}`}
+        >
+          {watchCta.kind === 'live'
+            ? <Radio className="h-4 w-4" aria-hidden="true" />
+            : <PlayCircle className="h-4 w-4" aria-hidden="true" />}
+          {watchCta.label}
+        </a>
+      ) : null}
     </article>
   );
 }
@@ -219,8 +252,18 @@ function getFamilyEventTitle(event: FamilyShareEvent) {
   return event.opponent && event.opponent !== 'TBD' ? `vs ${event.opponent}` : 'Game';
 }
 
-function getFamilyShareErrorState(error: unknown) {
+function getFamilyShareErrorState(error: unknown): FamilyShareErrorState {
   if (error instanceof FamilyShareTokenError) {
+    if (error.reason === 'throttled') {
+      const retryDetail = error.retryAfterSeconds
+        ? `Please wait about ${error.retryAfterSeconds} seconds, then retry.`
+        : 'Please wait a moment, then retry.';
+      return {
+        title: 'Family page temporarily busy',
+        detail: retryDetail,
+        retryable: true
+      };
+    }
     if (error.reason === 'expired') {
       return {
         title: 'This link has expired',

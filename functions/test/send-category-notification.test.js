@@ -5,6 +5,54 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { loadNotificationInternals } = require('./send-category-notification-test-helpers.cjs');
 
+test('public RSVP private contacts hydrate in bounded BatchGet chunks for a large roster', async () => {
+        const eligibleCount = 205;
+        const playerDocs = Object.fromEntries([
+            ...Array.from({ length: eligibleCount }, (_, index) => [
+                `eligible-${index}`,
+                { active: true, name: `Eligible ${index}` }
+            ]),
+            ['inactive', { active: false }],
+            ['responded', { active: true }],
+            ['public-contact', { active: true, parents: [{ email: 'public@example.com' }] }]
+        ]);
+        const privateProfileDocs = Object.fromEntries([
+            ...Array.from({ length: eligibleCount }, (_, index) => [
+                `eligible-${index}`,
+                { parents: [{ email: `parent-${index}@example.com` }] }
+            ]),
+            ['inactive', { parents: [{ email: 'inactive@example.com' }] }],
+            ['responded', { parents: [{ email: 'responded@example.com' }] }],
+            ['public-contact', { parents: [{ email: 'private-fallback@example.com' }] }]
+        ]);
+        delete privateProfileDocs['eligible-203'];
+        privateProfileDocs['eligible-204'] = { parents: 'malformed' };
+
+        const { internals, env, cleanup } = loadNotificationInternals({
+            playerDocs,
+            privateProfileDocs
+        });
+
+        try {
+            const players = await internals.hydratePublicRsvpPrivateProfileParents({
+                teamId: 'team-1',
+                playerDocs: Object.entries(playerDocs).map(([id, data]) => ({ id, data: () => data })),
+                respondedPlayerIds: new Set(['responded'])
+            });
+
+            assert.deepEqual(env.getAllCalls.map((call) => call.length), [100, 100, 5]);
+            assert.ok(env.getAllCalls.every((call) => call.length <= 100));
+            assert.equal(players.find((player) => player.id === 'eligible-0').privateProfileParents[0].email, 'parent-0@example.com');
+            assert.equal(players.find((player) => player.id === 'eligible-203').privateProfileParents, undefined);
+            assert.equal(players.find((player) => player.id === 'eligible-204').privateProfileParents, undefined);
+            assert.equal(env.getAllCalls.flat().some((path) => path.includes('/inactive/')), false);
+            assert.equal(env.getAllCalls.flat().some((path) => path.includes('/responded/')), false);
+            assert.equal(env.getAllCalls.flat().some((path) => path.includes('/public-contact/')), false);
+        } finally {
+            cleanup();
+        }
+});
+
 test('getTargetsForCategory uses indexed targets without legacy per-user device scans when index coverage is complete', async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {
@@ -41,6 +89,224 @@ test('getTargetsForCategory uses indexed targets without legacy per-user device 
             assert.deepEqual(targets.map((target) => target.token).sort(), [
                 'coach-token', 'parent-token'
             ]);
+        } finally {
+            cleanup();
+        }
+});
+
+test('getTargetsForCategory retries a transient Auth batch failure before delivery', async () => {
+        const transientError = Object.assign(new Error('temporary Auth outage'), {
+            code: 'auth/internal-error'
+        });
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+            userDocs: { 'coach-1': { email: 'coach@example.com' } },
+            authGetUsersErrors: [transientError],
+            indexedTargets: [{
+                uid: 'coach-1',
+                deviceId: 'coach-device',
+                token: 'coach-token',
+                categories: { schedule: true }
+            }]
+        });
+
+        try {
+            const targets = await internals.getTargetsForCategory('team-1', 'schedule');
+            assert.deepEqual(targets.map((target) => target.token), ['coach-token']);
+            assert.ok(env.counts.authGetUsersCalls >= 3);
+        } finally {
+            cleanup();
+        }
+});
+
+test('getTargetsForCategory rejects after bounded transient Auth retries', async () => {
+        const authErrors = Array.from({ length: 3 }, () => Object.assign(
+            new Error('persistent Auth outage'),
+            { code: 'auth/internal-error' }
+        ));
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+            userDocs: { 'coach-1': { email: 'coach@example.com' } },
+            authGetUsersErrors: authErrors,
+            indexedTargets: []
+        });
+
+        try {
+            await assert.rejects(
+                internals.getTargetsForCategory('team-1', 'schedule'),
+                (error) => error.notificationAuthResolutionFailed === true
+            );
+            assert.equal(env.counts.authGetUsersCalls, 3);
+        } finally {
+            cleanup();
+        }
+});
+
+test('getTargetsForCategory drops malformed Auth UIDs before batching', async () => {
+        const malformedUid = 'x'.repeat(129);
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: { ownerId: malformedUid, adminEmails: [] },
+            indexedTargets: [{
+                uid: malformedUid,
+                deviceId: 'invalid-device',
+                token: 'invalid-token',
+                categories: { schedule: true }
+            }]
+        });
+
+        try {
+            assert.deepEqual(await internals.getTargetsForCategory('team-1', 'schedule'), []);
+            assert.equal(env.counts.authGetUsersCalls, 0);
+        } finally {
+            cleanup();
+        }
+});
+
+test('getTargetsForCategory excludes a disabled indexed owner before notification delivery', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'disabled-owner',
+                adminEmails: []
+            },
+            userDocs: {
+                'disabled-owner': { email: 'disabled@example.com', parentTeamIds: [] }
+            },
+            authUsersByUid: {
+                'disabled-owner': {
+                    email: 'disabled@example.com',
+                    emailVerified: true,
+                    disabled: true
+                }
+            },
+            indexedTargets: [{
+                uid: 'disabled-owner',
+                roles: ['staff'],
+                deviceId: 'disabled-device',
+                token: 'disabled-token',
+                categories: { schedule: true }
+            }]
+        });
+
+        try {
+            const targets = await internals.getTargetsForCategory('team-1', 'schedule');
+
+            assert.deepEqual(targets, []);
+            assert.equal(env.counts.preferenceGets, 0);
+            assert.equal(env.counts.deviceGets, 0);
+        } finally {
+            cleanup();
+        }
+});
+
+test('empty-index backfill cannot recreate a disabled parent recipient', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'enabled-owner',
+                adminEmails: []
+            },
+            parentUserIds: ['disabled-parent'],
+            userDocs: {
+                'enabled-owner': { email: 'owner@example.com', parentTeamIds: [] },
+                'disabled-parent': {
+                    email: 'disabled-parent@example.com',
+                    parentTeamIds: ['team-1']
+                }
+            },
+            authUsersByUid: {
+                'enabled-owner': { email: 'owner@example.com', disabled: false },
+                'disabled-parent': {
+                    email: 'disabled-parent@example.com',
+                    disabled: true
+                }
+            },
+            preferenceDocs: {
+                'users/enabled-owner/notificationPreferences/team-1': { schedule: true },
+                'users/disabled-parent/notificationPreferences/team-1': { schedule: true }
+            },
+            deviceDocs: {
+                'enabled-owner': [{ id: 'owner-device', token: 'owner-token', platform: 'ios' }],
+                'disabled-parent': [{ id: 'parent-device', token: 'parent-token', platform: 'ios' }]
+            }
+        });
+
+        try {
+            const targets = await internals.getTargetsForCategory('team-1', 'schedule');
+
+            assert.deepEqual(targets.map((target) => target.uid), ['enabled-owner']);
+            assert.deepEqual(
+                env.dedupWrites
+                    .filter((write) => write.path.includes('/notificationRecipients/'))
+                    .map((write) => write.path),
+                ['teams/team-1/notificationRecipients/enabled-owner']
+            );
+        } finally {
+            cleanup();
+        }
+});
+
+test('targeted notification delivery excludes disabled requested user IDs', async () => {
+        const { internals, cleanup } = loadNotificationInternals({
+            authUsersByUid: {
+                'disabled-parent': { disabled: true }
+            },
+            preferenceDocs: {
+                'users/disabled-parent/notificationPreferences/team-1': { rsvp: true }
+            },
+            deviceDocs: {
+                'disabled-parent': [{ id: 'parent-device', token: 'parent-token', platform: 'ios' }]
+            }
+        });
+
+        try {
+            await assert.doesNotReject(async () => {
+                const targets = await internals.getTargetsForCategoryUserIds(
+                    'team-1',
+                    'rsvp',
+                    ['disabled-parent']
+                );
+                assert.deepEqual(targets, []);
+            });
+        } finally {
+            cleanup();
+        }
+});
+
+test('targeted notification delivery revalidates Auth after target resolution and emits no effects', async () => {
+        const authUsersByUid = {
+            'parent-1': { email: 'parent@example.com', disabled: false }
+        };
+        const { internals, env, cleanup } = loadNotificationInternals({
+            parentUserIds: ['parent-1'],
+            authUsersByUid,
+            indexedTargets: [{
+                uid: 'parent-1',
+                deviceId: 'parent-device',
+                token: 'parent-token',
+                categories: { rsvp: true }
+            }]
+        });
+
+        try {
+            const targets = await internals.getTargetsForCategoryUserIds(
+                'team-1',
+                'rsvp',
+                ['parent-1']
+            );
+            assert.equal(targets.length, 1);
+            authUsersByUid['parent-1'].disabled = true;
+
+            const result = await internals.sendDirectTargetsNotification({
+                targets,
+                category: 'rsvp',
+                title: 'RSVP reminder',
+                body: 'This must not be delivered.',
+                teamId: 'team-1'
+            });
+
+            assert.equal(result, null);
+            assert.equal(env.messagingCalls.length, 0);
+            assert.equal(env.inboxWrites.length, 0);
+            assert.equal(env.auditWrites.length, 0);
         } finally {
             cleanup();
         }
@@ -615,6 +881,156 @@ test('sendCategoryNotification preserves visible media album behavior for parent
             assert.deepEqual(env.messagingCalls[0]?.tokens.sort(), ['coach-token', 'parent-token']);
             assert.deepEqual(env.inboxWrites.map((write) => write.uid).sort(), ['coach-1', 'parent-1']);
             assert.equal(env.auditWrites[0]?.value.targetCount, 2);
+        } finally {
+            cleanup();
+        }
+});
+
+test('sendCategoryNotification emits no effects when Auth is disabled after indexed target resolution', async () => {
+        const authUsersByUid = {
+            'coach-1': { email: 'coach@example.com', disabled: false }
+        };
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+            userDocs: { 'coach-1': {} },
+            authUsersByUid,
+            indexedTargets: [{
+                uid: 'coach-1',
+                roles: ['staff'],
+                deviceId: 'coach-device',
+                token: 'coach-token',
+                categories: { liveChat: true }
+            }],
+            onAuthGetUsersCall: ({ callCount }) => {
+                if (callCount === 3) authUsersByUid['coach-1'].disabled = true;
+            }
+        });
+
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'liveChat',
+                title: 'Team chat',
+                body: 'This must not be delivered.'
+            });
+
+            assert.equal(result, null);
+            assert.equal(env.counts.authGetUsersCalls, 3);
+            assert.equal(env.messagingCalls.length, 0);
+            assert.equal(env.inboxWrites.length, 0);
+            assert.equal(env.auditWrites.length, 0);
+        } finally {
+            cleanup();
+        }
+});
+
+test('sendCategoryNotification emits no effects when the canonical team grant is revoked after target resolution', async () => {
+        const teamDoc = { ownerId: 'coach-1', adminEmails: [] };
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc,
+            userDocs: { 'coach-1': {} },
+            authUsersByUid: {
+                'coach-1': { email: 'coach@example.com', disabled: false }
+            },
+            indexedTargets: [{
+                uid: 'coach-1',
+                roles: ['staff'],
+                deviceId: 'coach-device',
+                token: 'coach-token',
+                categories: { liveChat: true }
+            }],
+            onAuthGetUsersCall: ({ callCount }) => {
+                if (callCount === 3) teamDoc.ownerId = 'new-owner';
+            }
+        });
+
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'liveChat',
+                title: 'Team chat',
+                body: 'This must not be delivered.'
+            });
+
+            assert.equal(result, null);
+            assert.equal(env.counts.authGetUsersCalls, 3);
+            assert.equal(env.messagingCalls.length, 0);
+            assert.equal(env.inboxWrites.length, 0);
+            assert.equal(env.auditWrites.length, 0);
+        } finally {
+            cleanup();
+        }
+});
+
+test('sendCategoryNotification preserves an enabled owner with one unambiguous legacy email alias', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerEmail: ' Legacy.Owner@Example.com ',
+                ownerEmailLower: 'legacy.owner@example.com',
+                adminEmails: []
+            },
+            userDocs: { 'legacy-owner': {} },
+            authUsersByUid: {
+                'legacy-owner': { email: 'LEGACY.OWNER@example.com', disabled: false }
+            },
+            indexedTargets: [{
+                uid: 'legacy-owner',
+                roles: ['staff'],
+                deviceId: 'legacy-owner-device',
+                token: 'legacy-owner-token',
+                categories: { liveChat: true }
+            }]
+        });
+
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'liveChat',
+                title: 'Team chat',
+                body: 'Legacy owner should receive this.'
+            });
+
+            assert.equal(result?.successCount, 1);
+            assert.deepEqual(env.messagingCalls[0]?.tokens, ['legacy-owner-token']);
+            assert.deepEqual(env.inboxWrites.map((write) => write.uid), ['legacy-owner']);
+            assert.equal(env.auditWrites[0]?.value.targetCount, 1);
+        } finally {
+            cleanup();
+        }
+});
+
+test('sendCategoryNotification fails closed when legacy owner email aliases conflict', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerEmail: 'legacy.owner@example.com',
+                ownerEmailLower: 'former.owner@example.com',
+                adminEmails: []
+            },
+            userDocs: { 'legacy-owner': {} },
+            authUsersByUid: {
+                'legacy-owner': { email: 'legacy.owner@example.com', disabled: false }
+            },
+            indexedTargets: [{
+                uid: 'legacy-owner',
+                roles: ['staff'],
+                deviceId: 'legacy-owner-device',
+                token: 'legacy-owner-token',
+                categories: { liveChat: true }
+            }]
+        });
+
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'liveChat',
+                title: 'Team chat',
+                body: 'Conflicting legacy owner must not receive this.'
+            });
+
+            assert.equal(result, null);
+            assert.equal(env.messagingCalls.length, 0);
+            assert.equal(env.inboxWrites.length, 0);
+            assert.equal(env.auditWrites.length, 0);
         } finally {
             cleanup();
         }

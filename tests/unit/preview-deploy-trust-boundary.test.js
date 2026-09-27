@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 
 import {
     MAX_PREVIEW_ARCHIVE_BYTES,
@@ -16,8 +17,8 @@ const pullRequestWorkflow = fs.readFileSync(
     path.join(repoRoot, '.github', 'workflows', 'deploy-preview.yml'),
     'utf8'
 );
-const integrationWorkflow = fs.readFileSync(
-    path.join(repoRoot, '.github', 'workflows', 'pr-integration.yml'),
+const previewRequestWorkflow = fs.readFileSync(
+    path.join(repoRoot, '.github', 'workflows', 'pr-preview.yml'),
     'utf8'
 );
 const trustedWorkflow = fs.readFileSync(
@@ -34,6 +35,10 @@ const scheduledProdSmokeWorkflow = fs.readFileSync(
 );
 const extendedProductionSmoke = fs.readFileSync(
     path.join(repoRoot, 'tests', 'smoke', 'app-authenticated-extended.spec.js'),
+    'utf8'
+);
+const imageWriteProductionSmoke = fs.readFileSync(
+    path.join(repoRoot, 'tests', 'smoke', 'app-authenticated-image-writes.spec.js'),
     'utf8'
 );
 const trustBoundaryRunbook = fs.readFileSync(
@@ -53,31 +58,34 @@ function validTriggerFixture() {
             repository: { full_name: repository },
             workflow_run: {
                 id: runId,
-                name: 'pr-integration',
-                event: 'pull_request',
+                name: 'pr-preview',
+                display_title: `PR preview #${prNumber} @ ${headSha}`,
+                event: 'workflow_dispatch',
                 status: 'completed',
                 conclusion: 'success',
-                head_sha: headSha,
+                head_sha: 'ed4cc306a66cdf31c5672b965ebffc452bcbad2d',
                 repository: { full_name: repository },
                 head_repository: { full_name: repository },
-                pull_requests: [{ number: prNumber }]
+                pull_requests: []
             }
         },
         run: {
             id: runId,
-            name: 'pr-integration',
-            path: '.github/workflows/pr-integration.yml',
-            event: 'pull_request',
+            name: 'pr-preview',
+            display_title: `PR preview #${prNumber} @ ${headSha}`,
+            path: '.github/workflows/pr-preview.yml',
+            event: 'workflow_dispatch',
             status: 'completed',
             conclusion: 'success',
-            head_sha: headSha,
-            head_branch: 'security/payment-authority-followup',
+            head_sha: 'ed4cc306a66cdf31c5672b965ebffc452bcbad2d',
+            head_branch: 'master',
             repository: { full_name: repository },
             head_repository: { full_name: repository }
         },
         pullRequest: {
             number: prNumber,
             state: 'open',
+            draft: false,
             base: { repo: { full_name: repository } },
             head: {
                 repo: { full_name: repository },
@@ -193,30 +201,41 @@ describe('preview deployment workflow trust boundary', () => {
         expect(pullRequestWorkflow).not.toContain('external-claim');
     });
 
-    it('serializes the untrusted preview artifact inside the consolidated PR run', () => {
-        expect(integrationWorkflow).toContain('name: pr-integration');
-        expect(integrationWorkflow).toContain('group: pr-integration-${{ github.event.pull_request.number }}');
-        expect(integrationWorkflow).toContain('cancel-in-progress: true');
-        expect(integrationWorkflow).toContain('uses: ./.github/workflows/deploy-preview.yml');
-        expect(integrationWorkflow).toContain('name: preview-smoke');
-        expect(integrationWorkflow).not.toContain('      - unlabeled');
-        expect(integrationWorkflow).not.toContain('      - labeled');
+    it('builds the untrusted preview artifact only after an exact-head manual dispatch', () => {
+        const parsedPreviewRequestWorkflow = parseYaml(previewRequestWorkflow);
+
+        expect(previewRequestWorkflow).toContain('name: pr-preview');
+        expect(previewRequestWorkflow).toContain('workflow_dispatch:');
+        expect(parsedPreviewRequestWorkflow['run-name']).toBe(
+            'PR preview #${{ inputs.pr_number }} @ ${{ inputs.head_sha }}'
+        );
+        expect(previewRequestWorkflow).toContain('group: pr-preview-${{ inputs.pr_number }}');
+        expect(previewRequestWorkflow).toContain('cancel-in-progress: true');
+        expect(previewRequestWorkflow).toContain('uses: ./.github/workflows/deploy-preview.yml');
     });
 
     it('runs the credentialed deploy only from trusted default-branch code', () => {
+        const parsedTrustedWorkflow = parseYaml(trustedWorkflow);
+        const classifyScript = parsedTrustedWorkflow.jobs['classify-trigger'].steps[0].run;
+
         expect(trustedWorkflow).toContain('workflow_run:');
-        expect(trustedWorkflow).toContain('      - pr-integration');
+        expect(trustedWorkflow).toContain('      - pr-preview');
         expect(trustedWorkflow).toContain('classify-trigger:');
         expect(trustedWorkflow).toContain('preview_ready: ${{ steps.classify.outputs.preview_ready }}');
         expect(trustedWorkflow).toContain('pull-requests: read');
-        expect(trustedWorkflow).toContain('Fork pull request — no trusted preview deploy is required.');
-        expect(trustedWorkflow).toContain('echo "preview_ready=false" >> "$GITHUB_OUTPUT"');
+        expect(trustedWorkflow).toContain('Preview dispatch is not bound to the current ready same-repository PR head.');
+        expect(trustedWorkflow).toContain('actions/workflows/pr-integration.yml/runs');
+        expect(trustedWorkflow).toContain('-f event=pull_request');
+        expect(trustedWorkflow).toContain('-f status=success');
+        expect(trustedWorkflow).toContain('-f head_sha="$expected_head_sha"');
+        expect(classifyScript).toContain('actions/runs/$integration_run_id/jobs?filter=latest&per_page=100');
+        expect(classifyScript).toContain('.name == "mobile-build"');
+        expect(classifyScript).toContain('.name == "preview-smoke"');
+        expect(classifyScript).toContain('.conclusion == "success"');
+        expect(classifyScript).toContain('No exact-head pr-integration run has successful mobile-build and preview-smoke jobs.');
+        expect(trustedWorkflow).toContain('WORKFLOW_DISPLAY_TITLE: ${{ github.event.workflow_run.display_title }}');
         expect(trustedWorkflow).toContain('Expected exactly one preview bundle');
         expect(trustedWorkflow).toContain("needs.classify-trigger.outputs.preview_ready == 'true'");
-        expect(trustedWorkflow).toContain(
-            'group: trusted-preview-pr-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}'
-        );
-        expect(trustedWorkflow).toContain('cancel-in-progress: true');
         expect(trustedWorkflow).toContain('name: firebase-preview-trusted');
         expect(trustedWorkflow).toContain('ref: ${{ github.event.repository.default_branch }}');
         expect(trustedWorkflow).toContain('persist-credentials: false');
@@ -236,6 +255,54 @@ describe('preview deployment workflow trust boundary', () => {
         expect(trustedWorkflow).toContain('refusing to report a partially functional preview');
         expect(trustedWorkflow).toContain('find "$bundle/site" -type l');
         expect(trustedWorkflow).not.toContain('find "$bundle" -type l');
+    });
+
+    it('rejects a successful integration workflow whose stable jobs were only skipped', () => {
+        const parsedTrustedWorkflow = parseYaml(trustedWorkflow);
+        const classifyScript = parsedTrustedWorkflow.jobs['classify-trigger'].steps[0].run;
+        const skippedDraftJobs = {
+            jobs: [
+                { name: 'mobile-build', status: 'completed', conclusion: 'skipped' },
+                { name: 'preview-smoke', status: 'completed', conclusion: 'skipped' }
+            ]
+        };
+        const successfulReadyJobs = {
+            jobs: [
+                { name: 'mobile-build', status: 'completed', conclusion: 'success' },
+                { name: 'preview-smoke', status: 'completed', conclusion: 'success' }
+            ]
+        };
+        const stableJobsSucceeded = ({ jobs }) => ['mobile-build', 'preview-smoke'].every(
+            (name) => jobs.filter((job) => (
+                job.name === name && job.status === 'completed' && job.conclusion === 'success'
+            )).length === 1
+        );
+
+        expect(classifyScript).toContain('integration_jobs_succeeded=false');
+        expect(classifyScript).toContain('if [ "$integration_jobs_succeeded" != "true" ]');
+        expect(stableJobsSucceeded(skippedDraftJobs)).toBe(false);
+        expect(stableJobsSucceeded(successfulReadyJobs)).toBe(true);
+    });
+
+    it('serializes trusted deployments by PR across different requested heads', () => {
+        const parsedTrustedWorkflow = parseYaml(trustedWorkflow);
+        const deployConcurrency = parsedTrustedWorkflow.jobs['deploy-preview'].concurrency;
+        const firstRequest = validTriggerFixture();
+        const secondRequest = validTriggerFixture();
+        secondRequest.event.workflow_run.display_title =
+            'PR preview #4032 @ 1111111111111111111111111111111111111111';
+        const prNumberFromTitle = (title) => /^PR preview #(\d+) @ [0-9a-f]{40}$/.exec(title)?.[1];
+        const resolveGroup = (request) => deployConcurrency.group.replace(
+            '${{ needs.prepare-preview.outputs.pr_number }}',
+            prNumberFromTitle(request.event.workflow_run.display_title)
+        );
+
+        expect(deployConcurrency).toEqual({
+            group: 'trusted-preview-pr-${{ needs.prepare-preview.outputs.pr_number }}',
+            'cancel-in-progress': true
+        });
+        expect(resolveGroup(firstRequest)).toBe('trusted-preview-pr-4032');
+        expect(resolveGroup(secondRequest)).toBe(resolveGroup(firstRequest));
     });
 
     it('rechecks the exact pull-request head immediately before deploy and comment writes', () => {
@@ -346,14 +413,17 @@ describe('preview deployment workflow trust boundary', () => {
         expect(scheduledProdSmokeWorkflow).not.toContain("cron: '*/15 * * * *'");
         expect(scheduledProdSmokeWorkflow).toContain('cancel-in-progress: false');
         expect(scheduledProdSmokeWorkflow).toContain(
-            'SMOKE_EXTENDED_WRITES: ${{ vars.SMOKE_EXTENDED_WRITES_ENABLED }}'
+            "SMOKE_EXTENDED_WRITES: ${{ github.event_name == 'workflow_dispatch' && (inputs.extended_writes && '1' || '0') || vars.SMOKE_EXTENDED_WRITES_ENABLED }}"
         );
+        expect(scheduledProdSmokeWorkflow).toContain('extended_writes:');
+        expect(scheduledProdSmokeWorkflow).toContain('type: boolean');
+        expect(scheduledProdSmokeWorkflow).toContain('default: false');
         expect(scheduledProdSmokeWorkflow).not.toContain("SMOKE_EXTENDED_WRITES: '1'");
     });
 
     it('verifies and removes chat notifications in the same reversible smoke workflow', () => {
         const staffWorkflowStart = extendedProductionSmoke.indexOf(
-            "test('staff smoke writes are deterministic and removed after validation'"
+            "test('staff smoke writes are deterministic and reversed or soft-deleted after validation'"
         );
         const parentWorkflowStart = extendedProductionSmoke.indexOf(
             "test('parent smoke writes restore or remove every touched record'"
@@ -366,10 +436,112 @@ describe('preview deployment workflow trust boundary', () => {
         expect(staffWorkflow).toContain('`users/${parentRestSession.localId}/notificationInbox`');
         expect(staffWorkflow).toContain("category: 'liveChat'");
         expect(staffWorkflow).toContain('body: chatText');
+        expect(extendedProductionSmoke).toContain('async function findSmokeChatMessages(text)');
+        expect(extendedProductionSmoke).toContain('`teams/${config.teamId}/chatConversations`');
+        expect(extendedProductionSmoke).toContain("'type',\n            'team'");
+        expect(extendedProductionSmoke).toContain("'type',\n            'group'");
+        expect(extendedProductionSmoke).toContain("'directAccess',\n            'team_admin'");
+        expect(extendedProductionSmoke).not.toContain(
+            'listFirestoreDocuments(\n        staffRestSession,\n        `teams/${config.teamId}/chatConversations`'
+        );
+        expect(extendedProductionSmoke).toContain('`${getFirestoreDocumentPath(conversation)}/chatMessages`');
+        expect(extendedProductionSmoke).toContain('cleanup: () => softDeleteSmokeChatMessages(chatText, editedChatText)');
+        expect(extendedProductionSmoke).toContain('cleanup: () => softDeleteSmokeChatMessage(chatDocumentPath)');
+        expect(extendedProductionSmoke).toContain("deleted: { booleanValue: true }");
+        expect(extendedProductionSmoke).not.toContain('deleteFirestoreDocument(staffRestSession, chatDocumentPath)');
         const notificationAssertion = staffWorkflow.indexOf('const messageDeepLink');
         const cleanupCall = staffWorkflow.indexOf('await runSmokeCleanup(runId, cleanupTasks)');
         expect(notificationAssertion).toBeGreaterThanOrEqual(0);
         expect(cleanupCall).toBeGreaterThan(notificationAssertion);
+    });
+
+    it('keeps production image writes isolated and always schedules cleanup', () => {
+        const staffWorkflowStart = extendedProductionSmoke.indexOf(
+            "test('staff smoke writes are deterministic and reversed or soft-deleted after validation'"
+        );
+        const imageWorkflowStart = extendedProductionSmoke.indexOf(
+            "test('staff image upload is persisted and removed after validation'"
+        );
+        const profileImageWorkflowStart = imageWriteProductionSmoke.indexOf(
+            "test('profile image paths accept authenticated storage and document writes'"
+        );
+        const parentWorkflowStart = extendedProductionSmoke.indexOf(
+            "test('parent smoke writes restore or remove every touched record'"
+        );
+        const staffWorkflow = extendedProductionSmoke.slice(staffWorkflowStart, imageWorkflowStart);
+        const imageWorkflow = extendedProductionSmoke.slice(imageWorkflowStart, parentWorkflowStart);
+        const profileImageWorkflow = imageWriteProductionSmoke.slice(profileImageWorkflowStart);
+        const reconciliationWorkflow = imageWriteProductionSmoke.slice(
+            imageWriteProductionSmoke.indexOf('async function reconcileDedicatedImageFixture'),
+            profileImageWorkflowStart
+        );
+
+        expect(staffWorkflowStart).toBeGreaterThanOrEqual(0);
+        expect(parentWorkflowStart).toBeGreaterThan(staffWorkflowStart);
+        expect(imageWorkflowStart).toBeGreaterThan(staffWorkflowStart);
+        expect(parentWorkflowStart).toBeGreaterThan(imageWorkflowStart);
+        expect(profileImageWorkflowStart).toBeGreaterThanOrEqual(0);
+        expect(staffWorkflow).toContain('section[aria-label="Manage schedule tools"]');
+        expect(staffWorkflow).toContain("locator('button[aria-controls]').first()");
+        expect(staffWorkflow).toContain('manageSchedule.click({ timeout: 25_000 })');
+        expect(staffWorkflow).toContain("toHaveAttribute('aria-expanded', 'true'");
+        expect(staffWorkflow).toContain("test.step('create and verify a schedule game'");
+        expect(extendedProductionSmoke).toContain('page.setDefaultTimeout(LIVE_ACTION_TIMEOUT_MS)');
+        expect(staffWorkflow).not.toContain('input[type="file"][accept="image/*"]');
+        expect(imageWriteProductionSmoke).not.toContain("test.describe.configure({ mode: 'serial' })");
+        expect(extendedProductionSmoke).toContain("test.describe.configure({ mode: 'serial' })");
+        expect(scheduledProdSmokeWorkflow).toContain('tests/smoke/app-authenticated-image-writes.spec.js');
+        expect(imageWorkflow).toContain("recordType: 'team-media'");
+        expect(imageWorkflow).toContain('await openWritableMediaAlbum(page)');
+        expect(imageWorkflow).toContain('withAuthenticatedPage(staffSession');
+        expect(extendedProductionSmoke).toContain("getByRole('button', { name: 'Refresh media' })");
+        expect(extendedProductionSmoke).toContain("waitFor({ state: 'visible', timeout: 15_000 })");
+        expect(extendedProductionSmoke).not.toContain('isVisible({ timeout:');
+        expect(imageWorkflow).toContain('input[type="file"][accept="image/*"]');
+        expect(imageWorkflow).toContain("getByText('Uploaded', { exact: true })");
+        expect(imageWorkflow).toContain("getByText('Media item deleted.')");
+        expect(imageWorkflow).toContain('await runSmokeCleanup(runId, cleanupTasks)');
+        expect(profileImageWorkflow).toContain('profile-photos/users/${staffRestSession.localId}/');
+        expect(profileImageWorkflow).toContain('profile-photos/teams/${config.teamId}/players/${config.playerId}/');
+        expect(imageWriteProductionSmoke).toContain("import { randomUUID } from 'node:crypto';");
+        expect(imageWriteProductionSmoke).toContain("const attemptNonce = randomUUID().replace(/-/g, '');");
+        expect(profileImageWorkflow).toContain('players/${config.playerId}/private/profile');
+        expect(profileImageWorkflow).toContain('allowMissing: true');
+        expect(profileImageWorkflow).toContain('removeIfCreated: true');
+        expect(profileImageWorkflow).toContain('cleanupRestSession: staffRestSession');
+        expect(profileImageWorkflow).toContain('restSession: parentRestSession');
+        expect(imageWriteProductionSmoke).toContain('SMOKE_PARENT_EMAIL: config.parentEmail');
+        expect(profileImageWorkflow).toContain('uploadFirebaseStorageObject(');
+        expect(profileImageWorkflow).toContain('patchFirestoreDocumentFields(');
+        expect(profileImageWorkflow).toContain('createFirestoreDocument(');
+        expect(imageWriteProductionSmoke).toContain('deleteFirestoreDocument(');
+        expect(imageWriteProductionSmoke).toContain('Object.keys(createdDocument.fields || {})');
+        expect(reconciliationWorkflow).toContain('Existing fixture metadata is a real');
+        expect(reconciliationWorkflow).toContain('isEmptyFirestoreDocument(cleanupDocument)');
+        expect(reconciliationWorkflow).toContain('updateTime: cleanupDocument.updateTime');
+        expect(reconciliationWorkflow).not.toContain('deleteFirebaseStorageObject(');
+        expect(profileImageWorkflow).toContain('restoreImageFieldsIfUnchanged(');
+        expect(profileImageWorkflow).toContain('await reconcileDedicatedImageFixture(target)');
+        expect(imageWriteProductionSmoke).toContain('isAbandonedSmokeImageValue');
+        expect(imageWriteProductionSmoke).toContain('must have an empty ${fieldName} baseline');
+        expect(imageWriteProductionSmoke).toContain('restoreFirestoreDocumentFields(');
+        expect(imageWriteProductionSmoke).toContain('{ updateTime: currentDocument.updateTime }');
+        expect(profileImageWorkflow).toContain('deleteFirebaseStorageObject(');
+        expect(profileImageWorkflow.indexOf('patchFirestoreDocumentFields(')).toBeLessThan(
+            profileImageWorkflow.indexOf('uploadFirebaseStorageObject(')
+        );
+        expect(profileImageWorkflow.indexOf('restoreImageFieldsIfUnchanged(documentState)')).toBeLessThan(
+            profileImageWorkflow.indexOf('deleteFirebaseStorageObject(')
+        );
+        expect(profileImageWorkflow.slice(
+            profileImageWorkflow.indexOf('deleteFirebaseStorageObject(')
+        )).not.toContain('restoreImageFieldsIfUnchanged(documentState)');
+        expect(profileImageWorkflow).toContain(
+            'const safeDocumentPhotoUrl = `https://allplays.ai/img/logo_small.png?smoke=${attemptNonce}`;'
+        );
+        expect(profileImageWorkflow).not.toContain('firebasestorage.googleapis.com');
+        expect(profileImageWorkflow).toContain('photoUrl: { stringValue: safeDocumentPhotoUrl }');
+        expect(profileImageWorkflow).toContain('await runSmokeCleanup(runId, cleanupTasks)');
     });
 
     it('documents the keyless credential and exact-head operational contract', () => {

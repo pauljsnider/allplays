@@ -16,6 +16,7 @@ import {
   Home,
   ImagePlus,
   KeyRound,
+  Loader2,
   LogOut,
   LogIn,
   MessageCircle,
@@ -33,6 +34,7 @@ import {
   X
 } from 'lucide-react';
 import { useShellLayout } from '../lib/useShellLayout';
+import { useAppForegroundState } from '../lib/useAppForegroundState';
 import { recordUxTiming } from '../lib/uxTiming';
 import { openPublicUrl } from '../lib/publicActions';
 import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
@@ -50,6 +52,42 @@ import {
 
 const AppSearchDialog = lazy(() => import('./AppSearchDialog').then((module) => ({ default: module.AppSearchDialog })));
 const NotificationInboxSheet = lazy(() => import('./NotificationInboxSheet').then((module) => ({ default: module.NotificationInboxSheet })));
+
+function NotificationInboxLoadingDialog({ onClose }: { onClose: () => void }) {
+  return (
+    <Modal
+      ariaLabel="Notifications"
+      onClose={onClose}
+      overlayClassName="z-50 flex items-end bg-gray-950/40 p-3 backdrop-blur-sm sm:items-center sm:justify-center"
+    >
+      <div className="w-full max-w-lg rounded-2xl bg-white shadow-app-lg">
+        <div className="flex items-center justify-between border-b border-gray-200 p-4">
+          <div>
+            <div className="app-label">Inbox</div>
+            <h2 className="text-lg font-black text-gray-950">Notifications</h2>
+          </div>
+          <button
+            type="button"
+            className="ghost-button !h-10 !min-h-10 !w-10 !p-0"
+            onClick={onClose}
+            aria-label="Close notifications"
+          >
+            <X className="h-5 w-5" aria-hidden="true" />
+          </button>
+        </div>
+        <div
+          className="flex flex-col items-center gap-3 px-4 py-12 text-center"
+          role="status"
+          aria-label="Loading notifications"
+          data-testid="notification-inbox-chunk-loading"
+        >
+          <Loader2 className="h-8 w-8 animate-spin text-gray-400" aria-hidden="true" />
+          <p className="text-sm font-semibold text-gray-500">Loading notifications…</p>
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 const navItems: NavItem[] = [
   { label: 'Home', path: '/home', icon: Home },
@@ -114,6 +152,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   const [signingOut, setSigningOut] = useState(false);
   const [reportedScheduleAccess, setReportedScheduleAccess] = useState<ScheduleAccessReport | null>(null);
   const { isDesktopWeb } = useShellLayout();
+  const isAppForeground = useAppForegroundState();
   const navigate = useNavigate();
   const location = useLocation();
   const routeStartedAtRef = useRef(typeof performance !== 'undefined' ? performance.now() : Date.now());
@@ -227,6 +266,7 @@ export function AppShell({ auth, children }: AppShellProps) {
       setUnreadState('ready');
       return;
     }
+    if (!isAppForeground) return;
     setUnreadState('loading');
     let active = true;
     let unsubscribe = () => {};
@@ -251,7 +291,7 @@ export function AppShell({ auth, children }: AppShellProps) {
       active = false;
       unsubscribe();
     };
-  }, [auth.user?.uid]);
+  }, [auth.user?.uid, isAppForeground]);
 
   useEffect(() => {
     if (!auth.user?.uid) {
@@ -279,7 +319,7 @@ export function AppShell({ auth, children }: AppShellProps) {
       setInboxState('idle');
       return;
     }
-    if (!inboxOpen) return;
+    if (!inboxOpen || !isAppForeground) return;
 
     setInboxState('loading');
     let active = true;
@@ -306,7 +346,7 @@ export function AppShell({ auth, children }: AppShellProps) {
       active = false;
       unsubscribe();
     };
-  }, [auth.user?.uid, inboxOpen, inboxRetryKey]);
+  }, [auth.user?.uid, inboxOpen, inboxRetryKey, isAppForeground]);
 
   const handleRetryNotificationInbox = () => {
     setInboxRetryKey((current) => current + 1);
@@ -436,7 +476,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                 onClick={() => navigate(hasSignedInSession ? '/home' : '/discover')}
                 aria-label={hasSignedInSession ? 'Go to home' : 'Go to Discover'}
               >
-                <img src="./logo_small.png" alt="" className="h-10 w-10 flex-none rounded-xl shadow-sm" />
+                <img src="./logo_small.png" alt="" decoding="async" className="h-10 w-10 flex-none rounded-xl shadow-sm" />
                 <span className="min-w-0">
                   <span className="block truncate text-base font-black leading-tight text-gray-950">ALL PLAYS</span>
                   <span className="block truncate text-xs font-bold text-gray-500">
@@ -568,7 +608,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                 onClick={() => navigate(hasSignedInSession ? '/home' : '/discover')}
                 aria-label={hasSignedInSession ? 'Go to home' : 'Go to Discover'}
               >
-                <img src="./logo_small.png" alt="" className="h-10 w-10 flex-none rounded-xl shadow-sm" />
+                <img src="./logo_small.png" alt="" decoding="async" className="h-10 w-10 flex-none rounded-xl shadow-sm" />
                 <span className="min-w-0">
                   <span className="block truncate text-base font-black leading-tight text-gray-950">ALL PLAYS</span>
                   <span className="block truncate text-xs font-bold text-gray-500">
@@ -713,7 +753,7 @@ export function AppShell({ auth, children }: AppShellProps) {
       ) : null}
 
       {inboxOpen ? (
-        <Suspense fallback={null}>
+        <Suspense fallback={<NotificationInboxLoadingDialog onClose={() => setInboxOpen(false)} />}>
           <NotificationInboxSheet
             items={inboxItems}
             inboxState={inboxState === 'idle' ? 'loading' : inboxState}

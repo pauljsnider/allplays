@@ -107,6 +107,7 @@
                             <input type="file" id="playerPhoto" accept="image/*"
                                 class="mt-1 block w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
                             <p class="text-xs text-gray-500 mt-1">JPG/PNG up to 5MB.</p>
+                            <p id="player-photo-ownership-status" class="hidden text-xs text-red-600 mt-1">Photo details could not be loaded. Refresh the roster before replacing or removing this photo.</p>
                             <div id="player-photo-preview" class="mt-2 flex items-center gap-3 hidden">
                                 <span
                                     class="inline-flex h-12 w-12 rounded-full bg-gray-100 overflow-hidden border border-gray-200"
@@ -177,7 +178,7 @@
 
                                 <!-- Image preview -->
                                 <div id="roster-image-preview" class="hidden mt-3">
-                                    <img id="roster-image-preview-img" class="max-w-full h-auto rounded-lg border border-gray-300" alt="Roster preview">
+                                    <img loading="lazy" decoding="async" id="roster-image-preview-img" class="max-w-full h-auto rounded-lg border border-gray-300" alt="Roster preview">
                                     <button type="button" id="remove-roster-image" class="mt-2 text-sm text-red-600 hover:text-red-800">✕ Remove image</button>
                                 </div>
                             </div>
@@ -556,15 +557,15 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getUsersByParentPlayerKey, getUsersByParentTeamId, addPlayer, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=127';
+        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getPlayerPrivateProfile, getUsersByParentPlayerKey, getUsersByParentTeamId, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, deleteLegacyImageUpload, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=4433199';
         import { buildFullRosterCsvTemplate, buildRosterFieldDefinitionPayload, collectRosterParentContacts, collectRosterProfileValues, getRosterAiImportFieldCatalog, getRosterProfileValues, mergeStandardRosterFieldDefinitions, normalizeRosterFieldDefinitions, planRosterAiImport, planRosterCsvImport, renderRosterProfileFields, splitProtectedRosterProfileValues, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults, validateRosterProfileValues } from './js/roster-profile-fields.js?v=9';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=18';
-        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=18';
-        import { checkAuth } from './js/auth.js?v=135';
-        import { queueInviteEmail } from './js/invite-email.js?v=1';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443375';
+        import { checkAuth } from './js/auth.js?v=4433203';
+        import { queueInviteEmail } from './js/invite-email.js?v=7';
         import { buildAppJoinUrl } from './js/join-code.js?v=2';
-        import { renderTeamAdminBanner } from './js/team-admin-banner.js';
-        import { hasFullTeamAccess, normalizeTeamPermissions } from './js/team-access.js';
+        import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443350';
+        import { hasFullTeamAccess, normalizeTeamPermissions } from './js/team-access.js?v=44338';
         import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, hasConfiguredRegistrationProviderMetadata, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=3';
         import { createBulkAiImageController } from './js/edit-schedule-ai-import.js?v=2';
         import { buildRegistrationReviewCsv, buildRegistrationReviewCsvFilename, getDefaultRegistrationReviewCsvColumnKeys, getRegistrationReviewCsvColumnDefinitions, matchesRegistrationReviewScreeningStatus, summarizeRegistrationReviewScreening } from './js/registration-review.js?v=6';
@@ -579,6 +580,8 @@
         let currentUser = null;
         let editingPlayerId = null;
         let editingPhotoUrl = null;
+        let editingPhotoPath = null;
+        let editingPhotoOwnershipLoaded = true;
         let editingPlayerProfile = null;
         let rosterFieldDefinitions = [];
         let rosterFieldDefinitionDrafts = [];
@@ -1194,7 +1197,7 @@
 
         function loadFirebaseModule() {
             if (!firebaseModulePromise) {
-                firebaseModulePromise = import('./js/firebase.js?v=22').catch((error) => {
+                firebaseModulePromise = import('./js/firebase.js?v=33').catch((error) => {
                     firebaseModulePromise = null;
                     throw error;
                 });
@@ -1731,7 +1734,7 @@
                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-indigo-700 hover:underline">
                             <a class="flex items-center gap-3 text-indigo-700 hover:underline" href="${latestGameId ? `player.html#teamId=${currentTeamId}&gameId=${latestGameId}&playerId=${p.id}` : `player.html#teamId=${currentTeamId}&playerId=${p.id}`}">
                                 <span class="inline-flex h-10 w-10 rounded-full bg-gray-100 overflow-hidden border border-gray-200">
-                                ${p.photoUrl ? `<img src="${playerPhotoUrl}" alt="${playerName}" class="w-full h-full object-cover">` : `
+                                ${p.photoUrl ? `<img loading="lazy" decoding="async" src="${playerPhotoUrl}" alt="${playerName}" class="w-full h-full object-cover">` : `
                                     <svg class="w-full h-full text-gray-400 p-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A9 9 0 1119 12.999M15 21v-2a3 3 0 00-3-3H6a3 3 0 00-3 3v2"></path>
                                     </svg>
@@ -2044,6 +2047,8 @@
         function resetForm() {
             editingPlayerId = null;
             editingPhotoUrl = null;
+            editingPhotoPath = null;
+            editingPhotoOwnershipLoaded = true;
             editingPlayerProfile = null;
             document.getElementById('add-player-form').reset();
             document.getElementById('submit-player').textContent = 'Add Player';
@@ -2052,6 +2057,9 @@
             document.getElementById('player-photo-preview').classList.add('hidden');
             document.getElementById('player-photo-thumb').innerHTML = '';
             document.getElementById('removePhoto').checked = false;
+            document.getElementById('playerPhoto').disabled = false;
+            document.getElementById('removePhoto').disabled = false;
+            document.getElementById('player-photo-ownership-status').classList.add('hidden');
             renderRosterProfileFields(document.getElementById('roster-profile-fields'), rosterFieldDefinitions);
         }
 
@@ -2367,6 +2375,8 @@
 
             editingPlayerId = player.id;
             editingPhotoUrl = player.photoUrl || null;
+            editingPhotoPath = player.photoPath || null;
+            editingPhotoOwnershipLoaded = player.photoOwnershipLoaded !== false;
             editingPlayerProfile = player.profile || null;
             document.getElementById('playerName').value = player.name || '';
             document.getElementById('playerNumber').value = player.number || '';
@@ -2375,11 +2385,14 @@
             document.getElementById('cancel-edit').classList.remove('hidden');
             document.getElementById('playerPhoto').value = '';
             document.getElementById('removePhoto').checked = false;
+            document.getElementById('playerPhoto').disabled = !editingPhotoOwnershipLoaded;
+            document.getElementById('removePhoto').disabled = !editingPhotoOwnershipLoaded;
+            document.getElementById('player-photo-ownership-status').classList.toggle('hidden', editingPhotoOwnershipLoaded);
 
             const previewWrap = document.getElementById('player-photo-preview');
             const thumb = document.getElementById('player-photo-thumb');
             if (editingPhotoUrl) {
-                thumb.innerHTML = `<img src="${escapeHtml(editingPhotoUrl)}" alt="${escapeHtml(player.name || '')}" class="w-full h-full object-cover">`;
+                thumb.innerHTML = `<img loading="lazy" decoding="async" src="${escapeHtml(editingPhotoUrl)}" alt="${escapeHtml(player.name || '')}" class="w-full h-full object-cover">`;
             } else {
                 thumb.innerHTML = `
                     <svg class="w-full h-full text-gray-400 p-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2431,19 +2444,85 @@
             }
         });
 
+        function isDefinitiveFirestoreWriteFailure(error) {
+            const code = String(error?.code || '').trim().toLowerCase().split('/').pop() || '';
+            return new Set([
+                'already-exists',
+                'failed-precondition',
+                'invalid-argument',
+                'not-found',
+                'out-of-range',
+                'permission-denied',
+                'resource-exhausted',
+                'unauthenticated',
+                'unimplemented'
+            ]).has(code);
+        }
+
+        async function getPlayerPhotoPersistenceState(playerId, expectedPhotoPath) {
+            try {
+                const privateProfile = await getPlayerPrivateProfile(currentTeamId, playerId);
+                return String(privateProfile?.photoPath || '').trim() === String(expectedPhotoPath || '').trim()
+                    ? 'committed'
+                    : 'not-committed';
+            } catch (_) {
+                return 'unknown';
+            }
+        }
+
+        async function getRosterPlayerOwnerState(playerId) {
+            try {
+                const players = await getPlayers(currentTeamId, { includeInactive: true });
+                return players.some((player) => String(player?.id || '').trim() === String(playerId || '').trim())
+                    ? 'committed'
+                    : 'not-committed';
+            } catch (_) {
+                return 'unknown';
+            }
+        }
+
         document.getElementById('add-player-form').addEventListener('submit', async (e) => {
             e.preventDefault();
+            let newlyUploadedPlayerPhotoPath = '';
+            let playerPhotoPersisted = false;
+            let playerPhotoWriteAttempted = false;
+            let createdNewPlayerOwner = false;
+            const previousPhotoPath = editingPhotoPath || '';
+            let nextPhotoPath = previousPhotoPath;
             const name = document.getElementById('playerName').value;
             const number = document.getElementById('playerNumber').value;
             const photoInput = document.getElementById('playerPhoto');
+            const selectedPhotoFile = photoInput.files[0] || null;
             const removePhoto = document.getElementById('removePhoto').checked;
+            const photoOwnershipLoaded = !editingPlayerId || editingPhotoOwnershipLoaded;
             const profileValues = collectRosterProfileValues(document.getElementById('roster-profile-fields'), rosterFieldDefinitions);
             const validationErrors = validateRosterProfileValues(rosterFieldDefinitions, profileValues);
             const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(rosterFieldDefinitions, profileValues);
+            const reservedPlayerId = editingPlayerId || crypto.randomUUID().replace(/-/g, '');
 
             if (validationErrors.length) {
                 alert(validationErrors.join('\n'));
                 return;
+            }
+
+            if ((selectedPhotoFile || removePhoto) && !photoOwnershipLoaded) {
+                alert('Photo details could not be loaded. Refresh the roster before changing the photo.');
+                return;
+            }
+
+            if (selectedPhotoFile) {
+                if (!selectedPhotoFile.type.startsWith('image/')) {
+                    alert('Please select an image file.');
+                    return;
+                }
+                if (!Number.isFinite(selectedPhotoFile.size) || selectedPhotoFile.size <= 0) {
+                    alert('Please select a valid image file.');
+                    return;
+                }
+                if (selectedPhotoFile.size > 5 * 1024 * 1024) {
+                    alert('Image must be smaller than 5MB.');
+                    return;
+                }
             }
 
             try {
@@ -2451,21 +2530,7 @@
 
                 if (removePhoto) {
                     photoUrl = null;
-                }
-
-                if (photoInput.files.length > 0) {
-                    const file = photoInput.files[0];
-
-                    if (!file.type.startsWith('image/')) {
-                        alert('Please select an image file.');
-                        return;
-                    }
-                    if (file.size > 5 * 1024 * 1024) {
-                        alert('Image must be smaller than 5MB.');
-                        return;
-                    }
-
-                    photoUrl = await uploadPlayerPhoto(file);
+                    nextPhotoPath = '';
                 }
 
                 const { publicProfile: existingPublicProfile, privateValues: legacyProtectedValues } = splitProtectedRosterProfileValues(editingPlayerProfile || {});
@@ -2477,28 +2542,109 @@
                 const playerData = {
                     name,
                     number,
-                    photoUrl,
                     profile: publicProfile
                 };
+                if (photoOwnershipLoaded) {
+                    playerData.photoUrl = photoUrl;
+                    playerData.photoPath = nextPhotoPath || null;
+                }
                 if (Object.prototype.hasOwnProperty.call(publicValues, 'position')) {
                     playerData.position = publicValues.position;
                 }
 
-                if (editingPlayerId) {
+                if (!editingPlayerId && selectedPhotoFile) {
+                    try {
+                        await applyRosterCsvImportOperations(currentTeamId, [{
+                            type: 'add',
+                            playerId: reservedPlayerId,
+                            payload: { ...playerData, photoUrl: null, photoPath: null },
+                            privateRosterFields: { ...protectedProfileValues, ...privateValues }
+                        }]);
+                    } catch (ownerError) {
+                        const ownerState = isDefinitiveFirestoreWriteFailure(ownerError)
+                            ? 'not-committed'
+                            : await getRosterPlayerOwnerState(reservedPlayerId);
+                        if (ownerState !== 'committed') throw ownerError;
+                    }
+                    createdNewPlayerOwner = true;
+                }
+
+                if (selectedPhotoFile) {
+                    const uploadedPhoto = await uploadPlayerPhoto(selectedPhotoFile, {
+                        returnUpload: true,
+                        teamId: currentTeamId,
+                        playerId: reservedPlayerId
+                    });
+                    photoUrl = uploadedPhoto.url;
+                    newlyUploadedPlayerPhotoPath = uploadedPhoto.path;
+                    nextPhotoPath = newlyUploadedPlayerPhotoPath;
+                }
+
+                if (photoOwnershipLoaded) {
+                    playerData.photoUrl = photoUrl;
+                    playerData.photoPath = nextPhotoPath || null;
+                }
+
+                playerPhotoWriteAttempted = true;
+                if (editingPlayerId || createdNewPlayerOwner) {
                     await applyRosterCsvImportOperations(currentTeamId, [{
                         type: 'update',
-                        playerId: editingPlayerId,
+                        playerId: editingPlayerId || reservedPlayerId,
                         payload: playerData,
                         privateRosterFields: { ...protectedProfileValues, ...privateValues }
                     }]);
                 } else {
-                    const savedPlayerId = await addPlayer(currentTeamId, playerData);
-                    await setPlayerPrivateRosterProfileFields(currentTeamId, savedPlayerId, { ...protectedProfileValues, ...privateValues });
+                    await applyRosterCsvImportOperations(currentTeamId, [{
+                        type: 'add',
+                        playerId: reservedPlayerId,
+                        payload: playerData,
+                        privateRosterFields: { ...protectedProfileValues, ...privateValues }
+                    }]);
+                }
+                playerPhotoPersisted = true;
+
+                if (previousPhotoPath && previousPhotoPath !== nextPhotoPath) {
+                    await deleteLegacyImageUpload(previousPhotoPath).catch(() => undefined);
                 }
 
                 resetForm();
                 loadRoster();
             } catch (error) {
+                if ((selectedPhotoFile || removePhoto) && playerPhotoWriteAttempted && !isDefinitiveFirestoreWriteFailure(error)) {
+                    const persistenceState = removePhoto && !previousPhotoPath
+                        ? 'unknown'
+                        : await getPlayerPhotoPersistenceState(reservedPlayerId, nextPhotoPath);
+                    if (persistenceState === 'committed') {
+                        playerPhotoPersisted = true;
+                        if (previousPhotoPath && previousPhotoPath !== nextPhotoPath) {
+                            await deleteLegacyImageUpload(previousPhotoPath).catch(() => undefined);
+                        }
+                        resetForm();
+                        loadRoster();
+                        return;
+                    }
+                    if (persistenceState === 'unknown') {
+                        console.error(error);
+                        if (createdNewPlayerOwner) {
+                            resetForm();
+                            loadRoster();
+                            alert('Player was added. The new photo was kept because its save status is unknown; refresh the roster before changing it.');
+                        } else {
+                            alert('The player may have saved. The new photo was kept; refresh the roster before retrying.');
+                        }
+                        return;
+                    }
+                }
+                if (newlyUploadedPlayerPhotoPath && !playerPhotoPersisted) {
+                    await deleteLegacyImageUpload(newlyUploadedPlayerPhotoPath).catch(() => undefined);
+                }
+                if (createdNewPlayerOwner) {
+                    console.error(error);
+                    resetForm();
+                    loadRoster();
+                    alert('Player was added, but the photo could not be saved. Edit the player to try the photo again.');
+                    return;
+                }
                 console.error(error);
                 alert('Error saving player.');
             }

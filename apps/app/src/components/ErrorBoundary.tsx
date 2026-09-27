@@ -18,6 +18,7 @@ interface ErrorBoundaryProps {
   variant?: ErrorBoundaryVariant;
   resetKey?: string;
   onError?: (report: ReactErrorBoundaryReport) => void;
+  onRetry?: () => void;
   onGoHome?: () => void;
 }
 
@@ -57,6 +58,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   private reset = () => {
+    this.props.onRetry?.();
     this.setState({ error: null });
   };
 

@@ -123,6 +123,16 @@ function buildDeferredMediaThreadMessagesScript() {
 
 async function mockMessagesModules(page, options = {}) {
     await page.addInitScript(({ speech }) => {
+        window.__ALLPLAYS_CONFIG__ = {
+            firebase: {
+                apiKey: 'demo-api-key',
+                authDomain: 'demo-allplays.firebaseapp.com',
+                projectId: 'demo-allplays',
+                messagingSenderId: '1234567890',
+                appId: '1:1234567890:web:allplayssmoke'
+            },
+            appCheck: { enabled: false }
+        };
         window.__chatCalls = {
             sends: [],
             reactions: [],
@@ -194,6 +204,42 @@ async function mockMessagesModules(page, options = {}) {
             status: 200,
             contentType: 'application/javascript',
             body: 'export async function canMessageAcceptedFriend() { return true; }'
+        });
+    });
+
+    await page.route(/\/src\/lib\/opportunityService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function listPublicOpportunities() {
+                    return { items: [], nextCursor: null };
+                }
+
+                export async function getPublicOpportunity() { return null; }
+                export async function createPublicOpportunity() { throw new Error('Not used in this fixture.'); }
+                export async function updatePublicOpportunity() { throw new Error('Not used in this fixture.'); }
+                export async function closePublicOpportunity() { throw new Error('Not used in this fixture.'); }
+                export async function renewPublicOpportunity() { throw new Error('Not used in this fixture.'); }
+                export async function listMyPublicOpportunities() { return []; }
+                export async function listManagedPublicOpportunityTeams() { return []; }
+                export async function reportPublicOpportunity() { throw new Error('Not used in this fixture.'); }
+                export async function createOpportunityInquiry() { throw new Error('Not used in this fixture.'); }
+                export async function listOpportunityInquiries() {
+                    return { items: [], nextCursor: null };
+                }
+
+                export async function getOpportunityInquiry() {
+                    throw new Error('No opportunity inquiry is selected in this fixture.');
+                }
+
+                export async function replyToOpportunityInquiry() {
+                    throw new Error('No opportunity inquiry is selected in this fixture.');
+                }
+
+                export async function listPublicOpportunityReports() { return []; }
+                export async function moderatePublicOpportunity() { throw new Error('Not used in this fixture.'); }
+            `
         });
     });
 
@@ -487,6 +533,10 @@ test('@visual messages inbox and team chat exercise real migrated chat UX', asyn
     await page.goto(url, { waitUntil: 'domcontentloaded' });
 
     await waitForMessagesRoute(page, page.getByRole('heading', { name: 'Conversations', exact: true }));
+    await expect(page.getByText('internal', { exact: true })).toBeHidden();
+    const brandLogo = page.getByRole('button', { name: 'Go to home' }).locator('img');
+    await expect(brandLogo).toBeVisible();
+    await expect.poll(() => brandLogo.evaluate((image) => image.complete && image.naturalWidth > 1)).toBe(true);
     await expect(page.getByRole('link', { name: /Bears/ }).first()).toBeVisible();
     await expect(page.getByText('Coach Jamie: Practice packet is posted.')).toBeVisible();
     await expectVisualSnapshot(page, 'messages-inbox-mobile.png', {
@@ -513,6 +563,10 @@ test('@visual messages inbox and team chat exercise real migrated chat UX', asyn
     await expect(thread).toContainText('Bring both jerseys.');
     await expect(thread).toContainText('We can bring snacks.');
     await expect(page.getByText('Latest ride update.')).toBeVisible();
+    const latestMessageRow = page.locator('.message-row-measure').filter({ hasText: 'Latest ride update.' });
+    await expect(latestMessageRow.getByRole('button', { name: /Open message actions for/i })).toBeVisible();
+    await expect(latestMessageRow.getByRole('button')).toHaveCount(1);
+    await expect.poll(() => latestMessageRow.locator('.chat-message-actions').evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(28);
     await expect(bottomNav.getByRole('link', { name: 'Home' })).toBeVisible();
     await expect(bottomNav.getByRole('link', { name: 'Schedule' })).toBeVisible();
     await expect(bottomNav.getByRole('link', { name: 'Messages' })).toBeVisible();
@@ -640,8 +694,12 @@ test('@visual messages inbox and team chat exercise real migrated chat UX', asyn
         selectedRecipientIds: []
     }]);
 
-    await page.getByRole('button', { name: 'Add reaction' }).last().click();
-    await expect(page.locator('.chat-reaction-picker')).toBeVisible();
+    await page.getByRole('button', { name: /Open message actions for/i }).last().click();
+    await expect(page.locator('.chat-message-actions-popover')).toBeVisible();
+    await expect.poll(() => page.locator('.chat-message-actions-popover').evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return bounds.left >= 0 && bounds.right <= window.innerWidth;
+    })).toBe(true);
     await page.getByRole('button', { name: 'Like' }).click();
     await expect.poll(() => page.evaluate(() => window.__chatCalls.reactions[0])).toMatchObject({
         teamId: 'team-1',

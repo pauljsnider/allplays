@@ -19,6 +19,7 @@ const performanceMocks = vi.hoisted(() => {
   const end = vi.fn();
   return {
     end,
+    getPerformancePlatform: vi.fn(() => 'web'),
     startPerformanceSpan: vi.fn((label: string) => ({
       label,
       traceName: `trace-${label}`,
@@ -144,6 +145,7 @@ describe('app telemetry bridge', () => {
         loadName: 'profile',
         durationMs: 50,
         outcome: 'success',
+        platform: 'web',
         route: 'profile',
         source: 'profile-document',
         hasPhone: true
@@ -202,13 +204,37 @@ describe('app telemetry bridge', () => {
         stage: 'startup',
         phase: 'initial-render',
         durationMs: 100,
-        outcome: 'success'
+        outcome: 'success',
+        platform: 'web'
       }),
       {}
     );
     expect(performanceMocks.startPerformanceSpan).toHaveBeenCalledWith('app startup', expect.objectContaining({
       kind: 'ux'
     }));
+  });
+
+  it('cancels abandoned initial-load spans without emitting a successful timer event', async () => {
+    const capture = vi.fn();
+    window.AllPlaysTelemetry = { capture };
+    const telemetry = await import('./telemetry');
+
+    const timer = telemetry.startAppInitialLoadTimer('schedule', { route: 'schedule' });
+    timer.cancel({ reason: 'superseded' });
+    await Promise.resolve();
+
+    expect(capture).not.toHaveBeenCalledWith('app_initial_load', expect.anything(), expect.anything());
+    expect(performanceMocks.end).toHaveBeenCalledWith(expect.objectContaining({
+      category: 'initial_load',
+      loadName: 'schedule',
+      route: 'schedule',
+      reason: 'superseded',
+      abandoned: true,
+      outcome: 'abandoned'
+    }));
+
+    timer.end({ eventRows: 4 });
+    expect(performanceMocks.end).toHaveBeenCalledTimes(1);
   });
 
   it('emits workflow timing separately from generic UX spans', async () => {

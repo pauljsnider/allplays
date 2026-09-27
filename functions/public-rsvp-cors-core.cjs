@@ -15,6 +15,13 @@ const STATIC_ALLOWED_ORIGINS = new Set([
   'http://127.0.0.1:8004'
 ]);
 
+// Native compatibility is intentionally narrower than browser development
+// compatibility and is used only by the authenticated staff reminder action.
+const STAFF_NATIVE_ALLOWED_ORIGINS = new Set([
+  'https://localhost',
+  'capacitor://localhost'
+]);
+
 // Local dev servers (static site + Vite app) on localhost / loopback, any port.
 const LOCALHOST_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1):\d{1,5}$/;
 
@@ -29,4 +36,11 @@ function isAllowedPublicRsvpOrigin(origin) {
   return false;
 }
 
-module.exports = { isAllowedPublicRsvpOrigin };
+function isAllowedPublicRsvpAdminOrigin(origin) {
+  return isAllowedPublicRsvpOrigin(origin) || STAFF_NATIVE_ALLOWED_ORIGINS.has(origin);
+}
+
+module.exports = {
+  isAllowedPublicRsvpAdminOrigin,
+  isAllowedPublicRsvpOrigin
+};

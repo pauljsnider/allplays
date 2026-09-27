@@ -19,6 +19,7 @@ import {
     getPracticeSession as legacyGetPracticeSession,
     getPracticeSessionByEvent as legacyGetPracticeSessionByEvent,
     getPracticeSessions as legacyGetPracticeSessions,
+    getPublicTeamCalendarEvents as legacyGetPublicTeamCalendarEvents,
     getRsvpBreakdownByPlayer as legacyGetRsvpBreakdownByPlayer,
     getRsvpSummaries as legacyGetRsvpSummaries,
     getMyRsvps as legacyGetMyRsvps,
@@ -52,7 +53,11 @@ import {
     deleteField as legacyFirebaseDeleteField,
     getDoc as legacyFirebaseGetDoc,
     getDocs as legacyFirebaseGetDocs,
+    functions as legacyFirebaseFunctions,
+    httpsCallable as legacyFirebaseHttpsCallable,
     increment as legacyFirebaseIncrement,
+    limit as legacyFirebaseLimit,
+    orderBy as legacyFirebaseOrderBy,
     query as legacyFirebaseQuery,
     runTransaction as legacyFirebaseRunTransaction,
     serverTimestamp as legacyFirebaseServerTimestamp,
@@ -119,6 +124,13 @@ export async function getPracticeSessions(teamId: string, options: PracticeSessi
     return await Promise.resolve(legacyGetPracticeSessions(teamId, options));
 }
 
+export async function getPublicTeamCalendarEvents(
+    teamId: string,
+    options: { startDate?: Date | null; endDate?: Date | null } = {}
+) {
+    return await Promise.resolve(legacyGetPublicTeamCalendarEvents(teamId, options));
+}
+
 export async function updatePracticeSession(teamId: string, sessionId: string, payload: Record<string, unknown>) {
     return await Promise.resolve(legacyUpdatePracticeSession(teamId, sessionId, payload));
 }
@@ -152,6 +164,19 @@ export async function getTeam(teamId: string, options?: { includeInactive?: bool
     return await Promise.resolve(options === undefined ? legacyGetTeam(teamId) : legacyGetTeam(teamId, options));
 }
 
+export async function getDelegatedTeamContext(teamId: string, gameId?: string | null) {
+    const callable = legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'getDelegatedTeamContext');
+    const response = await callable({
+        teamId,
+        ...(gameId ? { gameId } : {})
+    });
+    const item = (response as any)?.data?.item;
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        throw new Error('Delegated team context response is invalid.');
+    }
+    return item as Record<string, unknown>;
+}
+
 export async function getTeams(options?: { includePrivate?: boolean }) {
     return await Promise.resolve(options === undefined ? legacyGetTeams() : legacyGetTeams(options));
 }
@@ -167,60 +192,36 @@ export type StaffTeamsResult = {
     isPartial: boolean;
 };
 
-export async function getStaffTeams({ userId, email, coachTeamIds = [] }: StaffTeamsQuery) {
-    const teamsRef = legacyFirebaseCollection(legacyFirebaseDb, 'teams');
-    const staffEmail = String(email || '').trim();
-    const normalizedEmail = staffEmail.toLowerCase();
-    const ownerEmailCandidates = [...new Set([staffEmail, normalizedEmail].filter(Boolean))];
-    const uniqueCoachTeamIds = [...new Set(coachTeamIds.map((teamId) => String(teamId || '').trim()).filter(Boolean))];
-    const emptySnapshot = { docs: [] };
-    const coreStaffQueries = [
-        ...(userId
-            ? [legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('ownerId', '==', userId)))]
-            : []),
-        ...(normalizedEmail
-            ? [legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('adminEmails', 'array-contains', normalizedEmail)))]
-            : [])
-    ];
-    const [coreStaffSnapshotResults, legacyOwnerSnapshotResults, coachSnapshotResults] = await Promise.all([
-        Promise.allSettled(coreStaffQueries),
-        Promise.allSettled([
-            normalizedEmail
-                ? legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('ownerEmailLower', '==', normalizedEmail)))
-                : Promise.resolve(emptySnapshot),
-            ...ownerEmailCandidates.map((ownerEmail) => (
-            legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('ownerEmail', '==', ownerEmail)))
-            ))
-        ]),
-        Promise.allSettled(uniqueCoachTeamIds.map((teamId) => (
-            legacyFirebaseGetDoc(legacyFirebaseDoc(legacyFirebaseDb, 'teams', teamId))
-        )))
-    ]);
+export type OfficialLinkedTeamsResult = {
+    teamIds: string[];
+    isPartial: boolean;
+};
 
-    const successfulCoreStaffSnapshots = coreStaffSnapshotResults.flatMap((result) => (
-        result.status === 'fulfilled' && result.value ? [result.value] : []
-    ));
-    if (!successfulCoreStaffSnapshots.length) {
-        const firstCoreFailure = coreStaffSnapshotResults.find((result) => result.status === 'rejected');
-        if (firstCoreFailure?.status === 'rejected') throw firstCoreFailure.reason;
-    }
-    const legacyOwnerSnapshots = legacyOwnerSnapshotResults.flatMap((result) => (
-        result.status === 'fulfilled' && result.value ? [result.value] : []
-    ));
-    const coachSnapshots = coachSnapshotResults.flatMap((result) => (
-        result.status === 'fulfilled' && result.value ? [result.value] : []
-    ));
-    const teamsById = new Map<string, Record<string, unknown>>();
-    [...successfulCoreStaffSnapshots.flatMap((snapshot) => snapshot.docs), ...legacyOwnerSnapshots.flatMap((snapshot) => snapshot.docs), ...coachSnapshots]
-        .filter((snapshot): snapshot is NonNullable<typeof snapshot> => Boolean(snapshot && ('exists' in snapshot ? snapshot.exists() : true)))
-        .forEach((snapshot) => {
-            const id = String(snapshot.id || '').trim();
-            if (id) teamsById.set(id, { id, ...snapshot.data() });
-        });
+export async function getStaffTeams(_query: StaffTeamsQuery): Promise<StaffTeamsResult> {
+    const callable = legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'listManagedTeams');
+    const response = await callable({});
+    const items = (response as any)?.data?.items;
+    if (!Array.isArray(items)) throw new Error('Managed teams response is invalid.');
     return {
-        teams: [...teamsById.values()],
-        isPartial: [...coreStaffSnapshotResults, ...legacyOwnerSnapshotResults, ...coachSnapshotResults]
-            .some((result) => result.status === 'rejected')
+        teams: items.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item))),
+        isPartial: (response as any)?.data?.isPartial === true
+    };
+}
+
+export async function getOfficialLinkedTeamIds(): Promise<OfficialLinkedTeamsResult> {
+    const callable = legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'listOfficialLinkedTeamIds');
+    const response = await callable({});
+    const data = (response as any)?.data;
+    if (!data || data.isPartial !== false || !Array.isArray(data.teamIds)) {
+        throw new Error('Official team discovery response is invalid.');
+    }
+    const teamIds = data.teamIds.map((value: unknown) => typeof value === 'string' ? value.trim() : '');
+    if (teamIds.some((teamId: string) => !teamId || teamId.length > 128 || teamId.includes('/'))) {
+        throw new Error('Official team discovery response is invalid.');
+    }
+    return {
+        teamIds: [...new Set<string>(teamIds)].sort(),
+        isPartial: false
     };
 }
 
@@ -348,7 +349,12 @@ export async function requestRideSpot(teamId: string, gameId: string, offerId: s
     return await Promise.resolve(legacyRequestRideSpot(teamId, gameId, offerId, payload));
 }
 
-export async function listRideOffersForEvent(teamId: string, gameId: string, options?: { fallbackGameIds?: string[] }) {
+export async function listRideOffersForEvent(teamId: string, gameId: string, options?: {
+    fallbackGameIds?: string[];
+    requesterUserId?: string;
+    childIds?: string[];
+    canManageTeamRequests?: boolean;
+}) {
     return await Promise.resolve(options === undefined ? legacyListRideOffersForEvent(teamId, gameId) : legacyListRideOffersForEvent(teamId, gameId, options));
 }
 
@@ -383,7 +389,25 @@ export async function broadcastLiveEvent(teamId: string, gameId: string, payload
 }
 
 export async function getLiveEvents(teamId: string, gameId: string) {
-    return await Promise.resolve(legacyGetLiveEvents(teamId, gameId));
+    const game = await Promise.resolve(legacyGetGame(teamId, gameId));
+    const status = [game?.status, game?.liveStatus]
+        .map((value) => String(value || '').trim().toLowerCase());
+    const isCompletedGame = status.some((value) => value === 'completed' || value === 'final');
+    if (isCompletedGame) return await Promise.resolve(legacyGetLiveEvents(teamId, gameId));
+
+    const eventsRef = legacyFirebaseCollection(
+        legacyFirebaseDb,
+        `teams/${teamId}/games/${gameId}/liveEvents`
+    );
+    const eventsQuery = legacyFirebaseQuery(
+        eventsRef,
+        legacyFirebaseOrderBy('createdAt', 'desc'),
+        legacyFirebaseLimit(20)
+    );
+    const snapshot = await legacyFirebaseGetDocs(eventsQuery);
+    return snapshot.docs
+        .map((eventDoc: any) => ({ id: eventDoc.id, ...eventDoc.data() }))
+        .reverse();
 }
 
 export async function updateGame(teamId: string, gameId: string, payload: Record<string, unknown>) {

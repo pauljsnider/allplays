@@ -82,26 +82,32 @@ export function Teams({ auth }: { auth: AuthState }) {
     setTeamsLoadError(null);
 
     let teamSummaryBootstrap: Awaited<ReturnType<typeof loadParentTeamsSummaryBootstrap>> | null = null;
+    let hasStreamedTeams = false;
+    const applyTeamSummary = (fastHome: ParentHomeModel, preserveExisting = false) => {
+      if (loadId !== activeLoadIdRef.current) return;
+      hasStreamedTeams = hasStreamedTeams || fastHome.teams.length > 0;
+      setHome((current) => preserveExisting ? mergeStreamedTeamSummary(current, fastHome) : fastHome);
+      setLoadedTeamSummaryUserId(user.uid);
+      setTeamsLoadError(null);
+    };
     const fastHome = await runTeamSummaryLoad(
       async () => {
-        teamSummaryBootstrap = await loadParentTeamsSummaryBootstrap(user, { force: !showLoading });
+        teamSummaryBootstrap = await loadParentTeamsSummaryBootstrap(user, {
+          force: !showLoading,
+          onPartial: (partialHome) => applyTeamSummary(partialHome, true)
+        });
         return teamSummaryBootstrap.home;
       },
       {
         ignoreStale: true,
         rethrow: false,
         getErrorMessage: (loadError) => getTeamsLoadErrorMessage(toAppServiceError(loadError, 'Unable to load teams.'), hasExistingTeams),
-        onSuccess: (fastHome) => {
-          if (loadId !== activeLoadIdRef.current) return;
-          setHome(fastHome);
-          setLoadedTeamSummaryUserId(user.uid);
-          setTeamsLoadError(null);
-        },
+        onSuccess: applyTeamSummary,
         onError: (loadError) => {
           if (loadId !== activeLoadIdRef.current) return;
           const appError = toAppServiceError(loadError, 'Unable to load teams.');
           setTeamsLoadError(appError);
-          if (!hasExistingTeams) {
+          if (!hasExistingTeams && !hasStreamedTeams) {
             setHome(emptyHome());
             setLoadedTeamSummaryUserId(null);
             setLoadedTeamUserId(null);
@@ -158,7 +164,7 @@ export function Teams({ auth }: { auth: AuthState }) {
 
   useRefreshOnResume(() => loadTeams(), { enabled: Boolean(auth.user?.uid) });
 
-  const showBlockingErrorState = !loading && !hasLoadedTeamDetails && Boolean(teamsLoadError);
+  const showBlockingErrorState = !loading && !hasLoadedTeamSummary && !hasLoadedTeamDetails && Boolean(teamsLoadError);
 
   const teamRoles = useMemo(() => getLoadedTeamRoles(home.teams), [home.teams]);
 
@@ -233,15 +239,46 @@ export function Teams({ auth }: { auth: AuthState }) {
 function mergeTeamSummary(current: ParentHomeModel, enriched: ParentHomeModel): ParentHomeModel {
   if (!enriched.teams.length) return current;
   const currentByTeamId = new Map(current.teams.map((team) => [team.teamId, team]));
-  return {
-    ...enriched,
-    teams: enriched.teams.map((team) => ({
+  const enrichedTeamIds = new Set(enriched.teams.map((team) => team.teamId));
+  const mergedTeams = [
+    ...enriched.teams.map((team) => ({
       ...team,
       unreadCount: currentByTeamId.get(team.teamId)?.unreadCount || team.unreadCount,
       role: currentByTeamId.get(team.teamId)?.role || team.role,
       sport: currentByTeamId.get(team.teamId)?.sport || team.sport,
       photoUrl: currentByTeamId.get(team.teamId)?.photoUrl || team.photoUrl
-    }))
+    })),
+    // Enrichment is optional detail, not a new access authority. Never let a
+    // nonempty but incomplete enrichment response erase a team from the
+    // authoritative fast chooser that already rendered it.
+    ...current.teams.filter((team) => !enrichedTeamIds.has(team.teamId))
+  ];
+  return {
+    ...enriched,
+    teams: mergedTeams,
+    metrics: {
+      ...enriched.metrics,
+      teams: mergedTeams.length,
+      players: mergedTeams.reduce((total, team) => total + team.players.length, 0)
+    }
+  };
+}
+
+function mergeStreamedTeamSummary(current: ParentHomeModel, streamed: ParentHomeModel): ParentHomeModel {
+  if (!streamed.teams.length) return current;
+  const currentTeamIds = new Set(current.teams.map((team) => team.teamId));
+  const mergedTeams = [
+    ...current.teams,
+    ...streamed.teams.filter((team) => !currentTeamIds.has(team.teamId))
+  ];
+  return {
+    ...current,
+    teams: mergedTeams,
+    metrics: {
+      ...current.metrics,
+      teams: mergedTeams.length,
+      players: mergedTeams.reduce((total, team) => total + team.players.length, 0)
+    }
   };
 }
 
@@ -380,7 +417,7 @@ function TeamLauncherRow({ team, selected, requestedWorkflow = '', compact = fal
           <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">{getTeamLauncherDetail(team)}</span>
           <span className="mt-1 flex min-w-0 flex-wrap gap-1.5">
             <TeamLauncherChip label={`${team.players.length} player${team.players.length === 1 ? '' : 's'}`} />
-            <TeamLauncherChip label={`${team.eventCount} event${team.eventCount === 1 ? '' : 's'}`} />
+            <TeamLauncherChip label={`${team.upcomingEventCount} upcoming`} />
             {team.unreadCount > 0 ? <TeamLauncherChip tone="primary" label={`${team.unreadCount} unread`} /> : null}
             {team.openActions > 0 ? <TeamLauncherChip tone="amber" label={`${team.openActions} action${team.openActions === 1 ? '' : 's'}`} /> : null}
           </span>

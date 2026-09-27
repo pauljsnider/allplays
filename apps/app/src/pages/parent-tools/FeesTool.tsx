@@ -70,26 +70,18 @@ export function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVer
 
         paymentInFlightRef.current = true;
         const feeKey = getFeeCardKey(fee);
-        const checkoutStatus = String(fee.checkoutStatus || '').toLowerCase();
-        const reusableCheckoutUrl = Boolean(fee.checkoutUrl) && (!checkoutStatus || checkoutStatus === 'open');
+        const canRegenerateCheckout = Boolean(fee.teamId && fee.batchId && fee.recipientId);
         setPayingFeeId(feeKey);
         setFeeErrors((current) => ({ ...current, [feeKey]: '' }));
         payOperation.clearError();
         await payOperation.run(
             async () => {
-                if (fee.paymentAction === 'checkoutUrl' || (!fee.paymentAction && reusableCheckoutUrl)) {
-                    await openPublicUrl(String(fee.checkoutUrl));
-                    return;
-                }
-                if (fee.paymentAction === 'createCheckout' || (!fee.paymentAction && fee.checkoutInitiatable)) {
+                if (canRegenerateCheckout) {
                     const checkout = await initiateParentTeamFeeCheckout(String(fee.teamId || ''), String(fee.batchId || ''), String(fee.recipientId || ''));
                     await openPublicUrl(checkout.checkoutUrl);
                     return;
                 }
-                if (!reusableCheckoutUrl) {
-                    throw new Error('Checkout is not available for this fee.');
-                }
-                await openPublicUrl(String(fee.checkoutUrl));
+                throw new Error('Checkout is not available for this fee.');
             },
             'Unable to open checkout. Please try again.',
             {

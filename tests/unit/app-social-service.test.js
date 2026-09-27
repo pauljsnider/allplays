@@ -10,6 +10,7 @@ const firebaseMocks = vi.hoisted(() => ({
     setDoc: vi.fn(),
     addDoc: vi.fn(),
     updateDoc: vi.fn(),
+    documentId: vi.fn(() => '__name__'),
     query: vi.fn((collectionRef, ...clauses) => ({ collectionRef, clauses })),
     where: vi.fn((field, op, value) => ({ field, op, value })),
     orderBy: vi.fn((field, direction) => ({ field, direction })),
@@ -25,7 +26,8 @@ const homeMocks = vi.hoisted(() => ({
 }));
 
 const chatMocks = vi.hoisted(() => ({
-    uploadTeamChatAttachment: vi.fn()
+    uploadTeamChatAttachment: vi.fn(),
+    deleteTeamChatAttachments: vi.fn()
 }));
 
 const publicTeamMocks = vi.hoisted(() => ({
@@ -36,11 +38,29 @@ const athleteProfileMocks = vi.hoisted(() => ({
     buildAthleteProfileShareUrl: vi.fn((origin, profileId) => `${origin}/athlete-profile.html?profileId=${encodeURIComponent(profileId)}`)
 }));
 
+const profileMocks = vi.hoisted(() => ({
+    loadProfileDocument: vi.fn()
+}));
+const nativeCallableMocks = vi.hoisted(() => ({ callNativeFirebaseFunction: vi.fn() }));
+const nativeRuntimeMocks = vi.hoisted(() => ({ isNativeRuntime: vi.fn() }));
+const nativeAuthMocks = vi.hoisted(() => ({
+    firebaseAuth: { app: { options: { projectId: 'demo-project' } } },
+    getNativeAuthIdToken: vi.fn()
+}));
+const appCheckMocks = vi.hoisted(() => ({
+    getPrimaryAppCheckHeaders: vi.fn(async (headers) => ({ ...headers, 'X-Firebase-AppCheck': 'debug-app-check' }))
+}));
+
 vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock(import('../../apps/app/src/lib/homeService.ts'), () => homeMocks);
 vi.mock(import('../../apps/app/src/lib/chatService.ts'), () => chatMocks);
 vi.mock(import('../../apps/app/src/lib/publicTeamsService.ts'), () => publicTeamMocks);
 vi.mock(import('../../apps/app/src/lib/adapters/legacyPlayerProfile.ts'), () => athleteProfileMocks);
+vi.mock(import('../../apps/app/src/lib/profileService.ts'), () => profileMocks);
+vi.mock(import('../../apps/app/src/lib/nativeCallable.ts'), () => nativeCallableMocks);
+vi.mock(import('../../apps/app/src/lib/nativeRuntime.ts'), () => nativeRuntimeMocks);
+vi.mock(import('../../apps/app/src/lib/authService.ts'), () => nativeAuthMocks);
+vi.mock(import('../../apps/app/src/lib/adapters/legacyFirebaseAppCheck.ts'), () => appCheckMocks);
 
 const user = {
     uid: 'user-1',
@@ -58,8 +78,36 @@ function snapshot(docs) {
     };
 }
 
+function nativeJsonResponse(data, status = 200) {
+    return {
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => data
+    };
+}
+
+function nativeFirestoreDocument(path, fields) {
+    return {
+        name: `projects/demo-project/databases/(default)/documents/${path}`,
+        fields
+    };
+}
+
+function deferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((nextResolve, nextReject) => {
+        resolve = nextResolve;
+        reject = nextReject;
+    });
+    return { promise, resolve, reject };
+}
+
 beforeEach(() => {
+    vi.unstubAllGlobals();
     vi.clearAllMocks();
+    nativeRuntimeMocks.isNativeRuntime.mockReturnValue(false);
+    nativeAuthMocks.getNativeAuthIdToken.mockResolvedValue('native-token');
     Object.defineProperty(globalThis, 'crypto', {
         value: {
             subtle: {
@@ -85,9 +133,15 @@ beforeEach(() => {
         type: 'image',
         url: 'https://img.example.test/upload.png',
         name: 'upload.png',
-        thumbnailUrl: null
+        thumbnailUrl: null,
+        path: 'chat-attachments/team-1/social/upload.png'
     });
     publicTeamMocks.getPublicTeamDetail.mockResolvedValue(null);
+    profileMocks.loadProfileDocument.mockResolvedValue({
+        displayName: 'Pat Parent',
+        photoUrl: 'https://img.example.test/user.png',
+        discoveryTeamIds: []
+    });
 });
 
 describe('React app social service', () => {
@@ -190,6 +244,11 @@ describe('React app social service', () => {
                 title: 'Pat Star highlight',
                 caption: 'Great hustle.',
                 route: '/players/team-1/player-1',
+                href: null,
+                snapshot: expect.objectContaining({
+                    route: '/players/team-1/player-1',
+                    href: null
+                }),
                 visibleUserIds: ['user-1', 'friend-1'],
                 media: [expect.objectContaining({ url: 'https://img.example.test/post.png' })],
                 reactionCounts: {},
@@ -197,6 +256,56 @@ describe('React app social service', () => {
                 hidden: false
             })
         );
+    });
+
+    it.each([
+        ['an external route', { route: 'https://example.invalid/source' }],
+        ['a protocol-relative route', { route: '//example.invalid/source' }],
+        ['a backslash route', { route: '/\\example.invalid/source' }],
+        ['a control-character route', { route: '/teams/team-1\nnext' }],
+        ['an external href', { route: '/teams/team-1', href: 'https://example.invalid/source' }],
+        ['a non-web href', { route: '/teams/team-1', href: 'mailto:team@example.invalid' }]
+    ])('rejects %s before writing a social post', async (_label, navigation) => {
+        const { createSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
+
+        await expect(createSocialPost(user, {
+            type: 'team_media',
+            visibility: 'team',
+            title: 'Team update',
+            teamId: 'team-1',
+            ...navigation
+        })).rejects.toThrow('navigation');
+        expect(firebaseMocks.addDoc).not.toHaveBeenCalled();
+    });
+
+    it('fails legacy stored navigation closed while preserving the social post', async () => {
+        const { loadVisibleSocialPosts } = await import('../../apps/app/src/lib/socialService.ts');
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const path = queryRef.collectionRef?.path?.join('/') || '';
+            if (path === 'socialPosts') {
+                return snapshot([{
+                    id: 'legacy-post',
+                    authorId: 'friend-1',
+                    title: 'Legacy team update',
+                    route: '//example.invalid/source',
+                    href: 'mailto:team@example.invalid',
+                    createdAt: { seconds: 4102444800 },
+                    playerIds: [],
+                    playerNames: [],
+                    media: []
+                }]);
+            }
+            return snapshot([]);
+        });
+
+        const posts = await loadVisibleSocialPosts(user, {
+            players: [], teams: [], upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: 0, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        expect(posts).toEqual([
+            expect.objectContaining({ id: 'legacy-post', title: 'Legacy team update', route: null, href: null })
+        ]);
     });
 
     it('writes deterministic friendship records and request decisions', async () => {
@@ -313,6 +422,115 @@ describe('React app social service', () => {
         expect(firebaseMocks.where).not.toHaveBeenCalledWith('memberIds', 'array-contains', 'user-1');
     });
 
+    it('surfaces a failed native team-post query without treating the known feed as complete', async () => {
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+        const fetchMock = vi.fn(async (url, request) => {
+            const requestUrl = String(url);
+            if (requestUrl.endsWith('/users/user-1:runQuery')) {
+                const body = JSON.parse(String(request?.body || '{}'));
+                expect(body.structuredQuery).toMatchObject({
+                    from: [{ collectionId: 'hiddenSocialPosts' }],
+                    where: { fieldFilter: { field: { fieldPath: '__name__' }, op: 'IN' } },
+                    limit: 10
+                });
+                return nativeJsonResponse([]);
+            }
+            if (requestUrl.endsWith('/documents:runQuery')) {
+                const body = JSON.parse(String(request?.body || '{}'));
+                const filters = body?.structuredQuery?.where?.compositeFilter?.filters || [];
+                const hasTeamFilter = filters.some((filter) => filter?.fieldFilter?.field?.fieldPath === 'teamId');
+                if (hasTeamFilter) {
+                    return nativeJsonResponse({ error: { message: 'Team feed unavailable.' } }, 503);
+                }
+                return nativeJsonResponse([{ document: nativeFirestoreDocument('socialPosts/known-post', {
+                    authorId: { stringValue: 'friend-1' },
+                    authorName: { stringValue: 'Jamie Friend' },
+                    title: { stringValue: 'Known update' },
+                    hidden: { booleanValue: false },
+                    createdAt: { timestampValue: '2026-08-11T12:00:00.000Z' }
+                }) }]);
+            }
+            if (requestUrl.includes('/socialPosts/known-post/reactions/user-1')) {
+                return nativeJsonResponse({ error: { message: 'Not found.' } }, 404);
+            }
+            throw new Error(`Unexpected native request: ${requestUrl}`);
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
+
+        const model = await loadSocialHome(user, {
+            players: [], teams: [{ teamId: 'team-1', teamName: 'Bears' }], upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: 1, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        expect(model.feedItems).toEqual([expect.objectContaining({ id: 'known-post', viewerHasLiked: false })]);
+        expect(model.feedError).toContain('Some feed details could not load');
+    });
+
+    it('marks team-post discovery partial when the bounded team fan-out is truncated', async () => {
+        const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
+        const teams = Array.from({ length: 9 }, (_, index) => ({
+            teamId: `team-${index + 1}`,
+            teamName: `Team ${index + 1}`
+        }));
+
+        const model = await loadSocialHome(user, {
+            players: [], teams, upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: teams.length, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        expect(model.feedItems).toEqual([]);
+        expect(model.feedError).toContain('Some feed details could not load');
+        const queriedTeamIds = firebaseMocks.getDocs.mock.calls
+            .map(([queryRef]) => queryRef)
+            .filter((queryRef) => queryRef.collectionRef?.path?.join('/') === 'socialPosts')
+            .flatMap((queryRef) => queryRef.clauses
+                .filter((clause) => clause.field === 'teamId')
+                .map((clause) => clause.value));
+        expect(queriedTeamIds).toEqual(teams.slice(0, 8).map((team) => team.teamId));
+        expect(queriedTeamIds).not.toContain('team-9');
+    });
+
+    it('keeps failed native reaction reads unknown so Like cannot invert an existing reaction', async () => {
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+        vi.stubGlobal('fetch', vi.fn(async (url, request) => {
+            const requestUrl = String(url);
+            if (requestUrl.endsWith('/users/user-1:runQuery')) {
+                const body = JSON.parse(String(request?.body || '{}'));
+                expect(body.structuredQuery.where.fieldFilter.value.arrayValue.values).toEqual([
+                    { referenceValue: 'projects/demo-project/databases/(default)/documents/users/user-1/hiddenSocialPosts/unknown-reaction-post' }
+                ]);
+                return nativeJsonResponse([]);
+            }
+            if (requestUrl.endsWith('/documents:runQuery')) {
+                return nativeJsonResponse([{ document: nativeFirestoreDocument('socialPosts/unknown-reaction-post', {
+                    authorId: { stringValue: 'friend-1' },
+                    title: { stringValue: 'Reaction state pending' },
+                    hidden: { booleanValue: false },
+                    createdAt: { timestampValue: '2026-08-11T12:00:00.000Z' },
+                    reactionCounts: { mapValue: { fields: { like: { integerValue: '2' } } } }
+                }) }]);
+            }
+            if (requestUrl.includes('/socialPosts/unknown-reaction-post/reactions/user-1')) {
+                return nativeJsonResponse({ error: { message: 'Reaction read unavailable.' } }, 503);
+            }
+            throw new Error(`Unexpected native request: ${requestUrl}`);
+        }));
+        const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
+
+        const model = await loadSocialHome(user, {
+            players: [], teams: [], upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: 0, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        expect(model.feedItems).toEqual([expect.objectContaining({
+            id: 'unknown-reaction-post',
+            viewerHasLiked: undefined,
+            viewerReactionError: true
+        })]);
+        expect(model.feedError).toContain('Like state');
+    });
+
     it('merges query results newest-first and applies viewer-local hide and reaction state', async () => {
         const { loadVisibleSocialPosts } = await import('../../apps/app/src/lib/socialService.ts');
         firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
@@ -360,6 +578,124 @@ describe('React app social service', () => {
         expect(firebaseMocks.orderBy).toHaveBeenCalledWith('createdAt', 'desc');
         expect(firebaseMocks.where).toHaveBeenCalledWith('teamId', '==', 'team-1');
         expect(firebaseMocks.where).toHaveBeenCalledWith('hidden', '==', false);
+        const hideCandidateIds = firebaseMocks.getDocs.mock.calls
+            .map(([queryRef]) => queryRef)
+            .filter((queryRef) => queryRef.collectionRef?.path?.join('/') === 'users/user-1/hiddenSocialPosts')
+            .flatMap((queryRef) => queryRef.clauses.find((clause) => clause.field === '__name__')?.value || []);
+        expect(hideCandidateIds).toHaveLength(new Set(hideCandidateIds).size);
+        expect(new Set(hideCandidateIds)).toEqual(new Set(['post-hidden', 'post-visible', 'post-newest']));
+    });
+
+    it('checks every all-visible candidate in the eight-team Home first-page fan-out', async () => {
+        const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const path = queryRef.collectionRef?.path?.join('/') || '';
+            if (path === 'users/user-1/hiddenSocialPosts') return snapshot([]);
+            if (path === 'socialPosts') {
+                const teamId = queryRef.clauses.find((clause) => clause.field === 'teamId')?.value || 'main';
+                const pageSize = queryRef.clauses.find((clause) => clause.count)?.count || 30;
+                return snapshot(Array.from({ length: pageSize }, (_, index) => ({
+                    id: `${teamId}-post-${index}`,
+                    authorId: 'friend-1',
+                    title: 'Visible candidate',
+                    createdAt: { seconds: 4102444900 - index },
+                    playerIds: [],
+                    playerNames: [],
+                    media: []
+                })));
+            }
+            return snapshot([]);
+        });
+        const teams = Array.from({ length: 8 }, (_, index) => ({
+            teamId: `team-${index}`,
+            teamName: `Team ${index}`
+        }));
+
+        const model = await loadSocialHome(user, {
+            players: [], teams, upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: teams.length, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        const checkedIds = firebaseMocks.getDocs.mock.calls
+            .map(([queryRef]) => queryRef)
+            .filter((queryRef) => queryRef.collectionRef?.path?.join('/') === 'users/user-1/hiddenSocialPosts')
+            .flatMap((queryRef) => queryRef.clauses.find((clause) => clause.field === '__name__')?.value || []);
+        expect(checkedIds).toHaveLength(126);
+        expect(new Set(checkedIds).size).toBe(126);
+        expect(model.feedItems).toHaveLength(30);
+        expect(model.feedError).toBeNull();
+    });
+
+    it('shares one 126-candidate Home hide budget across all feed branches', async () => {
+        const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const path = queryRef.collectionRef?.path?.join('/') || '';
+            if (path === 'users/user-1/hiddenSocialPosts') {
+                const ids = queryRef.clauses.find((clause) => clause.field === '__name__')?.value || [];
+                return snapshot(ids.map((id) => ({ id })));
+            }
+            if (path === 'socialPosts') {
+                const teamId = queryRef.clauses.find((clause) => clause.field === 'teamId')?.value || 'main';
+                const pageSize = queryRef.clauses.find((clause) => clause.count)?.count || 30;
+                const page = queryRef.clauses.some((clause) => clause.cursor) ? 2 : 1;
+                return snapshot(Array.from({ length: pageSize }, (_, index) => ({
+                    id: `${teamId}-page-${page}-post-${index}`,
+                    authorId: 'friend-1',
+                    title: 'Hidden candidate',
+                    createdAt: { seconds: 4102444900 - index },
+                    playerIds: [],
+                    playerNames: [],
+                    media: []
+                })));
+            }
+            return snapshot([]);
+        });
+        const teams = Array.from({ length: 8 }, (_, index) => ({
+            teamId: `team-${index}`,
+            teamName: `Team ${index}`
+        }));
+
+        const model = await loadSocialHome(user, {
+            players: [], teams, upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: teams.length, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        const checkedIds = firebaseMocks.getDocs.mock.calls
+            .map(([queryRef]) => queryRef)
+            .filter((queryRef) => queryRef.collectionRef?.path?.join('/') === 'users/user-1/hiddenSocialPosts')
+            .flatMap((queryRef) => queryRef.clauses.find((clause) => clause.field === '__name__')?.value || []);
+        expect(checkedIds).toHaveLength(126);
+        expect(new Set(checkedIds).size).toBe(126);
+        expect(model.feedItems).toEqual([]);
+        expect(model.feedError).toContain('Some feed details could not load');
+    });
+
+    it('fails hidden-candidate lookup closed and surfaces a retryable feed state', async () => {
+        const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const path = queryRef.collectionRef?.path?.join('/') || '';
+            if (path === 'users/user-1/hiddenSocialPosts') throw new Error('Hide lookup unavailable');
+            if (path === 'socialPosts') {
+                return snapshot([{
+                    id: 'unverified-post',
+                    authorId: 'friend-1',
+                    title: 'Must not render',
+                    createdAt: { seconds: 4102444900 },
+                    playerIds: [],
+                    playerNames: [],
+                    media: []
+                }]);
+            }
+            return snapshot([]);
+        });
+
+        const model = await loadSocialHome(user, {
+            players: [], teams: [], upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: 0, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        expect(model.feedItems).toEqual([]);
+        expect(model.feedError).toContain('Some feed details could not load');
     });
 
     it('pages past a full hidden post window to return older visible feed items', async () => {
@@ -404,20 +740,27 @@ describe('React app social service', () => {
         expect(firebaseMocks.startAfter).toHaveBeenCalledWith(expect.objectContaining({ id: 'hidden-29' }));
     });
 
-    it('loads every hidden-post page so hides beyond the first 200 stay durable', async () => {
+    it('checks only bounded candidate IDs so large hide histories do not add reads', async () => {
         const { loadVisibleSocialPosts } = await import('../../apps/app/src/lib/socialService.ts');
-        const firstHiddenPage = Array.from({ length: 200 }, (_, index) => ({ id: `hidden-${index}` }));
+        const candidatePosts = Array.from({ length: 12 }, (_, index) => ({
+            id: index === 11 ? 'hidden-beyond-history' : `visible-${index}`,
+            authorId: 'friend-1',
+            title: `Candidate ${index}`,
+            createdAt: { seconds: 4102444900 - index },
+            playerIds: [],
+            playerNames: [],
+            media: []
+        }));
         firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
             const path = queryRef.collectionRef?.path || [];
             if (path.join('/') === 'users/user-1/hiddenSocialPosts') {
-                const cursorClause = queryRef.clauses.find((clause) => clause.cursor);
-                return cursorClause ? snapshot([{ id: 'hidden-200' }]) : snapshot(firstHiddenPage);
+                const candidateClause = queryRef.clauses.find((clause) => clause.field === '__name__');
+                return snapshot(candidateClause?.value.includes('hidden-beyond-history')
+                    ? [{ id: 'hidden-beyond-history' }]
+                    : []);
             }
             if (path.join('/') === 'socialPosts') {
-                return snapshot([
-                    { id: 'hidden-200', authorId: 'friend-1', title: 'Still hidden', createdAt: { seconds: 4102444900 }, playerIds: [], playerNames: [], media: [] },
-                    { id: 'visible-post', authorId: 'friend-1', title: 'Visible', createdAt: { seconds: 4102444800 }, playerIds: [], playerNames: [], media: [] }
-                ]);
+                return snapshot(candidatePosts);
             }
             return snapshot([]);
         });
@@ -427,8 +770,21 @@ describe('React app social service', () => {
             metrics: { players: 0, teams: 0, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
         });
 
-        expect(posts.map((post) => post.id)).toEqual(['visible-post']);
-        expect(firebaseMocks.startAfter).toHaveBeenCalledWith(expect.objectContaining({ id: 'hidden-199' }));
+        expect(posts.map((post) => post.id)).toEqual(candidatePosts.slice(0, 11).map((post) => post.id));
+        const hideQueries = firebaseMocks.getDocs.mock.calls
+            .map(([queryRef]) => queryRef)
+            .filter((queryRef) => queryRef.collectionRef?.path?.join('/') === 'users/user-1/hiddenSocialPosts');
+        expect(hideQueries).toHaveLength(2);
+        const requestedCandidateIds = hideQueries.flatMap((queryRef) => (
+            queryRef.clauses.find((clause) => clause.field === '__name__')?.value || []
+        ));
+        expect(requestedCandidateIds).toEqual(candidatePosts.map((post) => post.id));
+        hideQueries.forEach((queryRef) => {
+            expect(queryRef.clauses).toContainEqual({ field: '__name__', op: 'in', value: expect.any(Array) });
+            expect(queryRef.clauses.find((clause) => clause.field === '__name__').value.length).toBeLessThanOrEqual(10);
+            expect(queryRef.clauses).toContainEqual({ count: 10 });
+            expect(queryRef.clauses.some((clause) => clause.cursor)).toBe(false);
+        });
     });
 
     it('merges requested and received friendship queries without duplicate friends', async () => {
@@ -511,8 +867,80 @@ describe('React app social service', () => {
         expect(firebaseMocks.orderBy).toHaveBeenCalledWith('createdAt', 'desc');
     });
 
-    it('pages past a full hidden post window on a friend profile', async () => {
+    it('hydrates friend profile teams and post reactions on independent overlapping branches', async () => {
+        const publicTeamRequest = deferred();
+        const postQueryRequest = deferred();
+        const reactionRequest = deferred();
+        publicTeamMocks.getPublicTeamDetail.mockReturnValue(publicTeamRequest.promise);
+        firebaseMocks.getDoc.mockImplementation((ref) => {
+            const path = ref.path.join('/');
+            if (path === 'friendships/friend-1__user-1') {
+                return Promise.resolve({
+                    id: 'friend-1__user-1',
+                    exists: () => true,
+                    data: () => ({ status: 'accepted', memberIds: ['friend-1', 'user-1'] })
+                });
+            }
+            if (path === 'publicUserProfiles/friend-1') {
+                return Promise.resolve({
+                    id: 'friend-1',
+                    exists: () => true,
+                    data: () => ({ displayName: 'Jamie Friend', discoveryTeamIds: ['team-1'] })
+                });
+            }
+            if (path === 'socialPosts/post-1/reactions/user-1') {
+                return reactionRequest.promise;
+            }
+            return Promise.resolve({ id: ref.path.at(-1), exists: () => false, data: () => ({}) });
+        });
+        firebaseMocks.getDocs.mockImplementation((queryRef) => {
+            const path = queryRef.collectionRef?.path?.join('/') || '';
+            if (path === 'socialPosts') return postQueryRequest.promise;
+            return Promise.resolve(snapshot([]));
+        });
+
         const { loadFriendProfile } = await import('../../apps/app/src/lib/socialService.ts');
+        let completed = false;
+        const profilePromise = loadFriendProfile(user, 'friend-1').then((profile) => {
+            completed = true;
+            return profile;
+        });
+
+        await vi.waitFor(() => {
+            expect(publicTeamMocks.getPublicTeamDetail).toHaveBeenCalledWith('team-1');
+            expect(firebaseMocks.getDocs).toHaveBeenCalledWith(expect.objectContaining({
+                collectionRef: expect.objectContaining({ path: ['socialPosts'] })
+            }));
+        });
+        expect(completed).toBe(false);
+
+        postQueryRequest.resolve(snapshot([{
+            id: 'post-1',
+            authorId: 'friend-1',
+            authorName: 'Jamie Friend',
+            title: 'Newest post',
+            createdAt: { seconds: 200 },
+            visibleUserIds: ['user-1']
+        }]));
+        await vi.waitFor(() => expect(firebaseMocks.getDoc).toHaveBeenCalledWith(
+            expect.objectContaining({ path: ['socialPosts', 'post-1', 'reactions', 'user-1'] })
+        ));
+        expect(completed).toBe(false);
+
+        reactionRequest.resolve({ exists: () => true });
+        await Promise.resolve();
+        expect(completed).toBe(false);
+
+        publicTeamRequest.resolve({ id: 'team-1', name: 'Bears', sport: 'Basketball', photoUrl: null });
+        const profile = await profilePromise;
+
+        expect(profile.publicTeams).toEqual([{ id: 'team-1', name: 'Bears', sport: 'Basketball', photoUrl: null }]);
+        expect(profile.posts).toEqual([expect.objectContaining({ id: 'post-1', viewerHasLiked: true })]);
+    });
+
+    it('checks only friend-profile candidates and pages to older visible posts', async () => {
+        const { loadFriendProfile } = await import('../../apps/app/src/lib/socialService.ts');
+        const unrelatedHistoricalIds = new Set(Array.from({ length: 250 }, (_, index) => `historical-${index}`));
         const hiddenPosts = Array.from({ length: 30 }, (_, index) => ({
             id: `hidden-${index}`,
             authorId: 'friend-1',
@@ -547,7 +975,10 @@ describe('React app social service', () => {
         firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
             const path = queryRef.collectionRef?.path || [];
             if (path.join('/') === 'users/user-1/hiddenSocialPosts') {
-                return snapshot(hiddenPosts.map(({ id }) => ({ id, postId: id })));
+                const candidateIds = queryRef.clauses.find((clause) => clause.field === '__name__')?.value || [];
+                return snapshot(candidateIds
+                    .filter((id) => id.startsWith('hidden-'))
+                    .map((id) => ({ id, postId: id })));
             }
             if (path.join('/') === 'socialPosts') {
                 const cursorClause = queryRef.clauses.find((clause) => clause.cursor);
@@ -561,6 +992,18 @@ describe('React app social service', () => {
         expect(profile.posts).toHaveLength(30);
         expect(profile.posts.map((post) => post.id)).toEqual(olderVisiblePosts.map((post) => post.id));
         expect(firebaseMocks.startAfter).toHaveBeenCalledWith(expect.objectContaining({ id: 'hidden-29' }));
+        const hideQueries = firebaseMocks.getDocs.mock.calls
+            .map(([queryRef]) => queryRef)
+            .filter((queryRef) => queryRef.collectionRef?.path?.join('/') === 'users/user-1/hiddenSocialPosts');
+        const checkedIds = hideQueries.flatMap((queryRef) => (
+            queryRef.clauses.find((clause) => clause.field === '__name__')?.value || []
+        ));
+        expect(checkedIds).toEqual([
+            ...hiddenPosts.map((post) => post.id),
+            ...olderVisiblePosts.map((post) => post.id)
+        ]);
+        expect(checkedIds.some((id) => unrelatedHistoricalIds.has(id))).toBe(false);
+        expect(hideQueries.every((queryRef) => queryRef.clauses.every((clause) => !clause.cursor))).toBe(true);
     });
 
     it('rejects non-friends before reading a profile or its posts', async () => {
@@ -580,15 +1023,11 @@ describe('React app social service', () => {
 
     it('allows a user to load their own profile without a friendship lookup', async () => {
         const { loadFriendProfile } = await import('../../apps/app/src/lib/socialService.ts');
-        firebaseMocks.getDoc.mockImplementation(async (ref) => ({
-            id: ref.path[1],
-            exists: () => ref.path[0] === 'publicUserProfiles',
-            data: () => ({ displayName: 'Pat Parent' })
-        }));
 
         const profile = await loadFriendProfile(user, 'user-1');
 
         expect(profile).toMatchObject({ userId: 'user-1', name: 'Pat Parent', isSelf: true });
+        expect(profileMocks.loadProfileDocument).toHaveBeenCalledWith('user-1');
         expect(firebaseMocks.doc).not.toHaveBeenCalledWith(firebaseMocks.db, 'friendships', expect.anything());
     });
 
@@ -669,8 +1108,28 @@ describe('React app social service', () => {
             type: 'image',
             url: 'https://img.example.test/upload.png',
             name: 'upload.png',
-            thumbnailUrl: null
+            thumbnailUrl: null,
+            storagePath: 'chat-attachments/team-1/social/upload.png'
         });
+    });
+
+    it('discards an uploaded social attachment when its post is not saved', async () => {
+        const { discardSocialPostMediaUpload } = await import('../../apps/app/src/lib/socialService.ts');
+
+        await discardSocialPostMediaUpload({
+            type: 'image',
+            url: 'https://img.example.test/upload.png',
+            name: 'upload.png',
+            thumbnailUrl: null,
+            storagePath: 'chat-attachments/team-1/social/upload.png'
+        });
+
+        expect(chatMocks.deleteTeamChatAttachments).toHaveBeenCalledWith([
+            expect.objectContaining({
+                url: 'https://img.example.test/upload.png',
+                path: 'chat-attachments/team-1/social/upload.png'
+            })
+        ]);
     });
 
     it('hides social posts only for the current viewer', async () => {
@@ -686,6 +1145,46 @@ describe('React app social service', () => {
             }
         );
         expect(firebaseMocks.updateDoc).not.toHaveBeenCalled();
+    });
+
+    it('uses the native-authenticated callable to hide posts in Capacitor', async () => {
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+        nativeCallableMocks.callNativeFirebaseFunction.mockResolvedValue({ hidden: true });
+        const { hideSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
+
+        await hideSocialPost('post-1', user);
+
+        expect(nativeCallableMocks.callNativeFirebaseFunction).toHaveBeenCalledWith(
+            'hideSocialPostForCaller',
+            { postId: 'post-1' },
+            { errorLabel: 'Hide social post' }
+        );
+        expect(firebaseMocks.setDoc).not.toHaveBeenCalled();
+    });
+
+    it('uses native-authenticated callables for comments and reports in Capacitor', async () => {
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+        nativeCallableMocks.callNativeFirebaseFunction
+            .mockResolvedValueOnce({ commented: true, commentId: 'comment-1' })
+            .mockResolvedValueOnce({ reported: true, reportId: 'report-1' });
+        const { commentOnSocialPost, reportSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
+
+        await commentOnSocialPost('post-1', user, '  Great update!  ');
+        await reportSocialPost('post-1', user, 'Needs review');
+
+        expect(nativeCallableMocks.callNativeFirebaseFunction).toHaveBeenNthCalledWith(
+            1,
+            'commentOnSocialPostForCaller',
+            { postId: 'post-1', text: 'Great update!' },
+            { errorLabel: 'Social comment' }
+        );
+        expect(nativeCallableMocks.callNativeFirebaseFunction).toHaveBeenNthCalledWith(
+            2,
+            'reportSocialPostForCaller',
+            { postId: 'post-1', reason: 'Needs review' },
+            { errorLabel: 'Social report' }
+        );
+        expect(firebaseMocks.addDoc).not.toHaveBeenCalled();
     });
 
     it('atomically toggles the viewer reaction and parent like count', async () => {
@@ -711,6 +1210,20 @@ describe('React app social service', () => {
             expect.objectContaining({ path: ['socialPosts', 'post-1'] }),
             expect.objectContaining({ 'reactionCounts.like': 3 })
         );
+    });
+
+    it('uses the native-authenticated callable to toggle reactions in Capacitor', async () => {
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+        nativeCallableMocks.callNativeFirebaseFunction.mockResolvedValue({ liked: true, count: 3 });
+        const { reactToSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
+
+        await expect(reactToSocialPost('post-1', user)).resolves.toEqual({ liked: true, count: 3 });
+        expect(nativeCallableMocks.callNativeFirebaseFunction).toHaveBeenCalledWith(
+            'toggleSocialPostReaction',
+            { postId: 'post-1', reactionKey: 'like' },
+            { errorLabel: 'Social reaction' }
+        );
+        expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
     });
 
     it('atomically removes an existing viewer reaction', async () => {

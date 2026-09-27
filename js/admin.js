@@ -15,43 +15,64 @@ import {
     getTelemetryRouteDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
-} from './db.js?v=127';
-import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, query } from './firebase.js?v=23';
-import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=18';
-import { checkAuth } from './auth.js?v=135';
+} from './db.js?v=4433199';
+import {
+    db,
+    collection,
+    documentId,
+    getDocs,
+    doc,
+    limit,
+    orderBy,
+    query,
+    setDoc,
+    startAfter,
+    updateDoc,
+    serverTimestamp
+} from './firebase.js?v=33';
+import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443375';
+import { checkAuth } from './auth.js?v=4433203';
 import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=2';
 import {
     adminRegistrationDefaults,
     buildAdminRegistrationFormPayload,
+    createAdminRegistrationFormsPageState,
     formatFieldLabels,
     formatRegistrationDiscountRulesText,
     parseRegistrationDiscountRulesText,
     getAdminRegistrationShareUrl,
+    loadAdminRegistrationFormsPage,
+    mergeAdminRegistrationFormsPage,
     validateAdminRegistrationFormPayload
-} from './admin-registration-forms.js?v=3';
+} from './admin-registration-forms.js?v=4';
 import { buildRecentGameResultsRows } from './admin-game-results.js?v=1';
 import {
     buildOfficialLookupCacheKey,
     buildOfficialUserLookup,
+    filterAdminUsersForView,
     formatOfficialUserSummary,
-    getOfficialUserSummary,
-    matchesOfficialUserSearch
-} from './admin-user-official-links.js?v=3';
-import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=1';
+    getOfficialUserSummary
+} from './admin-user-official-links.js?v=4';
+import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=2';
+import {
+    createDebouncedAdminTeamSearch,
+    normalizeAdminTeamSearchTerm,
+    resolveAdminTeamSearchResult,
+    searchAdminTeams
+} from './admin-team-search.js?v=7';
 import {
     createDebouncedAdminUserSearch,
-    hasAdminGlobalSearchTerm,
-    loadCompleteAdminSearchCollection,
     normalizeAdminSearchTerm,
     resolveAdminUserSearchResult,
-    selectAdminItemById,
-    selectAdminSearchCollection
-} from './admin-search.js?v=7';
+    selectAdminItemById
+} from './admin-search.js?v=8';
 import {
     buildTrackedWorkflowLoadSummary,
     buildTelemetryPerformanceSummary,
-    formatPerformanceDuration
-} from './telemetry-performance.js?v=3';
+    formatPerformanceDuration,
+    formatPerformanceValue
+} from './telemetry-performance.js?v=4';
+import { createAdminPremiumAccessControl } from './admin-premium-access-control.js?v=7';
 
 let allTeams = [];
 let allUsers = [];
@@ -68,6 +89,9 @@ let activeOfficials = [];
 let activeRegistrationTeam = null;
 let activeRegistrationForms = [];
 let activeRegistrationOptions = [];
+let registrationFormsPageState = createAdminRegistrationFormsPageState();
+let registrationFormsLoading = false;
+let registrationFormsRequestVersion = 0;
 let activeTab = 'dashboard';
 
 const teamPageState = {
@@ -90,8 +114,9 @@ let loadedGamesPageKey = '';
 let loadedDashboardGamesKey = '';
 let loadedTeamsOfficialsPageKey = '';
 let loadedUsersOfficialsKey = '';
-let globalSearchTeamsLoaded = false;
-let globalSearchTeamsPromise = null;
+const runDebouncedAdminTeamSearch = createDebouncedAdminTeamSearch({
+    search: searchAdminTeams
+});
 const runDebouncedAdminUserSearch = createDebouncedAdminUserSearch({
     search: searchAdminUsers
 });
@@ -145,39 +170,26 @@ function applyCurrentUsersPage() {
 
 function resetGlobalAdminSearchCollections() {
     globalSearchTeams = [];
-    globalSearchUsers = [];
-    globalSearchTeamsLoaded = false;
-    globalSearchTeamsPromise = null;
+    invalidateAdminUserSearchState();
 }
 
-async function ensureGlobalAdminTeamsForSearch() {
-    if (globalSearchTeamsLoaded) return globalSearchTeams;
-    if (!globalSearchTeamsPromise) {
-        globalSearchTeamsPromise = loadCompleteAdminSearchCollection({
-            fetchPage: getAdminTeamsPage,
-            itemsKey: 'teams'
-        })
-            .then((teams) => {
-                globalSearchTeams = teams;
-                globalSearchTeamsLoaded = true;
-                return globalSearchTeams;
-            })
-            .finally(() => {
-                globalSearchTeamsPromise = null;
-            });
-    }
-    return globalSearchTeamsPromise;
+function invalidateAdminUserSearchState() {
+    runDebouncedAdminUserSearch.invalidate();
+    globalSearchUsers = [];
+    loadedUsersOfficialsKey = '';
+    officialUserLookup = new Map();
 }
 
 async function getAdminTeamsForSearch(searchTerm = '') {
-    if (hasAdminGlobalSearchTerm(searchTerm)) {
-        await ensureGlobalAdminTeamsForSearch();
+    const result = await runDebouncedAdminTeamSearch(searchTerm);
+    const teams = resolveAdminTeamSearchResult(allTeams, result);
+    if (!teams) return null;
+    if (!result.remote) {
+        globalSearchTeams = [];
+        return teams;
     }
-    return selectAdminSearchCollection({
-        searchTerm,
-        pageItems: allTeams,
-        globalItems: globalSearchTeams
-    });
+    globalSearchTeams = teams;
+    return globalSearchTeams;
 }
 
 async function getAdminUsersForSearch(searchTerm = '') {
@@ -254,6 +266,8 @@ let telemetryState = {
     loading: false,
     error: null,
     days: 7,
+    eventLimit: 0,
+    rawEventLimitReached: false,
     events: [],
     daily: [],
     pages: [],
@@ -278,11 +292,15 @@ function getVisibleTeams() {
 
 function canCurrentUserDeactivateTeam(team) {
     if (!currentUser || !team) return false;
-    if (team.ownerId && currentUser.uid) {
-        return team.ownerId === currentUser.uid;
+    const ownerId = String(team.ownerId || '').trim();
+    if (ownerId) {
+        return Boolean(currentUser.uid && ownerId === currentUser.uid);
     }
-    if (team.ownerEmail && currentUser.email) {
-        return team.ownerEmail.trim().toLowerCase() === currentUser.email.trim().toLowerCase();
+    const ownerEmails = [...new Set([team.ownerEmail, team.ownerEmailLower]
+        .map((email) => String(email || '').trim().toLowerCase())
+        .filter(Boolean))];
+    if (ownerEmails.length === 1 && currentUser.email) {
+        return ownerEmails[0] === currentUser.email.trim().toLowerCase();
     }
     return false;
 }
@@ -302,7 +320,11 @@ checkAuth(async (user) => {
     renderFooter(document.getElementById('footer-container'));
     document.getElementById('admin-email').textContent = user.email;
 
-    await loadData();
+    const premiumAccessControl = createAdminPremiumAccessControl();
+    await Promise.all([
+        loadData(),
+        premiumAccessControl.load()
+    ]);
     setupTabs();
     setupSearch();
 });
@@ -505,6 +527,8 @@ async function loadTelemetryData({ silent = false } = {}) {
             loaded: true,
             loading: false,
             days,
+            eventLimit: maxEvents,
+            rawEventLimitReached: events.length >= maxEvents,
             events,
             daily,
             pages,
@@ -513,7 +537,9 @@ async function loadTelemetryData({ silent = false } = {}) {
             sessions
         };
         if (status) {
-            status.textContent = `Loaded ${events.length.toLocaleString()} recent raw events plus aggregate summaries.`;
+            status.textContent = events.length >= maxEvents
+                ? `Loaded the newest ${events.length.toLocaleString()} raw events (query limit reached; raw-event analysis may not cover the full selected range), plus aggregate summaries.`
+                : `Loaded ${events.length.toLocaleString()} raw events for the selected range plus aggregate summaries.`;
         }
     } catch (error) {
         console.error('Error loading telemetry:', error);
@@ -522,6 +548,8 @@ async function loadTelemetryData({ silent = false } = {}) {
             loading: false,
             loaded: false,
             error: error.message || 'Telemetry could not be loaded',
+            eventLimit: 0,
+            rawEventLimitReached: false,
             events: [],
             daily: [],
             pages: [],
@@ -904,20 +932,26 @@ function setTelemetryText(id, value) {
 
 function renderTelemetryPerformanceEmpty(message = 'No app performance telemetry has been recorded for this range.') {
     setTelemetryText('telemetry-performance-samples', '0');
-    setTelemetryText('telemetry-performance-p50', '-');
-    setTelemetryText('telemetry-performance-p95', '-');
-    setTelemetryText('telemetry-performance-slow', '0');
+    setTelemetryText('telemetry-performance-budgeted', '0');
+    setTelemetryText('telemetry-performance-within', '0');
+    setTelemetryText('telemetry-performance-over-budget', '0');
     renderEmptyTelemetry('telemetry-performance-groups', message);
-    renderEmptyTelemetry('telemetry-performance-slow-events', message);
+    renderEmptyTelemetry('telemetry-performance-over-budget-events', message);
     renderEmptyTelemetry('telemetry-performance-tracked-workflows', message);
 }
 
 function renderTelemetryPerformance() {
     const summary = buildTelemetryPerformanceSummary(telemetryState.events, {
-        slowThresholdMs: 1500,
         groupLimit: 8,
-        slowLimit: 8
+        overBudgetLimit: 8
     });
+
+    setTelemetryText(
+        'telemetry-performance-coverage',
+        telemetryState.rawEventLimitReached
+            ? `Showing performance metrics from the newest ${telemetryNumber(telemetryState.eventLimit)} raw events only; this sample may not cover the full ${telemetryNumber(telemetryState.days)}-day range.`
+            : `Performance metrics cover all ${telemetryNumber(telemetryState.events.length)} raw events loaded for this range.`
+    );
 
     if (!summary.count) {
         renderTelemetryPerformanceEmpty();
@@ -925,27 +959,24 @@ function renderTelemetryPerformance() {
     }
 
     setTelemetryText('telemetry-performance-samples', telemetryNumber(summary.count));
-    setTelemetryText('telemetry-performance-p50', formatPerformanceDuration(summary.p50Ms));
-    setTelemetryText('telemetry-performance-p95', formatPerformanceDuration(summary.p95Ms));
-    setTelemetryText(
-        'telemetry-performance-slow',
-        `${telemetryNumber(summary.slowCount)} >= ${formatPerformanceDuration(summary.slowThresholdMs)}`
-    );
+    setTelemetryText('telemetry-performance-budgeted', telemetryNumber(summary.budgetedCount));
+    setTelemetryText('telemetry-performance-within', telemetryNumber(summary.withinBudgetCount));
+    setTelemetryText('telemetry-performance-over-budget', telemetryNumber(summary.overBudgetCount));
 
     renderTelemetryList('telemetry-performance-groups', summary.groups, (group) => `
         <div class="border-b border-gray-100 pb-2 last:border-0">
             <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
                     <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(group.label)}</p>
-                    <p class="text-xs text-gray-500 truncate">${escapeHtml(group.route || '-')}</p>
+                    <p class="text-xs text-gray-500 truncate">${escapeHtml([group.route, group.platform].filter(Boolean).join(' · ') || '-')}</p>
                 </div>
-                <span class="text-xs font-semibold text-gray-900 whitespace-nowrap">P95 ${escapeHtml(formatPerformanceDuration(group.p95Ms))}</span>
+                <span class="text-xs font-semibold text-gray-900 whitespace-nowrap">P95 ${escapeHtml(formatPerformanceValue(group.p95Value, group.unit))}</span>
             </div>
-            <p class="text-xs text-gray-500 mt-1">${telemetryNumber(group.count)} samples · ${telemetryNumber(group.slowCount)} slow · max ${escapeHtml(formatPerformanceDuration(group.maxMs))}</p>
+            <p class="text-xs text-gray-500 mt-1">${telemetryNumber(group.count)} samples · ${telemetryNumber(group.overBudgetCount)} over budget · max ${escapeHtml(formatPerformanceValue(group.maxValue, group.unit))}${group.budgetValue !== null ? ` · budget ≤ ${escapeHtml(formatPerformanceValue(group.budgetValue, group.unit))}` : ' · no budget assigned'}</p>
         </div>
     `, 'No app performance telemetry has been recorded for this range.');
 
-    renderTelemetryList('telemetry-performance-slow-events', summary.slowEvents, (item) => {
+    renderTelemetryList('telemetry-performance-over-budget-events', summary.overBudgetEvents, (item) => {
         const createdAt = item.createdAt;
         const owner = item.userId ? `User ${item.userId}` : `Session ${item.sessionId || '-'}`;
         return `
@@ -955,16 +986,14 @@ function renderTelemetryPerformance() {
                         <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(item.label)}</p>
                         <p class="text-xs text-gray-500 truncate">${escapeHtml(item.route || '-')}</p>
                     </div>
-                    <span class="text-xs font-semibold text-gray-900 whitespace-nowrap">${escapeHtml(formatPerformanceDuration(item.durationMs))}</span>
+                    <span class="text-xs font-semibold text-gray-900 whitespace-nowrap">${escapeHtml(formatPerformanceValue(item.value, item.unit))}</span>
                 </div>
-                <p class="text-xs text-gray-500 mt-1">${escapeHtml(owner)}${createdAt ? ` · ${escapeHtml(createdAt.toLocaleString())}` : ''}</p>
+                <p class="text-xs text-gray-500 mt-1">Budget ≤ ${escapeHtml(formatPerformanceValue(item.budgetValue, item.unit))} · ${escapeHtml(owner)}${createdAt ? ` · ${escapeHtml(createdAt.toLocaleString())}` : ''}</p>
             </div>
         `;
-    }, 'No slow app performance examples have been recorded for this range.');
+    }, 'No over-budget app performance examples have been recorded for this range.');
 
-    const trackedRows = buildTrackedWorkflowLoadSummary(telemetryState.events, {
-        slowThresholdMs: summary.slowThresholdMs
-    });
+    const trackedRows = buildTrackedWorkflowLoadSummary(telemetryState.events);
     renderTelemetryList('telemetry-performance-tracked-workflows', trackedRows, (row) => {
         const latest = telemetryDate(row.latestAt);
         return `
@@ -976,7 +1005,7 @@ function renderTelemetryPerformance() {
                     </div>
                     <span class="text-xs font-semibold text-gray-900 whitespace-nowrap">P95 ${escapeHtml(row.count ? formatPerformanceDuration(row.p95Ms) : '-')}</span>
                 </div>
-                <p class="text-xs text-gray-500 mt-1">${telemetryNumber(row.count)} samples · P50 ${escapeHtml(row.count ? formatPerformanceDuration(row.p50Ms) : '-')} · max ${escapeHtml(row.count ? formatPerformanceDuration(row.maxMs) : '-')}${latest ? ` · latest ${escapeHtml(latest.toLocaleString())}` : ''}</p>
+                <p class="text-xs text-gray-500 mt-1">${telemetryNumber(row.count)} samples · P50 ${escapeHtml(row.count ? formatPerformanceDuration(row.p50Ms) : '-')} · ${telemetryNumber(row.slowCount)} over ${escapeHtml(formatPerformanceDuration(row.budgetMs))} · max ${escapeHtml(row.count ? formatPerformanceDuration(row.maxMs) : '-')}${latest ? ` · latest ${escapeHtml(latest.toLocaleString())}` : ''}</p>
             </div>
         `;
     }, 'No tracked workflow timers have been recorded for this range.');
@@ -1290,7 +1319,7 @@ async function saveOfficialsAdmin(event) {
 
     message.textContent = officialId ? 'Official updated.' : 'Official saved.';
     loadedTeamsOfficialsPageKey = '';
-    loadedUsersOfficialsKey = '';
+    invalidateAdminUserSearchState();
     resetOfficialsAdminFormState();
     document.getElementById('officials-admin-form').classList.remove('hidden');
     await loadOfficialsForActiveTeam();
@@ -1317,7 +1346,7 @@ async function handleOfficialsAdminListClick(event) {
             document.getElementById('officials-admin-form').classList.remove('hidden');
         }
         loadedTeamsOfficialsPageKey = '';
-        loadedUsersOfficialsKey = '';
+        invalidateAdminUserSearchState();
         message.textContent = 'Official removed.';
         await loadOfficialsForActiveTeam();
     } catch (error) {
@@ -1394,6 +1423,7 @@ window.openRegistrationFormsAdmin = async function (teamId) {
     activeRegistrationTeam = getAdminTeamById(teamId);
     if (!activeRegistrationTeam) return;
 
+    resetRegistrationFormsPagination(activeRegistrationTeam.id);
     document.getElementById('registration-team-name').textContent = activeRegistrationTeam.name || 'Team';
     document.getElementById('registration-form-editor').classList.add('hidden');
     document.getElementById('registration-forms-modal').classList.remove('hidden');
@@ -1402,6 +1432,8 @@ window.openRegistrationFormsAdmin = async function (teamId) {
 
 window.closeRegistrationFormsAdmin = function () {
     document.getElementById('registration-forms-modal').classList.add('hidden');
+    activeRegistrationTeam = null;
+    resetRegistrationFormsPagination();
 };
 
 function hasAdvancedRegistrationSettings(form = {}) {
@@ -1545,25 +1577,77 @@ window.copyRegistrationLinkAdmin = async function (teamId, formId) {
     }
 };
 
-async function loadRegistrationFormsForActiveTeam() {
+function resetRegistrationFormsPagination(teamId = '') {
+    registrationFormsRequestVersion += 1;
+    registrationFormsLoading = false;
+    registrationFormsPageState = createAdminRegistrationFormsPageState(teamId);
+    activeRegistrationForms = [];
+    setRegistrationFormsLoadMoreError(false);
+    updateRegistrationFormsLoadMoreControl();
+}
+
+function updateRegistrationFormsLoadMoreControl() {
+    const button = document.getElementById('registration-forms-load-more');
+    if (!button) return;
+    button.classList.toggle('hidden', !registrationFormsPageState.hasMore);
+    button.disabled = registrationFormsLoading;
+    button.textContent = registrationFormsLoading ? 'Loading...' : 'Load more';
+}
+
+function setRegistrationFormsLoadMoreError(visible) {
+    const error = document.getElementById('registration-forms-load-more-error');
+    if (error) error.classList.toggle('hidden', !visible);
+}
+
+window.loadMoreRegistrationFormsAdmin = async function () {
+    await loadRegistrationFormsForActiveTeam({ append: true });
+};
+
+async function loadRegistrationFormsForActiveTeam({ append = false } = {}) {
     const team = activeRegistrationTeam;
     const teamId = team?.id;
     if (!teamId) return;
+    if (registrationFormsLoading) return;
+    if (append && !registrationFormsPageState.hasMore) return;
+
+    if (!append) resetRegistrationFormsPagination(teamId);
+    const requestVersion = registrationFormsRequestVersion;
 
     const list = document.getElementById('registration-forms-list');
-    list.innerHTML = '<p class="text-sm text-gray-500">Loading registration forms...</p>';
+    if (!append) {
+        list.innerHTML = '<p class="text-sm text-gray-500">Loading registration forms...</p>';
+    }
+    setRegistrationFormsLoadMoreError(false);
+    registrationFormsLoading = true;
+    updateRegistrationFormsLoadMoreControl();
     try {
-        const snapshot = await getDocs(collection(db, `teams/${teamId}/registrationForms`));
+        const page = await loadAdminRegistrationFormsPage({
+            teamId,
+            afterDoc: append ? registrationFormsPageState.lastDoc : null,
+            firestore: { db, collection, documentId, getDocs, limit, orderBy, query, startAfter }
+        });
         if (activeRegistrationTeam?.id !== teamId) return;
+        if (registrationFormsRequestVersion !== requestVersion) return;
 
-        activeRegistrationForms = snapshot.docs
-            .map(formDoc => ({ id: formDoc.id, ...formDoc.data() }))
-            .sort((a, b) => String(a.programName || a.title || '').localeCompare(String(b.programName || b.title || '')));
+        registrationFormsPageState = mergeAdminRegistrationFormsPage(registrationFormsPageState, {
+            teamId,
+            ...page
+        });
+        activeRegistrationForms = registrationFormsPageState.forms;
         renderRegistrationFormsList();
     } catch (error) {
         console.error('Error loading registration forms:', error);
-        if (activeRegistrationTeam?.id === teamId) {
-            list.innerHTML = '<p class="text-sm text-red-600">Failed to load registration forms. Please try again.</p>';
+        if (activeRegistrationTeam?.id === teamId && registrationFormsRequestVersion === requestVersion) {
+            if (append) {
+                setRegistrationFormsLoadMoreError(true);
+            } else {
+                list.innerHTML = '<p class="text-sm text-red-600">Failed to load registration forms. Please try again.</p>';
+            }
+        }
+    } finally {
+        if (activeRegistrationTeam?.id === teamId && registrationFormsRequestVersion === requestVersion) {
+            registrationFormsLoading = false;
+            updateRegistrationFormsLoadMoreControl();
         }
     }
 }
@@ -1572,6 +1656,7 @@ function renderRegistrationFormsList() {
     const list = document.getElementById('registration-forms-list');
     if (!activeRegistrationForms.length) {
         list.innerHTML = '<p class="text-sm text-gray-500">No registration forms yet.</p>';
+        updateRegistrationFormsLoadMoreControl();
         return;
     }
 
@@ -1596,6 +1681,7 @@ function renderRegistrationFormsList() {
             </div>
         `;
     }).join('');
+    updateRegistrationFormsLoadMoreControl();
 }
 
 function getRegistrationAdminStatus(form = {}) {
@@ -1675,15 +1761,17 @@ async function saveRegistrationForm(event) {
         ? 'Registration form saved and closed.'
         : payload.published ? 'Registration form saved and published.' : 'Registration form saved as draft.';
     if (activeRegistrationTeam?.id === teamId) {
+        resetRegistrationFormsPagination(teamId);
         await loadRegistrationFormsForActiveTeam();
         document.getElementById('registration-form-editor').classList.add('hidden');
     }
 }
 
 async function renderCurrentTeamsView() {
-    const term = normalizeAdminSearchTerm(document.getElementById('search-teams')?.value || '');
+    const term = normalizeAdminTeamSearchTerm(document.getElementById('search-teams')?.value || '');
     const teams = await getAdminTeamsForSearch(term);
-    const latestTerm = normalizeAdminSearchTerm(document.getElementById('search-teams')?.value || '');
+    if (!teams) return;
+    const latestTerm = normalizeAdminTeamSearchTerm(document.getElementById('search-teams')?.value || '');
     if (term !== latestTerm) return;
 
     const visibleTeams = showInactiveTeams ? teams : teams.filter(isTeamActive);
@@ -1707,12 +1795,7 @@ async function renderCurrentUsersView() {
     const refreshedTerm = normalizeAdminSearchTerm(document.getElementById('search-users')?.value || '');
     if (term !== refreshedTerm) return;
 
-    const filtered = users.filter((u) => {
-        const officialSummary = getOfficialUserSummary(u, officialUserLookup);
-        if (officialFilter === 'officials' && !officialSummary) return false;
-        if (officialFilter === 'non-officials' && officialSummary) return false;
-        return matchesOfficialUserSearch(u, officialSummary, term);
-    });
+    const filtered = filterAdminUsersForView(users, officialUserLookup, officialFilter, term);
     renderUsers(filtered);
 }
 

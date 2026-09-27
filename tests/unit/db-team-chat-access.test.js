@@ -24,17 +24,18 @@ describe('team chat access compatibility', () => {
         }, team)).toBe(true);
     });
 
-    it('uses legacy ownerEmail when the team owner uid is stale', () => {
+    it('uses legacy ownerEmail only when the team has no canonical owner uid', () => {
         expect(canAccessTeamChat({
             uid: 'new-owner-uid',
             email: 'OWNER@example.com'
         }, {
-            ...team,
+            id: team.id,
+            adminEmails: [],
             ownerEmail: 'owner@example.com'
         })).toBe(true);
     });
 
-    it('uses legacy ownerEmail for stale-owner moderation', () => {
+    it('uses legacy ownerEmail for moderation only without a canonical owner uid', () => {
         const canModerateChat = Function(`${getFunctionSource('canModerateChat')
             .replace('export function canModerateChat', 'return function canModerateChat')}`)();
 
@@ -42,9 +43,37 @@ describe('team chat access compatibility', () => {
             uid: 'new-owner-uid',
             email: 'OWNER@example.com'
         }, {
-            ...team,
+            id: team.id,
+            adminEmails: [],
             ownerEmail: 'owner@example.com'
         })).toBe(true);
+    });
+
+    it('denies both legacy owner aliases when they conflict', () => {
+        const canModerateChat = Function(`${getFunctionSource('canModerateChat')
+            .replace('export function canModerateChat', 'return function canModerateChat')}`)();
+        const conflictingTeam = {
+            id: team.id,
+            adminEmails: [],
+            ownerEmail: 'current@example.com',
+            ownerEmailLower: 'former@example.com'
+        };
+
+        for (const email of ['current@example.com', 'former@example.com']) {
+            const user = { uid: email, email };
+            expect(canAccessTeamChat(user, conflictingTeam)).toBe(false);
+            expect(canModerateChat(user, conflictingTeam)).toBe(false);
+        }
+    });
+
+    it('denies stale owner email chat access and moderation when a canonical owner exists', () => {
+        const canModerateChat = Function(`${getFunctionSource('canModerateChat')
+            .replace('export function canModerateChat', 'return function canModerateChat')}`)();
+        const formerOwner = { uid: 'former-owner', email: 'OWNER@example.com' };
+        const reassignedTeam = { ...team, ownerEmail: 'owner@example.com' };
+
+        expect(canAccessTeamChat(formerOwner, reassignedTeam)).toBe(false);
+        expect(canModerateChat(formerOwner, reassignedTeam)).toBe(false);
     });
 
     it('treats normalized parentTeamIds as authoritative once present', () => {

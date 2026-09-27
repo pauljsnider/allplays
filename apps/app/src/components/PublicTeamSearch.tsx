@@ -13,7 +13,17 @@ function publicTeamRequestKey(searchText?: string | null) {
   return trimmedSearchText ? `search:${trimmedSearchText}` : 'browse';
 }
 
-export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = false }: { autoBrowseOnMount?: boolean; showBackLink?: boolean }) {
+export function PublicTeamSearch({
+  autoBrowseOnMount = false,
+  showBackLink = false,
+  showRosterCounts = true,
+  pageSize = 24
+}: {
+  autoBrowseOnMount?: boolean;
+  showBackLink?: boolean;
+  showRosterCounts?: boolean;
+  pageSize?: number;
+}) {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [publicTeams, setPublicTeams] = useState<ParentHomeTeam[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
@@ -28,6 +38,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
   const autoBrowseTriggeredRef = useRef(false);
   const latestRequestIdRef = useRef(0);
   const rosterHydrationGenerationRef = useRef(0);
+  const rosterHydrationAbortControllerRef = useRef<AbortController | null>(null);
   const pendingRequestKeyRef = useRef<string | null>(null);
 
   const fetchPublicTeams = useCallback(async ({ searchText, cursor = null, append = false }: { searchText?: string; cursor?: unknown | null; append?: boolean } = {}) => {
@@ -42,7 +53,12 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
     const rosterHydrationGeneration = append
       ? rosterHydrationGenerationRef.current
       : rosterHydrationGenerationRef.current + 1;
+    const rosterHydrationAbortController = append
+      ? rosterHydrationAbortControllerRef.current
+      : new AbortController();
     if (!append) {
+      rosterHydrationAbortControllerRef.current?.abort();
+      rosterHydrationAbortControllerRef.current = rosterHydrationAbortController;
       rosterHydrationGenerationRef.current = rosterHydrationGeneration;
     }
 
@@ -56,18 +72,27 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
     }
     setHasSearched(true);
     try {
-      const result = await getPublicTeamsPage({ searchText: submittedSearchText, cursor, includeRosterCounts: false });
+      const result = await getPublicTeamsPage({
+        searchText: submittedSearchText,
+        cursor,
+        includeRosterCounts: false,
+        ...(pageSize === 24 ? {} : { pageSize })
+      });
       if (requestId !== latestRequestIdRef.current) {
         return;
       }
       const discoveredTeamIds = new Set(result.teams.map((team) => team.teamId));
-      setRosterCountsLoading((current) => append
-        ? new Set([...current, ...discoveredTeamIds])
-        : discoveredTeamIds);
+      if (showRosterCounts) {
+        setRosterCountsLoading((current) => append
+          ? new Set([...current, ...discoveredTeamIds])
+          : discoveredTeamIds);
+      }
       setPublicTeams((current) => append ? [...current, ...result.teams] : result.teams);
       setNextCursor(result.nextCursor);
       setActiveSearchQuery(submittedSearchText || null);
-      void hydratePublicTeamRosterCounts(result.teams)
+      if (showRosterCounts) void hydratePublicTeamRosterCounts(result.teams, {
+        signal: rosterHydrationAbortController?.signal
+      })
         .then((hydratedTeams) => {
           if (rosterHydrationGeneration !== rosterHydrationGenerationRef.current) {
             return;
@@ -109,7 +134,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
         setPendingRequestKey(null);
       }
     }
-  }, []);
+  }, [pageSize, showRosterCounts]);
 
   const handleSearch = () => {
     const trimmedQuery = searchQuery.trim();
@@ -135,6 +160,8 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
   const handleClear = () => {
     latestRequestIdRef.current += 1;
     rosterHydrationGenerationRef.current += 1;
+    rosterHydrationAbortControllerRef.current?.abort();
+    rosterHydrationAbortControllerRef.current = null;
     setSearchQuery('');
     setPublicTeams([]);
     setError('');
@@ -156,6 +183,13 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
     autoBrowseTriggeredRef.current = true;
     void fetchPublicTeams();
   }, [autoBrowseOnMount, fetchPublicTeams]);
+
+  useEffect(() => () => {
+    latestRequestIdRef.current += 1;
+    rosterHydrationGenerationRef.current += 1;
+    rosterHydrationAbortControllerRef.current?.abort();
+    rosterHydrationAbortControllerRef.current = null;
+  }, []);
 
   const groupedTeams = useMemo(() => {
     const groups: Record<string, ParentHomeTeam[]> = {};
@@ -261,7 +295,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
               <h3 className="text-lg font-black text-gray-950">{location}</h3>
               <div className="grid gap-2 sm:grid-cols-2">
                 {teams.map(team => (
-                  <PublicTeamCard key={team.teamId} team={team} rosterCountLoading={rosterCountsLoading.has(team.teamId)} />
+                  <PublicTeamCard key={team.teamId} team={team} rosterCountLoading={rosterCountsLoading.has(team.teamId)} showRosterCount={showRosterCounts} />
                 ))}
               </div>
             </div>
@@ -310,7 +344,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
   );
 }
 
-function PublicTeamCard({ team, rosterCountLoading }: { team: ParentHomeTeam; rosterCountLoading: boolean }) {
+function PublicTeamCard({ team, rosterCountLoading, showRosterCount }: { team: ParentHomeTeam; rosterCountLoading: boolean; showRosterCount: boolean }) {
   const hasRosterCount = typeof team.publicRosterCount === 'number';
   const rosterCountLabel = rosterCountLoading
     ? 'Loading roster count'
@@ -325,9 +359,9 @@ function PublicTeamCard({ team, rosterCountLoading }: { team: ParentHomeTeam; ro
         <span className="min-w-0 flex-1">
           <span className="truncate text-sm font-black text-gray-950">{team.teamName}</span>
           <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">{team.location || 'Location Unknown'}</span>
-          <span className="mt-1 flex min-w-0 flex-wrap gap-1.5">
+          {showRosterCount ? <span className="mt-1 flex min-w-0 flex-wrap gap-1.5">
             <TeamLauncherChip label={rosterCountLabel} />
-          </span>
+          </span> : null}
         </span>
       </div>
 

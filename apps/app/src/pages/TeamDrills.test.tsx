@@ -21,6 +21,20 @@ const teamDrillsServiceMocks = vi.hoisted(() => ({
   }),
   loadFavoriteDrills: vi.fn(),
   loadTeamDrillLibraryPage: vi.fn(),
+  normalizeAbsoluteHttpUrl: vi.fn((value) => {
+    const candidate = String(value || '').trim();
+    const hasControlCharacter = [...candidate].some((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 31 || code === 127;
+    });
+    if (!candidate || hasControlCharacter) return null;
+    try {
+      const parsed = new URL(candidate);
+      return ['http:', 'https:'].includes(parsed.protocol) && parsed.hostname && !parsed.username && !parsed.password ? parsed.href : null;
+    } catch {
+      return null;
+    }
+  }),
   setTeamDrillFavorite: vi.fn()
 }));
 
@@ -292,6 +306,28 @@ describe('TeamDrills', () => {
     await waitFor(() => expect(teamDrillsServiceMocks.setTeamDrillFavorite).toHaveBeenCalledWith('team-1', auth.user, 'drill-1', true));
   });
 
+  it('does not render or dispatch actions for unsafe legacy drill URLs', async () => {
+    teamDrillsServiceMocks.loadTeamDrillLibraryPage.mockResolvedValue(createPage({
+      drills: [createDrill({
+        youtubeUrl: 'javascript:alert(1)',
+        attribution: {
+          source: 'Legacy source',
+          license: 'CC BY',
+          url: '//unsafe.example.test/source'
+        }
+      })],
+      favoriteIds: []
+    }));
+
+    renderTeamDrills();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Rondo 4v2' }));
+    expect(await screen.findByText('Attribution')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Video link' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open source' })).toBeNull();
+    expect(publicActionsMocks.openPublicUrl).not.toHaveBeenCalled();
+  });
+
   it('loads favorites lazily and applies client-side search/filtering there too', async () => {
     renderTeamDrills();
 
@@ -323,6 +359,21 @@ describe('TeamDrills', () => {
     expect(await screen.findByText('Finishing ladder')).toBeTruthy();
     expect(teamDrillsServiceMocks.loadFavoriteDrills).toHaveBeenCalledTimes(1);
     expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads favorites with the current user when the signed-in user changes', async () => {
+    const initialAuth: AuthState = { ...auth, user: { ...auth.user! } as AuthState['user'] };
+    const nextAuth: AuthState = { ...auth, user: { ...auth.user!, uid: 'coach-2' } as AuthState['user'] };
+    const view = renderTeamDrills(initialAuth);
+
+    expect(await screen.findByText('Rondo 4v2')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Favorites (1)' }));
+    await waitFor(() => expect(teamDrillsServiceMocks.loadFavoriteDrills).toHaveBeenCalledTimes(1));
+
+    rerenderTeamDrills(view, nextAuth);
+
+    await waitFor(() => expect(teamDrillsServiceMocks.loadFavoriteDrills).toHaveBeenCalledTimes(2));
+    expect(teamDrillsServiceMocks.loadFavoriteDrills).toHaveBeenLastCalledWith('team-1', nextAuth.user);
   });
 
   it('generates an editable AI coach proposal and waits for acceptance before saving the timeline', async () => {

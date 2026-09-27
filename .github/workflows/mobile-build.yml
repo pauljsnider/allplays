@@ -55,7 +55,11 @@ jobs:
           echo "Changed files:" >&2
           echo "$CHANGED" >&2
 
-          if echo "$CHANGED" | grep -Eq '^(\.github/workflows/mobile-build\.yml|apps/app/|android/|ios/|capacitor\.config\.json|package\.json|package-lock\.json)'; then
+          # React source is already typechecked, tested, built, and smoke-tested
+          # by pr-fast/preview-smoke. Rebuilding both native shells for an
+          # ordinary apps/app/src change adds minutes without exercising a new
+          # native boundary. Reserve these jobs for shell/config/plugin inputs.
+          if echo "$CHANGED" | grep -Eq '^(\.github/workflows/mobile-build\.yml|android/|ios/|capacitor\.config\.(js|json|ts)|package\.json|package-lock\.json|apps/app/package\.json|apps/app/package-lock\.json)'; then
             echo "mobile=true" >> "$GITHUB_OUTPUT"
           else
             echo "mobile=false" >> "$GITHUB_OUTPUT"
@@ -114,7 +118,9 @@ jobs:
           done
 
       - name: Build React app
-        run: npm run app:build
+        env:
+          VITE_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
+        run: npm run app:build:native
 
       - name: Sync Android project
         run: npx cap sync android
@@ -201,10 +207,12 @@ jobs:
           done
 
       - name: Build React app
-        run: npm run app:build
+        env:
+          VITE_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
+        run: npm run app:build:native
 
       - name: Sync iOS project
-        run: npx cap sync ios
+        run: npm run prepare:ios-auth-spm && npx cap sync ios
 
       - name: Resolve iOS package dependencies
         run: |

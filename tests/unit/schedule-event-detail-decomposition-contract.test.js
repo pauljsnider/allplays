@@ -10,6 +10,7 @@ function readRepoFile(relativePath) {
 describe('ScheduleEventDetail decomposition contract', () => {
     it('keeps reusable event summary UI in schedule components', () => {
         const page = readRepoFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+        const gameHub = readRepoFile('apps/app/src/pages/schedule/ScheduleGameHubSection.tsx');
 
         [
             "import { AssignmentsSection } from '../components/schedule/AssignmentsSection';",
@@ -18,10 +19,7 @@ describe('ScheduleEventDetail decomposition contract', () => {
             "import { ScheduleEventHeader } from '../components/schedule/ScheduleEventHeader';",
             "import { EventSectionNav } from '../components/schedule/EventSectionNav';",
             "import { PlayerSwitcher } from '../components/schedule/PlayerSwitcher';",
-            "import { PracticeAttendancePanel } from '../components/schedule/PracticeAttendancePanel';",
-            "import { ReportMarkdownText } from '../components/schedule/ReportMarkdownText';",
             "import { RideshareSection } from '../components/schedule/RideshareSection';",
-            "import { ScoreStepper } from '../components/schedule/ScoreStepper';",
             "import { Status } from '../components/schedule/ScheduleStatus';",
             "import { StaffRsvpBreakdownPanel } from '../components/schedule/StaffRsvpBreakdownPanel';",
             "import { StaffRsvpReminderPanel } from '../components/schedule/StaffRsvpReminderPanel';",
@@ -30,6 +28,14 @@ describe('ScheduleEventDetail decomposition contract', () => {
             'AttentionPanel'
         ].forEach((snippet) => {
             expect(page).toContain(snippet);
+        });
+
+        [
+            "import { PracticeAttendancePanel } from '../../components/schedule/PracticeAttendancePanel';",
+            "import { ReportMarkdownText } from '../../components/schedule/ReportMarkdownText';",
+            "import { ScoreStepper } from '../../components/schedule/ScoreStepper';"
+        ].forEach((snippet) => {
+            expect(gameHub).toContain(snippet);
         });
 
         [
@@ -213,23 +219,24 @@ describe('ScheduleEventDetail decomposition contract', () => {
 
     it('keeps game report rendering behind extracted schedule components', () => {
         const page = readRepoFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+        const gameHub = readRepoFile('apps/app/src/pages/schedule/ScheduleGameHubSection.tsx');
         const sections = readRepoFile('apps/app/src/components/schedule/GameReportSections.tsx');
         const content = readRepoFile('apps/app/src/components/schedule/GameReportSectionContent.tsx');
         const markdown = readRepoFile('apps/app/src/components/schedule/ReportMarkdownText.tsx');
 
         expect(page).not.toContain("import { GameReportSections } from '../components/schedule/GameReportSections';");
-        expect(page).toContain("type GameReportSectionsModule = typeof import('../components/schedule/GameReportSections');");
-        expect(page).toContain('export function loadGameReportSectionsModule()');
-        expect(page).toContain("gameReportSectionsModulePromise = import('../components/schedule/GameReportSections');");
-        expect(page).toContain('loadGameReportSectionsModule().then((module) => ({ default: module.GameReportSections }))');
-        expect(page).toContain('<DeferredGameReportSections event={event} />');
+        expect(gameHub).toContain("type GameReportSectionsModule = typeof import('../../components/schedule/GameReportSections');");
+        expect(gameHub).toContain('export function loadGameReportSectionsModule()');
+        expect(gameHub).toContain("gameReportSectionsModulePromise = import('../../components/schedule/GameReportSections');");
+        expect(gameHub).toContain('loadGameReportSectionsModule().then((module) => ({ default: module.GameReportSections }))');
+        expect(gameHub).toContain('<DeferredGameReportSections event={event} onRefreshEvent={onEventRefresh} />');
         expect(page).not.toMatch(/^function GameReportSections\b/m);
         expect(page).not.toMatch(/^function GameReportSectionContent\b/m);
         expect(page).not.toMatch(/loadGameReportSections\(/);
 
         expect(sections).toContain('export function GameReportSections');
-        expect(sections).toContain('const loaded = await loadGameReportSections(event.teamId, event.id);');
-        expect(sections).toContain('<GameReportSectionContent report={report} activeSection={activeReportSection} />');
+        expect(sections).toContain('const loaded = await loadGameReportSections(event.teamId, event.id, {');
+        expect(sections).toContain('<GameReportSectionContent report={displayedReport} activeSection={activeReportSection} />');
         expect(sections).toContain('function getVisibleGameReportSections(report: GameReportData | null)');
         expect(content).toContain('export function GameReportSectionContent');
         expect(content).toContain('function MatchSummarySection({ report }: { report: GameReportData })');

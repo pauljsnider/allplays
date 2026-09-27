@@ -122,15 +122,75 @@ describe('appDataCache', () => {
     const secondCache = await loadCacheModule();
     const loader = vi.fn().mockResolvedValue({ version: 2 });
     const onRefresh = vi.fn();
+    const onBackgroundRefresh = vi.fn();
 
-    await expect(secondCache.loadCachedAppData('stale:key', loader, { ttlMs: 1000, staleWhileRevalidate: true, onRefresh })).resolves.toEqual({ version: 1 });
+    await expect(secondCache.loadCachedAppData('stale:key', loader, {
+      ttlMs: 1000,
+      staleWhileRevalidate: true,
+      onRefresh,
+      onBackgroundRefresh
+    })).resolves.toEqual({ version: 1 });
     expect(loader).toHaveBeenCalledTimes(1);
 
     await Promise.resolve();
     await Promise.resolve();
 
     expect(onRefresh).toHaveBeenCalledWith({ version: 2 });
+    expect(onBackgroundRefresh).toHaveBeenCalledWith({ version: 2 });
     expect(secondCache.getCachedAppData('stale:key')).toEqual({ version: 2 });
+  });
+
+  it('returns a stale in-memory value immediately while its refresh runs', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-12T12:00:00Z'));
+    const cache = await loadCacheModule();
+    await cache.loadCachedAppData('memory-stale:key', async () => ({ version: 1 }), { ttlMs: 1000 });
+
+    vi.setSystemTime(new Date('2026-06-12T12:00:02Z'));
+    let resolveRefresh!: (value: { version: number }) => void;
+    const loader = vi.fn(() => new Promise<{ version: number }>((resolve) => {
+      resolveRefresh = resolve;
+    }));
+
+    await expect(cache.loadCachedAppData('memory-stale:key', loader, {
+      ttlMs: 1000,
+      maxStaleMs: 5000,
+      staleWhileRevalidate: true
+    })).resolves.toEqual({ version: 1 });
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    resolveRefresh({ version: 2 });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(cache.getCachedAppData('memory-stale:key')).toEqual({ version: 2 });
+  });
+
+  it('reports a failed background refresh while preserving the last complete value', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-12T12:00:00Z'));
+    const cache = await loadCacheModule();
+    await cache.loadCachedAppData('failed-refresh:key', async () => ({ teams: ['team-1'] }), { ttlMs: 1000 });
+
+    vi.setSystemTime(new Date('2026-06-12T12:00:02Z'));
+    const refreshError = new Error('network unavailable');
+    const onRefreshError = vi.fn();
+    await expect(cache.loadCachedAppData('failed-refresh:key', async () => Promise.reject(refreshError), {
+      ttlMs: 1000,
+      maxStaleMs: 5000,
+      staleWhileRevalidate: true,
+      onRefreshError
+    })).resolves.toEqual({ teams: ['team-1'] });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onRefreshError).toHaveBeenCalledWith(refreshError);
+    const nextRefresh = vi.fn(() => new Promise<{ teams: string[] }>(() => {}));
+    await expect(cache.loadCachedAppData('failed-refresh:key', nextRefresh, {
+      ttlMs: 1000,
+      maxStaleMs: 5000,
+      staleWhileRevalidate: true
+    })).resolves.toEqual({ teams: ['team-1'] });
+    expect(nextRefresh).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to memory cache when storage persistence fails', async () => {

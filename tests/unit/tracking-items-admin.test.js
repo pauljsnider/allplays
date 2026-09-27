@@ -62,6 +62,7 @@ describe('tracking items admin helpers', () => {
         expect(isTrackingItemAdmin(team, { isAdmin: true })).toBe(true);
         expect(isTrackingItemAdmin(team, { uid: 'moderator-1' }, () => true)).toBe(true);
         expect(isTrackingItemAdmin(team, { email: 'parent@example.com' })).toBe(false);
+        expect(isTrackingItemAdmin(team, { profileEmail: 'coach@example.com' })).toBe(false);
     });
 
     it('keeps public tracking item reads scoped to team members in Firestore rules', () => {

@@ -5,6 +5,7 @@ const helper = readFileSync('tests/smoke/helpers/app-auth.js', 'utf8');
 const authenticatedCore = readFileSync('tests/smoke/app-authenticated-core.spec.js', 'utf8');
 const adminCore = readFileSync('tests/smoke/app-admin-core.spec.js', 'utf8');
 const authenticatedExtended = readFileSync('tests/smoke/app-authenticated-extended.spec.js', 'utf8');
+const authenticatedImageWrites = readFileSync('tests/smoke/app-authenticated-image-writes.spec.js', 'utf8');
 const legacyAuthenticatedCore = readFileSync('tests/smoke/legacy-authenticated-core.spec.js', 'utf8');
 
 describe('production smoke authenticated setup timeout', () => {
@@ -24,6 +25,14 @@ describe('production smoke authenticated setup timeout', () => {
             expect(boundedSetup).toMatch(/createAuthenticatedAppSession(?:s)?\(browser,/);
             expect(source).toMatch(/test\.afterAll\(async \(\) => \{[\s\S]*?closeAuthenticatedAppSession\(/);
         }
+
+        expect(authenticatedImageWrites).toContain('AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS');
+        expect(authenticatedImageWrites).toMatch(
+            /test\.beforeAll\(async \(\) => \{\s+test\.setTimeout\(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS\);/
+        );
+        expect(authenticatedImageWrites).toContain('createFirebaseRestSession({');
+        expect(authenticatedImageWrites).not.toContain('createAuthenticatedAppSession');
+        expect(authenticatedImageWrites).not.toContain('closeAuthenticatedAppSession');
 
         for (const source of [authenticatedCore, authenticatedExtended]) {
             const boundedSetup = source.slice(
@@ -78,6 +87,12 @@ describe('production smoke authenticated setup timeout', () => {
 
         expect(workflow).toMatch(
             /tests\/smoke\/app-admin-core\.spec\.js[\s\S]*?tests\/smoke\/app-authenticated-core\.spec\.js[\s\S]*?--workers=1/
+        );
+        expect(workflow).toMatch(
+            /tests\/smoke\/app-admin-core\.spec\.js[\s\S]*?tests\/smoke\/app-authenticated-core\.spec\.js[\s\S]*?--retries=1/
+        );
+        expect(workflow).toMatch(
+            /tests\/smoke\/app-admin-core\.spec\.js[\s\S]*?tests\/smoke\/app-authenticated-core\.spec\.js[\s\S]*?--fail-on-flaky-tests/
         );
         expect(scheduledWorkflow).toMatch(
             /tests\/smoke\/app-admin-core\.spec\.js[\s\S]*?tests\/smoke\/app-authenticated-core\.spec\.js[\s\S]*?--workers=1/

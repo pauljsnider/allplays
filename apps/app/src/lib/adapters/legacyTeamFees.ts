@@ -1,6 +1,7 @@
 import { createTeamFeeBatch as legacyCreateTeamFeeBatch, getPlayers as legacyGetPlayers, getTeam as legacyGetTeam, listTeamFeeBatches as legacyListTeamFeeBatches, listTeamFeeRecipients as legacyListTeamFeeRecipients, updateTeamFeeRecipient as legacyUpdateTeamFeeRecipient } from '@legacy/db.js';
 import { initiateTeamFeeCheckout as legacyInitiateTeamFeeCheckout } from '@legacy/stripe-service.js';
 import { hasFullTeamAccess as legacyHasFullTeamAccess } from '@legacy/team-access.js';
+import { assertTeamFeeRecipientLimit as legacyAssertTeamFeeRecipientLimit, normalizeTeamFeeRecipientIds as legacyNormalizeTeamFeeRecipientIds } from '@legacy/team-fee-batch-limits.js';
 
 /**
  * Typed adapter boundary for the legacy js/ team-fees helpers (#2066).
@@ -14,3 +15,5 @@ export const listTeamFeeRecipients = legacyListTeamFeeRecipients as (...args: an
 export const updateTeamFeeRecipient = legacyUpdateTeamFeeRecipient as (...args: any[]) => Promise<any>;
 export const initiateTeamFeeCheckout = legacyInitiateTeamFeeCheckout as (...args: any[]) => Promise<any>;
 export const hasFullTeamAccess = legacyHasFullTeamAccess as (...args: any[]) => boolean;
+export const assertTeamFeeRecipientLimit = legacyAssertTeamFeeRecipientLimit as (recipientCount: number) => void;
+export const normalizeTeamFeeRecipientIds = legacyNormalizeTeamFeeRecipientIds as (recipientIds?: unknown[]) => string[];

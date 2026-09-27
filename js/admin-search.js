@@ -105,45 +105,88 @@ export function createDebouncedAdminUserSearch({
     let generation = 0;
     let pendingTimer = null;
     let settlePending = null;
+    let pendingTerm = '';
+    let retainedTerm = null;
+    let retainedResult = null;
+    let retainedPromise = null;
 
-    return function runAdminUserSearch(value = '') {
+    function invalidate() {
+        generation += 1;
+        if (pendingTimer) {
+            clearTimeout(pendingTimer);
+            pendingTimer = null;
+            settlePending?.({ term: pendingTerm, users: [], stale: true, remote: false });
+        }
+        settlePending = null;
+        pendingTerm = '';
+        retainedTerm = null;
+        retainedResult = null;
+        retainedPromise = null;
+    }
+
+    function runAdminUserSearch(value = '') {
         const term = normalizeAdminSearchTerm(value);
+
+        if (term === retainedTerm) {
+            if (retainedPromise) return retainedPromise;
+            if (retainedResult) return Promise.resolve(retainedResult);
+        }
+
         const requestGeneration = ++generation;
 
         if (pendingTimer) {
             clearTimeout(pendingTimer);
             pendingTimer = null;
-            settlePending?.({ term, users: [], stale: true, remote: false });
+            settlePending?.({ term: pendingTerm, users: [], stale: true, remote: false });
             settlePending = null;
+            pendingTerm = '';
         }
+
+        retainedTerm = term;
+        retainedResult = null;
+        retainedPromise = null;
 
         if (!shouldRunRemoteAdminUserSearch(term)) {
-            return Promise.resolve({ term, users: [], stale: false, remote: false });
+            retainedResult = { term, users: [], stale: false, remote: false };
+            return Promise.resolve(retainedResult);
         }
 
-        return new Promise((resolve, reject) => {
+        retainedPromise = new Promise((resolve, reject) => {
             settlePending = resolve;
+            pendingTerm = term;
             pendingTimer = setTimeout(async () => {
                 pendingTimer = null;
                 settlePending = null;
+                pendingTerm = '';
                 try {
                     const users = await search(term);
-                    resolve({
+                    const result = {
                         term,
                         users: Array.isArray(users) ? users.slice(0, ADMIN_USER_SEARCH_RESULT_LIMIT) : [],
                         stale: requestGeneration !== generation,
                         remote: true
-                    });
+                    };
+                    if (!result.stale && retainedTerm === term) {
+                        retainedResult = result;
+                        retainedPromise = null;
+                    }
+                    resolve(result);
                 } catch (error) {
                     if (requestGeneration !== generation) {
                         resolve({ term, users: [], stale: true, remote: true });
                         return;
                     }
+                    if (retainedTerm === term) retainedPromise = null;
                     reject(error);
                 }
             }, debounceMs);
         });
-    };
+
+        return retainedPromise;
+    }
+
+    runAdminUserSearch.invalidate = invalidate;
+    return runAdminUserSearch;
 }
 
 export async function loadCompleteAdminSearchCollection({ fetchPage, itemsKey, pageSize = 100 } = {}) {

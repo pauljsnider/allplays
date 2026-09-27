@@ -85,6 +85,9 @@ jobs:
             echo "No app performance measurement artifact to validate."
           fi
 
+      - name: Run Diamond scorebook acceptance gate
+        run: npm run test:diamond:ci
+
       - name: Run unit tests
         run: npm run test:unit:ci
 
@@ -96,6 +99,9 @@ jobs:
 
       - name: Run team email functions coverage
         run: npm run test:functions:team-email
+
+      - name: Run Functions security boundary coverage
+        run: npm run test:functions:security-boundaries
 
   app-quality:
     runs-on: ubuntu-latest

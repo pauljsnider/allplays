@@ -242,6 +242,7 @@ function makeFunctionsStub() {
         onCreate: (fn) => fn,
         onUpdate: (fn) => fn,
         onWrite: (fn) => fn,
+        onDelete: (fn) => fn,
         onRun: (fn) => fn,
         document() {
             return this;
@@ -251,9 +252,13 @@ function makeFunctionsStub() {
         },
         timeZone() {
             return this;
+        },
+        user() {
+            return this;
         }
     };
     triggerChain.https = triggerChain;
+    triggerChain.auth = triggerChain;
     triggerChain.firestore = triggerChain;
     triggerChain.pubsub = triggerChain;
 
@@ -266,6 +271,9 @@ function makeFunctionsStub() {
         },
         firestore: {
             document: () => triggerChain
+        },
+        auth: {
+            user: () => triggerChain
         },
         pubsub: {
             schedule: () => triggerChain
@@ -394,6 +402,11 @@ test('drains overdue registration payment reminders across ordered cursor pages'
     assert.equal(laterRegistration.paymentReminder.status, 'active');
     assert.equal(laterRegistration.paymentReminder.lastReminderKind, 'followup');
     assert.ok(laterRegistration.paymentReminder.nextReminderAt > dueIso);
+    assert.equal(Object.prototype.hasOwnProperty.call(laterRegistration.paymentReminder, 'retryUrl'), false);
+    assert.equal(
+        firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-055/checkoutAttempts/current').paymentRetryUrl,
+        'https://allplays.test/registration.html?retryPayment=1'
+    );
 
     const laterMail = firestore.snapshot(`mail/${laterRegistration.paymentReminder.lastMailId}`);
     assert.equal(laterMail.metadata.registrationId, 'reg-055');

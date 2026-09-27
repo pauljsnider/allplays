@@ -311,6 +311,24 @@ describe('Firestore recovery posture', () => {
         );
     });
 
+    it('ignores a historical backup nearing expiry when a fresh backup survives the next check window', () => {
+        const input = healthyInput();
+        input.backups[0].snapshotTime = '2026-07-05T06:00:00Z';
+        input.backups[0].expireTime = '2026-07-18T18:00:00Z';
+        input.backups.push({
+            ...input.backups[0],
+            name: 'projects/demo-project/locations/nam5/backups/13bff7d6-f49e-4b5f-b785-d0fdbf1da103',
+            snapshotTime: '2026-07-18T06:00:00Z',
+            expireTime: '2026-08-01T06:00:00Z'
+        });
+
+        expect(evaluateFirestoreRecoveryPosture(input)).toMatchObject({
+            healthy: true,
+            failures: [],
+            newestBackup: { name: input.backups[1].name }
+        });
+    });
+
     it('requires a ready backup to name the exact database and canonical backup resource', () => {
         const wrongDatabase = healthyInput();
         wrongDatabase.expectedDatabaseName = demoDatabaseName;

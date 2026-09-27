@@ -44,8 +44,8 @@ describe('Stripe async payment webhook handling (issue #2203)', () => {
     });
 
     it('accepts public checkout capability metadata for non-paid webhook retries', () => {
-        expect(source).toContain('if (!registrationCheckoutAuthorityMatches(registration, registrationInput)) {');
-        expect(source).not.toContain('if (!registrationCheckoutAttemptMatches(registration, registrationInput)) {');
+        expect(source).toContain('if (!registrationCheckoutAuthorityMatches(checkoutAuthority, registrationInput)) {');
+        expect(source).not.toContain('if (!registrationCheckoutAttemptMatches(checkoutAuthority, registrationInput)) {');
     });
 
     it('keeps existing async_payment_failed reminder email handling unchanged', () => {

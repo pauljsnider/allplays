@@ -63,7 +63,11 @@ describe('notification inbox pipeline', () => {
         expect(functionsSource).toContain('.startAfter(oldestRetainedDoc)');
         expect(functionsSource).toContain('.limit(500)');
         expect(functionsSource).not.toContain('.offset(NOTIFICATION_INBOX_MAX_ITEMS)');
-        expect(functionsSource.match(/const inboxResult = await writeNotificationInboxRecords\(\{/g)).toHaveLength(2);
+        expect(functionsSource).toContain('let inboxResult = { writeCount: 0, cleanupCount: 0, failureCount: 0 };');
+        expect(functionsSource).toContain('if (normalizedDeliveryIdempotencyKey) {\n    inboxResult = await writeNotificationInboxRecords({');
+        expect(functionsSource).toContain('if (!normalizedDeliveryIdempotencyKey) {\n    inboxResult = await writeNotificationInboxRecords({');
+        expect(functionsSource).toContain('if (!chatMessageRef) {');
+        expect(functionsSource).toContain('inboxResult = await writeNotificationInboxRecords({');
         expect(functionsSource.match(/const inboxPromise = writeNotificationInboxRecords\(\{/g)).toHaveLength(1);
         expect(functionsSource).toContain('await inboxPromise;\n    throw error;');
         expect(functionsSource.match(/inboxWriteCount: inboxResult.writeCount/g)).toHaveLength(3);

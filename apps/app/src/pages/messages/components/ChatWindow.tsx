@@ -20,7 +20,6 @@ import {
   RefreshCw,
   Share2,
   ShieldCheck,
-  Smile,
   Trash2,
   Video,
   X
@@ -92,6 +91,7 @@ import { useChatSheets } from '../hooks/useChatSheets';
 import { useChatTeam } from '../hooks/useChatTeam';
 import { getChatMessagesErrorMessage, useChatMessages } from '../hooks/useChatMessages';
 import { Composer } from './ChatComposer';
+import { TeamAvatar } from './TeamAvatar';
 
 const LazyTeamEmailSheet = lazy(() => import('./TeamEmailSheet'));
 
@@ -357,26 +357,6 @@ export function getReverseDirectConversationId(currentUserId: string, recipientI
   return getDirectConversationLookupIds(currentUserId, recipientId)[1] || '';
 }
 
-export function TeamAvatar({ team }: { team: Pick<ChatTeam, 'name' | 'photoUrl' | 'unreadCount'> }) {
-  return (
-    <div className="relative flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-primary-50 text-primary-700 shadow-sm">
-      {team.photoUrl ? (
-        <AvatarImage
-          src={team.photoUrl}
-          alt={`${team.name} team photo`}
-          loading="lazy"
-          decoding="async"
-          className="h-full w-full object-cover"
-          fallback={<span className="text-base font-black">{team.name.charAt(0).toUpperCase()}</span>}
-        />
-      ) : (
-        <span className="text-base font-black">{team.name.charAt(0).toUpperCase()}</span>
-      )}
-      {team.unreadCount > 0 ? <span className="absolute right-1 top-1 h-2.5 w-2.5 rounded-full border-2 border-white bg-rose-600" /> : null}
-    </div>
-  );
-}
-
 export function ChatWindow({
   auth,
   teamId,
@@ -430,6 +410,7 @@ export function ChatWindow({
     openConversationSheet,
     closeConversationSheet,
     openAudienceSheet,
+    openEmailAudienceSheet,
     closeAudienceSheet,
     openMediaGallery,
     closeMediaGallery,
@@ -441,7 +422,6 @@ export function ChatWindow({
     closeEmailSheet: closeTeamEmailSheet
   } = useChatSheets();
   const [linkDraft, setLinkDraft] = useState('');
-  const [reactionMessageId, setReactionMessageId] = useState('');
   const [actionMessageId, setActionMessageId] = useState('');
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
@@ -512,6 +492,7 @@ export function ChatWindow({
     setSelectedConversationId,
     loadingContext,
     error: teamError,
+    retryContext,
     reloadConversations,
     switchConversation: switchChatConversation
   } = useChatTeam({
@@ -549,6 +530,27 @@ export function ChatWindow({
   const staffConversationReady = !activeConversationIsStaff || (
     staffRepairState.key === activeStaffRepairKey && staffRepairState.status === 'ready'
   );
+
+  useEffect(() => {
+    if (!actionMessageId) return undefined;
+    const dismissMessageActions = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element) || !target.closest('[data-chat-message-actions="true"]')) {
+        setActionMessageId('');
+      }
+    };
+    const dismissMessageActionsOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setActionMessageId('');
+      }
+    };
+    document.addEventListener('pointerdown', dismissMessageActions);
+    document.addEventListener('keydown', dismissMessageActionsOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', dismissMessageActions);
+      document.removeEventListener('keydown', dismissMessageActionsOnEscape);
+    };
+  }, [actionMessageId]);
 
   const repairStaffConversation = useCallback(async (requestedConversationId = CANONICAL_STAFF_CONVERSATION_ID) => {
     if (!auth.user || !team) return null;
@@ -1327,7 +1329,6 @@ export function ChatWindow({
     setSelectedRecipientTarget(nextDraft.selectedRecipientTarget);
     setSelectedRecipientIds([...nextDraft.selectedRecipientIds]);
     setComposerCursorPosition(undefined);
-    setReactionMessageId('');
     setActionMessageId('');
     closeConversationSheet();
   };
@@ -1633,6 +1634,11 @@ export function ChatWindow({
     void ensureRecipientOptionsLoaded().catch(() => undefined);
   };
 
+  const editEmailAudience = () => {
+    openEmailAudienceSheet();
+    void ensureRecipientOptionsLoaded().catch(() => undefined);
+  };
+
   const toggleVoiceCapture = async () => {
     if (voiceListening) {
       stopVoiceCapture();
@@ -1804,7 +1810,7 @@ export function ChatWindow({
     if (!auth.user) return;
     try {
       await toggleTeamChatReaction(teamId, messageId, reactionKey, auth.user.uid, effectiveConversationId);
-      setReactionMessageId('');
+      setActionMessageId('');
     } catch (reactionError: any) {
       setStatus({ tone: 'error', message: reactionError?.message || 'Failed to update reaction.' });
     }
@@ -1869,7 +1875,12 @@ export function ChatWindow({
       <section className={`chat-window app-card p-5 ${embedded ? 'chat-window-embedded' : ''}`}>
         <div className="text-base font-black text-rose-700">{error}</div>
         <div className="mt-4 flex flex-wrap gap-2">
-          {canRetryMessagesError ? (
+          {teamError ? (
+            <button type="button" className="primary-button" onClick={retryContext}>
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              Retry
+            </button>
+          ) : canRetryMessagesError ? (
             <button type="button" className="primary-button" onClick={() => { void handleRetryMessages(); }}>
               <RefreshCw className="h-4 w-4" aria-hidden="true" />
               Retry
@@ -2008,10 +2019,8 @@ export function ChatWindow({
                 currentUserId={auth.user?.uid || ''}
                 canModerate={canModerate}
                 actionMessageId={actionMessageId}
-                reactionMessageId={reactionMessageId}
                 onMessageRowHeightChange={handleMessageRowHeightChange}
                 onActionMessage={setActionMessageId}
-                onReactionMessage={setReactionMessageId}
                 onToggleReaction={handleToggleReaction}
                 onEdit={handleEdit}
                 onDelete={handleDelete}
@@ -2129,6 +2138,7 @@ export function ChatWindow({
             setSelectedRecipientTarget={setSelectedRecipientTarget}
             setSelectedRecipientIds={setSelectedRecipientIds}
             switchConversation={switchConversation}
+            onEditAudience={editEmailAudience}
             onClose={closeTeamEmailSheet}
           />
         </Suspense>
@@ -2390,10 +2400,8 @@ type MessageListProps = {
   currentUserId: string;
   canModerate: boolean;
   actionMessageId: string;
-  reactionMessageId: string;
   onMessageRowHeightChange: (messageId: string, height: number) => void;
   onActionMessage: (messageId: string) => void;
-  onReactionMessage: (messageId: string) => void;
   onToggleReaction: (messageId: string, reactionKey: string) => void;
   onEdit: (message: ChatMessage) => void;
   onDelete: (message: ChatMessage) => void;
@@ -2407,10 +2415,8 @@ const MessageList = memo(function MessageList({
   currentUserId,
   canModerate,
   actionMessageId,
-  reactionMessageId,
   onMessageRowHeightChange,
   onActionMessage,
-  onReactionMessage,
   onToggleReaction,
   onEdit,
   onDelete,
@@ -2423,7 +2429,7 @@ const MessageList = memo(function MessageList({
       {messages.map((message, index) => {
         const day = formatChatDay(message.createdAt);
         const showDay = day && day !== lastDay;
-        const preferReactionPickerAbove = index >= Math.max(0, messages.length - 2);
+        const preferActionsAbove = messages.length > 2 && index >= messages.length - 2;
         lastDay = day || lastDay;
         return (
           <div
@@ -2444,10 +2450,8 @@ const MessageList = memo(function MessageList({
               currentUserId={currentUserId}
               canModerate={canModerate}
               actionsOpen={actionMessageId === message.id}
-              reactionsOpen={reactionMessageId === message.id}
-              preferReactionPickerAbove={preferReactionPickerAbove}
+              preferActionsAbove={preferActionsAbove}
               onActionMessage={onActionMessage}
-              onReactionMessage={onReactionMessage}
               onToggleReaction={onToggleReaction}
               onEdit={onEdit}
               onDelete={onDelete}
@@ -2469,10 +2473,8 @@ type MessageBubbleProps = {
   currentUserId: string;
   canModerate: boolean;
   actionsOpen: boolean;
-  reactionsOpen: boolean;
-  preferReactionPickerAbove: boolean;
+  preferActionsAbove: boolean;
   onActionMessage: (messageId: string) => void;
-  onReactionMessage: (messageId: string) => void;
   onToggleReaction: (messageId: string, reactionKey: string) => void;
   onEdit: (message: ChatMessage) => void;
   onDelete: (message: ChatMessage) => void;
@@ -2485,10 +2487,8 @@ const MessageBubble = memo(function MessageBubble({
   currentUserId,
   canModerate,
   actionsOpen,
-  reactionsOpen,
-  preferReactionPickerAbove,
+  preferActionsAbove,
   onActionMessage,
-  onReactionMessage,
   onToggleReaction,
   onEdit,
   onDelete,
@@ -2501,6 +2501,7 @@ const MessageBubble = memo(function MessageBubble({
   const senderLabel = useMemo(() => getMessageSenderLabel(message, currentUserId), [currentUserId, message]);
   const attachments = useMemo(() => getSafeMessageAttachments(message), [message]);
   const reactions = useMemo(() => normalizeChatReactions(message), [message]);
+  const hasReactions = useMemo(() => Object.values(reactions).some((users) => users && users.length), [reactions]);
   const messageHtml = useMemo(() => formatChatMessageHtml(message.text || ''), [message.text]);
   const createdAtLabel = useMemo(() => formatChatTime(message.createdAt), [message.createdAt]);
   const canEdit = isOwn && !isLocalSend && !isDeleted && Boolean(message.text);
@@ -2519,7 +2520,7 @@ const MessageBubble = memo(function MessageBubble({
   return (
     <div className={`message-bubble group flex items-end gap-2 ${isOwn ? 'justify-end' : 'justify-start'}`}>
       {!isOwn ? <MessageAvatar message={message} label={senderLabel} /> : null}
-      <div className={`relative max-w-[82%] sm:max-w-[74%] ${isOwn ? 'items-end' : 'items-start'}`}>
+      <div className={`relative max-w-[74%] ${isOwn ? 'items-end' : 'items-start'}`}>
         <div className={`mb-1 flex items-center gap-2 text-[11px] font-bold text-gray-500 ${isOwn ? 'justify-end' : 'justify-start'}`}>
           {!isOwn ? <span className="truncate">{senderLabel}</span> : null}
           {message.editedAt ? <span className="italic">(edited)</span> : null}
@@ -2545,32 +2546,68 @@ const MessageBubble = memo(function MessageBubble({
             </div>
           ) : null}
         </div>
-        <div className={`chat-reactions-anchor ${isOwn ? 'justify-end' : 'justify-start'}`}>
-          {!isLocalSend ? (
+        {!isLocalSend ? (
+          <div className={`chat-message-actions ${isOwn ? 'chat-message-actions-own' : 'chat-message-actions-other'}`} data-chat-message-actions="true">
+            <button
+              type="button"
+              className="chat-message-actions-trigger"
+              onClick={() => onActionMessage(actionsOpen ? '' : message.id)}
+              aria-label={`Open message actions for ${senderLabel}`}
+              aria-expanded={actionsOpen}
+              aria-controls={`message-actions-${message.id}`}
+            >
+              <MoreVertical className="h-4 w-4" aria-hidden="true" />
+            </button>
+            {actionsOpen ? (
+              <div
+                id={`message-actions-${message.id}`}
+                role="group"
+                aria-label={`Message actions for ${senderLabel}`}
+                className={`chat-message-actions-popover ${preferActionsAbove ? 'chat-message-actions-popover-above' : 'chat-message-actions-popover-below'} ${isOwn ? 'left-0' : 'right-0'}`}
+              >
+                <div className="chat-message-reaction-options" aria-label="Reactions">
+                  {chatReactions.map((reaction) => (
+                    <button
+                      key={reaction.key}
+                      type="button"
+                      className="chat-message-reaction-option"
+                      onClick={() => onToggleReaction(message.id, reaction.key)}
+                      aria-label={reaction.label}
+                    >
+                      {reaction.emoji}
+                    </button>
+                  ))}
+                </div>
+                {(canEdit || canDelete) ? (
+                  <div className="chat-message-management-actions">
+                    {canEdit ? (
+                      <button type="button" className="chat-message-management-button" onClick={() => onEdit(message)}>
+                        <Edit3 className="h-4 w-4" aria-hidden="true" />
+                        Edit
+                      </button>
+                    ) : null}
+                    {canDelete ? (
+                      <button type="button" className="chat-message-management-button chat-message-management-button-danger" onClick={() => onDelete(message)}>
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                        Delete
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {hasReactions ? (
+          <div className={`chat-message-reactions ${isOwn ? 'justify-end' : 'justify-start'}`}>
             <ReactionPills
               message={message}
               currentUserId={currentUserId}
               reactions={reactions}
               onToggleReaction={onToggleReaction}
-              onOpenPicker={() => onReactionMessage(reactionsOpen ? '' : message.id)}
             />
-          ) : null}
-          {reactionsOpen ? (
-            <div className={`chat-reaction-picker ${preferReactionPickerAbove ? 'chat-reaction-picker-above' : 'chat-reaction-picker-below'} ${isOwn ? 'right-0' : 'left-0'}`}>
-              {chatReactions.map((reaction) => (
-                <button
-                  key={reaction.key}
-                  type="button"
-                  className="flex h-9 w-9 items-center justify-center rounded-full text-lg hover:bg-gray-50"
-                  onClick={() => onToggleReaction(message.id, reaction.key)}
-                  aria-label={reaction.label}
-                >
-                  {reaction.emoji}
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
         {isLocalSend ? (
           <div className={`mt-1 flex ${isOwn ? 'justify-end' : 'justify-start'}`}>
             {message.sendStatus === 'failed' ? (
@@ -2589,34 +2626,6 @@ const MessageBubble = memo(function MessageBubble({
             )}
           </div>
         ) : null}
-        {(canEdit || canDelete) ? (
-          <div className={`mt-1 flex ${isOwn ? 'justify-end' : 'justify-start'}`}>
-            <button
-              type="button"
-              className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 shadow-sm"
-              onClick={() => onActionMessage(actionsOpen ? '' : message.id)}
-              aria-label={`Open actions for ${senderLabel}`}
-            >
-              <MoreVertical className="h-4 w-4" aria-hidden="true" />
-            </button>
-          </div>
-        ) : null}
-        {actionsOpen ? (
-          <div className={`absolute z-10 mt-1 min-w-36 rounded-xl border border-gray-200 bg-white p-1 shadow-app-lg ${isOwn ? 'right-0' : 'left-0'}`}>
-            {canEdit ? (
-              <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-bold text-gray-700 hover:bg-gray-50" onClick={() => onEdit(message)}>
-                <Edit3 className="h-4 w-4" aria-hidden="true" />
-                Edit
-              </button>
-            ) : null}
-            {canDelete ? (
-              <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-bold text-rose-700 hover:bg-rose-50" onClick={() => onDelete(message)}>
-                <Trash2 className="h-4 w-4" aria-hidden="true" />
-                Delete
-              </button>
-            ) : null}
-          </div>
-        ) : null}
       </div>
       {isOwn ? <MessageAvatar message={message} label={senderLabel} /> : null}
     </div>
@@ -2629,11 +2638,9 @@ function areMessageBubblePropsEqual(previous: MessageBubbleProps, next: MessageB
   return previous.currentUserId === next.currentUserId
     && previous.canModerate === next.canModerate
     && previous.actionsOpen === next.actionsOpen
-    && previous.reactionsOpen === next.reactionsOpen
-    && previous.preferReactionPickerAbove === next.preferReactionPickerAbove
+    && previous.preferActionsAbove === next.preferActionsAbove
     && previous.messageRevisionSignature === next.messageRevisionSignature
     && previous.onActionMessage === next.onActionMessage
-    && previous.onReactionMessage === next.onReactionMessage
     && previous.onToggleReaction === next.onToggleReaction
     && previous.onEdit === next.onEdit
     && previous.onDelete === next.onDelete
@@ -2716,7 +2723,7 @@ export function MessageAvatar({ message, label }: { message: ChatMessage; label:
     </div>
   );
   if (message.ai) {
-    return <img src="./logo_small.png" alt="ALL PLAYS assistant avatar" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />;
+    return <img src="./logo_small.png" alt="ALL PLAYS assistant avatar" loading="lazy" decoding="async" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />;
   }
   if (message.senderPhotoUrl) {
     return <AvatarImage src={message.senderPhotoUrl} alt={`${label} profile photo`} loading="lazy" decoding="async" className="h-8 w-8 rounded-full object-cover" fallback={initialsBadge} />;
@@ -2785,16 +2792,15 @@ function ReactionPills({
   message,
   currentUserId,
   reactions,
-  onToggleReaction,
-  onOpenPicker
+  onToggleReaction
 }: {
   message: ChatMessage;
   currentUserId: string;
   reactions: Partial<Record<string, string[]>>;
   onToggleReaction: (messageId: string, reactionKey: string) => void;
-  onOpenPicker: () => void;
 }) {
   const hasReactions = Object.values(reactions).some((users) => users && users.length);
+  if (!hasReactions) return null;
   return (
     <div className="flex flex-wrap gap-1.5">
       {chatReactions.map((reaction) => {
@@ -2816,14 +2822,6 @@ function ReactionPills({
           </button>
         );
       })}
-      <button
-        type="button"
-        className={`inline-flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 shadow-sm ${hasReactions ? '' : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100'}`}
-        onClick={onOpenPicker}
-        aria-label="Add reaction"
-      >
-        <Smile className="h-4 w-4" aria-hidden="true" />
-      </button>
     </div>
   );
 }
@@ -2831,7 +2829,7 @@ function ReactionPills({
 function AiThinkingBubble() {
   return (
     <div className="flex justify-start gap-2 px-3 pb-4 sm:px-4">
-      <img src="./logo_small.png" alt="" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />
+      <img src="./logo_small.png" alt="" loading="lazy" decoding="async" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />
       <div className="max-w-[78%] rounded-2xl rounded-bl-md border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-bold text-indigo-700">
         <span className="inline-flex items-center gap-2">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />

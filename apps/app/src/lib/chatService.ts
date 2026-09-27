@@ -1,4 +1,5 @@
 import { isNativeRuntime } from './nativeRuntime';
+import { createSecureUploadToken } from './secureUploadToken';
 import {
   canAccessTeamChat,
   canModerateChat,
@@ -54,6 +55,7 @@ import {
 } from './chatLogic';
 import { startInteractionTimer, UX_TIMING } from './uxTiming';
 import { canMessageAcceptedFriend, sendAuthorizedDirectMessage } from './friendMessageService';
+import { callNativeFirebaseFunction } from './nativeCallable';
 import {
   mapChatConversationRecords,
   mapChatMessageRecord,
@@ -65,8 +67,10 @@ import type {
   ChatConversationFirestoreRecord,
   ChatMessageFirestoreRecord,
   FirestoreDecodedDocument,
-  FirestoreDocument as NativeFirestoreDocument
+  FirestoreDocument as NativeFirestoreDocument,
+  NativeChatPageCursor
 } from './firestore/types';
+import { isNativeChatPageCursor } from './firestore/types';
 import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
@@ -74,6 +78,13 @@ const chatUploadTimeoutMs = 25000;
 const chatAttachmentUploadConcurrency = 3;
 const chatPreviewCacheTtlMs = 20 * 1000;
 const deferredInboxPreviewConcurrency = 3;
+const chatUnreadCountTimeoutMs = 3000;
+const nativeChatUnreadCountConcurrency = 6;
+const nativeChatUnreadConversationLimit = 26;
+const nativeChatUnreadAggregationRequestLimit = 240;
+const nativeChatUnreadJobLimit = nativeChatUnreadAggregationRequestLimit / 2;
+const nativeChatPageOrder = 'createdAt desc' as const;
+const nativeChatPageSize = 50 as const;
 export const CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY = 8;
 const logger = createLogger('chat-service');
 
@@ -145,8 +156,21 @@ export type TeamEmailDraft = {
   updatedAt?: unknown;
 };
 
+export const TEAM_EMAIL_SAVED_PAGE_SIZE = 25;
+
+export type TeamEmailSavedCursor = {
+  updatedAt: unknown;
+  id: string;
+};
+
+export type TeamEmailSavedPage<T> = {
+  items: T[];
+  nextCursor: TeamEmailSavedCursor | null;
+};
+
 export type ChatInboxLoadResult = {
   teams: ChatTeam[];
+  isPartial?: boolean;
 };
 
 export type ChatInboxPreviewUpdate = {
@@ -165,6 +189,9 @@ type TeamChatStateEntry = {
 export type ChatInboxLoadOptions = {
   includeLastMessages?: boolean;
   onPreview?: (update: ChatInboxPreviewUpdate) => void;
+  onPreviewError?: (teamId: string) => void;
+  nativeProfileLoader?: () => Promise<Record<string, any>>;
+  nativeManagedTeamsLoader?: () => Promise<{ teams: Record<string, any>[]; isPartial: boolean }>;
 };
 
 export type ChatConversationLoadOptions = {
@@ -249,6 +276,24 @@ function compactString(value: unknown) {
   return String(value || '').trim();
 }
 
+function normalizeChatMessageRevisionValue(value: unknown): unknown {
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(normalizeChatMessageRevisionValue);
+  if (!value || typeof value !== 'object') return value;
+
+  return Object.keys(value as Record<string, unknown>)
+    .filter((key) => key !== '_doc' && (value as Record<string, unknown>)[key] !== undefined)
+    .sort()
+    .reduce<Record<string, unknown>>((normalized, key) => {
+      normalized[key] = normalizeChatMessageRevisionValue((value as Record<string, unknown>)[key]);
+      return normalized;
+    }, {});
+}
+
+function getChatMessageListRevision(messages: ChatMessage[]) {
+  return JSON.stringify(normalizeChatMessageRevisionValue(messages));
+}
+
 function getProjectId() {
   const projectId = firebaseAuth.app?.options?.projectId;
   if (!projectId) {
@@ -261,8 +306,12 @@ function getFirestoreBaseUrl() {
   return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(getProjectId())}/databases/(default)/documents`;
 }
 
-async function getNativeHeaders(requestUrl: string) {
-  const token = await getNativeAuthIdToken(true);
+async function getNativeHeaders(requestUrl: string, forceRefresh = false) {
+  // Firebase Authentication refreshes an expired token even when forceRefresh
+  // is false. Forcing a refresh for every parallel Home read crosses the native
+  // bridge twice per request and can exhaust the three-second unread-count
+  // budget before Firestore is contacted.
+  const token = await getNativeAuthIdToken(forceRefresh);
   if (!token) {
     throw new Error('Native auth token is unavailable.');
   }
@@ -276,13 +325,19 @@ async function getNativeHeaders(requestUrl: string) {
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
   const url = `${getFirestoreBaseUrl()}${path}`;
   const runRequest = async () => {
-    const response = await withTimeout(fetch(url, {
+    const method = String(init.method || 'GET').toUpperCase();
+    const isReadOnly = method === 'GET' || path.includes(':runQuery') || path.includes(':runAggregationQuery');
+    const execute = async (forceRefresh: boolean) => withTimeout(fetch(url, {
       ...init,
       headers: {
-        ...(await getNativeHeaders(url)),
+        ...(await getNativeHeaders(url, forceRefresh)),
         ...(init.headers || {})
       }
     }), 'Firestore REST request');
+    let response = await execute(!isReadOnly);
+    if (response.status === 401) {
+      response = await execute(true);
+    }
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
@@ -329,13 +384,29 @@ async function nativeGetDocument(path: string) {
 }
 
 async function nativeListCollection(path: string, params: Record<string, string | number> = {}) {
+  return (await nativeListCollectionPage(path, params)).documents;
+}
+
+async function nativeListCollectionPage(path: string, params: Record<string, string | number> = {}) {
   const query = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => query.set(key, String(value)));
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  const payload = await nativeFirestoreRequest(`/${path}${suffix}`);
-  return (payload.documents || [])
-    .map((document: NativeFirestoreDocument) => mapFirestoreDocument(document))
-    .filter(Boolean) as FirestoreDocument[];
+  const payload = await nativeFirestoreRequest(`/${path}${suffix}`) as {
+    documents?: NativeFirestoreDocument[];
+    nextPageToken?: unknown;
+  };
+  if (payload.nextPageToken != null && typeof payload.nextPageToken !== 'string') {
+    throw new Error('Native Firestore pagination returned an invalid nextPageToken.');
+  }
+  const nextPageToken = typeof payload.nextPageToken === 'string' && payload.nextPageToken.trim()
+    ? payload.nextPageToken
+    : null;
+  return {
+    documents: (payload.documents || [])
+      .map((document: NativeFirestoreDocument) => mapFirestoreDocument(document))
+      .filter(Boolean) as FirestoreDocument[],
+    nextPageToken
+  };
 }
 
 async function nativePatchDocument(path: string, data: Record<string, unknown>) {
@@ -418,6 +489,187 @@ async function nativeRunQuery(structuredQuery: Record<string, unknown>) {
     .filter(Boolean) as FirestoreDocument[];
 }
 
+function buildNativeUnreadWhere(
+  conversationId: string,
+  userId: string,
+  lastReadAt: unknown,
+  ownMessagesOnly: boolean
+) {
+  const filters: Record<string, unknown>[] = [];
+  if (isDefaultTeamConversation(conversationId)) {
+    filters.push(
+      {
+        fieldFilter: {
+          field: { fieldPath: 'targetType' },
+          op: 'EQUAL',
+          value: encodeFirestoreValue('full_team')
+        }
+      },
+      {
+        fieldFilter: {
+          field: { fieldPath: 'recipientIds' },
+          op: 'EQUAL',
+          value: encodeFirestoreValue([])
+        }
+      }
+    );
+  }
+  const lastReadDate = toDate(lastReadAt);
+  if (lastReadDate) {
+    filters.push({
+      fieldFilter: {
+        field: { fieldPath: 'createdAt' },
+        op: 'GREATER_THAN',
+        value: encodeFirestoreValue(lastReadDate)
+      }
+    });
+  }
+  if (ownMessagesOnly) {
+    filters.push({
+      fieldFilter: {
+        field: { fieldPath: 'senderId' },
+        op: 'EQUAL',
+        value: encodeFirestoreValue(userId)
+      }
+    });
+  }
+  if (filters.length === 0) return undefined;
+  if (filters.length === 1) return filters[0];
+  return { compositeFilter: { op: 'AND', filters } };
+}
+
+async function nativeAggregateUnreadMessageCount({
+  teamId,
+  conversationId,
+  userId,
+  lastReadAt,
+  ownMessagesOnly,
+  signal
+}: {
+  teamId: string;
+  conversationId: string;
+  userId: string;
+  lastReadAt: unknown;
+  ownMessagesOnly: boolean;
+  signal: AbortSignal;
+}) {
+  const parentPath = isDefaultTeamConversation(conversationId)
+    ? `teams/${encodeURIComponent(teamId)}`
+    : `teams/${encodeURIComponent(teamId)}/chatConversations/${encodeURIComponent(conversationId)}`;
+  const where = buildNativeUnreadWhere(conversationId, userId, lastReadAt, ownMessagesOnly);
+  const structuredQuery: Record<string, unknown> = {
+    from: [{ collectionId: 'chatMessages' }],
+    ...(where ? { where } : {})
+  };
+  const payload = await nativeFirestoreRequest(`/${parentPath}:runAggregationQuery`, {
+    method: 'POST',
+    signal,
+    body: JSON.stringify({
+      structuredAggregationQuery: {
+        structuredQuery,
+        aggregations: [{ alias: 'messageCount', count: {} }]
+      }
+    })
+  });
+  const rows = Array.isArray(payload) ? payload : [payload];
+  const countValue = rows.find((row) => row?.result?.aggregateFields?.messageCount)
+    ?.result?.aggregateFields?.messageCount;
+  const rawCount = countValue?.integerValue ?? countValue?.doubleValue;
+  const count = Number(rawCount);
+  if (rawCount === undefined || !Number.isFinite(count) || count < 0) {
+    throw new Error('Native chat unread count response was invalid.');
+  }
+  return count;
+}
+
+async function nativeLoadUnreadChatCounts(
+  userId: string,
+  teamIds: string[],
+  profile: Record<string, any>,
+  conversationIdsByTeam: Record<string, string[]>,
+  timeoutMs = chatUnreadCountTimeoutMs
+) {
+  const uniqueTeamIds = Array.from(new Set(teamIds));
+  const counts = Object.fromEntries(uniqueTeamIds.map((teamId) => [teamId, 0])) as Record<string, number>;
+  let conversationOverflow = false;
+  let timedOut = false;
+  const abortController = new AbortController();
+  const timeoutId = window.setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, timeoutMs);
+  const jobs = uniqueTeamIds.flatMap((teamId) => {
+    const storedConversationIds = Array.isArray(conversationIdsByTeam[teamId])
+      ? conversationIdsByTeam[teamId]
+      : [];
+    const allConversationIds = Array.from(new Set([DEFAULT_TEAM_CONVERSATION_ID, ...storedConversationIds]));
+    if (allConversationIds.length > nativeChatUnreadConversationLimit) conversationOverflow = true;
+    const conversationIds = allConversationIds.slice(0, nativeChatUnreadConversationLimit);
+    return conversationIds.map((conversationId) => async () => {
+      const teamState = getTeamChatStateEntry(profile, teamId);
+      const lastReadAt = isDefaultTeamConversation(conversationId)
+        ? teamState.lastReadAt || profile?.chatLastRead?.[teamId] || null
+        : teamState.lastReadByConversation?.[conversationId] || null;
+      const [totalUnread, ownUnread] = await Promise.all([
+        nativeAggregateUnreadMessageCount({
+          teamId,
+          conversationId,
+          userId,
+          lastReadAt,
+          ownMessagesOnly: false,
+          signal: abortController.signal
+        }),
+        nativeAggregateUnreadMessageCount({
+          teamId,
+          conversationId,
+          userId,
+          lastReadAt,
+          ownMessagesOnly: true,
+          signal: abortController.signal
+        })
+      ]);
+      return { teamId, count: Math.max(0, totalUnread - ownUnread) };
+    });
+  });
+  const workloadOverflow = jobs.length > nativeChatUnreadJobLimit;
+  const boundedJobs = jobs.slice(0, nativeChatUnreadJobLimit);
+  const results = new Array<PromiseSettledResult<{ teamId: string; count: number }>>(boundedJobs.length);
+  let nextJobIndex = 0;
+  try {
+    await Promise.all(Array.from(
+      { length: Math.min(nativeChatUnreadCountConcurrency, boundedJobs.length) },
+      async () => {
+        while (nextJobIndex < boundedJobs.length && !abortController.signal.aborted) {
+          const jobIndex = nextJobIndex;
+          nextJobIndex += 1;
+          try {
+            results[jobIndex] = { status: 'fulfilled', value: await boundedJobs[jobIndex]() };
+          } catch (error) {
+            results[jobIndex] = { status: 'rejected', reason: error };
+          }
+        }
+      }
+    ));
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+  results.forEach((result) => {
+    if (result.status === 'fulfilled') {
+      counts[result.value.teamId] = Number(counts[result.value.teamId] || 0) + result.value.count;
+    } else {
+      logger.warn('Native chat unread count failed.', { error: result.reason });
+    }
+  });
+  return {
+    counts,
+    isPartial: conversationOverflow
+      || workloadOverflow
+      || timedOut
+      || results.filter(Boolean).length < boundedJobs.length
+      || results.some((result) => result.status === 'rejected')
+  };
+}
+
 async function nativeQueryTeamsByField(fieldPath: string, op: string, value: string) {
   if (!value) return [];
   return nativeRunQuery({
@@ -471,6 +723,29 @@ function getMessageCollectionPath(teamId: string, conversationId = DEFAULT_TEAM_
 
 function getMessageDocumentPath(teamId: string, messageId: string, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
   return `${getMessageCollectionPath(teamId, conversationId)}/${encodeURIComponent(messageId)}`;
+}
+
+function createNativeChatPageCursor(collectionPath: string, nextPageToken: string | null): NativeChatPageCursor {
+  return {
+    kind: 'native-chat-rest',
+    collectionPath,
+    orderBy: nativeChatPageOrder,
+    pageSize: nativeChatPageSize,
+    nextPageToken
+  };
+}
+
+function validateNativeChatPageCursor(cursor: NativeChatPageCursor, expectedCollectionPath: string) {
+  if (
+    cursor.collectionPath !== expectedCollectionPath
+    || cursor.orderBy !== nativeChatPageOrder
+    || cursor.pageSize !== nativeChatPageSize
+  ) {
+    throw new Error('Native chat pagination cursor does not match the active conversation.');
+  }
+  if (cursor.nextPageToken !== null && typeof cursor.nextPageToken !== 'string') {
+    throw new Error('Native chat pagination cursor has an invalid nextPageToken.');
+  }
 }
 
 function mapUserWithProfile(user: AuthUser, profile: Record<string, any>) {
@@ -639,21 +914,45 @@ function getTeamRole(user: AuthUser, team: Record<string, any>, profile: Record<
   return 'Parent';
 }
 
-async function nativeLoadUserTeams(user: AuthUser, profile: Record<string, any>) {
-  const ownedTeams = await nativeQueryTeamsByField('ownerId', 'EQUAL', user.uid);
-  const adminTeams = user.email ? await nativeQueryTeamsByField('adminEmails', 'ARRAY_CONTAINS', user.email.toLowerCase()) : [];
-  const parentTeamIds = [
+async function nativeLoadLinkedTeams(profile: Record<string, any>) {
+  const linkedTeamIds = [
     ...(Array.isArray(profile.parentOf) ? profile.parentOf.map((entry: any) => entry?.teamId) : []),
-    ...(Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : [])
+    ...(Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : []),
+    ...(Array.isArray(profile.coachOf) ? profile.coachOf.map((entry: any) => entry?.teamId || entry) : [])
   ].map(compactString).filter(Boolean);
-  const parentTeams = await Promise.all([...new Set(parentTeamIds)].map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`)));
+  const linkedTeamResults = await Promise.allSettled(
+    [...new Set(linkedTeamIds)].map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`))
+  );
+  const linkedTeams = linkedTeamResults.flatMap((result) => {
+    if (result.status === 'fulfilled') return result.value ? [result.value] : [];
+    logger.warn('Native linked team read failed.', { error: result.reason });
+    return [];
+  });
+  return {
+    teams: linkedTeams,
+    isPartial: linkedTeamResults.some((result) => result.status === 'rejected')
+  };
+}
+
+async function nativeLoadUserTeams(user: AuthUser, profile: Record<string, any>) {
+  const ownedTeams = await nativeQueryTeamsByField('ownerId', 'EQUAL', user.uid).catch((error) => {
+    logger.warn('Native owner team query failed.', { error });
+    return [] as FirestoreDocument[];
+  });
+  const linkedTeamsResult = await nativeLoadLinkedTeams(profile);
   const map = new Map<string, FirestoreDocument>();
-  [...ownedTeams, ...adminTeams, ...parentTeams].forEach((team) => {
+  [...ownedTeams, ...linkedTeamsResult.teams].forEach((team) => {
     if (team?.id) map.set(team.id, team);
   });
-  return [...map.values()]
-    .filter(isTeamActive)
-    .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)));
+  return {
+    teams: [...map.values()]
+      .filter(isTeamActive)
+      .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id))),
+    // The denied adminEmails collection query cannot be made provable under
+    // Firestore rules. Owner/direct linked reads preserve verified records,
+    // but only the server callable can prove the result is complete.
+    isPartial: true
+  };
 }
 
 function getMessageTime(message: ChatMessage | null) {
@@ -704,7 +1003,8 @@ function getConversationIdFromMetadata(value: unknown): string | null {
 function getConversationLatestMessageTimeFromMetadata(value: unknown) {
   if (!value || typeof value !== 'object') return null;
   const record = value as Record<string, any>;
-  return record.lastMessageAt || record.latestMessageAt || record.updatedAt || null;
+  const timestamp = record.lastMessageAt || record.latestMessageAt || record.updatedAt || null;
+  return toDate(timestamp);
 }
 
 function shouldRequestUnreadCount(
@@ -785,40 +1085,54 @@ function getTeamConversationMetadata(team: Record<string, any>) {
 }
 
 async function getLatestConversationMessage(teamId: string, conversationId: string): Promise<ChatMessage | null> {
-  try {
-    const [message] = await withTimeout(Promise.resolve(getChatMessages(teamId, { limit: 1, conversationId })), `latest chat ${teamId}/${conversationId}`, 2500);
-    return mapChatMessageRecord(message, message?.id || '') || null;
-  } catch (error) {
-    if (!isNativeRuntime()) return null;
+  if (isNativeRuntime()) {
     const path = isDefaultTeamConversation(conversationId)
       ? `teams/${encodeURIComponent(teamId)}/chatMessages`
       : `teams/${encodeURIComponent(teamId)}/chatConversations/${encodeURIComponent(conversationId)}/chatMessages`;
     const [message] = await nativeListCollection(path, {
       orderBy: 'createdAt desc',
       pageSize: 1
-    }).catch(() => []);
+    });
     return mapChatMessageRecord(message, message?.id || '') || null;
+  }
+  try {
+    const [message] = await withTimeout(Promise.resolve(getChatMessages(teamId, { limit: 1, conversationId })), `latest chat ${teamId}/${conversationId}`, 2500);
+    return mapChatMessageRecord(message, message?.id || '') || null;
+  } catch {
+    return null;
   }
 }
 
 async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Record<string, any>, canModerate: boolean): Promise<{ message: ChatMessage | null; conversationId: string | null }> {
   let conversations: ChatConversation[] = [buildDefaultTeamConversation(team)];
   try {
-    const loadedConversations = await withTimeout(
-      Promise.resolve(getChatConversations(teamId, user, { team, canModerate })),
-      `latest chat conversations ${teamId}`,
-      2500
-    ) as ChatConversation[];
-    const mappedConversations = mapChatConversationRecords(loadedConversations);
-    conversations = mappedConversations.length
-      ? mappedConversations
-      : [buildDefaultTeamConversation(team)];
-  } catch (error) {
-    if (!isNativeRuntime()) {
-      conversations = [buildDefaultTeamConversation(team)];
+    if (isNativeRuntime()) {
+      const metadata = getTeamConversationMetadata(team);
+      conversations = [
+        buildDefaultTeamConversation(team),
+        ...metadata.ids
+          .filter((conversationId) => !isDefaultTeamConversation(conversationId))
+          .map((conversationId) => ({
+            id: conversationId,
+            type: 'group',
+            updatedAt: metadata.latestMessageAtByConversation[conversationId] || null,
+            lastMessageAt: metadata.latestMessageAtByConversation[conversationId] || null
+          } as ChatConversation))
+      ];
     } else {
-      logger.warn('Latest inbox preview limited to team chat.', { error });
+      const loadedConversations = await withTimeout(
+        Promise.resolve(getChatConversations(teamId, user, { team, canModerate })),
+        `latest chat conversations ${teamId}`,
+        2500
+      ) as ChatConversation[];
+      const mappedConversations = mapChatConversationRecords(loadedConversations);
+      conversations = mappedConversations.length
+        ? mappedConversations
+        : [buildDefaultTeamConversation(team)];
     }
+  } catch (error) {
+    conversations = [buildDefaultTeamConversation(team)];
+    logger.warn('Latest inbox preview limited to team chat.', { error });
   }
 
   const rankedConversations = conversations
@@ -863,6 +1177,9 @@ async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Rec
         message: await getLatestConversationMessage(teamId, conversation.id)
       }))
   );
+  if (fallbackMessages.some((result) => result.status === 'rejected')) {
+    throw new Error(`Latest chat preview could not be completely loaded for team ${teamId}.`);
+  }
   const fallbackPreview = fallbackMessages.reduce<{ message: ChatMessage | null; conversationId: string | null }>((newest, result) => {
     if (result.status !== 'fulfilled') return newest;
     return getMessageTime(result.value.message) > getMessageTime(newest.message)
@@ -913,28 +1230,56 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
   if (!user?.uid) return { teams: [] };
   const includeLastMessages = options.includeLastMessages !== false;
   const onPreview = typeof options.onPreview === 'function' ? options.onPreview : null;
+  const onPreviewError = typeof options.onPreviewError === 'function' ? options.onPreviewError : null;
 
-  const profile = await withTimeout(Promise.resolve(getUserProfile(user.uid)), 'Chat profile load').catch(async (error) => {
-    if (!isNativeRuntime()) throw error;
-    return nativeGetDocument(`users/${encodeURIComponent(user.uid)}`);
-  }) as Record<string, any> || {};
+  const nativeRuntime = isNativeRuntime();
+  const profile = (nativeRuntime
+    ? await (options.nativeProfileLoader
+      ? options.nativeProfileLoader()
+      : nativeGetDocument(`users/${encodeURIComponent(user.uid)}`))
+    : await withTimeout(Promise.resolve(getUserProfile(user.uid)), 'Chat profile load')) as Record<string, any> || {};
 
   let teams: Record<string, any>[] = [];
-  try {
+  let teamDiscoveryPartial = false;
+  const serverAuthorizedChatTeamIds = new Set<string>();
+  if (nativeRuntime) {
+    try {
+      const managedResult = options.nativeManagedTeamsLoader
+        ? await options.nativeManagedTeamsLoader()
+        : await import('./profileService').then(({ loadManagedTeamsFromNativeCallable }) => (
+          loadManagedTeamsFromNativeCallable({ includeChatMetadata: true })
+        ));
+      const map = new Map<string, Record<string, any>>();
+      managedResult.teams.forEach((team: any) => {
+        if (!team?.id) return;
+        map.set(team.id, team);
+        if (team.chatAccessVerified === true) serverAuthorizedChatTeamIds.add(team.id);
+      });
+      teams = [...map.values()];
+      teamDiscoveryPartial = managedResult.isPartial;
+    } catch (error) {
+      logger.warn('Native managed team discovery failed; using verified direct reads.', { error });
+      const fallback = await nativeLoadUserTeams(user, profile);
+      teams = fallback.teams;
+      teamDiscoveryPartial = true;
+    }
+  } else {
     const [memberTeamsResult, parentTeamsResult] = await withTimeout(Promise.allSettled([
-      getUserTeamsWithAccess(user.uid, user.email || profile.email || ''),
+      getUserTeamsWithAccess(user.uid, user.email || ''),
       getParentTeams(user.uid)
     ]), 'Chat teams load');
     if (memberTeamsResult.status === 'rejected' && parentTeamsResult.status === 'rejected') {
       throw memberTeamsResult.reason || parentTeamsResult.reason;
     }
     if (memberTeamsResult.status === 'rejected') {
+      teamDiscoveryPartial = true;
       if (!isPermissionDeniedError(memberTeamsResult.reason)) {
         throw memberTeamsResult.reason;
       }
       logger.warn('Chat member team load failed; using parent teams only.', { error: memberTeamsResult.reason });
     }
     if (parentTeamsResult.status === 'rejected') {
+      teamDiscoveryPartial = true;
       if (!isPermissionDeniedError(parentTeamsResult.reason)) {
         throw parentTeamsResult.reason;
       }
@@ -951,14 +1296,16 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
       if (team?.id) map.set(team.id, team);
     });
     teams = [...map.values()];
-  } catch (error) {
-    if (!isNativeRuntime()) throw error;
-    logger.warn('Falling back to REST team load.', { error });
-    teams = await nativeLoadUserTeams(user, profile);
   }
 
   const userWithProfile = mapUserWithProfile(user, profile);
-  const accessibleTeams = teams.filter((team) => isTeamActive(team) && canAccessTeamChat(userWithProfile, { ...team, id: team.id }));
+  const accessibleTeams = teams.filter((team) => isTeamActive(team) && (
+    serverAuthorizedChatTeamIds.has(team.id)
+    || canAccessTeamChat(userWithProfile, { ...team, id: team.id })
+  ));
+  if (teamDiscoveryPartial && accessibleTeams.length === 0) {
+    throw new Error('Chat team access could not be completely verified. Try again.');
+  }
   const latestMessageAtByTeam = accessibleTeams.reduce<Record<string, unknown>>((acc, team) => {
     const latestMessageAt = getTeamLatestMessageTime(team);
     if (latestMessageAt) {
@@ -1009,24 +1356,56 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
       latestMessageAtByConversationByTeam[team.id]
     ))
     .map((team) => team.id);
-  const unreadCounts = await withTimeout(
-    Promise.resolve(getUnreadChatCounts(user.uid, unreadCandidateTeamIds, {
-      latestMessageAtByTeam,
-      latestMessageAtByConversationByTeam,
+  const unreadDeadlineAt = Date.now() + chatUnreadCountTimeoutMs;
+  const nativeUnreadResult = nativeRuntime
+    ? await nativeLoadUnreadChatCounts(
+      user.uid,
+      unreadCandidateTeamIds,
+      profile,
       conversationIdsByTeam,
-      conversationLookupByTeam,
-      defaultConversationOnly: !includeLastMessages
-    })),
-    'Chat unread counts',
-    3000
-  ).catch(() => ({} as Record<string, number>));
+      chatUnreadCountTimeoutMs
+    ).catch((error) => {
+      logger.warn('Native chat unread counts failed.', { error });
+      return {
+        counts: {} as Record<string, number>,
+        isPartial: unreadCandidateTeamIds.length > 0
+      };
+    })
+    : null;
+  const unreadCountsPartial = nativeUnreadResult?.isPartial === true;
+  const unreadCounts = nativeUnreadResult?.counts || await withTimeout(
+      Promise.resolve(getUnreadChatCounts(user.uid, unreadCandidateTeamIds, {
+        latestMessageAtByTeam,
+        latestMessageAtByConversationByTeam,
+        conversationIdsByTeam,
+        conversationLookupByTeam,
+        defaultConversationOnly: !includeLastMessages,
+        deadlineAt: unreadDeadlineAt
+      })),
+      'Chat unread counts',
+      chatUnreadCountTimeoutMs
+    ).catch(() => ({} as Record<string, number>));
 
+  let previewReadsPartial = false;
   const previews = includeLastMessages
-    ? await Promise.all(previewInputs.map(async ({ team, canModerate }) => ({
+    ? (await Promise.allSettled(previewInputs.map(async ({ team, canModerate }) => ({
       team,
       canModerate,
       preview: await loadCachedMessagePreview(team.id, userWithProfile, team, canModerate)
-    })))
+    })))).map((result, index) => {
+      if (result.status === 'fulfilled') return result.value;
+      previewReadsPartial = true;
+      const { team, canModerate } = previewInputs[index];
+      logger.warn('Inbox preview failed; preserving the verified team as partial.', {
+        error: result.reason,
+        teamId: team.id
+      });
+      return {
+        team,
+        canModerate,
+        preview: { message: null, conversationId: null }
+      };
+    })
     : previewInputs.map(({ team, canModerate }) => ({
       team,
       canModerate,
@@ -1047,11 +1426,13 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
         });
       } catch (error) {
         logger.warn('Deferred inbox preview failed.', { error });
+        onPreviewError?.(team.id);
       }
     });
   }
 
   return {
+    isPartial: teamDiscoveryPartial || unreadCountsPartial || previewReadsPartial,
     teams: previews.map(({ team, canModerate, preview }) => ({
       id: team.id,
       name: team.name || 'Team',
@@ -1115,6 +1496,36 @@ export async function loadChatConversations(
   canModerate: boolean,
   options: ChatConversationLoadOptions = {}
 ): Promise<ChatConversation[]> {
+  if (isNativeRuntime()) {
+    const result = await callNativeFirebaseFunction<{
+      items?: unknown[];
+      isPartial?: boolean;
+    }>('listAuthorizedChatConversations', {
+      teamId,
+      activeConversationId: options.activeConversationId || null
+    }, { errorLabel: 'Chat conversations' });
+    if (!result || result.isPartial !== false || !Array.isArray(result.items)) {
+      throw new Error('Chat conversations could not be completely verified. Try again.');
+    }
+    const projectedConversations = mapChatConversationRecords(result.items as ChatConversation[]);
+    const conversationsById = new Map<string, ChatConversation>([
+      [DEFAULT_TEAM_CONVERSATION_ID, buildDefaultTeamConversation(team) as ChatConversation]
+    ]);
+    projectedConversations.forEach((conversation) => {
+      if (conversation.id && !isDefaultTeamConversation(conversation.id)) {
+        conversationsById.set(conversation.id, conversation);
+      }
+    });
+    const activeConversationId = compactString(options.activeConversationId);
+    if (
+      activeConversationId &&
+      !isDefaultTeamConversation(activeConversationId) &&
+      !conversationsById.has(activeConversationId)
+    ) {
+      throw new Error('The requested conversation is no longer available to this account.');
+    }
+    return [...conversationsById.values()];
+  }
   try {
     const conversations = await withTimeout(Promise.resolve(getChatConversations(teamId, user, {
       team,
@@ -1138,6 +1549,10 @@ export async function loadChatConversationById(
   const requestedConversationId = compactString(conversationId);
   if (!requestedConversationId || isDefaultTeamConversation(requestedConversationId) || requestedConversationId.includes('/')) {
     return null;
+  }
+  if (isNativeRuntime()) {
+    const conversations = await loadChatConversations(teamId, user, team, canModerate);
+    return conversations.find((conversation) => conversation.id === requestedConversationId) || null;
   }
   let conversations: ChatConversation[];
   try {
@@ -1189,24 +1604,50 @@ export function subscribeToTeamChatMessages(
   let cancelled = false;
   let unsubscribe: (() => void) | null = null;
   let pollTimer: number | undefined;
+  let lastNativeMessageRevision: string | null = null;
+  let pollingStarted = false;
 
   const startPollingFallback = async () => {
+    if (cancelled || pollingStarted) return;
+    pollingStarted = true;
+    unsubscribe?.();
+    unsubscribe = null;
     const load = async () => {
       if (cancelled) return;
       try {
-        const messages = await nativeListCollection(getMessageCollectionPath(teamId, conversationId), {
-          orderBy: 'createdAt desc',
-          pageSize: 50
+        const collectionPath = getMessageCollectionPath(teamId, conversationId);
+        const page = await nativeListCollectionPage(collectionPath, {
+          orderBy: nativeChatPageOrder,
+          pageSize: nativeChatPageSize
         });
-        const mappedMessages = mapChatMessageRecords(messages);
-        onMessages(mappedMessages, mappedMessages[mappedMessages.length - 1]?._doc || null);
+        if (cancelled) return;
+        const mappedMessages = mapChatMessageRecords(page.documents);
+        const cursor = createNativeChatPageCursor(collectionPath, page.nextPageToken);
+        const messageRevision = JSON.stringify({
+          messages: getChatMessageListRevision(mappedMessages),
+          nextPageToken: cursor.nextPageToken
+        });
+        if (messageRevision === lastNativeMessageRevision) return;
+        lastNativeMessageRevision = messageRevision;
+        onMessages(mappedMessages, cursor);
       } catch (error: any) {
-        onError?.(error);
+        if (!cancelled) onError?.(error);
       }
     };
     await load();
     if (!cancelled) {
       pollTimer = window.setInterval(load, 8000);
+    }
+  };
+
+  const handleListenerError = (error: Error) => {
+    if (isNativeRuntime()) {
+      // Listener authorization failures arrive asynchronously. Keep realtime
+      // delivery when the in-memory bridge is healthy, and reuse the existing
+      // authenticated REST poller if the WebView listener cannot start.
+      void startPollingFallback();
+    } else {
+      onError?.(error);
     }
   };
 
@@ -1216,38 +1657,54 @@ export function subscribeToTeamChatMessages(
         const mappedMessages = mapChatMessageRecords(messages);
         onMessages(mappedMessages, oldestDoc);
       }
-    }, onError);
+    }, handleListenerError);
   } catch (error: any) {
-    if (!isNativeRuntime()) {
-      onError?.(error);
-    } else {
-      void startPollingFallback();
-    }
+    handleListenerError(error);
   }
 
   return {
     unsubscribe: () => {
       cancelled = true;
-      if (pollTimer) window.clearInterval(pollTimer);
+      if (pollTimer !== undefined) window.clearInterval(pollTimer);
       unsubscribe?.();
     }
   };
 }
 
-export async function loadOlderTeamChatMessages(teamId: string, conversationId: string, startAfterDoc: unknown | null) {
-  if (!startAfterDoc) return [];
-  try {
-    const messages = await withTimeout(Promise.resolve(getChatMessages(teamId, {
-      limit: 50,
-      startAfterDoc,
-      conversationId
-    })), 'Older chat messages load') as ChatMessage[];
-    return mapChatMessageRecords(messages);
-  } catch (error) {
-    if (!isNativeRuntime()) throw error;
-    logger.warn('Older chat history is limited in native REST fallback.', { error });
-    return [];
+export async function loadOlderTeamChatMessages(teamId: string, conversationId: string, startAfterDoc: unknown | null): Promise<{
+  messages: ChatMessage[];
+  cursor: unknown | null;
+}> {
+  if (!startAfterDoc) return { messages: [], cursor: null };
+  if (isNativeChatPageCursor(startAfterDoc)) {
+    const collectionPath = getMessageCollectionPath(teamId, conversationId);
+    validateNativeChatPageCursor(startAfterDoc, collectionPath);
+    if (!startAfterDoc.nextPageToken?.trim()) {
+      return { messages: [], cursor: createNativeChatPageCursor(collectionPath, null) };
+    }
+    const page = await nativeListCollectionPage(collectionPath, {
+      orderBy: nativeChatPageOrder,
+      pageSize: nativeChatPageSize,
+      pageToken: startAfterDoc.nextPageToken
+    });
+    return {
+      messages: mapChatMessageRecords(page.documents),
+      cursor: createNativeChatPageCursor(collectionPath, page.nextPageToken)
+    };
   }
+
+  const messages = await withTimeout(Promise.resolve(getChatMessages(teamId, {
+    limit: 50,
+    startAfterDoc,
+    conversationId
+  })), 'Older chat messages load') as ChatMessage[];
+  const mappedMessages = mapChatMessageRecords(messages);
+  return {
+    messages: mappedMessages,
+    cursor: mappedMessages.length >= nativeChatPageSize
+      ? mappedMessages[mappedMessages.length - 1]?._doc || null
+      : null
+  };
 }
 
 async function nativeUploadChatMedia(teamId: string, file: File, conversationId = DEFAULT_TEAM_CONVERSATION_ID): Promise<ChatAttachment> {
@@ -1268,7 +1725,7 @@ async function nativeUploadChatMedia(teamId: string, file: File, conversationId 
   const safeConversationId = String(conversationId || DEFAULT_TEAM_CONVERSATION_ID).replace(/[^%\w.-]+/g, '_') || DEFAULT_TEAM_CONVERSATION_ID;
   const safeUserId = String(userId).replace(/[^\w.-]+/g, '_');
   const isVideo = String(file.type || '').toLowerCase().startsWith('video/');
-  const path = `stat-sheets/team-chat/${safeTeamId}/${safeConversationId}/${safeUserId}/${Date.now()}_${safeName}`;
+  const path = `stat-sheets/team-chat/${safeTeamId}/${safeConversationId}/${safeUserId}/${Date.now()}_${createSecureUploadToken()}_${safeName}`;
   const requestUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`;
   const abortController = new AbortController();
   let uploadTimeoutId: number | undefined;
@@ -1278,36 +1735,43 @@ async function nativeUploadChatMedia(teamId: string, file: File, conversationId 
       reject(new Error('Chat media upload timed out. Check your connection and try again.'));
     }, chatUploadTimeoutMs);
   });
-  const uploadRequest = fetch(requestUrl, {
-    method: 'POST',
-    headers: await getPrimaryAppCheckHeaders({
-      Authorization: `Bearer ${idToken}`,
-      'Content-Type': file.type || 'application/octet-stream'
-    }, requestUrl),
-    body: file,
-    signal: abortController.signal
-  });
-  const response = await Promise.race([uploadRequest, uploadTimeout]).finally(() => {
-    if (uploadTimeoutId) window.clearTimeout(uploadTimeoutId);
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload?.error?.message || `Chat media upload failed (${response.status}).`);
-  }
-  const token = payload.downloadTokens || payload.metadata?.firebaseStorageDownloadTokens;
-  const url = token
-    ? `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media&token=${encodeURIComponent(String(token).split(',')[0])}`
-    : `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media`;
+  try {
+    const uploadRequest = fetch(requestUrl, {
+      method: 'POST',
+      headers: await getPrimaryAppCheckHeaders({
+        Authorization: `Bearer ${idToken}`,
+        'Content-Type': file.type || 'application/octet-stream'
+      }, requestUrl),
+      body: file,
+      signal: abortController.signal
+    });
+    const response = await Promise.race([uploadRequest, uploadTimeout]).finally(() => {
+      if (uploadTimeoutId) window.clearTimeout(uploadTimeoutId);
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error?.message || `Chat media upload failed (${response.status}).`);
+    }
+    const token = payload.downloadTokens || payload.metadata?.firebaseStorageDownloadTokens;
+    const url = token
+      ? `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media&token=${encodeURIComponent(String(token).split(',')[0])}`
+      : `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media`;
 
-  return {
-    type: isVideo ? 'video' : 'image',
-    url,
-    path,
-    name: file.name || null,
-    mimeType: file.type || null,
-    size: Number.isFinite(file.size) ? file.size : null,
-    thumbnailUrl: null
-  };
+    return {
+      type: isVideo ? 'video' : 'image',
+      url,
+      path,
+      name: file.name || null,
+      mimeType: file.type || null,
+      size: Number.isFinite(file.size) ? file.size : null,
+      thumbnailUrl: null
+    };
+  } catch (error) {
+    if (uploadTimeoutId) window.clearTimeout(uploadTimeoutId);
+    const { deleteNativePrimaryStorageFile } = await import('./nativeStorageUpload');
+    await deleteNativePrimaryStorageFile(path).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function uploadTeamChatAttachment(teamId: string, file: File, conversationId = DEFAULT_TEAM_CONVERSATION_ID): Promise<ChatAttachment> {
@@ -1325,6 +1789,22 @@ export async function uploadTeamChatAttachment(teamId: string, file: File, conve
   } catch (error) {
     throw error;
   }
+}
+
+export async function deleteTeamChatAttachments(attachments: ChatAttachment[]) {
+  const cleanupAttachments = (Array.isArray(attachments) ? attachments : [])
+    .filter((attachment) => Boolean(attachment?.path));
+  if (!cleanupAttachments.length) return;
+  if (isNativeRuntime()) {
+    const { deleteNativePrimaryStorageFile } = await import('./nativeStorageUpload');
+    const results = await Promise.allSettled(cleanupAttachments.map((attachment) => (
+      deleteNativePrimaryStorageFile(String(attachment.path))
+    )));
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+    return;
+  }
+  await deleteUploadedChatAttachments(cleanupAttachments);
 }
 
 async function uploadTeamChatAttachments({
@@ -1483,23 +1963,17 @@ export async function sendTeamChatMessage({
       const participantIds = targetMetadata.targetType === 'staff'
         ? []
         : await resolveConversationParticipantIds(teamId, user.uid, targetMetadata.recipientIds);
-      const participantRoles = targetMetadata.targetType === 'staff' ? ['staff'] : [];
-      const conversationType = participantIds.length === 2
-        && getDirectUserIds(user.uid, participantIds).length === 2
-        ? 'direct'
-        : 'group';
-      const directMetadata = conversationType === 'direct'
-        ? await resolveDirectConversationMetadata({ teamId, user, participantIds, canModerate })
-        : {};
-      createdConversation = await withTimeout(Promise.resolve(upsertChatConversation(teamId, {
-        type: conversationType,
-        participantIds,
-        participantRoles,
-        mutedBy: [],
-        name: targetMetadata.targetType === 'staff' ? 'Staff only' : null,
-        ...(conversationType === 'direct' ? { createOnly: true } : {}),
-        ...directMetadata
-      })), 'Chat conversation create') as ChatConversation;
+      createdConversation = await withTimeout(Promise.resolve(
+        targetMetadata.targetType === 'staff'
+          ? upsertChatConversation(teamId, {
+            type: 'group',
+            participantIds: [],
+            participantRoles: ['staff'],
+            mutedBy: [],
+            name: 'Staff only'
+          })
+          : upsertChatConversation(teamId, { participantIds })
+      ), 'Chat conversation create') as ChatConversation;
       conversationId = createdConversation.id;
       if (targetMetadata.targetType === 'individuals') {
         targetMetadata = {
@@ -1591,7 +2065,7 @@ export async function sendTeamChatMessage({
     const cleanupAttachments = uploadedAttachments.filter((attachment): attachment is ChatAttachment => Boolean(attachment));
     if (cleanupAttachments.length > 0) {
       try {
-        await deleteUploadedChatAttachments(cleanupAttachments);
+        await deleteTeamChatAttachments(cleanupAttachments);
       } catch (cleanupError) {
         logger.error('Failed to clean up uploaded chat attachments.', { error: cleanupError });
       }
@@ -1605,13 +2079,15 @@ export async function sendTeamEmailMessage({
   subject,
   body,
   targetType = 'full_team',
-  recipientIds = []
+  recipientIds = [],
+  postToTeamChat
 }: {
   teamId: string;
   subject: string;
   body: string;
   targetType?: ChatTargetType;
   recipientIds?: string[];
+  postToTeamChat?: boolean;
 }) {
   const trimmedSubject = String(subject || '').trim();
   const trimmedBody = String(body || '').trim();
@@ -1622,31 +2098,62 @@ export async function sendTeamEmailMessage({
     throw new Error('Choose at least one selected member before sending.');
   }
 
-  return withTimeout(Promise.resolve(sendTeamEmail(teamId, {
+  const payload: {
+    subject: string;
+    body: string;
+    targetType: ChatTargetType;
+    recipientIds: string[];
+    postToTeamChat?: boolean;
+  } = {
     subject: trimmedSubject,
     body: trimmedBody,
     targetType,
     recipientIds: targetType === 'individuals' ? recipientIds : []
-  })), 'Team email send');
+  };
+  if (typeof postToTeamChat === 'boolean') {
+    payload.postToTeamChat = targetType === 'full_team' && postToTeamChat;
+  }
+
+  return withTimeout(Promise.resolve(sendTeamEmail(teamId, payload)), 'Team email send');
 }
 
 export async function loadSentTeamEmails(teamId: string, { limit = 25 }: { limit?: number } = {}): Promise<SentTeamEmail[]> {
   return withTimeout(Promise.resolve(getSentTeamEmails(teamId, { limit })), 'Sent email history') as Promise<SentTeamEmail[]>;
 }
 
-export async function loadTeamEmailDrafts(teamId: string): Promise<TeamEmailDraft[]> {
-  const drafts = await withTimeout(Promise.resolve(getStoredTeamEmailDrafts(teamId)), 'Team email drafts') as Record<string, any>[];
-  return drafts
+export function mergeTeamEmailSavedItems<T extends { id: string }>(current: T[], next: T[]): T[] {
+  const merged = new Map(current.map((item) => [item.id, item]));
+  next.forEach((item) => merged.set(item.id, item));
+  return Array.from(merged.values());
+}
+
+export async function loadTeamEmailDrafts(
+  teamId: string,
+  { pageSize = TEAM_EMAIL_SAVED_PAGE_SIZE, cursor = null }: { pageSize?: number; cursor?: TeamEmailSavedCursor | null } = {}
+): Promise<TeamEmailSavedPage<TeamEmailDraft>> {
+  const page = await withTimeout(
+    Promise.resolve(getStoredTeamEmailDrafts(teamId, { pageSize, cursor })),
+    'Team email drafts'
+  ) as { items?: Record<string, any>[]; nextCursor?: TeamEmailSavedCursor | null };
+  const items = (Array.isArray(page?.items) ? page.items : [])
     .map((draft) => normalizeTeamEmailDraft(draft))
     .filter((draft): draft is TeamEmailDraft => Boolean(draft))
     .sort((a, b) => (toDate(b.updatedAt)?.getTime() || 0) - (toDate(a.updatedAt)?.getTime() || 0));
+  return { items, nextCursor: page?.nextCursor || null };
 }
 
-export async function loadTeamEmailTemplates(teamId: string): Promise<TeamEmailTemplate[]> {
-  const templates = await withTimeout(Promise.resolve(getStoredTeamEmailTemplates(teamId)), 'Team email templates') as Record<string, any>[];
-  return templates
+export async function loadTeamEmailTemplates(
+  teamId: string,
+  { pageSize = TEAM_EMAIL_SAVED_PAGE_SIZE, cursor = null }: { pageSize?: number; cursor?: TeamEmailSavedCursor | null } = {}
+): Promise<TeamEmailSavedPage<TeamEmailTemplate>> {
+  const page = await withTimeout(
+    Promise.resolve(getStoredTeamEmailTemplates(teamId, { pageSize, cursor })),
+    'Team email templates'
+  ) as { items?: Record<string, any>[]; nextCursor?: TeamEmailSavedCursor | null };
+  const items = (Array.isArray(page?.items) ? page.items : [])
     .map((template) => normalizeTeamEmailTemplate(template))
     .filter((template): template is TeamEmailTemplate => Boolean(template));
+  return { items, nextCursor: page?.nextCursor || null };
 }
 
 export async function saveTeamEmailDraft({
@@ -2029,7 +2536,20 @@ function toDate(value: any) {
   if (!value) return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
   if (value?.toDate) return value.toDate();
-  if (typeof value?.seconds === 'number') return new Date(value.seconds * 1000);
+  const seconds = typeof value?.seconds === 'number'
+    ? value.seconds
+    : typeof value?._seconds === 'number'
+      ? value._seconds
+      : null;
+  if (seconds !== null) {
+    const nanoseconds = typeof value?.nanoseconds === 'number'
+      ? value.nanoseconds
+      : typeof value?._nanoseconds === 'number'
+        ? value._nanoseconds
+        : 0;
+    const date = new Date((seconds * 1000) + Math.floor(nanoseconds / 1_000_000));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
 }

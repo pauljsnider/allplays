@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CertificatesTool } from './CertificatesTool';
 import type { AuthState } from '../../lib/types';
 
 const parentCertificatesServiceMocks = vi.hoisted(() => ({
+    loadParentCertificate: vi.fn(),
     loadParentCertificates: vi.fn()
 }));
 const publicActionMocks = vi.hoisted(() => ({
@@ -13,10 +14,7 @@ const publicActionMocks = vi.hoisted(() => ({
     sharePublicUrl: vi.fn()
 }));
 
-vi.mock('../../lib/parentCertificatesService', () => ({
-    loadParentCertificates: parentCertificatesServiceMocks.loadParentCertificates
-}));
-
+vi.mock('../../lib/parentCertificatesService', () => parentCertificatesServiceMocks);
 vi.mock('../../lib/publicActions', () => publicActionMocks);
 
 vi.mock('lucide-react', () => {
@@ -54,6 +52,34 @@ const auth: AuthState = {
     signOut: vi.fn().mockResolvedValue(undefined)
 };
 
+const requestedCertificate = {
+    id: 'cert-1',
+    teamId: 'team-1',
+    teamName: 'Bears',
+    playerId: 'player-1',
+    playerName: 'Sam Player',
+    title: 'Hustle Award',
+    narrative: 'Great effort.',
+    url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
+};
+
+const leadershipCertificate = {
+    id: 'cert-2',
+    teamId: 'team-2',
+    teamName: 'Falcons',
+    playerId: 'player-2',
+    playerName: 'Jordan Star',
+    title: 'Leadership Award',
+    narrative: 'Great teammate.',
+    url: 'https://allplays.ai/certificates.html#teamId=team-2&certificateId=cert-2'
+};
+
+const staleCertificate = {
+    ...requestedCertificate,
+    id: 'stale-cert',
+    title: 'Stale Award'
+};
+
 function renderCertificatesTool(initialEntry = '/parent-tools/certificates') {
     return render(
         <MemoryRouter initialEntries={[initialEntry]}>
@@ -62,103 +88,167 @@ function renderCertificatesTool(initialEntry = '/parent-tools/certificates') {
     );
 }
 
-describe('CertificatesTool deep links', () => {
+describe('CertificatesTool', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        parentCertificatesServiceMocks.loadParentCertificate.mockResolvedValue(requestedCertificate);
         parentCertificatesServiceMocks.loadParentCertificates.mockResolvedValue([
-            {
-                id: 'cert-2',
-                teamId: 'team-2',
-                teamName: 'Falcons',
-                playerId: 'player-2',
-                playerName: 'Jordan Star',
-                title: 'Leadership Award',
-                narrative: 'Great teammate.',
-                url: 'https://allplays.ai/certificates.html#teamId=team-2&certificateId=cert-2'
-            },
-            {
-                id: 'cert-1',
-                teamId: 'team-1',
-                teamName: 'Bears',
-                playerId: 'player-1',
-                playerName: 'Sam Player',
-                title: 'Hustle Award',
-                narrative: 'Great effort.',
-                url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
-            }
+            requestedCertificate,
+            leadershipCertificate
         ]);
     });
 
-    it('shows the requested certificate first and lets parents expand back to the full list', async () => {
+    it('renders the direct award before the deferred full list and loads that list once on demand', async () => {
+        let resolveFullList!: (cards: typeof requestedCertificate[]) => void;
+        parentCertificatesServiceMocks.loadParentCertificates.mockReturnValue(new Promise((resolve) => {
+            resolveFullList = resolve;
+        }));
         renderCertificatesTool('/parent-tools/certificates?teamId=team-1&certificateId=cert-1');
 
         expect(await screen.findByText('Hustle Award')).toBeTruthy();
         expect(screen.queryByText('Leadership Award')).toBeNull();
+        expect(parentCertificatesServiceMocks.loadParentCertificate).toHaveBeenCalledWith(auth.user, 'team-1', 'cert-1');
+        expect(parentCertificatesServiceMocks.loadParentCertificates).not.toHaveBeenCalled();
         expect(screen.getByText('Opened from a notification')).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Show all awards' })).toBeTruthy();
+
         const requestedCard = screen.getByText('Hustle Award').closest('section') as HTMLElement;
-        const viewAward = within(requestedCard).getByRole('button', { name: 'View award' });
-        const requestedShare = within(requestedCard).getByRole('button', { name: 'Share' });
-        expect(viewAward.className).toContain('primary-button');
-        expect(requestedShare.className).toContain('secondary-button');
-        expect(viewAward.parentElement?.className).toContain('grid-cols-2');
-        fireEvent.click(viewAward);
-        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1');
-        expect(parentCertificatesServiceMocks.loadParentCertificates).toHaveBeenCalledWith(auth.user, {
-            requestedTeamId: 'team-1',
-            requestedCertificateId: 'cert-1'
+        fireEvent.click(within(requestedCard).getByRole('button', { name: 'View award' }));
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith(requestedCertificate.url);
+        fireEvent.click(within(requestedCard).getByRole('button', { name: 'Share' }));
+        expect(publicActionMocks.sharePublicUrl).toHaveBeenCalledWith({
+            title: 'Hustle Award',
+            text: 'Sam Player award',
+            url: requestedCertificate.url
         });
 
-        fireEvent.click(screen.getByRole('button', { name: 'Show all awards' }));
+        const showAll = screen.getByRole('button', { name: 'Show all awards' });
+        fireEvent.click(showAll);
+        fireEvent.click(showAll);
+
+        expect(parentCertificatesServiceMocks.loadParentCertificates).toHaveBeenCalledTimes(1);
+        expect(parentCertificatesServiceMocks.loadParentCertificates).toHaveBeenCalledWith(auth.user, {
+            includeCertificate: requestedCertificate
+        });
+        expect(screen.getByText('Hustle Award')).toBeTruthy();
+        expect(screen.queryByText('Leadership Award')).toBeNull();
+
+        resolveFullList([requestedCertificate, leadershipCertificate]);
 
         expect(await screen.findByText('Leadership Award')).toBeTruthy();
+        expect(parentCertificatesServiceMocks.loadParentCertificate).toHaveBeenCalledTimes(1);
         expect(within(requestedCard).getByRole('button', { name: 'View award' })).toBeTruthy();
-        expect(within(requestedCard).getByRole('button', { name: 'Share' })).toBeTruthy();
-        const leadershipCard = screen.getByText('Leadership Award').closest('section') as HTMLElement;
-        expect(within(leadershipCard).getByRole('button', { name: 'Open' })).toBeTruthy();
-        expect(within(leadershipCard).getByRole('button', { name: 'Share' })).toBeTruthy();
+        expect(within(screen.getByText('Leadership Award').closest('section') as HTMLElement).getByRole('button', { name: 'Open' })).toBeTruthy();
     });
 
-    it('falls back to the full list with an inline explanation when the requested certificate is missing', async () => {
+    it('falls back to the bounded full list with an explanation when the direct award is unavailable', async () => {
+        parentCertificatesServiceMocks.loadParentCertificate.mockResolvedValueOnce(null);
         renderCertificatesTool('/parent-tools/certificates?teamId=team-1&certificateId=missing-cert');
 
         expect(await screen.findByText('Leadership Award')).toBeTruthy();
         expect(screen.getByText('That award is no longer available. Showing all published awards instead.')).toBeTruthy();
-        expect(screen.getAllByText('Hustle Award').length).toBeGreaterThan(0);
+        expect(parentCertificatesServiceMocks.loadParentCertificate).toHaveBeenCalledWith(auth.user, 'team-1', 'missing-cert');
+        expect(parentCertificatesServiceMocks.loadParentCertificates).toHaveBeenCalledTimes(1);
+        expect(parentCertificatesServiceMocks.loadParentCertificates).toHaveBeenCalledWith(auth.user);
     });
 
-    it('renders multiple award cards from the same team', async () => {
-        parentCertificatesServiceMocks.loadParentCertificates.mockResolvedValueOnce([
-            {
-                id: 'cert-1',
-                teamId: 'team-1',
-                teamName: 'Bears',
-                playerId: 'player-1',
-                playerName: 'Sam Player',
-                title: 'Hustle Award',
-                narrative: 'Great effort.',
-                url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
-            },
-            {
-                id: 'cert-2',
-                teamId: 'team-1',
-                teamName: 'Bears',
-                playerId: 'player-2',
-                playerName: 'Jordan Star',
-                title: 'Leadership Award',
-                narrative: 'Great teammate.',
-                url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-2'
-            }
-        ]);
+    it('ignores a deferred full-list completion after navigating to another award', async () => {
+        let resolveStaleList!: (cards: typeof requestedCertificate[]) => void;
+        parentCertificatesServiceMocks.loadParentCertificates.mockReturnValueOnce(new Promise((resolve) => {
+            resolveStaleList = resolve;
+        }));
+        parentCertificatesServiceMocks.loadParentCertificate.mockImplementation(async (_user, _teamId, certificateId) => (
+            certificateId === 'cert-2' ? leadershipCertificate : requestedCertificate
+        ));
 
-        const { container } = renderCertificatesTool();
-        const currentRender = within(container);
+        render(
+            <MemoryRouter initialEntries={['/parent-tools/certificates?teamId=team-1&certificateId=cert-1']}>
+                <Link to="/parent-tools/certificates?teamId=team-2&certificateId=cert-2">Next award</Link>
+                <Routes>
+                    <Route path="/parent-tools/certificates" element={<CertificatesTool auth={auth} refreshVersion={0} />} />
+                </Routes>
+            </MemoryRouter>
+        );
 
-        expect(await currentRender.findByText('Hustle Award')).toBeTruthy();
-        expect(currentRender.getByText('Leadership Award')).toBeTruthy();
-        expect(currentRender.getByText('Sam Player - Bears')).toBeTruthy();
-        expect(currentRender.getByText('Jordan Star - Bears')).toBeTruthy();
-        expect(currentRender.getAllByRole('button', { name: 'Open' })).toHaveLength(2);
-        expect(currentRender.queryByRole('button', { name: 'View award' })).toBeNull();
+        expect(await screen.findByText('Hustle Award')).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', { name: 'Show all awards' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Next award' }));
+        expect(await screen.findByText('Leadership Award')).toBeTruthy();
+
+        await act(async () => resolveStaleList([staleCertificate]));
+
+        expect(screen.getByText('Leadership Award')).toBeTruthy();
+        expect(screen.queryByText('Stale Award')).toBeNull();
+    });
+
+    it('ignores a deferred full-list completion after refreshVersion changes', async () => {
+        let resolveStaleList!: (cards: typeof requestedCertificate[]) => void;
+        parentCertificatesServiceMocks.loadParentCertificates.mockReturnValueOnce(new Promise((resolve) => {
+            resolveStaleList = resolve;
+        }));
+        const refreshedCertificate = { ...requestedCertificate, title: 'Refreshed Award' };
+        const view = render(
+            <MemoryRouter initialEntries={['/parent-tools/certificates?teamId=team-1&certificateId=cert-1']}>
+                <CertificatesTool auth={auth} refreshVersion={0} />
+            </MemoryRouter>
+        );
+
+        expect(await screen.findByText('Hustle Award')).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', { name: 'Show all awards' }));
+        parentCertificatesServiceMocks.loadParentCertificate.mockResolvedValueOnce(refreshedCertificate);
+        view.rerender(
+            <MemoryRouter initialEntries={['/parent-tools/certificates?teamId=team-1&certificateId=cert-1']}>
+                <CertificatesTool auth={auth} refreshVersion={1} />
+            </MemoryRouter>
+        );
+        expect(await screen.findByText('Refreshed Award')).toBeTruthy();
+
+        await act(async () => resolveStaleList([staleCertificate]));
+
+        expect(screen.getByText('Refreshed Award')).toBeTruthy();
+        expect(screen.queryByText('Stale Award')).toBeNull();
+    });
+
+    it('ignores a deferred full-list completion after the authenticated user changes', async () => {
+        let resolveStaleList!: (cards: typeof requestedCertificate[]) => void;
+        parentCertificatesServiceMocks.loadParentCertificates.mockReturnValueOnce(new Promise((resolve) => {
+            resolveStaleList = resolve;
+        }));
+        const nextUserAuth: AuthState = {
+            ...auth,
+            user: { ...auth.user!, uid: 'parent-2', email: 'other-parent@example.com' }
+        };
+        const nextUserCertificate = { ...requestedCertificate, title: 'Other Parent Award' };
+        const view = render(
+            <MemoryRouter initialEntries={['/parent-tools/certificates?teamId=team-1&certificateId=cert-1']}>
+                <CertificatesTool auth={auth} refreshVersion={0} />
+            </MemoryRouter>
+        );
+
+        expect(await screen.findByText('Hustle Award')).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', { name: 'Show all awards' }));
+        parentCertificatesServiceMocks.loadParentCertificate.mockResolvedValueOnce(nextUserCertificate);
+        view.rerender(
+            <MemoryRouter initialEntries={['/parent-tools/certificates?teamId=team-1&certificateId=cert-1']}>
+                <CertificatesTool auth={nextUserAuth} refreshVersion={0} />
+            </MemoryRouter>
+        );
+        expect(await screen.findByText('Other Parent Award')).toBeTruthy();
+
+        await act(async () => resolveStaleList([staleCertificate]));
+
+        expect(screen.getByText('Other Parent Award')).toBeTruthy();
+        expect(screen.queryByText('Stale Award')).toBeNull();
+    });
+
+    it('retains normal bounded list rendering without a deep link', async () => {
+        renderCertificatesTool();
+
+        expect(await screen.findByText('Hustle Award')).toBeTruthy();
+        expect(screen.getByText('Leadership Award')).toBeTruthy();
+        expect(parentCertificatesServiceMocks.loadParentCertificate).not.toHaveBeenCalled();
+        expect(parentCertificatesServiceMocks.loadParentCertificates).toHaveBeenCalledTimes(1);
+        expect(parentCertificatesServiceMocks.loadParentCertificates).toHaveBeenCalledWith(auth.user);
+        expect(screen.getAllByRole('button', { name: 'Open' })).toHaveLength(2);
+        expect(screen.queryByRole('button', { name: 'View award' })).toBeNull();
     });
 });

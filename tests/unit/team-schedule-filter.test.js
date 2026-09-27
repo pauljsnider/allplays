@@ -49,6 +49,7 @@ function loadGetAllEvents() {
         let getMyRsvp = context.getMyRsvp;
         let isAvailabilityLocked = context.isAvailabilityLocked;
         let expandRecurrence = context.expandRecurrence;
+        let hasReplayVideoEvidence = context.hasReplayVideoEvidence || (() => false);
         let console = context.console || globalThis.console;
         ${functionSource}
         return getAllEvents(context.team, context.dbGames);

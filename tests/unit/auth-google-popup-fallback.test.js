@@ -6,7 +6,7 @@ const getRedirectResultMock = vi.fn();
 const validateAccessCodeMock = vi.fn();
 const markAccessCodeAsUsedMock = vi.fn();
 
-vi.mock('../../js/firebase.js?v=22', () => ({
+vi.mock('../../js/firebase.js?v=33', () => ({
     auth: { currentUser: null },
     signInWithEmailAndPassword: vi.fn(),
     createUserWithEmailAndPassword: vi.fn(),
@@ -24,7 +24,7 @@ vi.mock('../../js/firebase.js?v=22', () => ({
     updatePassword: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=127', () => ({
+vi.mock('../../js/db.js?v=4433199', () => ({
     validateAccessCode: validateAccessCodeMock,
     markAccessCodeAsUsed: markAccessCodeAsUsedMock,
     updateUserProfile: vi.fn(),
@@ -41,16 +41,16 @@ vi.mock('../../js/db.js?v=127', () => ({
     normalizeParentScopeLinks: vi.fn()
 }));
 
-vi.mock('../../js/signup-flow.js?v=12', () => ({
+vi.mock('../../js/signup-flow.js?v=14', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
 
-vi.mock('../../js/admin-invite.js?v=6', () => ({
+vi.mock('../../js/admin-invite.js?v=12', () => ({
     redeemAdminInviteAcceptance: vi.fn(),
     redeemAdminInviteAtomically: vi.fn()
 }));
 
-vi.mock('../../js/parent-membership-utils.js?v=2', () => ({
+vi.mock('../../js/parent-membership-utils.js?v=3', () => ({
     mergeApprovedParentMembershipRequests: vi.fn(() => ({ changed: false, userUpdate: {} }))
 }));
 

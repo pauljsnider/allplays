@@ -1,4 +1,5 @@
-import { createTeamFeeBatch, getPlayers, getTeam, hasFullTeamAccess, initiateTeamFeeCheckout, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient } from './adapters/legacyTeamFees';
+import { assertTeamFeeRecipientLimit, createTeamFeeBatch, getPlayers, getTeam, hasFullTeamAccess, listTeamFeeBatches, listTeamFeeRecipients, normalizeTeamFeeRecipientIds, updateTeamFeeRecipient } from './adapters/legacyTeamFees';
+import { appendAppRouteParams, buildAppUrl, getPublicAppOrigin } from './appLinks';
 import type { AuthUser } from './types';
 
 export type TeamFeeBatchSummary = {
@@ -380,7 +381,7 @@ export async function loadTeamFeeManagementModel(teamId: string, batchId: string
   const batches = ((rawBatches || []) as any[]).map(toBatchSummary);
   const selectedBatch = batches.find((batch) => batch.id === batchId) || batches[0] || null;
   const recipients = selectedBatch
-    ? ((await Promise.resolve(listTeamFeeRecipients(teamId, selectedBatch.id))) as any[]).map(toRecipientSummary)
+    ? ((await Promise.resolve(listTeamFeeRecipients(teamId, selectedBatch.id, { hydrateAdminBilling: false }))) as any[]).map(toRecipientSummary)
     : [];
   const rosterPlayers = ((rawPlayers || []) as any[])
     .filter((player) => player?.active !== false)
@@ -409,10 +410,16 @@ export async function createTeamFeeBatchForApp({ teamId, title, amount, dueDate,
   if (amountCents === null || amountCents <= 0) throw new Error('Enter an amount greater than $0.');
   if (!normalizeString(dueDate)) throw new Error('Enter a due date.');
 
+  const seenActivePlayerIds = new Set<string>();
   const activePlayers = ((await Promise.resolve(getPlayers(teamId))) as any[])
     .filter((player) => player?.active !== false)
     .map(toRosterPlayer)
-    .filter((player) => player.id);
+    .map((player) => ({ ...player, id: normalizeTeamFeeRecipientIds([player.id])[0] || '' }))
+    .filter((player) => {
+      if (!player.id || seenActivePlayerIds.has(player.id)) return false;
+      seenActivePlayerIds.add(player.id);
+      return true;
+    });
   const activePlayersById = new Map(activePlayers.map((player) => [player.id, player]));
   const requestedRecipientIds = Array.from(new Set((recipientIds || []).map(normalizeString).filter(Boolean)));
   const invalidRecipientIds = requestedRecipientIds.filter((recipientId) => !activePlayersById.has(recipientId));
@@ -425,6 +432,7 @@ export async function createTeamFeeBatchForApp({ teamId, title, amount, dueDate,
     : requestedRecipientIds.map((recipientId) => activePlayersById.get(recipientId)).filter(Boolean) as TeamFeeRosterPlayer[];
 
   if (!selectedPlayers.length) throw new Error('Select at least one roster recipient.');
+  assertTeamFeeRecipientLimit(selectedPlayers.length);
 
   const installments = installmentPlan ? buildTeamFeeInstallmentDraft({
     amount,
@@ -544,27 +552,22 @@ export async function recordOfflineTeamFeeRefund({ teamId, batchId, recipient, r
   return updates;
 }
 
-export async function initiateStaffTeamFeeCheckout({ teamId, batchId, recipientId, user }: {
+export function buildTeamFeeFamilyPaymentUrl({ teamId, batchId, recipientId, origin = getPublicAppOrigin() }: {
   teamId: string;
   batchId: string;
   recipientId: string;
-  user: AuthUser | null;
+  origin?: string;
 }) {
   if (!teamId || !batchId || !recipientId) {
-    throw new Error('Missing required fields for team fee checkout.');
+    throw new Error('Missing required fields for the family payment link.');
   }
 
-  const team = await Promise.resolve(getTeam(teamId));
-  if (!hasFullTeamAccess(user, team)) {
-    throw new Error('You do not have access to generate team fee checkout links.');
-  }
-
-  const checkoutUrl = await initiateTeamFeeCheckout({ teamId, batchId, recipientId });
-  if (!checkoutUrl) {
-    throw new Error('Failed to get checkout URL.');
-  }
-
-  return { success: true as const, checkoutUrl };
+  const nextRoute = appendAppRouteParams('/parent-tools/fees', {
+    teamId,
+    batchId,
+    recipientId
+  });
+  return buildAppUrl('/auth', { next: nextRoute }, origin);
 }
 
 function toBatchSummary(batch: any): TeamFeeBatchSummary {
@@ -588,7 +591,10 @@ function toRecipientSummary(recipient: any): TeamFeeRecipientSummary {
     parentEmail: normalizeString(recipient?.parentEmail),
     status: normalizeString(recipient?.status) || 'unpaid',
     collectionMode: normalizeString(recipient?.collectionMode || recipient?.paymentMode),
-    checkoutUrl: normalizeString(recipient?.checkoutUrl || recipient?.paymentLink || recipient?.paymentUrl),
+    // Active checkout destinations are caller-bound bearer state. Always ask
+    // the callable to resolve the current principal instead of exposing a
+    // legacy URL read from the recipient document.
+    checkoutUrl: '',
     checkoutStatus: normalizeString(recipient?.checkoutStatus),
     amountDueCents,
     amountPaidCents,

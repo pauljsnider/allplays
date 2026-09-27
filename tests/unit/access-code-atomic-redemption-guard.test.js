@@ -30,6 +30,7 @@ describe('access code atomic redemption guard', () => {
 
         const afterFunction = source.slice(fnIndex, fnIndex + 1400);
         expect(afterFunction).toContain("httpsCallable(functions, 'redeemParentInvite')");
+        expect(afterFunction).not.toContain('authEmail:');
         expect(afterFunction).toContain('await syncPublicUserProfile(userId);');
         expect(afterFunction).not.toContain('parentOf: arrayUnion');
         expect(afterFunction).not.toContain('parentTeamIds: arrayUnion');
@@ -64,7 +65,14 @@ describe('access code atomic redemption guard', () => {
         expect(afterFunction).toContain("codeData.type !== 'parent_invite'");
         expect(afterFunction).toContain('codeData.used || codeData.revoked === true || codeData.status ===');
         expect(afterFunction).toContain('isParentInviteExpired(codeData.expiresAt)');
-        expect(afterFunction).toContain('invitedEmail && (!signedInEmail || invitedEmail !== signedInEmail)');
+        expect(afterFunction).toContain('resolveAuthenticatedFamilyInviteEmail({');
+        expect(afterFunction).toContain('assertFamilyInviteRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail)');
+        expect(afterFunction).toContain('assertFamilyInviteRecipientEmail(codeData, signedInEmail)');
+        expect(afterFunction).not.toContain('data?.authEmail');
+        expect(afterFunction.indexOf('assertFamilyInviteRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail)'))
+            .toBeLessThan(afterFunction.indexOf('firestore.runTransaction(async (transaction) =>'));
+        expect(afterFunction.indexOf('assertFamilyInviteRecipientEmail(codeData, signedInEmail)'))
+            .toBeLessThan(afterFunction.indexOf('transaction.set(userRef'));
         expect(afterFunction).toContain('parentOf: nextUserData.parentOf');
         expect(afterFunction).toContain('parentTeamIds: nextUserData.parentTeamIds');
         expect(afterFunction).toContain('parentPlayerKeys: nextUserData.parentPlayerKeys');
@@ -131,7 +139,7 @@ describe('access code atomic redemption guard', () => {
         expect(keepBranchSource).toContain('}), { merge: true });');
     });
 
-    it('creates friend relationships in the same transaction that claims the code', () => {
+    it('keeps friend invite redemption behind the authenticated callable', () => {
         const dbSourcePath = resolve(process.cwd(), 'js/db.js');
         const source = readFileSync(dbSourcePath, 'utf8');
 
@@ -139,15 +147,13 @@ describe('access code atomic redemption guard', () => {
         const fnIndex = source.indexOf(fnAnchor);
         expect(fnIndex).toBeGreaterThanOrEqual(0);
 
-        const afterFunction = source.slice(fnIndex, fnIndex + 5000);
-        expect(afterFunction).toContain('runTransaction(db, async (transaction) =>');
-        expect(afterFunction).toContain('const friendshipSnapshot = await transaction.get(friendshipRef);');
-        expect(afterFunction).toContain("existingFriendship.status === 'blocked'");
-        expect(afterFunction).toContain('existingFriendship.blockedBy.length > 0');
-        expect(afterFunction).toContain('existingFriendship,');
-        expect(afterFunction).toContain('transaction.set(friendshipRef');
-        expect(afterFunction).toContain('transaction.update(codeRef');
-        expect(afterFunction).toContain('buildFriendInviteInviterProfile(codeData.inviterProfile || {})');
-        expect(afterFunction).not.toContain('doc(db, "users", inviterId)');
+        const fnEnd = source.indexOf('export async function rollbackParentInviteRedemption', fnIndex);
+        const redemptionSource = source.slice(fnIndex, fnEnd);
+        expect(redemptionSource).toContain("httpsCallable(functions, 'redeemFriendInvite')");
+        expect(redemptionSource).toContain('await callable({ code: normalizedCode })');
+        expect(redemptionSource).not.toContain('runTransaction');
+        expect(redemptionSource).not.toContain('transaction.get');
+        expect(redemptionSource).not.toContain('transaction.set');
+        expect(redemptionSource).not.toContain('transaction.update');
     });
 });

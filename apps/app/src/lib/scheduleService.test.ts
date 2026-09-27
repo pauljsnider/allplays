@@ -6,6 +6,28 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const testDir = dirname(fileURLToPath(import.meta.url));
 const readAppSource = (relativePath: string) => readFileSync(resolve(testDir, '..', relativePath), 'utf8');
 
+const capacitorCoreMock = vi.hoisted(() => ({
+  isNativePlatform: vi.fn(() => false),
+  getPlatform: vi.fn(() => 'web'),
+  httpPost: vi.fn()
+}));
+
+const nativeCallableMock = vi.hoisted(() => ({
+  callNativeFirebaseFunction: vi.fn()
+}));
+
+const diamondScorebookMock = vi.hoisted(() => ({
+  cancelDiamondGame: vi.fn()
+}));
+
+vi.mock('@capacitor/core', () => ({
+  Capacitor: capacitorCoreMock,
+  CapacitorHttp: { post: capacitorCoreMock.httpPost }
+}));
+
+vi.mock('./nativeCallable', () => nativeCallableMock);
+vi.mock('./diamondScorebookService', () => diamondScorebookMock);
+
 const mocks = vi.hoisted(() => {
   const transactionSet = vi.fn();
   const transactionGet = vi.fn();
@@ -37,18 +59,22 @@ vi.mock('./adapters/legacyScheduleDb', () => ({
   claimOpenOfficiatingSlot: vi.fn(),
   getGame: vi.fn(),
   getGames: vi.fn(),
+  getLiveEvents: vi.fn(),
   getPracticePacketCompletions: vi.fn(),
   getPracticeSession: vi.fn(),
   getPracticeSessionByEvent: vi.fn(),
   getPracticeSessions: vi.fn(),
+  getPublicTeamCalendarEvents: vi.fn(),
   getPlayers: vi.fn(),
   getMyRsvps: vi.fn(),
   getRsvpBreakdownByPlayer: vi.fn(),
   getRsvps: vi.fn(),
   getRsvpSummaries: vi.fn(),
+  getDelegatedTeamContext: vi.fn(),
   getTeam: vi.fn(),
   getTeams: vi.fn(),
   getStaffTeams: vi.fn(),
+  getOfficialLinkedTeamIds: vi.fn(),
   addGame: vi.fn(),
   addPractice: vi.fn(),
   buildSingleLegacyTournamentGameDocument: vi.fn((games: Array<Record<string, unknown> | null | undefined>, tournament: Record<string, unknown>) => {
@@ -201,7 +227,11 @@ vi.mock('./adapters/legacyAvailability', () => ({
   isAvailabilityLocked: vi.fn(() => false),
   normalizeAvailabilityPreferences: vi.fn((value: any) => (value && typeof value === 'object' ? value : {}))
 }));
-vi.mock('./profileService', () => ({ loadProfileDocument: vi.fn(), saveProfileDocument: vi.fn() }));
+vi.mock('./profileService', () => ({
+  loadManagedTeamsFromNativeCallable: vi.fn(async () => ({ teams: [], isPartial: false })),
+  loadProfileDocument: vi.fn(),
+  saveProfileDocument: vi.fn()
+}));
 vi.mock('./authService', () => ({
   firebaseAuth: { app: { options: { projectId: 'allplays-test' } } },
   getNativeAuthIdToken: vi.fn()
@@ -218,14 +248,14 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getMyRsvps, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
+import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getDelegatedTeamContext, getGame, getGames, getLiveEvents, getMyRsvps, getOfficialLinkedTeamIds, getPlayers, getPracticeSession, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
-import { expandRecurrence, fetchAndParseCalendar, isTeamActive, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
+import { expandRecurrence, fetchAndParseCalendar, getCalendarEventTrackingId, isTeamActive, isTrackedCalendarEvent, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
-import { mapScheduleEventRecord } from './firestore/mappers';
-import { loadProfileDocument } from './profileService';
+import { mapScheduleEventDocument, mapScheduleEventRecord } from './firestore/mappers';
+import { loadManagedTeamsFromNativeCallable, loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleRsvps, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, linkGameYouTubeReplayForApp, loadGameDayLiveEventsForApp, loadHomeScoringPlayers, loadOfficialAssignments, loadOfficialAssignmentsAccess, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, removeGameReplayForApp, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -238,11 +268,13 @@ function playerSnapshot(id: string, data: Record<string, unknown> | null) {
 it('keeps schedule workflows behind typed legacy adapters', () => {
   const scheduleServiceSource = readAppSource('lib/scheduleService.ts');
   const scheduleEventDetailSource = readAppSource('pages/ScheduleEventDetail.tsx');
+  const scheduleGameHubSectionSource = readAppSource('pages/schedule/ScheduleGameHubSection.tsx');
 
   expect(scheduleServiceSource).not.toContain("../../../../js/");
   expect(scheduleServiceSource).toContain("./adapters/legacyScheduleDb");
   expect(scheduleServiceSource).toContain("./adapters/legacyScheduleHelpers");
   expect(scheduleServiceSource).toContain("./adapters/legacyAvailability");
+  expect(scheduleServiceSource).toContain("./adapters/legacyHedgedRead");
   expect(scheduleServiceSource).toContain("./statTrackingEvent");
   expect(scheduleServiceSource).not.toContain("from './statTrackingService'");
   expect(scheduleServiceSource).toContain("./logger");
@@ -252,8 +284,314 @@ it('keeps schedule workflows behind typed legacy adapters', () => {
   expect(scheduleServiceSource).not.toContain('console.');
   expect(scheduleServiceSource).not.toContain('await Promise.resolve();');
   expect(scheduleServiceSource).toContain('lock.waiters.push(resolve);');
+  const hedgedReadSource = scheduleServiceSource.slice(
+    scheduleServiceSource.indexOf('async function readWithNativeFallback'),
+    scheduleServiceSource.indexOf('function compactString')
+  );
+  expect(hedgedReadSource).toContain('raceFirstSuccessfulRead({');
+  expect(hedgedReadSource).not.toContain('if (!isNativeRuntime()) throw error;');
+  const nativeListSource = scheduleServiceSource.slice(
+    scheduleServiceSource.indexOf('async function nativeListCollection'),
+    scheduleServiceSource.indexOf('async function nativeRunQuery')
+  );
+  expect(nativeListSource).toContain('listNativeFirestoreCollectionPages<NativeFirestoreDocument>(');
+  expect(nativeListSource).not.toContain('payload.documents');
+  const scheduleEventListSource = scheduleServiceSource.slice(
+    scheduleServiceSource.indexOf('async function nativeListScheduleEventDocuments'),
+    scheduleServiceSource.indexOf('async function nativeQueryScheduleEventDocuments')
+  );
+  expect(scheduleEventListSource).toContain('listNativeFirestoreCollectionPages<NativeFirestoreDocument>(');
+  expect(scheduleEventListSource).not.toContain('payload.documents');
   expect(scheduleEventDetailSource).not.toContain("../../../../js/");
-  expect(scheduleEventDetailSource).toContain("../lib/adapters/legacyScheduleHelpers");
+  expect(scheduleEventDetailSource).toContain("./schedule/ScheduleGameHubSection");
+  expect(scheduleGameHubSectionSource).not.toContain("../../../../../js/");
+  expect(scheduleGameHubSectionSource).toContain("../../lib/adapters/legacyScheduleHelpers");
+});
+
+describe('native scoring roster fallback', () => {
+  it('caps native fallback active-game live events at 20', async () => {
+    const previousWindow = (globalThis as any).window;
+    const previousFetch = globalThis.fetch;
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(getLiveEvents).mockRejectedValueOnce(new Error('SDK live events unavailable'));
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    (globalThis as any).fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        documents: Array.from({ length: 25 }, (_, index) => ({
+          name: `projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/liveEvents/event-${index + 1}`,
+          fields: { sequence: { integerValue: String(index + 1) } }
+        }))
+      })
+    });
+
+    try {
+      const events = await loadGameDayLiveEventsForApp('team-1', 'game-1');
+
+      expect(events).toHaveLength(20);
+      expect(events.map((event: any) => event.id)).toEqual(
+        Array.from({ length: 20 }, (_, index) => `event-${index + 1}`)
+      );
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/liveEvents?pageSize=20'),
+        expect.anything()
+      );
+    } finally {
+      (globalThis as any).window = previousWindow;
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it('does not request another native fallback page when the current page has 20 events', async () => {
+    const previousWindow = (globalThis as any).window;
+    const previousFetch = globalThis.fetch;
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(getLiveEvents).mockRejectedValueOnce(new Error('SDK live events unavailable'));
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    (globalThis as any).fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        documents: Array.from({ length: 20 }, (_, index) => ({
+          name: `projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/liveEvents/event-${index + 1}`,
+          fields: { sequence: { integerValue: String(index + 1) } }
+        })),
+        nextPageToken: 'unexpected-second-page'
+      })
+    });
+
+    try {
+      await expect(loadGameDayLiveEventsForApp('team-1', 'game-1')).resolves.toHaveLength(20);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      (globalThis as any).window = previousWindow;
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it('keeps native fallback pagination for a page with fewer than 20 events', async () => {
+    const previousWindow = (globalThis as any).window;
+    const previousFetch = globalThis.fetch;
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(getLiveEvents).mockRejectedValueOnce(new Error('SDK live events unavailable'));
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    const page = (start: number, count: number) => ({
+      ok: true,
+      json: async () => ({
+        documents: Array.from({ length: count }, (_, index) => ({
+          name: `projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/liveEvents/event-${start + index}`,
+          fields: { sequence: { integerValue: String(start + index) } }
+        })),
+        ...(start === 1 ? { nextPageToken: 'second-page' } : {})
+      })
+    });
+    (globalThis as any).fetch = vi.fn()
+      .mockResolvedValueOnce(page(1, 10))
+      .mockResolvedValueOnce(page(11, 2));
+
+    try {
+      await expect(loadGameDayLiveEventsForApp('team-1', 'game-1')).resolves.toHaveLength(12);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      (globalThis as any).window = previousWindow;
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it('includes later-page players in the home scoring model', async () => {
+    const previousWindow = (globalThis as any).window;
+    const previousFetch = globalThis.fetch;
+    vi.clearAllMocks();
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(getPlayers).mockRejectedValueOnce(new Error('SDK roster unavailable'));
+    vi.mocked(getDocs).mockResolvedValue({ docs: [] } as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    (globalThis as any).fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          documents: [{
+            name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/players/player-1',
+            fields: { name: { stringValue: 'First Player' }, active: { booleanValue: true } }
+          }],
+          nextPageToken: 'next page+/='
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          documents: [{
+            name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/players/player-2',
+            fields: { name: { stringValue: 'Later Player' }, active: { booleanValue: true } }
+          }]
+        })
+      });
+
+    try {
+      const players = await loadHomeScoringPlayers('team-1', 'game-1');
+
+      expect(players.map((player) => player.id)).toEqual(['player-1', 'player-2']);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+      expect(String(vi.mocked(globalThis.fetch).mock.calls[1][0]))
+        .toContain('pageToken=next+page%2B%2F%3D');
+    } finally {
+      (globalThis as any).window = previousWindow;
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it('refreshes a native schedule read once after a 401 response', async () => {
+    const previousWindow = (globalThis as any).window;
+    const previousFetch = globalThis.fetch;
+    vi.clearAllMocks();
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(getPlayers).mockRejectedValueOnce(new Error('SDK roster unavailable'));
+    vi.mocked(getDocs).mockResolvedValue({ docs: [] } as any);
+    vi.mocked(getNativeAuthIdToken)
+      .mockResolvedValueOnce('cached-token')
+      .mockResolvedValueOnce('refreshed-token');
+    (globalThis as any).fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: { message: 'Unauthenticated.' } })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ documents: [] })
+      });
+
+    try {
+      await expect(loadHomeScoringPlayers('team-1', 'game-1')).resolves.toEqual([]);
+      expect(getNativeAuthIdToken).toHaveBeenNthCalledWith(1, false);
+      expect(getNativeAuthIdToken).toHaveBeenNthCalledWith(2, true);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      (globalThis as any).window = previousWindow;
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it('does not retry a native schedule read after a 403 response', async () => {
+    const previousWindow = (globalThis as any).window;
+    const previousFetch = globalThis.fetch;
+    vi.clearAllMocks();
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(getPlayers).mockRejectedValueOnce(new Error('SDK roster unavailable'));
+    vi.mocked(getDocs).mockResolvedValue({ docs: [] } as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('cached-token');
+    (globalThis as any).fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => ({ error: { message: 'Missing or insufficient permissions.' } })
+    });
+
+    try {
+      await expect(loadHomeScoringPlayers('team-1', 'game-1'))
+        .rejects.toThrow('Missing or insufficient permissions.');
+      expect(getNativeAuthIdToken).toHaveBeenCalledTimes(1);
+      expect(getNativeAuthIdToken).toHaveBeenCalledWith(false);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      (globalThis as any).window = previousWindow;
+      globalThis.fetch = previousFetch;
+    }
+  });
+});
+
+describe('native rideshare request fallback', () => {
+  const user = { uid: 'parent-1', email: 'parent@example.com', roles: ['parent'] } as any;
+  const event = {
+    id: 'game-1',
+    teamId: 'team-1',
+    childId: 'player-1',
+    isDbGame: true,
+    isCancelled: false
+  } as any;
+  const childEvents = [event, { ...event, childId: 'player-2' }] as any[];
+  let previousWindow: typeof globalThis.window | undefined;
+  let previousFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    previousWindow = (globalThis as any).window;
+    previousFetch = globalThis.fetch;
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(listRideOffersForEvent).mockRejectedValue(new Error('SDK rideshare read unavailable'));
+  });
+
+  afterEach(() => {
+    (globalThis as any).window = previousWindow;
+    globalThis.fetch = previousFetch;
+  });
+
+  function rideOfferResponse() {
+    return {
+      ok: true,
+      json: async () => ({
+        documents: [{
+          name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rideOffers/offer-1',
+          fields: {
+            driverUserId: { stringValue: 'driver-1' },
+            seatCapacity: { integerValue: '3' },
+            seatCountConfirmed: { integerValue: '1' },
+            status: { stringValue: 'open' }
+          }
+        }]
+      })
+    } as any;
+  }
+
+  function missingDocumentResponse() {
+    return {
+      ok: false,
+      status: 404,
+      json: async () => ({ error: { message: 'Document not found.' } })
+    } as any;
+  }
+
+  it('returns an offer with zero requests when every scoped child request is missing', async () => {
+    (globalThis as any).fetch = vi.fn()
+      .mockResolvedValueOnce(rideOfferResponse())
+      .mockResolvedValue(missingDocumentResponse());
+
+    await expect(loadParentScheduleRideOffers(event, user, childEvents)).resolves.toEqual([
+      expect.objectContaining({ id: 'offer-1', requests: [] })
+    ]);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps an existing child request when another scoped child request is missing', async () => {
+    (globalThis as any).fetch = vi.fn().mockImplementation(async (input: any) => {
+      const url = String(input || '');
+      if (new URL(url).pathname.endsWith('/rideOffers')) return rideOfferResponse();
+      if (url.endsWith('/requests/parent-1__player-1')) {
+        return {
+          ok: true,
+          json: async () => ({
+            name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rideOffers/offer-1/requests/parent-1__player-1',
+            fields: {
+              parentUserId: { stringValue: 'parent-1' },
+              childId: { stringValue: 'player-1' },
+              childName: { stringValue: 'Avery' },
+              status: { stringValue: 'pending' }
+            }
+          })
+        } as any;
+      }
+      return missingDocumentResponse();
+    });
+
+    await expect(loadParentScheduleRideOffers(event, user, childEvents)).resolves.toEqual([
+      expect.objectContaining({
+        id: 'offer-1',
+        requests: [expect.objectContaining({ id: 'parent-1__player-1', childId: 'player-1' })]
+      })
+    ]);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe('parent schedule child scope', () => {
@@ -261,6 +599,8 @@ describe('parent schedule child scope', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockReset().mockResolvedValue({ teams: [], isPartial: false });
+    vi.mocked(getNativeAuthIdToken).mockRejectedValue(new Error('REST auth unavailable in isolated staff-scope tests'));
     vi.mocked(isTeamActive).mockImplementation((team: any) => (
       team?.active !== false &&
       team?.archived !== true &&
@@ -405,6 +745,71 @@ describe('parent schedule child scope', () => {
     ]);
   });
 
+  it('preserves canonical Diamond stat snapshot evidence in linked-player list and targeted detail events', async () => {
+    const snapshotHash = `sha256:${'d'.repeat(64)}`;
+    const canonicalGame = {
+      id: 'diamond-game-1',
+      type: 'game',
+      date: new Date('2026-09-06T18:00:00.000Z'),
+      opponent: 'Owls',
+      location: 'Field 1',
+      status: 'completed',
+      trackingEngine: 'diamond-v2',
+      diamondScorebookInstanceId: '00000000-0000-4000-8000-000000000001',
+      diamondProjectionStatus: 'current',
+      diamondProjectionComplete: true,
+      diamondProjectionRevision: 8,
+      diamondProjectionCheckpointHash: `sha256:${'a'.repeat(64)}`,
+      statTrackerConfigId: 'baseball',
+      diamondStatConfigSnapshotHash: snapshotHash,
+      diamondProjectionHash: `sha256:${'c'.repeat(64)}`,
+      isPublicProjection: false
+    };
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Avery Lee', teamName: 'Bears' }]
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', active: true } as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('player-1', { name: 'Avery Lee', active: true }) as any);
+    vi.mocked(getGames).mockResolvedValue([canonicalGame] as any);
+    vi.mocked(getGame).mockResolvedValue(canonicalGame as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+
+    const playerSchedule = await loadParentPlayerSchedule(parentUser, {
+      teamId: 'team-1',
+      playerId: 'player-1',
+      hydrateDetails: false
+    });
+    const targetedDetail = await loadParentScheduleEventDetail(parentUser, {
+      teamId: 'team-1',
+      eventId: 'diamond-game-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(playerSchedule.events[0]).toMatchObject({
+      id: 'diamond-game-1',
+      statTrackerConfigId: 'baseball',
+      diamondStatConfigSnapshotHash: snapshotHash,
+      diamondProjectionStatus: 'current',
+      diamondProjectionComplete: true,
+      diamondProjectionRevision: 8,
+      diamondProjectionCheckpointHash: `sha256:${'a'.repeat(64)}`,
+      diamondProjectionHash: `sha256:${'c'.repeat(64)}`,
+      isPublicProjection: false
+    });
+    expect(targetedDetail.events[0]).toMatchObject({
+      id: 'diamond-game-1',
+      statTrackerConfigId: 'baseball',
+      diamondStatConfigSnapshotHash: snapshotHash,
+      diamondProjectionStatus: 'current',
+      diamondProjectionComplete: true,
+      diamondProjectionRevision: 8,
+      diamondProjectionCheckpointHash: `sha256:${'a'.repeat(64)}`,
+      diamondProjectionHash: `sha256:${'c'.repeat(64)}`,
+      isPublicProjection: false
+    });
+  });
+
   it('uses scoped staff discovery and excludes inactive affiliated teams', async () => {
     const coachUser = { uid: 'coach-1', email: ' Coach@Example.com ', roles: ['coach'], coachOf: ['team-coach', 'team-coach'] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [] } as any);
@@ -495,31 +900,452 @@ describe('parent schedule child scope', () => {
     }));
   });
 
+  it('keeps a server-authorized coach link before client profile hydration finishes', async () => {
+    const freshCoachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-coached'] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'team-coached', name: 'Coach Bears', active: true }],
+      isPartial: false
+    } as any);
+
+    const scope = await loadParentScheduleScope(freshCoachUser);
+
+    expect(scope.staffTeams).toEqual([{ teamId: 'team-coached', teamName: 'Coach Bears' }]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
+    expect(getStaffTeams).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a cold managed-team callable finish beyond the shared schedule timeout', async () => {
+    vi.useFakeTimers();
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
+    vi.mocked(getStaffTeams)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        setTimeout(() => resolve({
+          teams: [{ id: 'team-owned', name: 'Vipers', active: true }],
+          isPartial: false
+        } as any), 6000);
+      }))
+      .mockResolvedValue({ teams: [], isPartial: true } as any);
+
+    try {
+      const scopePromise = loadParentScheduleScope(coachUser);
+      await vi.advanceTimersByTimeAsync(6000);
+      const scope = await scopePromise;
+
+      expect(getStaffTeams).toHaveBeenCalledTimes(1);
+      expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+      expect(scope.staffTeamsPartial).toBe(false);
+    } finally {
+      vi.mocked(getStaffTeams).mockReset();
+      vi.useRealTimers();
+    }
+  });
+
+  it('budgets a measured cold authenticated staff response within the production chooser wait', async () => {
+    vi.useFakeTimers();
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
+    vi.mocked(getStaffTeams).mockImplementation(() => new Promise(() => undefined));
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockImplementation(() => new Promise((resolve) => {
+      setTimeout(() => resolve({
+        teams: [{ id: 'team-owned', name: 'Vipers', active: true }],
+        isPartial: false
+      }), 11000);
+    }));
+
+    try {
+      const scopePromise = loadParentScheduleScope(coachUser);
+      await vi.advanceTimersByTimeAsync(15000);
+      const scope = await scopePromise;
+
+      expect(getStaffTeams).toHaveBeenCalledTimes(1);
+      expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+      expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledWith({ timeoutMs: 15000 });
+      expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+      expect(scope.staffTeamsPartial).toBe(false);
+    } finally {
+      vi.mocked(getStaffTeams).mockReset();
+      vi.useRealTimers();
+    }
+  });
+
+  it('lets a complete HTTP hedge clear a partial cold SDK result', async () => {
+    vi.useFakeTimers();
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
+    vi.mocked(getStaffTeams).mockImplementation(() => new Promise((resolve) => {
+      setTimeout(() => resolve({
+        teams: [],
+        isPartial: true
+      } as any), 3000);
+    }));
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockImplementation(() => new Promise((resolve) => {
+      setTimeout(() => resolve({
+        teams: [{ id: 'team-owned', name: 'Vipers', active: true }],
+        isPartial: false
+      }), 1000);
+    }));
+
+    try {
+      const scopePromise = loadParentScheduleScope(coachUser);
+      await vi.advanceTimersByTimeAsync(6000);
+      const scope = await scopePromise;
+
+      expect(getStaffTeams).toHaveBeenCalledTimes(1);
+      expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+      expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+      expect(scope.staffTeamsPartial).toBe(false);
+      expect(scope.isPartial).toBe(false);
+    } finally {
+      vi.mocked(getStaffTeams).mockReset();
+      vi.useRealTimers();
+    }
+  });
+
   it('marks parent scope partial when the authoritative staff-team read fails', async () => {
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: ['team-owned'] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
-    vi.mocked(getStaffTeams).mockRejectedValueOnce(new Error('network unavailable'));
+    vi.mocked(getStaffTeams)
+      .mockRejectedValueOnce(new Error('network unavailable'))
+      .mockRejectedValueOnce(new Error('network unavailable'));
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockRejectedValue(new Error('authenticated HTTP unavailable'));
 
     const scope = await loadParentScheduleScope(coachUser);
 
     expect(scope.isPartial).toBe(true);
     expect(scope.staffTeamsPartial).toBe(true);
     expect(scope.staffTeams).toEqual([]);
+    expect(getStaffTeams).toHaveBeenCalledTimes(2);
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries partial staff discovery with coach links from the freshly loaded profile', async () => {
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
+    vi.mocked(getStaffTeams)
+      .mockResolvedValueOnce({ teams: [], isPartial: true } as any)
+      .mockResolvedValueOnce({
+        teams: [{ id: 'team-owned', name: 'Vipers', active: true }],
+        isPartial: false
+      } as any);
+
+    const scope = await loadParentScheduleScope(coachUser);
+
+    expect(getStaffTeams).toHaveBeenNthCalledWith(1, {
+      userId: 'coach-1',
+      email: 'coach@example.com',
+      coachTeamIds: []
+    });
+    expect(getStaffTeams).toHaveBeenNthCalledWith(2, {
+      userId: 'coach-1',
+      email: 'coach@example.com',
+      coachTeamIds: ['team-owned']
+    });
+    expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
+  });
+
+  it('merges the authoritative web callable result with the authenticated HTTP projection', async () => {
+    const previousFetch = globalThis.fetch;
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'team-owned', name: 'Vipers', ownerId: 'coach-1', active: true }],
+      isPartial: false
+    } as any);
+    const fetchMock = vi.fn();
+    (globalThis as any).fetch = fetchMock;
+
+    try {
+      const scope = await loadParentScheduleScope(coachUser);
+
+      expect(getStaffTeams).toHaveBeenCalledTimes(1);
+      expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+      expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+      expect(scope.staffTeamsPartial).toBe(false);
+      expect(scope.isPartial).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it('falls back to the authenticated HTTP callable when the web SDK callable fails', async () => {
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
+    vi.mocked(getStaffTeams).mockRejectedValueOnce(new Error('SDK callable unavailable'));
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValueOnce({
+      teams: [{ id: 'team-owned', name: 'Vipers', ownerId: 'coach-1', active: true }],
+      isPartial: false
+    });
+
+    const scope = await loadParentScheduleScope(coachUser);
+
+    expect(getStaffTeams).toHaveBeenCalledTimes(1);
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+    expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
+  });
+
+  it('keeps an HTTP-authorized coach team when the initial user lacks the freshly loaded coach link', async () => {
+    const staleCoachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-coached'] } as any);
+    vi.mocked(getStaffTeams).mockRejectedValueOnce(new Error('SDK callable unavailable'));
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValueOnce({
+      teams: [{ id: 'team-coached', name: 'Coach Bears', active: true }],
+      isPartial: false
+    });
+
+    const scope = await loadParentScheduleScope(staleCoachUser);
+
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+    expect(scope.staffTeams).toEqual([{ teamId: 'team-coached', teamName: 'Coach Bears' }]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
+  });
+
+  it('verifies an empty web SDK result over authenticated HTTP for a known staff account', async () => {
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValueOnce({
+      teams: [{ id: 'team-coached', name: 'Coach Bears', active: true }],
+      isPartial: false
+    });
+
+    const scope = await loadParentScheduleScope(coachUser);
+
+    expect(getStaffTeams).toHaveBeenCalledTimes(1);
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+    expect(scope.staffTeams).toEqual([{ teamId: 'team-coached', teamName: 'Coach Bears' }]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
+  });
+
+  it('merges the authenticated HTTP result when a nonempty web result omits a declared coach team', async () => {
+    const coachUser = {
+      uid: 'coach-1',
+      email: 'coach@example.com',
+      roles: ['coach'],
+      coachOf: ['team-direct', 'team-declared']
+    } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [],
+      coachOf: ['team-direct', 'team-declared']
+    } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'team-direct', name: 'Direct Team', active: true }],
+      isPartial: false
+    } as any);
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValueOnce({
+      teams: [
+        { id: 'team-direct', name: 'Direct Team', active: true },
+        { id: 'team-declared', name: 'Declared Team', active: true }
+      ],
+      isPartial: false
+    });
+
+    const scope = await loadParentScheduleScope(coachUser);
+
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+    expect(scope.staffTeams).toEqual([
+      { teamId: 'team-direct', teamName: 'Direct Team' },
+      { teamId: 'team-declared', teamName: 'Declared Team' }
+    ]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
+  });
+
+  it('merges an HTTP-authorized team omitted from a nonempty web result without profile role hints', async () => {
+    const staffUser = { uid: 'staff-1', email: 'staff@example.com', roles: ['staff'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'team-visible', name: 'Visible Team', active: true }],
+      isPartial: false
+    } as any);
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValueOnce({
+      teams: [
+        { id: 'team-visible', name: 'Visible Team', active: true },
+        { id: 'team-authoritative', name: 'Authoritative Team', active: true }
+      ],
+      isPartial: false
+    });
+
+    const scope = await loadParentScheduleScope(staffUser);
+
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+    expect(scope.staffTeams).toEqual([
+      { teamId: 'team-visible', teamName: 'Visible Team' },
+      { teamId: 'team-authoritative', teamName: 'Authoritative Team' }
+    ]);
+    expect(scope.staffTeamsPartial).toBe(false);
+  });
+
+  it('retries a transient HTTP verification before accepting a nonempty incomplete web result', async () => {
+    const staffUser = { uid: 'staff-1', email: 'staff@example.com', roles: ['staff'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'team-visible', name: 'Visible Team', active: true }],
+      isPartial: false
+    } as any);
+    vi.mocked(loadManagedTeamsFromNativeCallable)
+      .mockRejectedValueOnce(new Error('temporary function cold start'))
+      .mockResolvedValueOnce({
+        teams: [
+          { id: 'team-visible', name: 'Visible Team', active: true },
+          { id: 'team-authoritative', name: 'Authoritative Team', active: true }
+        ],
+        isPartial: false
+      });
+
+    const scope = await loadParentScheduleScope(staffUser);
+
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(2);
+    expect(scope.staffTeams).toEqual([
+      { teamId: 'team-visible', teamName: 'Visible Team' },
+      { teamId: 'team-authoritative', teamName: 'Authoritative Team' }
+    ]);
+    expect(scope.staffTeamsPartial).toBe(false);
+  });
+
+  it('retries an empty partial HTTP verification before returning staff scope', async () => {
+    const staffUser = { uid: 'staff-1', email: 'staff@example.com', roles: ['staff'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'team-visible', name: 'Visible Team', active: true }],
+      isPartial: false
+    } as any);
+    vi.mocked(loadManagedTeamsFromNativeCallable)
+      .mockResolvedValueOnce({ teams: [], isPartial: true })
+      .mockResolvedValueOnce({
+        teams: [
+          { id: 'team-visible', name: 'Visible Team', active: true },
+          { id: 'team-authoritative', name: 'Authoritative Team', active: true }
+        ],
+        isPartial: false
+      });
+
+    const scope = await loadParentScheduleScope(staffUser);
+
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(2);
+    expect(scope.staffTeams).toEqual([
+      { teamId: 'team-visible', teamName: 'Visible Team' },
+      { teamId: 'team-authoritative', teamName: 'Authoritative Team' }
+    ]);
+    expect(scope.staffTeamsPartial).toBe(false);
+  });
+
+  it('unions different partial HTTP team subsets across retries', async () => {
+    const staffUser = { uid: 'staff-1', email: 'staff@example.com', roles: ['staff'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'team-visible', name: 'Visible Team', active: true }],
+      isPartial: false
+    } as any);
+    vi.mocked(loadManagedTeamsFromNativeCallable)
+      .mockResolvedValueOnce({
+        teams: [{ id: 'team-first', name: 'First Partial Team', active: true }],
+        isPartial: true
+      })
+      .mockResolvedValueOnce({
+        teams: [{ id: 'team-second', name: 'Second Partial Team', active: true }],
+        isPartial: true
+      });
+
+    const scope = await loadParentScheduleScope(staffUser);
+
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(2);
+    expect(scope.staffTeams).toEqual([
+      { teamId: 'team-visible', teamName: 'Visible Team' },
+      { teamId: 'team-first', teamName: 'First Partial Team' },
+      { teamId: 'team-second', teamName: 'Second Partial Team' }
+    ]);
+    expect(scope.staffTeamsPartial).toBe(true);
+    expect(scope.isPartial).toBe(true);
+  });
+
+  it('confirms an empty web SDK result even when the account lacks staff access signals', async () => {
+    const parentUser = { uid: 'parent-1', email: 'parent@example.com', roles: ['parent'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValueOnce({ teams: [], isPartial: false });
+
+    const scope = await loadParentScheduleScope(parentUser);
+
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+    expect(scope.staffTeams).toEqual([]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
+  });
+
+  it('retries partial owner and admin discovery when the profile has no coach links', async () => {
+    const staffUser = { uid: 'staff-1', email: 'staff@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
+    vi.mocked(getStaffTeams)
+      .mockResolvedValueOnce({ teams: [], isPartial: true } as any)
+      .mockResolvedValueOnce({
+        teams: [
+          { id: 'team-owned', name: 'Owned Team', ownerId: 'staff-1', active: true },
+          { id: 'team-admin', name: 'Admin Team', adminEmails: ['staff@example.com'], active: true }
+        ],
+        isPartial: false
+      } as any);
+
+    const scope = await loadParentScheduleScope(staffUser);
+
+    expect(getStaffTeams).toHaveBeenCalledTimes(2);
+    expect(getStaffTeams).toHaveBeenNthCalledWith(2, {
+      userId: 'staff-1',
+      email: 'staff@example.com',
+      coachTeamIds: []
+    });
+    expect(scope.staffTeams).toEqual([
+      { teamId: 'team-owned', teamName: 'Owned Team' },
+      { teamId: 'team-admin', teamName: 'Admin Team' }
+    ]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
+  });
+
+  it('clears the staff partial flag when a rejected discovery succeeds on retry', async () => {
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
+    vi.mocked(getStaffTeams)
+      .mockRejectedValueOnce(new Error('initial Firebase read unavailable'))
+      .mockResolvedValueOnce({
+        teams: [{ id: 'team-owned', name: 'Vipers', active: true }],
+        isPartial: false
+      } as any);
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockRejectedValueOnce(new Error('initial HTTP read unavailable'));
+
+    const scope = await loadParentScheduleScope(coachUser);
+
+    expect(getStaffTeams).toHaveBeenCalledTimes(2);
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(2);
+    expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
   });
 
   it('marks web staff scope partial when a coach-team document read is incomplete', async () => {
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: ['team-owned', 'team-missing'] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: coachUser.coachOf } as any);
-    vi.mocked(getStaffTeams).mockResolvedValueOnce({
+    vi.mocked(getStaffTeams).mockResolvedValue({
       teams: [{ id: 'team-owned', name: 'Vipers', ownerId: 'coach-1', active: true }],
       isPartial: true
     } as any);
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValue({ teams: [], isPartial: true });
 
     const scope = await loadParentScheduleScope(coachUser);
 
     expect(scope.isPartial).toBe(true);
     expect(scope.staffTeamsPartial).toBe(true);
     expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+    expect(getStaffTeams).toHaveBeenCalledTimes(2);
   });
 
   it('keeps repeated direct schedule refreshes partial when staff discovery fails', async () => {
@@ -528,6 +1354,7 @@ describe('parent schedule child scope', () => {
     vi.mocked(getStaffTeams)
       .mockRejectedValueOnce(new Error('network unavailable'))
       .mockRejectedValueOnce(new Error('network unavailable'));
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockRejectedValue(new Error('authenticated HTTP unavailable'));
 
     const firstRefresh = await loadParentSchedule(coachUser, { hydrateDetails: false, expandStaffPlayers: false });
     const secondRefresh = await loadParentSchedule(coachUser, { hydrateDetails: false, expandStaffPlayers: false });
@@ -537,34 +1364,21 @@ describe('parent schedule child scope', () => {
     expect(getStaffTeams).toHaveBeenCalledTimes(2);
   });
 
-  it('marks native staff scope partial when one REST fallback read fails', async () => {
+  it('preserves native staff teams when server-filtered discovery is partial', async () => {
     const previousWindow = (globalThis as any).window;
-    const previousFetch = globalThis.fetch;
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: ['team-owned'] } as any;
     (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
-    vi.mocked(getStaffTeams).mockRejectedValueOnce(new Error('native Firebase unavailable'));
-    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
-    (globalThis as any).fetch = vi.fn(async (_input: any, init?: RequestInit) => {
-      const body = init?.body ? JSON.parse(String(init.body)) : null;
-      if (body?.structuredQuery?.where?.fieldFilter?.field?.fieldPath === 'adminEmails') {
-        return {
-          ok: false,
-          status: 503,
-          json: async () => ({ error: { message: 'temporarily unavailable' } })
-        } as any;
-      }
-      return {
-        ok: true,
-        status: 200,
-        json: async () => body ? [] : ({
-          name: 'projects/allplays-test/databases/(default)/documents/teams/team-owned',
-          fields: {
-            name: { stringValue: 'Vipers' },
-            active: { booleanValue: true }
-          }
-        })
-      } as any;
+    vi.mocked(getStaffTeams).mockRejectedValue(new Error('native Firebase unavailable'));
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValue({
+      teams: [{
+        id: 'team-owned',
+        name: 'Vipers',
+        ownerEmail: 'former@example.com',
+        ownerEmailLower: 'coach@example.com',
+        active: true
+      }],
+      isPartial: true
     });
 
     try {
@@ -575,7 +1389,6 @@ describe('parent schedule child scope', () => {
       expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
     } finally {
       (globalThis as any).window = previousWindow;
-      globalThis.fetch = previousFetch;
     }
   });
 });
@@ -1306,6 +2119,8 @@ describe('scheduled practice writes', () => {
 });
 
 describe('parent game route resolution', () => {
+  const routeUser = { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: [] };
+
   beforeEach(() => {
     (globalThis as any).window = globalThis as any;
     vi.clearAllMocks();
@@ -1382,6 +2197,272 @@ describe('parent game route resolution', () => {
     expect(getGames).not.toHaveBeenCalled();
     expect(getPracticeSessions).not.toHaveBeenCalled();
     expect(fetchAndParseCalendar).not.toHaveBeenCalled();
+  });
+
+  it('resolves an opaque shared-game route through its exact bounded document path', async () => {
+    const sharedGamePath = `organizations/${'o'.repeat(90)}/sharedGames/${'g'.repeat(90)}`;
+    const opaqueGameId = 'sharedh_bounded-route-id';
+    vi.mocked(getGame).mockImplementation(async (teamId: string, gameId: string) => {
+      if (teamId === 'team-bravo' && gameId === `shared_${encodeURIComponent(sharedGamePath)}`) {
+        return { id: gameId, type: 'game', date: new Date('2026-06-25T18:00:00.000Z') };
+      }
+      return null;
+    });
+
+    const result = await resolveParentGameRoute(
+      routeUser,
+      opaqueGameId,
+      { expandStaffPlayers: false, targetTeamId: 'team-bravo', sharedGamePath }
+    );
+
+    expect(result).toEqual({
+      teamId: 'team-bravo',
+      eventId: opaqueGameId,
+      childId: 'child-2'
+    });
+    expect(getGame).toHaveBeenCalledTimes(1);
+    expect(getGame).toHaveBeenCalledWith('team-bravo', `shared_${encodeURIComponent(sharedGamePath)}`);
+  });
+
+  it('hydrates opaque shared-game details through the reversible data identity and restores the route id', async () => {
+    const sharedGamePath = `organizations/${'o'.repeat(90)}/sharedGames/${'g'.repeat(90)}`;
+    const opaqueGameId = 'sharedh_bounded-route-id';
+    const reversibleGameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false });
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-bravo', name: 'Bravo', active: true });
+    vi.mocked(getGame).mockImplementation(async (teamId: string, gameId: string) => (
+      teamId === 'team-bravo' && gameId === reversibleGameId
+        ? { id: gameId, type: 'game', date: new Date('2026-06-25T18:00:00.000Z') }
+        : teamId === 'team-bravo' && gameId === 'source-game-1'
+          ? { id: gameId, type: 'game', title: 'Colliding local game', date: new Date('2026-06-26T18:00:00.000Z') }
+          : null
+    ));
+    vi.mocked(getMyRsvps).mockResolvedValue([]);
+
+    const result = await loadParentScheduleEventDetail(
+      routeUser,
+      { teamId: 'team-bravo', eventId: opaqueGameId, sharedGamePath }
+    );
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0].id).toBe(opaqueGameId);
+    expect(getMyRsvps).toHaveBeenCalledWith('team-bravo', reversibleGameId, 'parent-1', ['child-2']);
+  });
+
+  it('opens a shared notification route through the recipient team without source-team access', async () => {
+    const sharedGamePath = 'organizations/org-1/sharedGames/shared-1';
+    const reversibleGameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [
+        { teamId: 'team-bravo', playerId: 'child-2', playerName: 'Blake' }
+      ]
+    } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false });
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => (
+      teamId === 'team-bravo'
+        ? { id: 'team-bravo', name: 'Bravo', active: true }
+        : null
+    ) as any);
+    vi.mocked(getGame).mockImplementation(async (teamId: string, gameId: string) => (
+      teamId === 'team-bravo' && gameId === reversibleGameId
+        ? { id: gameId, type: 'game', date: new Date('2026-06-25T18:00:00.000Z') }
+        : null
+    ));
+    vi.mocked(getMyRsvps).mockResolvedValue([]);
+
+    const result = await loadParentScheduleEventDetail(
+      routeUser,
+      { teamId: 'team-bravo', eventId: reversibleGameId, sharedGamePath }
+    );
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toMatchObject({ id: reversibleGameId, teamId: 'team-bravo' });
+    expect(getGame).toHaveBeenCalledTimes(1);
+    expect(getGame).toHaveBeenCalledWith('team-bravo', reversibleGameId);
+    expect(getGame).not.toHaveBeenCalledWith('team-bravo', 'source-game-1');
+    expect(getGame).not.toHaveBeenCalledWith('team-alpha', expect.anything());
+  });
+});
+
+describe('delegated schedule event authorization', () => {
+  const delegatedUser = { uid: 'helper-1', email: 'helper@example.com', roles: [] } as any;
+  const scheduledGame = {
+    id: 'game-1',
+    type: 'game',
+    date: new Date('2026-08-15T18:00:00.000Z'),
+    opponent: 'Wolves',
+    status: 'scheduled'
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(getGame).mockResolvedValue(scheduledGame as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+  });
+
+  it('loads only the requested game for an exact scorekeeping projection', async () => {
+    vi.mocked(getDelegatedTeamContext).mockResolvedValue({
+      id: 'team-1',
+      name: 'Falcons',
+      delegatedAccess: { scorekeeping: true }
+    } as any);
+
+    const result = await loadParentScheduleEventDetail(delegatedUser, {
+      teamId: 'team-1',
+      eventId: 'game-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(getDelegatedTeamContext).toHaveBeenCalledWith('team-1', 'game-1');
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(getGames).not.toHaveBeenCalled();
+    expect(result.events).toEqual([
+      expect.objectContaining({ id: 'game-1', teamId: 'team-1', opponent: 'Wolves' })
+    ]);
+  });
+
+  it.each(['media', 'streaming'] as const)(
+    'does not promote a %s-only projection to schedule access',
+    async (capability) => {
+      vi.mocked(getDelegatedTeamContext).mockResolvedValue({
+        id: 'team-1',
+        name: 'Falcons',
+        delegatedAccess: { [capability]: true }
+      } as any);
+
+      await expect(loadParentScheduleEventDetail(delegatedUser, {
+        teamId: 'team-1',
+        eventId: 'game-1',
+        hydrateDetails: false,
+        expandStaffPlayers: false
+      })).rejects.toThrow('You do not have permission to load this team schedule.');
+
+      expect(getGame).not.toHaveBeenCalled();
+      expect(getTeam).not.toHaveBeenCalled();
+    }
+  );
+
+  it('loads a completed game for an exact selected-videographer projection', async () => {
+    vi.mocked(getDelegatedTeamContext).mockResolvedValue({
+      id: 'team-1',
+      name: 'Falcons',
+      delegatedAccess: { videography: true, modes: { videography: 'selected' } },
+      teamPermissions: { videography: { mode: 'selected', memberIds: ['helper-1'] } }
+    } as any);
+    vi.mocked(getGame).mockResolvedValue({
+      ...scheduledGame,
+      status: 'completed',
+      liveStatus: 'completed',
+      replayVideo: {
+        provider: 'youtube',
+        videoId: 'PK1HyC37doc',
+        embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+        publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        status: 'ready'
+      }
+    } as any);
+
+    const result = await loadParentScheduleEventDetail(delegatedUser, {
+      teamId: 'team-1',
+      eventId: 'game-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(result.events).toEqual([
+      expect.objectContaining({
+        id: 'game-1',
+        canManageReplayVideo: true,
+        isTeamStaff: false,
+        status: 'completed',
+        replayVideo: expect.objectContaining({ videoId: 'PK1HyC37doc' })
+      })
+    ]);
+  });
+
+  it('projects delegated-full replay cleanup access without broad team-admin authority', async () => {
+    vi.mocked(getDelegatedTeamContext).mockResolvedValue({
+      id: 'team-1',
+      name: 'Falcons',
+      delegatedAccess: { full: true }
+    } as any);
+    vi.mocked(getGame).mockResolvedValue({
+      ...scheduledGame,
+      liveStatus: 'scheduled',
+      replayVideoPublicUrl: 'https://example.com/legacy-replay'
+    } as any);
+
+    const result = await loadParentScheduleEventDetail(delegatedUser, {
+      teamId: 'team-1',
+      eventId: 'game-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(result.events).toEqual([
+      expect.objectContaining({
+        id: 'game-1',
+        status: 'scheduled',
+        canManageReplayVideo: true,
+        canManageReplayVideoAsFullManager: true,
+        isTeamAdmin: false,
+        rawReplayState: { replayVideoPublicUrl: 'https://example.com/legacy-replay' }
+      })
+    ]);
+  });
+
+  it('does not use delegated access for an unscoped team schedule request', async () => {
+    vi.mocked(getDelegatedTeamContext).mockResolvedValue({
+      id: 'team-1',
+      name: 'Falcons',
+      delegatedAccess: { scorekeeping: true }
+    } as any);
+
+    await expect(loadParentSchedule(delegatedUser, {
+      targetTeamId: 'team-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    })).rejects.toThrow('You do not have permission to load this team schedule.');
+
+    expect(getDelegatedTeamContext).not.toHaveBeenCalled();
+    expect(getGames).not.toHaveBeenCalled();
+  });
+
+  it('rejects a mismatched team projection before loading the requested game', async () => {
+    vi.mocked(getDelegatedTeamContext).mockResolvedValue({
+      id: 'team-2',
+      name: 'Other Team',
+      delegatedAccess: { scorekeeping: true }
+    } as any);
+
+    await expect(loadParentScheduleEventDetail(delegatedUser, {
+      teamId: 'team-1',
+      eventId: 'game-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    })).rejects.toThrow('You do not have permission to load this team schedule.');
+
+    expect(getGame).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the exact-game projection is revoked or terminal', async () => {
+    vi.mocked(getDelegatedTeamContext).mockRejectedValue(
+      Object.assign(new Error('No current delegated team access was found.'), { code: 'permission-denied' })
+    );
+
+    await expect(loadParentScheduleEventDetail(delegatedUser, {
+      teamId: 'team-1',
+      eventId: 'game-finished',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    })).rejects.toThrow('You do not have permission to load this team schedule.');
+
+    expect(getDelegatedTeamContext).toHaveBeenCalledWith('team-1', 'game-finished');
+    expect(getGame).not.toHaveBeenCalled();
   });
 });
 
@@ -1607,6 +2688,110 @@ describe('parent schedule detail hydration', () => {
     expect(listRideOffersForEvent).toHaveBeenCalledTimes(1);
     expect(getAssignmentClaims).toHaveBeenCalledTimes(1);
   });
+
+  it('rejects a parent detail load when its critical RSVP read fails', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Avery', teamName: 'Bears' }]
+    } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', active: true } as any);
+    vi.mocked(getGame).mockResolvedValue({
+      id: 'game-1',
+      type: 'game',
+      date: new Date('2026-08-15T18:00:00.000Z'),
+      opponent: 'Wolves'
+    } as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('player-1', { id: 'player-1', name: 'Avery', active: true }) as any);
+    vi.mocked(getMyRsvps).mockRejectedValue(new Error('parent RSVP read failed'));
+
+    await expect(loadParentScheduleEventDetail(user, { teamId: 'team-1', eventId: 'game-1' }))
+      .rejects.toThrow('parent RSVP read failed');
+    expect(listRideOffersForEvent).not.toHaveBeenCalled();
+    expect(getAssignmentClaims).not.toHaveBeenCalled();
+  });
+
+  it('rejects a staff detail load when its critical RSVP read fails', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'team-1', name: 'Bears', ownerId: 'parent-1', active: true }],
+      isPartial: false
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'parent-1', active: true } as any);
+    vi.mocked(getGame).mockResolvedValue({
+      id: 'game-1',
+      type: 'game',
+      date: new Date('2026-08-15T18:00:00.000Z'),
+      opponent: 'Wolves'
+    } as any);
+    vi.mocked(getRsvps).mockRejectedValue(new Error('staff RSVP read failed'));
+
+    await expect(loadParentScheduleEventDetail(user, { teamId: 'team-1', eventId: 'game-1' }))
+      .rejects.toThrow('staff RSVP read failed');
+    expect(listRideOffersForEvent).not.toHaveBeenCalled();
+    expect(getAssignmentClaims).not.toHaveBeenCalled();
+  });
+
+  it('keeps optional reads off the detail critical path and shares their in-flight requests', async () => {
+    const cached = new Map<string, Promise<unknown>>();
+    vi.mocked(loadCachedAppData).mockImplementation((key: string, loader: () => Promise<unknown>) => {
+      if (!cached.has(key)) cached.set(key, loader());
+      return cached.get(key) as Promise<unknown>;
+    });
+    let resolveOffers!: (value: any[]) => void;
+    let resolveClaims!: (value: Record<string, unknown>) => void;
+    vi.mocked(listRideOffersForEvent).mockReturnValue(new Promise((resolve) => { resolveOffers = resolve; }) as any);
+    vi.mocked(getAssignmentClaims).mockReturnValue(new Promise((resolve) => { resolveClaims = resolve; }) as any);
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Avery', teamName: 'Bears' }]
+    } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', active: true } as any);
+    vi.mocked(getGame).mockResolvedValue({
+      id: 'game-1',
+      type: 'game',
+      date: new Date('2026-08-15T18:00:00.000Z'),
+      opponent: 'Wolves',
+      assignments: [{ role: 'Scoreboard', claimable: true, value: '' }]
+    } as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      const path = String(ref?.path || '');
+      if (path.endsWith('/players/player-1')) {
+        return playerSnapshot('player-1', { id: 'player-1', name: 'Avery', active: true }) as any;
+      }
+      if (path.endsWith('/rsvpNotes/parent-1__player-1')) {
+        return playerSnapshot('parent-1__player-1', { note: 'Will be there.' }) as any;
+      }
+      return playerSnapshot('', null) as any;
+    });
+
+    const detail = await loadParentScheduleEventDetail(user, { teamId: 'team-1', eventId: 'game-1' });
+
+    expect(detail.events[0]).toMatchObject({ myRsvp: 'going', myRsvpNote: 'Will be there.' });
+    expect(listRideOffersForEvent).not.toHaveBeenCalled();
+    expect(getAssignmentClaims).not.toHaveBeenCalled();
+
+    const optionalHydration = hydrateParentScheduleEventOptionalDetails(detail);
+    const rideshareLoad = loadParentScheduleRideOffers(detail.events[0]);
+    const assignmentsLoad = loadParentScheduleAssignments(detail.events[0]);
+
+    expect(listRideOffersForEvent).toHaveBeenCalledTimes(1);
+    expect(getAssignmentClaims).toHaveBeenCalledTimes(1);
+
+    resolveOffers([{ id: 'offer-1', seatCapacity: 3, seatCountConfirmed: 1, requests: [] }]);
+    await expect(rideshareLoad).resolves.toEqual([expect.objectContaining({ id: 'offer-1' })]);
+    resolveClaims({ scoreboard: { claimedByUserId: 'parent-2' } });
+    await expect(assignmentsLoad).resolves.toEqual(expect.any(Array));
+    const hydratedDetail = await optionalHydration;
+
+    expect(listRideOffersForEvent).toHaveBeenCalledTimes(1);
+    expect(getAssignmentClaims).toHaveBeenCalledTimes(1);
+    expect(hydratedDetail).not.toBe(detail);
+    expect(hydratedDetail.events[0]).not.toBe(detail.events[0]);
+    expect(hydratedDetail.events[0]).toMatchObject({
+      assignmentClaimsHydrated: true
+    });
+    expect(detail.events[0].assignmentClaimsHydrated).not.toBe(true);
+  });
 });
 
 describe('official assignments app service', () => {
@@ -1615,18 +2800,12 @@ describe('official assignments app service', () => {
   const pastDate = new Date(Date.now() - 86400000).toISOString();
 
   beforeEach(() => {
+    vi.unstubAllGlobals();
     vi.clearAllMocks();
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+    vi.mocked(getNativeAuthIdToken).mockRejectedValue(new Error('HTTP projection unavailable in browser fallback tests'));
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentTeamIds: ['team-alpha'], phone: '(555) 123-4567' } as any);
-    vi.mocked(getDocs).mockImplementation(async (request: any) => {
-      const filter = request?.filters?.[0];
-      if (filter?.field === 'email' && filter?.value === 'ref@example.com') {
-        return { docs: [{ ref: { path: 'teams/team-alpha/officials/ref-1' } }] } as any;
-      }
-      if (filter?.field === 'phone' && filter?.value === '5551234567') {
-        return { docs: [{ ref: { path: 'teams/team-alpha/officials/ref-1' } }] } as any;
-      }
-      return { docs: [] } as any;
-    });
+    vi.mocked(getOfficialLinkedTeamIds).mockResolvedValue({ teamIds: ['team-alpha'], isPartial: false });
     vi.mocked(getTeam).mockResolvedValue({ id: 'team-alpha', name: 'Alpha FC', ownerId: 'coach-1', adminEmails: [] } as any);
     vi.mocked(getGames).mockResolvedValue([
       {
@@ -1643,6 +2822,7 @@ describe('official assignments app service', () => {
       {
         id: 'game-past',
         date: pastDate,
+        liveStatus: 'live',
         opponent: 'Past',
         location: 'Old Field',
         officiatingSlots: [{ id: 'past', position: 'Center Referee', officialEmail: 'ref@example.com', status: 'pending' }]
@@ -1656,6 +2836,10 @@ describe('official assignments app service', () => {
         officiatingSlots: [{ id: 'cancelled', position: 'Center Referee', officialEmail: 'ref@example.com', status: 'pending' }]
       }
     ] as any);
+  });
+
+  afterEach(() => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
   });
 
   it('loads upcoming assigned and eligible open slots from linked official teams', async () => {
@@ -1698,23 +2882,362 @@ describe('official assignments app service', () => {
     expect(range.startDate.getTime()).toBeGreaterThan(Date.now() - 48 * 60 * 60 * 1000);
   });
 
-  it('hides officials access when no official link matches the signed-in user', async () => {
-    vi.mocked(getDocs).mockResolvedValue({ docs: [] } as any);
+  it('keeps recently started assigned and open slots visible while the game is in progress', async () => {
+    const recentStartDate = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    vi.mocked(getGames).mockResolvedValue([{
+      id: 'game-in-progress',
+      date: recentStartDate,
+      opponent: 'Tigers',
+      officiatingSelfAssignmentEnabled: true,
+      officiatingSlots: [
+        { id: 'center', officialEmail: 'ref@example.com', status: 'accepted' },
+        { id: 'line', status: 'open' }
+      ]
+    }] as any);
 
     const result = await loadOfficialAssignments(user);
 
-    expect(result).toEqual({ hasAccess: false, teamIds: [], teamCount: 0, assignments: [] });
+    expect(result.assignments.map(({ kind, gameId, slotId }) => ({ kind, gameId, slotId }))).toEqual([
+      { kind: 'assigned', gameId: 'game-in-progress', slotId: 'center' },
+      { kind: 'open', gameId: 'game-in-progress', slotId: 'line' }
+    ]);
+  });
+
+  it('loads native linked-team assignments from the authenticated bounded callable projection', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 200,
+      data: {
+        result: {
+          teamIds: ['team-alpha'],
+          teamCount: 1,
+          isPartial: false,
+          assignmentsComplete: true,
+          teams: [{ id: 'team-alpha', name: 'Alpha FC' }],
+          assignments: [{
+            kind: 'assigned',
+            teamId: 'team-alpha',
+            teamName: 'Alpha FC',
+            gameId: 'game-assigned',
+            slotId: 'center',
+            position: 'Center Referee',
+            status: 'pending',
+            opponent: 'Tigers',
+            location: 'Field 2',
+            date: futureDate,
+            canClaim: false,
+            scheduleReviewRequired: false
+          }]
+        }
+      },
+      headers: {},
+      url: ''
+    });
+
+    const result = await loadOfficialAssignments(user);
+
+    expect(result).toEqual({
+      hasAccess: true,
+      teamIds: ['team-alpha'],
+      teamCount: 1,
+      isPartial: false,
+      assignments: [{
+        kind: 'assigned',
+        teamId: 'team-alpha',
+        teamName: 'Alpha FC',
+        gameId: 'game-assigned',
+        slotId: 'center',
+        position: 'Center Referee',
+        status: 'pending',
+        opponent: 'Tigers',
+        location: 'Field 2',
+        date: new Date(futureDate),
+        canClaim: false,
+        scheduleReviewRequired: false
+      }]
+    });
+    expect(capacitorCoreMock.httpPost).toHaveBeenCalledWith(expect.objectContaining({
+      url: expect.stringContaining('listOfficialLinkedTeamIds'),
+      data: { data: { includeAssignments: true } },
+      headers: expect.objectContaining({ Authorization: 'Bearer native-token' })
+    }));
+    expect(getOfficialLinkedTeamIds).not.toHaveBeenCalled();
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(getGames).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps cold native official discovery separate from the shorter staff discovery timeout', async () => {
+    vi.useFakeTimers();
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    capacitorCoreMock.httpPost.mockImplementation(() => new Promise((resolve) => {
+      setTimeout(() => resolve({
+        status: 200,
+        data: {
+          result: {
+            teamIds: ['team-alpha'],
+            isPartial: false,
+            assignments: [],
+            assignmentsComplete: false
+          }
+        },
+        headers: {},
+        url: ''
+      }), 8000);
+    }));
+
+    try {
+      const accessPromise = loadOfficialAssignmentsAccess(user);
+      await vi.advanceTimersByTimeAsync(8000);
+
+      await expect(accessPromise).resolves.toEqual({
+        hasAccess: true,
+        teamIds: ['team-alpha'],
+        teamCount: 1,
+        isPartial: false
+      });
+      expect(capacitorCoreMock.httpPost).toHaveBeenCalledWith(expect.objectContaining({
+        connectTimeout: 12000,
+        readTimeout: 12000
+      }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('loads web linked-team assignments from the authenticated bounded HTTP projection', async () => {
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('web-token');
+    const sharedGamePath = 'tournaments/tournament-1/sharedGames/shared-assigned';
+    const gameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 200,
+      data: {
+        result: {
+          teamIds: ['team-alpha'],
+          teamCount: 1,
+          isPartial: false,
+          assignmentsComplete: true,
+          teams: [{ id: 'team-alpha', name: 'Alpha FC' }],
+          assignments: [{
+            kind: 'assigned',
+            teamId: 'team-alpha',
+            teamName: 'Alpha FC',
+            gameId,
+            sharedGamePath,
+            slotId: 'center',
+            position: 'Center Referee',
+            status: 'pending',
+            opponent: 'Tigers',
+            location: 'Field 2',
+            date: futureDate,
+            canClaim: false,
+            scheduleReviewRequired: false
+          }]
+        }
+      },
+      headers: {},
+      url: ''
+    });
+
+    const result = await loadOfficialAssignments(user, { teamId: 'team-alpha' });
+
+    expect(result).toEqual(expect.objectContaining({
+      hasAccess: true,
+      teamIds: ['team-alpha'],
+      isPartial: false,
+      assignments: [expect.objectContaining({ gameId, sharedGamePath, slotId: 'center' })]
+    }));
+    expect(capacitorCoreMock.httpPost).toHaveBeenCalledWith(expect.objectContaining({
+      data: { data: { includeAssignments: true, requestedTeamId: 'team-alpha' } },
+      headers: expect.objectContaining({ Authorization: 'Bearer web-token' })
+    }));
+    expect(getOfficialLinkedTeamIds).not.toHaveBeenCalled();
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(getGames).not.toHaveBeenCalled();
+
+    const [item] = result.assignments;
+    await respondToOfficialAssignmentItem(item, 'accepted');
+    await respondToOfficialAssignmentItem(item, 'declined');
+    await claimOfficialAssignmentItem({ ...item, kind: 'open', canClaim: true }, user);
+
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(1,
+      'respondToOfficiatingAssignment',
+      { teamId: 'team-alpha', gameId, sharedGamePath, slotId: 'center', status: 'accepted' },
+      { errorLabel: 'Officiating response' }
+    );
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(2,
+      'respondToOfficiatingAssignment',
+      { teamId: 'team-alpha', gameId, sharedGamePath, slotId: 'center', status: 'declined' },
+      { errorLabel: 'Officiating response' }
+    );
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(3,
+      'claimOpenOfficiatingSlot',
+      { teamId: 'team-alpha', gameId, sharedGamePath, slotId: 'center' },
+      { errorLabel: 'Officiating claim' }
+    );
+    expect(respondToOfficiatingAssignment).not.toHaveBeenCalled();
+    expect(claimOpenOfficiatingSlot).not.toHaveBeenCalled();
+  });
+
+  it('loads a requested native team and its shared assignments only from the complete callable projection', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    const sharedGamePath = 'tournaments/tournament-1/sharedGames/shared-requested';
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 200,
+      data: {
+        result: {
+          teamIds: ['team-requested'],
+          teamCount: 1,
+          isPartial: false,
+          assignmentsComplete: true,
+          teams: [{ id: 'team-requested', name: 'Requested FC' }],
+          assignments: [{
+            kind: 'open',
+            teamId: 'team-requested',
+            teamName: 'Requested FC',
+            gameId: `shared_${encodeURIComponent(sharedGamePath)}`,
+            sharedGamePath,
+            slotId: 'line',
+            position: 'Line Judge',
+            status: 'open',
+            opponent: 'Visitors',
+            location: 'Field 3',
+            date: futureDate,
+            canClaim: true,
+            scheduleReviewRequired: false
+          }]
+        }
+      },
+      headers: {},
+      url: ''
+    });
+
+    const result = await loadOfficialAssignments(user, { teamId: 'team-requested' });
+
+    expect(result).toEqual(expect.objectContaining({
+      hasAccess: true,
+      teamIds: ['team-requested'],
+      teamCount: 1,
+      isPartial: false,
+      assignments: [expect.objectContaining({ sharedGamePath, slotId: 'line' })]
+    }));
+    expect(capacitorCoreMock.httpPost).toHaveBeenCalledWith(expect.objectContaining({
+      data: { data: { includeAssignments: true, requestedTeamId: 'team-requested' } }
+    }));
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(getGames).not.toHaveBeenCalled();
+  });
+
+  it('marks a verified linked-team result partial when its games cannot load', async () => {
+    vi.mocked(getGames).mockRejectedValue(new Error('Schedule unavailable.'));
+
+    const result = await loadOfficialAssignments(user);
+
+    expect(result).toEqual({
+      hasAccess: true,
+      teamIds: ['team-alpha'],
+      teamCount: 1,
+      isPartial: true,
+      assignments: []
+    });
+  });
+
+  it('preserves known assignments but marks them partial when linked-team details cannot load', async () => {
+    vi.mocked(getTeam).mockRejectedValue(new Error('Team unavailable.'));
+
+    const result = await loadOfficialAssignments(user);
+
+    expect(result.hasAccess).toBe(true);
+    expect(result.isPartial).toBe(true);
+    expect(result.assignments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'assigned', gameId: 'game-assigned', teamName: 'Team' })
+    ]));
+  });
+
+  it('rejects an incomplete empty requested-team read instead of proving no access', async () => {
+    vi.mocked(getOfficialLinkedTeamIds).mockResolvedValue({ teamIds: [], isPartial: false });
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentTeamIds: [] } as any);
+    vi.mocked(getTeam).mockRejectedValue(new Error('Team unavailable.'));
+    vi.mocked(getGames).mockResolvedValue([]);
+
+    await expect(loadOfficialAssignments(user, { teamId: 'team-alpha' }))
+      .rejects.toThrow('Official assignment details could not be completely loaded. Try again.');
+  });
+
+  it('fails closed when native official discovery is unavailable despite an ordinary parent schedule link', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(getOfficialLinkedTeamIds).mockRejectedValue(new Error('Official callable is unavailable.'));
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-alpha', playerId: 'player-alpha', teamName: 'Alpha FC' }],
+      parentTeamIds: ['team-alpha']
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-alpha', name: 'Alpha FC', active: true } as any);
+    mocks.getDoc.mockResolvedValue(playerSnapshot('player-alpha', { name: 'Avery Ace', active: true }) as any);
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 404,
+      data: { error: { message: 'Function not found.' } },
+      headers: {},
+      url: ''
+    });
+
+    await expect(loadOfficialAssignmentsAccess(user)).rejects.toThrow('Function not found.');
+    expect(capacitorCoreMock.httpPost).toHaveBeenCalledWith(expect.objectContaining({
+      url: expect.stringContaining('listOfficialLinkedTeamIds'),
+      data: { data: { includeAssignments: false } }
+    }));
+    expect(getStaffTeams).not.toHaveBeenCalled();
+    expect(getTeam).not.toHaveBeenCalled();
+  });
+
+  it('rejects a native partial-empty schedule fallback when official discovery is unavailable', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(getOfficialLinkedTeamIds).mockRejectedValue(new Error('Official callable is unavailable.'));
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], parentTeamIds: [] } as any);
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 404,
+      data: { error: { message: 'Function not found.' } },
+      headers: {},
+      url: ''
+    });
+
+    await expect(loadOfficialAssignmentsAccess(user)).rejects.toThrow('Function not found.');
+  });
+
+  it('hides officials access when no official link matches the signed-in user', async () => {
+    vi.mocked(getOfficialLinkedTeamIds).mockResolvedValue({ teamIds: [], isPartial: false });
+
+    const result = await loadOfficialAssignments(user);
+
+    expect(result).toEqual({ hasAccess: false, teamIds: [], teamCount: 0, isPartial: false, assignments: [] });
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(getGames).not.toHaveBeenCalled();
+  });
+
+  it('surfaces discovery failure instead of treating a partial-empty result as no official access', async () => {
+    vi.mocked(getOfficialLinkedTeamIds).mockRejectedValue(new Error('Official team access could not be verified.'));
+
+    await expect(loadOfficialAssignments(user)).rejects.toThrow('Official team access could not be verified.');
     expect(getTeam).not.toHaveBeenCalled();
     expect(getGames).not.toHaveBeenCalled();
   });
 
   it('loads assigned slots for a requested team when official directory queries are denied', async () => {
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentTeamIds: [], phone: '(555) 123-4567' } as any);
-    vi.mocked(getDocs).mockRejectedValue(new Error('Missing or insufficient permissions.'));
+    vi.mocked(getOfficialLinkedTeamIds).mockRejectedValue(new Error('Official team access could not be verified.'));
 
     const result = await loadOfficialAssignments(user, { teamId: 'team-alpha' });
 
     expect(result.hasAccess).toBe(true);
+    expect(result.isPartial).toBe(true);
     expect(result.teamIds).toEqual(['team-alpha']);
     expect(result.assignments).toEqual([
       expect.objectContaining({
@@ -1732,7 +3255,7 @@ describe('official assignments app service', () => {
   });
 
   it('allows an eligible team participant to view requested-team open slots without an official directory link', async () => {
-    vi.mocked(getDocs).mockResolvedValue({ docs: [] } as any);
+    vi.mocked(getOfficialLinkedTeamIds).mockResolvedValue({ teamIds: [], isPartial: false });
     vi.mocked(getTeam).mockResolvedValue(null as any);
     vi.mocked(getGames).mockResolvedValue([
       {
@@ -1786,6 +3309,133 @@ describe('official assignments app service', () => {
     expect(respondToOfficiatingAssignment).toHaveBeenNthCalledWith(1, 'team-alpha', 'game-assigned', 'center', 'accepted');
     expect(respondToOfficiatingAssignment).toHaveBeenNthCalledWith(2, 'team-alpha', 'game-assigned', 'center', 'declined');
     expect(claimOpenOfficiatingSlot).toHaveBeenCalledWith('team-alpha', 'game-assigned', 'line', user);
+  });
+
+  it('routes native accept, decline, and claim actions through authenticated callables', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    const item = {
+      kind: 'assigned',
+      teamId: 'team-alpha',
+      teamName: 'Alpha FC',
+      gameId: 'game-assigned',
+      slotId: 'center',
+      position: 'Center Referee',
+      status: 'pending',
+      opponent: 'Tigers',
+      location: 'Field 2',
+      date: new Date(futureDate),
+      canClaim: false,
+      scheduleReviewRequired: false
+    } as any;
+
+    await respondToOfficialAssignmentItem(item, 'accepted');
+    await respondToOfficialAssignmentItem(item, 'declined');
+    await claimOfficialAssignmentItem({ ...item, kind: 'open', slotId: 'line', canClaim: true }, user);
+
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(1,
+      'respondToOfficiatingAssignment',
+      { teamId: 'team-alpha', gameId: 'game-assigned', slotId: 'center', status: 'accepted' },
+      { errorLabel: 'Officiating response' }
+    );
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(2,
+      'respondToOfficiatingAssignment',
+      { teamId: 'team-alpha', gameId: 'game-assigned', slotId: 'center', status: 'declined' },
+      { errorLabel: 'Officiating response' }
+    );
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(3,
+      'claimOpenOfficiatingSlot',
+      { teamId: 'team-alpha', gameId: 'game-assigned', slotId: 'line' },
+      { errorLabel: 'Officiating claim' }
+    );
+    expect(respondToOfficiatingAssignment).not.toHaveBeenCalled();
+    expect(claimOpenOfficiatingSlot).not.toHaveBeenCalled();
+  });
+
+  it('preserves a bounded shared-game action mapping through native projection and writes', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    const sharedGamePath = `organizations/${'o'.repeat(90)}/sharedGames/${'g'.repeat(90)}`;
+    const gameId = `sharedh_${'a'.repeat(43)}`;
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 200,
+      data: {
+        result: {
+          teamIds: ['team-alpha'],
+          teamCount: 1,
+          isPartial: false,
+          assignmentsComplete: true,
+          assignments: [{
+            kind: 'assigned',
+            teamId: 'team-alpha',
+            teamName: 'Alpha FC',
+            gameId,
+            sharedGamePath,
+            slotId: 'center',
+            position: 'Center Referee',
+            status: 'pending',
+            opponent: 'Tigers',
+            location: 'Field 2',
+            date: futureDate,
+            canClaim: false,
+            scheduleReviewRequired: false
+          }]
+        }
+      },
+      headers: {},
+      url: ''
+    });
+
+    const result = await loadOfficialAssignments(user);
+    const [item] = result.assignments;
+    expect(item).toEqual(expect.objectContaining({ gameId, sharedGamePath }));
+
+    await respondToOfficialAssignmentItem(item, 'accepted');
+    await claimOfficialAssignmentItem({ ...item, kind: 'open', canClaim: true }, user);
+
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(1,
+      'respondToOfficiatingAssignment',
+      { teamId: 'team-alpha', gameId, sharedGamePath, slotId: 'center', status: 'accepted' },
+      { errorLabel: 'Officiating response' }
+    );
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(2,
+      'claimOpenOfficiatingSlot',
+      { teamId: 'team-alpha', gameId, sharedGamePath, slotId: 'center' },
+      { errorLabel: 'Officiating claim' }
+    );
+  });
+
+  it('rejects official assignment projections outside supported shared-game roots', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    const sharedGamePath = 'users/user-1/sharedGames/game-1';
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 200,
+      data: {
+        result: {
+          teamIds: ['team-alpha'],
+          teamCount: 1,
+          isPartial: false,
+          assignmentsComplete: true,
+          assignments: [{
+            kind: 'assigned',
+            teamId: 'team-alpha',
+            gameId: `shared_${encodeURIComponent(sharedGamePath)}`,
+            sharedGamePath,
+            slotId: 'center',
+            position: 'Center Referee',
+            status: 'pending',
+            date: futureDate
+          }]
+        }
+      },
+      headers: {},
+      url: ''
+    });
+
+    await expect(loadOfficialAssignments(user)).rejects.toThrow(
+      'Official assignment discovery returned an invalid response.'
+    );
+    expect(nativeCallableMock.callNativeFirebaseFunction).not.toHaveBeenCalled();
   });
 });
 
@@ -1930,8 +3580,25 @@ describe('live score publishing', () => {
       createdBy: 'coach-1',
       createdByName: 'Coach',
       period: 'Q2',
-      gameClockMs: 321000
+      gameClockMs: 321000,
+      committedLifecycle: { liveStatus: 'live' }
     });
+  });
+
+  it('canonicalizes a padded stored live status before returning committed lifecycle evidence', async () => {
+    mocks.transactionGet.mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({ id: 'game-1', status: 'scheduled', liveStatus: ' LIVE ', liveHasData: true })
+    });
+
+    const result = await publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, user);
+
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      expect.objectContaining({ liveStatus: 'live' }),
+      { merge: true }
+    );
+    expect(result.committedLifecycle).toEqual({ liveStatus: 'live' });
   });
 
   it('keeps the persisted live score when tracker totals are partial', async () => {
@@ -2042,6 +3709,7 @@ describe('native live publishing fallbacks', () => {
           updateTime: '2026-06-19T16:00:00.000Z',
           fields: {
             status: { stringValue: 'scheduled' },
+            liveStatus: { stringValue: ' LIVE ' },
             homeScore: { integerValue: '9' },
             awayScore: { integerValue: '7' },
             period: { stringValue: 'Q2' },
@@ -2060,13 +3728,16 @@ describe('native live publishing fallbacks', () => {
       previousAwayScore: 7,
       createdByName: 'coach@example.com',
       period: 'Q2',
-      gameClockMs: 321000
+      gameClockMs: 321000,
+      committedLifecycle: { liveStatus: 'live' }
     });
+    expect(String((globalThis.fetch as any).mock.calls[1]?.[1]?.body || '')).toContain('liveStatus');
+    expect(String((globalThis.fetch as any).mock.calls[1]?.[1]?.body || '')).toContain('live');
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
   });
 
   it('records native player stats from mapped Firestore documents', async () => {
-    mocks.runTransactionMock.mockRejectedValueOnce(new Error('native fallback'));
+    mocks.runTransactionMock.mockRejectedValueOnce(Object.assign(new Error('native fallback'), { status: 500 }));
     vi.mocked(globalThis.fetch).mockImplementation(async (input: any) => {
       const url = String(input || '');
       if (url.includes('/events')) {
@@ -2120,6 +3791,7 @@ describe('native live publishing fallbacks', () => {
       playerId: 'player-1',
       statKey: 'pts',
       value: 2,
+      committedLifecycle: { liveStatus: 'live' },
       liveEvent: expect.objectContaining({
         type: 'stat',
         playerId: 'player-1',
@@ -2128,6 +3800,29 @@ describe('native live publishing fallbacks', () => {
       })
     });
     expect(globalThis.fetch).toHaveBeenCalled();
+  });
+
+  it('does not claim a lifecycle write when native live-score work is only queued offline', async () => {
+    vi.mocked(globalThis.fetch).mockRejectedValue(new Error('offline'));
+
+    const result = await publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, user as any);
+
+    expect(result.committedLifecycle).toBeNull();
+    expect(localStorageState['allplays.pendingLivePublishQueue.v1']).toContain('score_update');
+  });
+
+  it('does not claim a lifecycle write when native player stats are only queued offline', async () => {
+    mocks.runTransactionMock.mockRejectedValueOnce(new Error('offline'));
+
+    const result = await recordPlayerGameStat('team-1', 'game-1', 'player-1', {
+      statKey: 'fouls',
+      value: 1,
+      playerName: 'Avery Smith',
+      playerNumber: '12'
+    }, user as any);
+
+    expect(result.committedLifecycle).toBeNull();
+    expect(localStorageState['allplays.pendingLivePublishQueue.v1']).toContain('player_game_stat');
   });
 
   it('keeps only failed queued publishes after a partial flush', async () => {
@@ -2609,6 +4304,10 @@ describe('parent family RSVP submission', () => {
   it('invalidates schedule and Home caches after a single-child RSVP succeeds', async () => {
     const summary = { going: 1, maybe: 0, notGoing: 0, notResponded: 0, total: 1 };
     vi.mocked(submitRsvpForPlayer).mockResolvedValue(summary as any);
+    vi.mocked(listRideOffersForEvent).mockResolvedValue([] as any);
+
+    await loadParentScheduleRideOffers(baseEvent, user as any, [baseEvent]);
+    vi.mocked(invalidateCachedAppData).mockClear();
 
     await expect(submitParentScheduleRsvp(baseEvent, user as any, 'going', 'On time')).resolves.toEqual(summary);
 
@@ -2618,10 +4317,12 @@ describe('parent family RSVP submission', () => {
       response: 'going',
       note: 'On time'
     });
-    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(1, 'app-schedule-summary:parent-1');
-    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(2, 'home-secondary:parent-1');
-    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(3, 'event-details:team-1:game-1');
-    expect(invalidateCachedAppData).toHaveBeenCalledTimes(3);
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('app-schedule-summary:parent-1');
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('home-secondary:parent-1');
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('event-details:team-1:game-1');
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('event-details:team-1:game-1:ride-offers');
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('event-details:team-1:game-1:ride-offers:parent:parent-1:player-1');
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('event-details:team-1:game-1:assignment-claims');
   });
 
   it('keeps cached schedule data when a single-child RSVP write fails', async () => {
@@ -2954,7 +4655,9 @@ describe('parent family RSVP submission', () => {
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(1, 'app-schedule-summary:parent-1');
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(2, 'home-secondary:parent-1');
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(3, 'event-details:team-1:game-1');
-    expect(invalidateCachedAppData).toHaveBeenCalledTimes(3);
+    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(4, 'event-details:team-1:game-1:ride-offers');
+    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(5, 'event-details:team-1:game-1:assignment-claims');
+    expect(invalidateCachedAppData).toHaveBeenCalledTimes(5);
     expect(mocks.runTransactionMock).not.toHaveBeenCalled();
     expect(submitRsvpForPlayer).not.toHaveBeenCalled();
   });
@@ -3179,8 +4882,12 @@ describe('staff RSVP management', () => {
     expect(getRsvpBreakdownByPlayer).toHaveBeenCalledWith('team-1', 'practice-1__2026-07-13');
   });
 
-  it('attributes native fallback staff RSVP rows through roster parent links', async () => {
-    (globalThis as any).window.location.protocol = 'capacitor:';
+  it('uses the native RSVP fallback before the Android bridge is injected at https://localhost', async () => {
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, protocol: 'https:', hostname: 'localhost' },
+      writable: true,
+      configurable: true
+    });
     vi.mocked(getRsvpBreakdownByPlayer).mockRejectedValue(new Error('primary unavailable'));
     vi.mocked(getPlayers).mockResolvedValue([
       { id: 'p1', name: 'Avery Smith', parentUserId: 'parent-1' },
@@ -3259,7 +4966,9 @@ describe('staff RSVP management', () => {
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(1, 'app-schedule-summary:coach-1');
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(2, 'home-secondary:coach-1');
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(3, 'event-details:team-1:game-1');
-    expect(invalidateCachedAppData).toHaveBeenCalledTimes(3);
+    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(4, 'event-details:team-1:game-1:ride-offers');
+    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(5, 'event-details:team-1:game-1:assignment-claims');
+    expect(invalidateCachedAppData).toHaveBeenCalledTimes(5);
     expect(submitRsvpForPlayer).not.toHaveBeenCalledWith('team-1', 'game-1', 'coach-1', expect.objectContaining({
       playerId: 'child-event-player'
     }));
@@ -3451,6 +5160,16 @@ describe('native parent schedule Firestore mapping', () => {
           location: { stringValue: 'Main Gym' },
           opponent: { stringValue: 'Tigers' },
           status: { stringValue: 'scheduled' },
+          trackingEngine: { stringValue: 'diamond-v2' },
+          diamondScorebookInstanceId: { stringValue: '00000000-0000-4000-8000-000000000001' },
+          diamondProjectionStatus: { stringValue: 'current' },
+          diamondProjectionComplete: { booleanValue: true },
+          diamondProjectionRevision: { integerValue: '8' },
+          diamondProjectionCheckpointHash: { stringValue: `sha256:${'a'.repeat(64)}` },
+          statTrackerConfigId: { stringValue: 'baseball' },
+          diamondStatConfigSnapshotHash: { stringValue: `sha256:${'e'.repeat(64)}` },
+          diamondProjectionHash: { stringValue: `sha256:${'c'.repeat(64)}` },
+          isPublicProjection: { booleanValue: true },
           liveClockMs: { integerValue: '120000' },
           liveClockRunning: { booleanValue: true },
           assignments: {
@@ -3497,9 +5216,59 @@ describe('native parent schedule Firestore mapping', () => {
       liveClockMs: 120000,
       liveClockRunning: true,
       openAssignmentCount: 1,
-      sourceType: 'registration'
+      sourceType: 'registration',
+      trackingEngine: 'diamond-v2',
+      statTrackerConfigId: 'baseball',
+      diamondStatConfigSnapshotHash: `sha256:${'e'.repeat(64)}`,
+      diamondProjectionStatus: 'current',
+      diamondProjectionComplete: true,
+      diamondProjectionRevision: 8,
+      diamondProjectionCheckpointHash: `sha256:${'a'.repeat(64)}`,
+      diamondProjectionHash: `sha256:${'c'.repeat(64)}`,
+      isPublicProjection: false
     });
     expect(result.events[0].date).toEqual(new Date('2026-06-20T18:00:00.000Z'));
+  });
+
+  it('rejects an exact shared-game path that is unrelated to the authorized requested team', async () => {
+    const sharedGamePath = 'tournaments/t-1/sharedGames/shared-other-team';
+    const eventId = `shared_${encodeURIComponent(sharedGamePath)}`;
+    vi.mocked(fetchAndParseCalendar).mockResolvedValue([] as any);
+    vi.mocked(globalThis.fetch).mockImplementation(async (input: any) => {
+      if (String(input).includes('/documents/tournaments/t-1/sharedGames/shared-other-team')) {
+        return {
+          ok: true,
+          json: async () => ({
+            name: 'projects/allplays-test/databases/(default)/documents/tournaments/t-1/sharedGames/shared-other-team',
+            fields: {
+              type: { stringValue: 'game' },
+              date: { timestampValue: '2026-06-20T18:00:00.000Z' },
+              homeTeamId: { stringValue: 'team-2' },
+              awayTeamId: { stringValue: 'team-3' },
+              opponent: { stringValue: 'Unrelated Opponent' }
+            }
+          })
+        } as any;
+      }
+      return { ok: true, json: async () => [] } as any;
+    });
+
+    const result = await loadParentScheduleEventDetail(
+      { uid: 'parent-1', email: 'parent@example.com', roles: [] } as any,
+      {
+        teamId: 'team-1',
+        eventId,
+        sharedGamePath,
+        hydrateDetails: false,
+        expandStaffPlayers: false
+      }
+    );
+
+    expect(result.events).toEqual([]);
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/documents/tournaments/t-1/sharedGames/shared-other-team'),
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer native-token' }) })
+    );
   });
 
   it('keeps tracked calendar ids on native game loads so imported events do not duplicate db games', async () => {
@@ -3678,6 +5447,150 @@ describe('native parent schedule Firestore mapping', () => {
     });
   });
 
+  it.each([
+    {
+      name: 'closed',
+      range: {
+        startDate: new Date('2026-06-01T00:00:00.000Z'),
+        endDate: new Date('2026-06-30T23:59:59.000Z')
+      },
+      expectedFilters: [
+        { op: 'GREATER_THAN_OR_EQUAL', value: '2026-06-01T00:00:00.000Z' },
+        { op: 'LESS_THAN_OR_EQUAL', value: '2026-06-30T23:59:59.000Z' }
+      ]
+    },
+    {
+      name: 'start-only',
+      range: { startDate: new Date('2026-06-01T00:00:00.000Z') },
+      expectedFilters: [
+        { op: 'GREATER_THAN_OR_EQUAL', value: '2026-06-01T00:00:00.000Z' }
+      ]
+    },
+    {
+      name: 'end-only',
+      range: { endDate: new Date('2026-06-30T23:59:59.000Z') },
+      expectedFilters: [
+        { op: 'LESS_THAN_OR_EQUAL', value: '2026-06-30T23:59:59.000Z' }
+      ]
+    }
+  ])('queries native practice sessions with a $name date range', async ({ range, expectedFilters }) => {
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    vi.mocked(getPracticeSessions).mockRejectedValueOnce(new Error('offline'));
+    vi.mocked(globalThis.fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ([])
+    } as any);
+
+    await loadParentSchedule({ uid: 'parent-1', email: 'parent@example.com', roles: [] } as any, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      scheduleRangeByTeam: { 'team-1': range }
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [requestUrl, requestInit] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(requestUrl).toContain('/documents/teams/team-1:runQuery');
+    expect(requestUrl).not.toContain('/documents/teams/team-1/practiceSessions');
+    const body = JSON.parse(String(requestInit.body));
+    expect(body.structuredQuery.from).toEqual([{ collectionId: 'practiceSessions' }]);
+    expect(body.structuredQuery.orderBy).toEqual([
+      { field: { fieldPath: 'date' }, direction: 'DESCENDING' }
+    ]);
+    expect(body.structuredQuery.where.compositeFilter.filters).toEqual(
+      expectedFilters.map(({ op, value }) => ({
+        fieldFilter: {
+          field: { fieldPath: 'date' },
+          op,
+          value: { timestampValue: value }
+        }
+      }))
+    );
+  });
+
+  it('merges bounded native practices with games without listing practiceSessions', async () => {
+    const startDate = new Date('2026-06-01T00:00:00.000Z');
+    const endDate = new Date('2026-06-30T23:59:59.000Z');
+    vi.mocked(getPracticeSessions).mockRejectedValueOnce(new Error('offline'));
+    vi.mocked(globalThis.fetch).mockImplementation(async (input: any, init?: RequestInit) => {
+      const requestUrl = String(input);
+      expect(requestUrl).toContain('/documents/teams/team-1:runQuery');
+      expect(requestUrl).not.toContain('/documents/teams/team-1/practiceSessions');
+      const body = JSON.parse(String(init?.body));
+      if (body.structuredQuery.from[0].collectionId === 'games') {
+        return {
+          ok: true,
+          json: async () => ([
+            {
+              document: {
+                name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-in-range',
+                fields: {
+                  date: { timestampValue: '2026-06-10T18:00:00.000Z' },
+                  opponent: { stringValue: 'Tigers' }
+                }
+              }
+            },
+            {
+              document: {
+                name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/practice-in-range',
+                fields: {
+                  type: { stringValue: 'practice' },
+                  date: { timestampValue: '2026-06-20T18:00:00.000Z' },
+                  title: { stringValue: 'Practice' }
+                }
+              }
+            },
+            {
+              document: {
+                name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/practice-out-of-range',
+                fields: {
+                  type: { stringValue: 'practice' },
+                  date: { timestampValue: '2025-06-20T18:00:00.000Z' },
+                  title: { stringValue: 'Old practice' }
+                }
+              }
+            }
+          ])
+        } as any;
+      }
+      return {
+        ok: true,
+        json: async () => ([
+          {
+            document: {
+              name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/practiceSessions/session-in-range',
+              fields: {
+                eventId: { stringValue: 'practice-in-range' },
+                date: { timestampValue: '2026-06-20T18:00:00.000Z' }
+              }
+            }
+          },
+          {
+            document: {
+              name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/practiceSessions/session-out-of-range',
+              fields: {
+                eventId: { stringValue: 'practice-out-of-range' },
+                date: { timestampValue: '2025-06-20T18:00:00.000Z' }
+              }
+            }
+          }
+        ])
+      } as any;
+    });
+
+    const result = await loadParentSchedule({ uid: 'parent-1', email: 'parent@example.com', roles: [] } as any, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      scheduleRangeByTeam: { 'team-1': { startDate, endDate } }
+    });
+
+    expect(result.events.map((event) => event.id)).toEqual(['game-in-range', 'practice-in-range']);
+    expect(result.events.find((event) => event.id === 'practice-in-range')).toMatchObject({
+      type: 'practice',
+      practiceSessionId: 'session-in-range'
+    });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
   it('drops malformed Firestore schedule event records at the mapper boundary', async () => {
     vi.mocked(globalThis.fetch).mockResolvedValue({
       ok: true,
@@ -3728,6 +5641,45 @@ describe('partial parent schedule team failures (#3021)', () => {
     });
   });
 
+  it('starts a direct calendar read while stored games and practices are still loading', async () => {
+    let resolveGames: ((value: unknown[]) => void) | undefined;
+    let resolvePractices: ((value: unknown[]) => void) | undefined;
+    let resolveCalendar: ((value: unknown[]) => void) | undefined;
+    vi.mocked(getTeam).mockResolvedValue({
+      id: 'team-1',
+      name: 'Team One',
+      calendarUrls: ['https://calendar.example.com/team-1.ics']
+    } as any);
+    vi.mocked(getGames).mockImplementation(() => new Promise((resolve) => {
+      resolveGames = resolve;
+    }) as any);
+    vi.mocked(getPracticeSessions).mockImplementation(() => new Promise((resolve) => {
+      resolvePractices = resolve;
+    }) as any);
+    vi.mocked(fetchAndParseCalendar).mockImplementation(() => new Promise((resolve) => {
+      resolveCalendar = resolve;
+    }) as any);
+
+    const schedule = loadParentSchedule(parentUser, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      targetTeamId: 'team-1'
+    });
+
+    await vi.waitFor(() => expect(getGames).toHaveBeenCalledWith('team-1', expect.any(Object)));
+    try {
+      await vi.waitFor(() => {
+        expect(fetchAndParseCalendar).toHaveBeenCalledWith('https://calendar.example.com/team-1.ics');
+      });
+    } finally {
+      resolveGames?.([]);
+      resolvePractices?.([]);
+      await vi.waitFor(() => expect(resolveCalendar).toBeTypeOf('function'));
+      resolveCalendar?.([]);
+      await schedule;
+    }
+  });
+
   it('keeps successful teams visible when one team schedule load fails', async () => {
     vi.mocked(getGames).mockImplementation(async (teamId: string) => {
       if (teamId === 'team-2') {
@@ -3755,6 +5707,212 @@ describe('partial parent schedule team failures (#3021)', () => {
       opponent: 'Tigers'
     });
     expect(result.isPartial).toBe(true);
+  });
+
+  it('loads projected TeamSnap events when the public team boundary hides calendar URLs', async () => {
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
+      id: teamId,
+      name: teamId === 'team-1' ? 'Team One' : 'Team Two',
+      hasCalendarSources: teamId === 'team-1'
+    }) as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    vi.mocked(getPublicTeamCalendarEvents).mockImplementation(async (teamId: string) => teamId === 'team-1'
+      ? [{
+          id: 'teamsnap-event-1',
+          uid: 'teamsnap-event-1',
+          dtstart: new Date('2026-08-08T18:00:00.000Z'),
+          dtend: new Date('2026-08-08T20:00:00.000Z'),
+          type: 'practice',
+          summary: 'Workout',
+          location: 'Field 4',
+          status: 'SCHEDULED',
+          isPublicProjection: true
+        }]
+      : [] as any);
+
+    const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(getPublicTeamCalendarEvents).toHaveBeenCalledTimes(1);
+    expect(getPublicTeamCalendarEvents).toHaveBeenCalledWith('team-1', {
+      startDate: expect.any(Date),
+      endDate: expect.any(Date)
+    });
+    expect(fetchAndParseCalendar).not.toHaveBeenCalled();
+    expect(result.events).toEqual([
+      expect.objectContaining({
+        teamId: 'team-1',
+        type: 'practice',
+        date: new Date('2026-08-08T18:00:00.000Z'),
+        location: 'Field 4',
+        title: 'Workout',
+        sourceType: 'calendar',
+        sourceLabel: 'Imported calendar',
+        isImported: true,
+        calendarUrls: []
+      })
+    ]);
+  });
+
+  it('marks the parent schedule partial when a projected calendar read fails', async () => {
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
+      id: teamId,
+      name: teamId === 'team-1' ? 'Team One' : 'Team Two',
+      hasCalendarSources: teamId === 'team-1'
+    }) as any);
+    vi.mocked(getGames).mockImplementation(async (teamId: string) => teamId === 'team-2'
+      ? [{
+          id: 'game-2',
+          type: 'game',
+          date: new Date('2026-08-09T18:00:00.000Z'),
+          opponent: 'Tigers'
+        }]
+      : [] as any);
+    vi.mocked(getPublicTeamCalendarEvents).mockRejectedValueOnce(new Error('projection unavailable'));
+
+    const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(result).toMatchObject({
+      isPartial: true,
+      events: [expect.objectContaining({ teamId: 'team-2', id: 'game-2' })]
+    });
+  });
+
+  it('marks a direct TeamSnap calendar failure partial while retaining stored practices', async () => {
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
+      id: teamId,
+      name: teamId === 'team-1' ? 'Team One' : 'Team Two',
+      calendarUrls: teamId === 'team-1'
+        ? ['https://ical-cdn.teamsnap.com/team_schedule/test.ics']
+        : []
+    }) as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    vi.mocked(getPracticeSessions).mockImplementation(async (teamId: string) => teamId === 'team-1'
+      ? [{
+          id: 'practice-session-1',
+          eventId: 'practice-1',
+          date: new Date('2026-08-05T18:00:00.000Z'),
+          title: 'Stored practice',
+          location: 'Field 1'
+        }]
+      : [] as any);
+    vi.mocked(fetchAndParseCalendar).mockRejectedValueOnce(new Error('calendar unavailable'));
+
+    const result = await loadParentSchedule(parentUser, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      targetTeamId: 'team-1'
+    });
+
+    expect(fetchAndParseCalendar).toHaveBeenCalledWith('https://ical-cdn.teamsnap.com/team_schedule/test.ics');
+    expect(getTeam).not.toHaveBeenCalledWith('team-2');
+    expect(result).toMatchObject({
+      isPartial: true,
+      events: [expect.objectContaining({
+        teamId: 'team-1',
+        id: 'practice-1',
+        type: 'practice',
+        title: 'Stored practice'
+      })]
+    });
+  });
+
+  it('restores calendar import capacity after each queued cross-team wave', async () => {
+    const calendarUrlsByTeam = {
+      'team-1': Array.from({ length: 26 }, (_, index) => `https://calendar.example.com/team-1-${index}.ics`),
+      'team-2': Array.from({ length: 26 }, (_, index) => `https://calendar.example.com/team-2-${index}.ics`)
+    };
+    const pendingImports: Array<{ url: string; resolve: (events: any[]) => void }> = [];
+    let activeImports = 0;
+    let maximumActiveImports = 0;
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
+      id: teamId,
+      name: teamId === 'team-1' ? 'Team One' : 'Team Two',
+      calendarUrls: calendarUrlsByTeam[teamId as keyof typeof calendarUrlsByTeam]
+    }) as any);
+    vi.mocked(getGames).mockImplementation(async (teamId: string) => [{
+      id: `stored-${teamId}`,
+      type: 'game',
+      date: new Date('2026-08-01T18:00:00.000Z'),
+      opponent: 'Stored Opponent'
+    }] as any);
+    vi.mocked(fetchAndParseCalendar).mockImplementation((url: string) => {
+      if (activeImports >= 50) {
+        return Promise.reject(new Error('Too many calendar imports are already in progress.'));
+      }
+      activeImports += 1;
+      maximumActiveImports = Math.max(maximumActiveImports, activeImports);
+      return new Promise((resolve) => {
+        pendingImports.push({
+          url,
+          resolve: (events) => {
+            activeImports -= 1;
+            resolve(events);
+          }
+        });
+      });
+    });
+
+    const loadAndDrainWave = async () => {
+      maximumActiveImports = 0;
+      const schedulePromise = loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+      await vi.waitFor(() => expect(pendingImports).toHaveLength(50));
+      expect(activeImports).toBe(50);
+      expect(maximumActiveImports).toBe(50);
+
+      for (const pendingImport of pendingImports.splice(0)) {
+        pendingImport.resolve([{
+          uid: pendingImport.url,
+          dtstart: new Date('2026-08-02T18:00:00.000Z'),
+          summary: 'Imported game',
+          location: 'Imported Field'
+        }]);
+      }
+      await vi.waitFor(() => expect(pendingImports).toHaveLength(2));
+      for (const pendingImport of pendingImports.splice(0)) {
+        pendingImport.resolve([{
+          uid: pendingImport.url,
+          dtstart: new Date('2026-09-01T18:00:00.000Z'),
+          summary: 'Queued imported game',
+          location: 'Queued Field'
+        }]);
+      }
+
+      const result = await schedulePromise;
+      expect(activeImports).toBe(0);
+      expect(result.events).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'stored-team-1', isDbGame: true }),
+        expect.objectContaining({ id: 'stored-team-2', isDbGame: true }),
+        expect.objectContaining({ sourceType: 'calendar', isImported: true })
+      ]));
+      expect(result.events.filter((event) => event.sourceType === 'calendar')).toHaveLength(52);
+      expect(result.isPartial).toBe(false);
+    };
+
+    await loadAndDrainWave();
+    await loadAndDrainWave();
+    expect(fetchAndParseCalendar).toHaveBeenCalledTimes(104);
+  });
+
+  it('marks an event-detail calendar fallback partial when the requested event cannot load', async () => {
+    vi.mocked(getTeam).mockResolvedValue({
+      id: 'team-1',
+      name: 'Team One',
+      calendarUrls: ['https://ical-cdn.teamsnap.com/team_schedule/test.ics']
+    } as any);
+    vi.mocked(getGame).mockResolvedValue(null as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+    vi.mocked(fetchAndParseCalendar).mockRejectedValueOnce(new Error('calendar unavailable'));
+
+    const result = await loadParentScheduleEventDetail(parentUser, {
+      teamId: 'team-1',
+      eventId: 'teamsnap-event-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(result).toMatchObject({ isPartial: true, events: [] });
+    expect(fetchAndParseCalendar).toHaveBeenCalledWith('https://ical-cdn.teamsnap.com/team_schedule/test.ics');
   });
 
   it('keeps an explicitly targeted team complete when an unrelated parent link is inaccessible', async () => {
@@ -4291,6 +6449,82 @@ describe('team schedule game windowing (#2034)', () => {
       }
     });
   });
+
+  it('preserves trusted public-projection provenance and canonical stat hash fields in mapped game rows', () => {
+    const mapped = mapScheduleEventRecord({
+      id: 'projected-game-1',
+      type: 'game',
+      date: new Date('2026-09-01T18:00:00.000Z'),
+      trackingEngine: 'diamond-v2',
+      diamondScorebookInstanceId: '00000000-0000-4000-8000-000000000001',
+      diamondProjectionStatus: 'current',
+      diamondProjectionComplete: true,
+      diamondProjectionRevision: 8,
+      diamondProjectionCheckpointHash: `sha256:${'a'.repeat(64)}`,
+      diamondStatConfigSnapshotHash: `sha256:${'f'.repeat(64)}`,
+      diamondProjectionHash: `sha256:${'c'.repeat(64)}`,
+      isPublicProjection: true
+    });
+
+    expect(mapped).toMatchObject({
+      id: 'projected-game-1',
+      trackingEngine: 'diamond-v2',
+      diamondScorebookInstanceId: '00000000-0000-4000-8000-000000000001',
+      diamondProjectionStatus: 'current',
+      diamondProjectionComplete: true,
+      diamondProjectionRevision: 8,
+      diamondProjectionCheckpointHash: `sha256:${'a'.repeat(64)}`,
+      diamondStatConfigSnapshotHash: `sha256:${'f'.repeat(64)}`,
+      diamondProjectionHash: `sha256:${'c'.repeat(64)}`,
+      isPublicProjection: true
+    });
+  });
+
+  it('preserves raw replay evidence and shared-game identity while mapping schedule records', () => {
+    const rawReplayVideo = { provider: 'vimeo', publicUrl: 'https://vimeo.com/12345' };
+    const mapped = mapScheduleEventRecord({
+      id: 'shared-game-1',
+      type: 'game',
+      date: new Date('2026-08-29T18:00:00.000Z'),
+      replayVideo: rawReplayVideo,
+      recordedVideoUrl: 'https://example.com/older-replay',
+      sharedScheduleId: 'shared-schedule-1',
+      sharedScheduleSourceTeamId: 'team-1',
+      sharedScheduleOpponentTeamId: 'team-2',
+      sharedScheduleOpponentGameId: 'game-2',
+      hasReplayShareMarker: true,
+      isSharedGame: true,
+      isCancelled: true,
+      deleted: true,
+      isDeleted: true,
+      status: ' completed ',
+      liveStatus: 0
+    });
+
+    expect(mapped).toMatchObject({
+      id: 'shared-game-1',
+      rawReplayState: {
+        replayVideo: rawReplayVideo,
+        recordedVideoUrl: 'https://example.com/older-replay'
+      },
+      sharedScheduleId: 'shared-schedule-1',
+      sharedScheduleSourceTeamId: 'team-1',
+      sharedScheduleOpponentTeamId: 'team-2',
+      sharedScheduleOpponentGameId: 'game-2',
+      hasReplayShareMarker: true,
+      isSharedGame: true,
+      isCancelled: true,
+      deleted: true,
+      isDeleted: true,
+      status: 'completed',
+      liveStatus: null,
+      rawReplayLifecycle: {
+        type: 'game',
+        status: ' completed ',
+        liveStatus: 0
+      }
+    });
+  });
 });
 
 describe('resolveCachedParentScheduleEvents (#2649)', () => {
@@ -4330,6 +6564,907 @@ describe('resolveCachedParentScheduleEvents (#2649)', () => {
   });
 });
 
+describe('enableRsvpForImportedCalendarEvent', () => {
+  const user = { uid: 'coach-1', displayName: 'Coach', email: 'coach@example.com', roles: ['coach'] } as any;
+  const calendarEvent = {
+    eventKey: 'team-1::calendar-uid-1::player-1::2026-06-04T18:00:00.000Z::game',
+    id: 'calendar-uid-1',
+    teamId: 'team-1',
+    teamName: 'Bears',
+    type: 'game',
+    date: new Date('2026-06-04T18:00:00.000Z'),
+    endDate: new Date('2026-06-04T20:00:00.000Z'),
+    location: 'Main Gym',
+    opponent: 'Wolves',
+    title: null,
+    childId: 'player-1',
+    childName: 'Avery',
+    isDbGame: false,
+    isCancelled: false,
+    isImported: true,
+    sourceType: 'calendar',
+    sourceLabel: 'Imported calendar',
+    assignments: []
+  } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1', active: true } as any);
+    mocks.transactionGet.mockReset();
+    mocks.transactionSet.mockReset();
+  });
+
+  it.each([
+    ['game', calendarEvent, { type: 'game', opponent: 'Wolves', title: null }],
+    ['practice', { ...calendarEvent, type: 'practice', opponent: null, title: 'Skills practice' }, { type: 'practice', opponent: null, title: 'Skills practice' }]
+  ])('materializes an imported calendar %s with stable provenance and idempotency', async (_label, event, expectedPayload) => {
+    mocks.transactionGet.mockResolvedValueOnce({ exists: () => false });
+
+    const firstId = await enableRsvpForImportedCalendarEvent(event as any, user);
+    const firstWrite = mocks.transactionSet.mock.calls[0]?.[1] as any;
+
+    expect(firstId).toMatch(/^calendar_[a-f0-9]{64}$/);
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: `teams/team-1/games/${firstId}` }),
+      expect.objectContaining({
+        ...expectedPayload,
+        calendarEventUid: 'calendar-uid-1__2026-06-04T18:00:00.000Z',
+        source: 'calendar',
+        sourceMetadata: {
+          sourceType: 'calendar',
+          sourceLabel: 'Imported calendar'
+        },
+        importBatch: expect.objectContaining({
+          rowNumber: 1,
+          totalCount: 1,
+          actionId: expect.stringMatching(/^calendar-materialize:/)
+        }),
+        createdBy: 'coach-1'
+      })
+    );
+
+    mocks.transactionGet.mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({ importBatch: firstWrite.importBatch })
+    });
+    const retryId = await enableRsvpForImportedCalendarEvent(event as any, user);
+
+    expect(retryId).toBe(firstId);
+    expect(mocks.transactionSet).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed before writing when the caller cannot manage the team', async () => {
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'another-user', active: true } as any);
+
+    await expect(enableRsvpForImportedCalendarEvent(calendarEvent, user)).rejects.toThrow('permission');
+    expect(mocks.runTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects coach-only staff because game creation requires owner/admin access', async () => {
+    const coachOnlyUser = { ...user, coachOf: ['team-1'] } as any;
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'another-user', active: true } as any);
+
+    await expect(enableRsvpForImportedCalendarEvent(calendarEvent, coachOnlyUser)).rejects.toThrow('permission');
+    expect(mocks.runTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it('materializes separate occurrences that reuse the same calendar event ID', async () => {
+    mocks.transactionGet.mockResolvedValue({ exists: () => false });
+    const laterOccurrence = {
+      ...calendarEvent,
+      eventKey: 'team-1::calendar-uid-1::player-1::2026-06-11T18:00:00.000Z::game',
+      date: new Date('2026-06-11T18:00:00.000Z'),
+      endDate: new Date('2026-06-11T20:00:00.000Z')
+    };
+
+    const firstId = await enableRsvpForImportedCalendarEvent(calendarEvent, user);
+    const laterId = await enableRsvpForImportedCalendarEvent(laterOccurrence, user);
+
+    expect(laterId).not.toBe(firstId);
+    expect(mocks.transactionSet).toHaveBeenCalledTimes(2);
+    expect(mocks.transactionSet.mock.calls.map((call) => call[0]?.path)).toEqual([
+      `teams/team-1/games/${firstId}`,
+      `teams/team-1/games/${laterId}`
+    ]);
+    expect(mocks.transactionSet.mock.calls.map((call) => call[1]?.calendarEventUid)).toEqual([
+      'calendar-uid-1__2026-06-04T18:00:00.000Z',
+      'calendar-uid-1__2026-06-11T18:00:00.000Z'
+    ]);
+  });
+
+  it('keeps a later shared-UID occurrence visible after reloading the materialized occurrence', async () => {
+    const parent = {
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Avery', teamName: 'Bears' }]
+    } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: parent.parentOf } as any);
+    vi.mocked(getTeams).mockResolvedValue([] as any);
+    vi.mocked(getTeam).mockResolvedValue({
+      id: 'team-1',
+      name: 'Bears',
+      ownerId: 'coach-1',
+      active: true,
+      calendarUrls: ['https://calendar.example.com/bears.ics']
+    } as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('player-1', { id: 'player-1', name: 'Avery', active: true }) as any);
+    vi.mocked(getGames).mockResolvedValue([{
+      id: 'tracked-first-occurrence',
+      type: 'game',
+      date: new Date('2026-06-04T18:00:00.000Z'),
+      opponent: 'Wolves',
+      calendarEventUid: 'calendar-uid-1__2026-06-04T18:00:00.000Z'
+    }] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+    vi.mocked(getCalendarEventTrackingId).mockImplementation((event: any) => event.id || event.uid || '');
+    vi.mocked(isTrackedCalendarEvent).mockImplementation((event: any, trackedIds: string[]) => (
+      trackedIds.includes(event.id || event.uid || '')
+    ));
+    vi.mocked(fetchAndParseCalendar).mockResolvedValue([
+      {
+        id: 'calendar-uid-1',
+        uid: 'calendar-uid-1',
+        summary: 'Bears vs Wolves',
+        dtstart: new Date('2026-06-04T18:00:00.000Z'),
+        dtend: new Date('2026-06-04T20:00:00.000Z')
+      },
+      {
+        id: 'calendar-uid-1',
+        uid: 'calendar-uid-1',
+        summary: 'Bears vs Tigers',
+        dtstart: new Date('2026-06-11T18:00:00.000Z'),
+        dtend: new Date('2026-06-11T20:00:00.000Z')
+      }
+    ] as any);
+
+    const reloaded = await loadParentSchedule(parent, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      includePastGames: true
+    });
+
+    expect(reloaded.events).toHaveLength(2);
+    expect(reloaded.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'tracked-first-occurrence', isDbGame: true }),
+      expect.objectContaining({
+        id: 'calendar-uid-1',
+        date: new Date('2026-06-11T18:00:00.000Z'),
+        isDbGame: false,
+        isImported: true
+      })
+    ]));
+
+    mocks.transactionGet.mockResolvedValueOnce({ exists: () => false });
+    const laterOccurrence = reloaded.events.find((event) => event.date.toISOString() === '2026-06-11T18:00:00.000Z');
+    const laterId = await enableRsvpForImportedCalendarEvent({ ...laterOccurrence, opponent: 'Tigers' } as any, user);
+
+    expect(laterId).not.toBe('tracked-first-occurrence');
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: `teams/team-1/games/${laterId}` }),
+      expect.objectContaining({ calendarEventUid: 'calendar-uid-1__2026-06-11T18:00:00.000Z' })
+    );
+  });
+
+  it.each([
+    ['already tracked', { isDbGame: true }],
+    ['cancelled', { isCancelled: true }],
+    ['not a calendar import', { isImported: false, sourceType: 'db' }]
+  ])('rejects an invalid %s event before authorization or persistence', async (_label, overrides) => {
+    await expect(enableRsvpForImportedCalendarEvent({ ...calendarEvent, ...overrides } as any, user)).rejects.toThrow();
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(mocks.runTransactionMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('game replay mutations', () => {
+  const manager = { uid: 'coach-1', displayName: 'Coach', email: 'coach@example.com', roles: [] } as any;
+  const videographer = { uid: 'video-1', displayName: 'Camera Helper', email: 'video@example.com', roles: [] } as any;
+  const completedGame = {
+    id: 'game-1',
+    type: 'game',
+    date: new Date('2026-08-29T18:00:00.000Z'),
+    opponent: 'Wolves',
+    status: 'completed',
+    liveStatus: 'completed'
+  };
+  const clearedLegacyReplayAliases = {
+    recordedVideo: { __deleteField: true },
+    videoReplay: { __deleteField: true },
+    replayVideoUrl: { __deleteField: true },
+    recordedVideoUrl: { __deleteField: true },
+    videoReplayUrl: { __deleteField: true },
+    archivedVideoUrl: { __deleteField: true },
+    replayVideoPublicUrl: { __deleteField: true },
+    replayVideoPosterUrl: { __deleteField: true },
+    replayVideoTitle: { __deleteField: true },
+    replayVideoDurationMs: { __deleteField: true },
+    replayStatus: { __deleteField: true },
+    recordedReplayStatus: { __deleteField: true },
+    videoReplayStatus: { __deleteField: true },
+    replayVideoFallbackDisabled: { __deleteField: true }
+  };
+
+  function authorizeSelectedVideographer() {
+    vi.mocked(getTeam).mockRejectedValue(new Error('Direct team read denied.'));
+    vi.mocked(getDelegatedTeamContext).mockResolvedValue({
+      id: 'team-1',
+      delegatedAccess: { videography: true, modes: { videography: 'selected' } },
+      teamPermissions: { videography: { mode: 'selected', memberIds: ['video-1'] } }
+    } as any);
+  }
+
+  function firestoreTimestamp(seconds: number, nanoseconds: number) {
+    return {
+      seconds,
+      nanoseconds,
+      toMillis: () => (seconds * 1000) + (nanoseconds / 1_000_000),
+      toDate: () => new Date((seconds * 1000) + (nanoseconds / 1_000_000))
+    };
+  }
+
+  beforeEach(() => {
+    (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
+    vi.clearAllMocks();
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+    vi.mocked(getDelegatedTeamContext).mockRejectedValue(new Error('No delegated access.'));
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', ownerId: 'coach-1', active: true } as any);
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame })
+    });
+  });
+
+  afterEach(() => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+  });
+
+  it('links canonical replay metadata for a full manager with one game update', async () => {
+    const result = await linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc?si=share-token',
+      manager,
+      { title: `  ${'Vipers replay '.repeat(20)}  `, expectedReplayState: {} }
+    );
+
+    expect(mocks.runTransactionMock).toHaveBeenCalledTimes(1);
+    expect(mocks.transactionSet).toHaveBeenCalledTimes(1);
+    const payload = mocks.transactionSet.mock.calls[0][1] as any;
+    expect(payload).toEqual({
+      replayVideo: {
+        provider: 'youtube',
+        videoId: 'PK1HyC37doc',
+        embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+        publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        title: expect.any(String),
+        status: 'ready',
+        linkedBy: 'coach-1',
+        linkedAt: expect.any(Date)
+      },
+      ...clearedLegacyReplayAliases,
+      updatedAt: expect.any(Date)
+    });
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      payload,
+      { merge: true }
+    );
+    expect(payload.replayVideo.title).toHaveLength(120);
+    expect(payload.updatedAt).toBe(payload.replayVideo.linkedAt);
+    expect(result).toEqual(payload.replayVideo);
+    expect(invalidateCachedAppData).toHaveBeenCalled();
+  });
+
+  it('authorizes an exact selected videographer projection', async () => {
+    authorizeSelectedVideographer();
+
+    await linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://www.youtube.com/live/PK1HyC37doc',
+      videographer
+    );
+
+    expect(getDelegatedTeamContext).toHaveBeenCalledWith('team-1', 'game-1');
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      expect.objectContaining({
+        replayVideo: expect.objectContaining({ linkedBy: 'video-1', videoId: 'PK1HyC37doc' })
+      }),
+      { merge: true }
+    );
+  });
+
+  it('treats a bounded delegated-full projection as full-manager access for nonfinal cleanup', async () => {
+    vi.mocked(getTeam).mockRejectedValue(new Error('Direct team read denied.'));
+    vi.mocked(getDelegatedTeamContext).mockResolvedValue({
+      id: 'team-1',
+      delegatedAccess: { full: true }
+    } as any);
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        status: 'scheduled',
+        liveStatus: 'scheduled',
+        replayVideoPublicUrl: 'https://example.com/legacy-replay'
+      })
+    });
+
+    await removeGameReplayForApp('team-1', 'game-1', videographer, {
+      replayVideoPublicUrl: 'https://example.com/legacy-replay'
+    });
+
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      { replayVideo: null, ...clearedLegacyReplayAliases, replayVideoFallbackDisabled: true, updatedAt: expect.any(Date) },
+      { merge: true }
+    );
+  });
+
+  it('does not trust delegated-full fields from a canonical team document', async () => {
+    vi.mocked(getTeam).mockResolvedValue({
+      id: 'team-1',
+      ownerId: 'another-manager',
+      delegatedAccess: { full: true },
+      isDelegatedTeamContext: true
+    } as any);
+
+    await expect(removeGameReplayForApp('team-1', 'game-1', videographer, {
+      replayVideoPublicUrl: 'https://example.com/legacy-replay'
+    })).rejects.toThrow('You do not have permission to manage this game replay.');
+
+    expect(mocks.runTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it('removes the canonical replay and every legacy archive alias with updatedAt', async () => {
+    const existingReplay = {
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+      publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+      status: 'ready'
+    };
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        replayVideo: existingReplay,
+        archivedVideoUrl: 'https://example.com/older-archive'
+      })
+    });
+
+    const result = await removeGameReplayForApp('team-1', 'game-1', manager, {
+      replayVideo: existingReplay,
+      archivedVideoUrl: 'https://example.com/older-archive'
+    });
+
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      { replayVideo: null, ...clearedLegacyReplayAliases, replayVideoFallbackDisabled: true, updatedAt: expect.any(Date) },
+      { merge: true }
+    );
+    expect(result).toEqual({ removed: true, updatedAt: expect.any(Date) });
+  });
+
+  it('suppresses a historical completed videoUrl without deleting the stream field', async () => {
+    const videoUrl = 'https://youtu.be/PK1HyC37doc';
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame, liveStatus: 'scheduled', videoUrl })
+    });
+
+    await removeGameReplayForApp('team-1', 'game-1', manager, { videoUrl });
+
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      {
+        replayVideo: null,
+        ...clearedLegacyReplayAliases,
+        replayVideoFallbackDisabled: true,
+        updatedAt: expect.any(Date)
+      },
+      { merge: true }
+    );
+    expect(mocks.transactionSet.mock.calls[0][1]).not.toHaveProperty('videoUrl');
+  });
+
+  it('allows a canonical replay to be removed after the lifecycle is corrected away from final', async () => {
+    const existingReplay = {
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+      publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+      status: 'ready'
+    };
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame, status: 'scheduled', liveStatus: 'scheduled', replayVideo: existingReplay })
+    });
+
+    await removeGameReplayForApp('team-1', 'game-1', manager, { replayVideo: existingReplay });
+
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      { replayVideo: null, ...clearedLegacyReplayAliases, replayVideoFallbackDisabled: true, updatedAt: expect.any(Date) },
+      { merge: true }
+    );
+  });
+
+  it('lets a full manager remove legacy-only archive evidence from a nonfinal game', async () => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        status: 'scheduled',
+        liveStatus: 'scheduled',
+        replayVideoPublicUrl: 'https://example.com/legacy-replay'
+      })
+    });
+
+    await removeGameReplayForApp('team-1', 'game-1', manager, {
+      replayVideoPublicUrl: 'https://example.com/legacy-replay'
+    });
+
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      { replayVideo: null, ...clearedLegacyReplayAliases, replayVideoFallbackDisabled: true, updatedAt: expect.any(Date) },
+      { merge: true }
+    );
+  });
+
+  it('lets a selected videographer remove legacy-only archive evidence while the game is final', async () => {
+    authorizeSelectedVideographer();
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame, recordedVideo: { url: 'https://example.com/legacy-replay' } })
+    });
+
+    await removeGameReplayForApp('team-1', 'game-1', videographer, {
+      recordedVideo: { url: 'https://example.com/legacy-replay' }
+    });
+
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      { replayVideo: null, ...clearedLegacyReplayAliases, replayVideoFallbackDisabled: true, updatedAt: expect.any(Date) },
+      { merge: true }
+    );
+  });
+
+  it.each(['scheduled', 'cancelled'])('does not let a selected videographer remove replay evidence while the game is %s', async (lifecycle) => {
+    authorizeSelectedVideographer();
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        status: lifecycle,
+        liveStatus: lifecycle,
+        replayVideoPublicUrl: 'https://example.com/legacy-replay'
+      })
+    });
+
+    await expect(removeGameReplayForApp('team-1', 'game-1', videographer, {
+      replayVideoPublicUrl: 'https://example.com/legacy-replay'
+    })).rejects.toThrow('Only a full team manager can remove a replay while this game is not final.');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('requires a final game before writing replay metadata', async () => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame, status: 'scheduled', liveStatus: 'scheduled' })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager
+    )).rejects.toThrow('Mark the game final before linking its replay.');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('rejects contradictory completion fields inside the transaction', async () => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame, status: 'completed', liveStatus: 'live' })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager
+    )).rejects.toThrow('Mark the game final before linking its replay.');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('rejects lifecycle values whose casing does not match the Rules contract', async () => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame, status: 'FINAL', liveStatus: '' })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager
+    )).rejects.toThrow('Mark the game final before linking its replay.');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('rejects mirrored shared-schedule documents at the transaction boundary', async () => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        sharedScheduleId: 'shared-schedule-1',
+        sharedScheduleOpponentTeamId: 'team-2',
+        sharedScheduleOpponentGameId: 'game-2'
+      })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager
+    )).rejects.toThrow('original team game');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('rejects a detached mirror that retains only its source-team marker at the transaction boundary', async () => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        sharedScheduleId: null,
+        sharedScheduleSourceTeamId: 'team-2',
+        sharedScheduleOpponentTeamId: null,
+        sharedScheduleOpponentGameId: null
+      })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager
+    )).rejects.toThrow('original team game');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['sharedGameId', 'central-shared-game'],
+    ['sharedGamePath', 'organizations/org-1/sharedGames/game-1'],
+    ['_sharedGamePath', 'organizations/org-1/sharedGames/game-1'],
+    ['sharedGameId', { malformed: true }],
+    ['sharedGameId', '   ']
+  ])('rejects a mirror carrying %s at the transaction boundary', async (field, value) => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame, [field]: value })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager
+    )).rejects.toThrow('original team game');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('rejects synthetic shared-game route identifiers at the transaction boundary', async () => {
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'sharedh_bounded-route-id',
+      'https://youtu.be/PK1HyC37doc',
+      manager
+    )).rejects.toThrow('original team game');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid destinations before authorization or writes', async () => {
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://www.youtube.com/channel/UCa9ghvbup6VQmnDOdqwYpqQ',
+      manager
+    )).rejects.toThrow('Paste a complete YouTube video link.');
+
+    expect(getDelegatedTeamContext).not.toHaveBeenCalled();
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(mocks.runTransactionMock).not.toHaveBeenCalled();
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('reports a web write failure as unconfirmed', async () => {
+    mocks.runTransactionMock.mockRejectedValueOnce(new Error('connection reset'));
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager
+    )).rejects.toThrow('The replay update could not be confirmed. Refresh this game before trying again.');
+
+    expect(invalidateCachedAppData).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a stale screen would overwrite a newer replay', async () => {
+    const displayedReplay = 'https://vimeo.com/old';
+    const currentReplay = 'https://vimeo.com/new';
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame, recordedVideoUrl: currentReplay })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager,
+      { expectedReplayState: { recordedVideoUrl: displayedReplay } }
+    )).rejects.toThrow('The linked replay changed since this game loaded.');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('treats equivalent Date and Firestore Timestamp replay metadata as the same CAS state', async () => {
+    const linkedAt = new Date('2026-08-30T12:00:00.123Z');
+    const seconds = Math.floor(linkedAt.getTime() / 1000);
+    const expectedReplay = {
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+      status: 'ready',
+      linkedAt
+    };
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        replayVideo: {
+          ...expectedReplay,
+          linkedAt: firestoreTimestamp(seconds, 123_000_000)
+        }
+      })
+    });
+
+    await linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/AaBbCcDdEeF',
+      manager,
+      { expectedReplayState: { replayVideo: expectedReplay } }
+    );
+
+    expect(mocks.transactionSet).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves non-millisecond REST replay timestamp precision through cache and SDK transaction CAS', async () => {
+    const linkedAtValue = '2026-08-30T12:00:00.123456789Z';
+    const linkedAtSeconds = Math.floor(Date.parse(linkedAtValue) / 1000);
+    const mapped = mapScheduleEventDocument({
+      name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1',
+      fields: {
+        type: { stringValue: 'game' },
+        date: { timestampValue: '2026-08-29T18:00:00.000Z' },
+        status: { stringValue: 'completed' },
+        liveStatus: { stringValue: 'completed' },
+        replayVideo: {
+          mapValue: {
+            fields: {
+              provider: { stringValue: 'youtube' },
+              videoId: { stringValue: 'PK1HyC37doc' },
+              publicUrl: { stringValue: 'https://www.youtube.com/watch?v=PK1HyC37doc' },
+              status: { stringValue: 'ready' },
+              linkedAt: { timestampValue: linkedAtValue }
+            }
+          }
+        }
+      }
+    });
+    const expectedReplayState = JSON.parse(JSON.stringify(mapped?.rawReplayState || {}));
+    expect(expectedReplayState.replayVideo.linkedAt).toMatchObject({
+      seconds: linkedAtSeconds,
+      nanoseconds: 123_456_789
+    });
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        replayVideo: {
+          provider: 'youtube',
+          videoId: 'PK1HyC37doc',
+          publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+          status: 'ready',
+          linkedAt: firestoreTimestamp(linkedAtSeconds, 123_456_789)
+        }
+      })
+    });
+
+    await linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/AaBbCcDdEeF',
+      manager,
+      { expectedReplayState }
+    );
+
+    expect(mocks.transactionSet).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves browser-cached Firestore Timestamp JSON through replay transaction CAS', async () => {
+    const seconds = 1_788_091_200;
+    const nanoseconds = 123_456_789;
+    const cachedReplayState = JSON.parse(JSON.stringify({
+      replayVideo: {
+        provider: 'youtube',
+        videoId: 'PK1HyC37doc',
+        publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        status: 'ready',
+        linkedAt: {
+          toJSON: () => ({
+            type: 'firestore/timestamp/1.0',
+            seconds,
+            nanoseconds
+          })
+        }
+      }
+    }));
+    expect(cachedReplayState.replayVideo.linkedAt).toEqual({
+      type: 'firestore/timestamp/1.0',
+      seconds,
+      nanoseconds
+    });
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        replayVideo: {
+          provider: 'youtube',
+          videoId: 'PK1HyC37doc',
+          publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+          status: 'ready',
+          linkedAt: firestoreTimestamp(seconds, nanoseconds)
+        }
+      })
+    });
+
+    await linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/AaBbCcDdEeF',
+      manager,
+      { expectedReplayState: cachedReplayState }
+    );
+
+    expect(mocks.transactionSet).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves Timestamp nanoseconds when comparing replay CAS state', async () => {
+    const expectedReplay = {
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+      status: 'ready',
+      linkedAt: firestoreTimestamp(1_788_091_200, 123_000_000)
+    };
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        replayVideo: {
+          ...expectedReplay,
+          linkedAt: firestoreTimestamp(1_788_091_200, 123_000_001)
+        }
+      })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/AaBbCcDdEeF',
+      manager,
+      { expectedReplayState: { replayVideo: expectedReplay } }
+    )).rejects.toThrow('The linked replay changed since this game loaded.');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'a legacy URL inside an archive object',
+      { recordedVideo: { url: 'https://example.com/replay-a' } },
+      { recordedVideo: { url: 'https://example.com/replay-b' } }
+    ],
+    [
+      'an unknown provider field inside an archive object',
+      { recordedVideo: { url: 'https://example.com/replay', providerOpaque: { version: 1 } } },
+      { recordedVideo: { url: 'https://example.com/replay', providerOpaque: { version: 2 } } }
+    ],
+    [
+      'a numeric NaN changing to a string NaN',
+      { recordedVideo: { url: 'https://example.com/replay', providerOpaque: Number.NaN } },
+      { recordedVideo: { url: 'https://example.com/replay', providerOpaque: 'NaN' } }
+    ],
+    [
+      'numeric negative zero changing to positive zero',
+      { recordedVideo: { url: 'https://example.com/replay', providerOpaque: -0 } },
+      { recordedVideo: { url: 'https://example.com/replay', providerOpaque: 0 } }
+    ]
+  ])('fails closed when %s changes after the screen loads', async (_label, expectedReplayState, currentReplayState) => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame, ...currentReplayState })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager,
+      { expectedReplayState }
+    )).rejects.toThrow('The linked replay changed since this game loaded.');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('includes every playback alias in CAS even when the canonical replay is unchanged', async () => {
+    const existingReplay = {
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+      status: 'ready'
+    };
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        replayVideo: existingReplay,
+        videoReplayUrl: 'https://example.com/archive-added-later'
+      })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/AaBbCcDdEeF',
+      manager,
+      { expectedReplayState: { replayVideo: existingReplay } }
+    )).rejects.toThrow('The linked replay changed since this game loaded.');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('uses the same transaction on native and never falls back to an unconditional REST patch', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    mocks.runTransactionMock.mockRejectedValueOnce(new Error('native transaction unavailable'));
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager
+    )).rejects.toThrow('The replay update could not be confirmed.');
+
+    expect(capacitorCoreMock.httpPost).not.toHaveBeenCalled();
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+});
+
 describe('cancelScheduledGameForApp', () => {
   const user = { uid: 'coach-1', displayName: 'Coach', email: 'coach@example.com', roles: [] } as any;
   const event = {
@@ -4346,6 +7481,59 @@ describe('cancelScheduledGameForApp', () => {
   beforeEach(() => {
     (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
     vi.clearAllMocks();
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+    diamondScorebookMock.cancelDiamondGame.mockResolvedValue({
+      outcome: 'accepted',
+      revision: 4,
+      eventId: 'event-4',
+      snapshot: null,
+      completeness: { status: 'partial', authoritativeRevision: 4, families: {}, omissions: [] }
+    });
+  });
+
+  it('uses the canonical Diamond command and never writes cancellation fields or falls back to REST', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+
+    await cancelScheduledGameForApp(
+      {
+        ...event,
+        trackingEngine: 'diamond-v2',
+        isTeamAdmin: true,
+        sharedScheduleOpponentTeamId: 'team-2'
+      },
+      user
+    );
+
+    expect(diamondScorebookMock.cancelDiamondGame).toHaveBeenCalledWith({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      reason: 'Cancelled from schedule management.'
+    });
+    expect(vi.mocked(updateGame)).not.toHaveBeenCalled();
+    expect(capacitorCoreMock.httpPost).not.toHaveBeenCalled();
+    expect(nativeCallableMock.callNativeFirebaseFunction).not.toHaveBeenCalled();
+    expect(vi.mocked(postChatMessage)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(postSharedGameCancellationNotification)).not.toHaveBeenCalled();
+  });
+
+  it('does not post cancellation chat when the canonical Diamond command is not confirmed', async () => {
+    diamondScorebookMock.cancelDiamondGame.mockRejectedValueOnce(new Error('The scorebook could not confirm this request.'));
+
+    await expect(
+      cancelScheduledGameForApp({ ...event, trackingEngine: 'diamond-v2', isTeamAdmin: true }, user)
+    ).rejects.toThrow('could not confirm');
+
+    expect(vi.mocked(updateGame)).not.toHaveBeenCalled();
+    expect(vi.mocked(postChatMessage)).not.toHaveBeenCalled();
+  });
+
+  it('requires manager access for Diamond cancellation even when the caller can keep score', async () => {
+    await expect(
+      cancelScheduledGameForApp({ ...event, trackingEngine: 'diamond-v2', isTeamAdmin: false }, user)
+    ).rejects.toThrow('Team owner or admin access');
+
+    expect(diamondScorebookMock.cancelDiamondGame).not.toHaveBeenCalled();
+    expect(vi.mocked(updateGame)).not.toHaveBeenCalled();
   });
 
   it('does not request a counterpart notice for a linked opponent without reciprocal shared-game metadata', async () => {

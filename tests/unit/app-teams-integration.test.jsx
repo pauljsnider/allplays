@@ -204,7 +204,10 @@ describe('React app Teams page', () => {
     it('renders the same parent and staff/admin teams used by the app inbox', async () => {
         const { container } = await renderTeams('/teams?selectedTeamId=team-staff&from=home');
 
-        expect(homeMocks.loadParentTeamsSummaryBootstrap).toHaveBeenCalledWith(auth.user, { force: false });
+        expect(homeMocks.loadParentTeamsSummaryBootstrap).toHaveBeenCalledWith(auth.user, {
+            force: false,
+            onPartial: expect.any(Function)
+        });
         expect(homeMocks.loadParentHomeSummary).toHaveBeenCalledWith(auth.user, {
             force: false,
             scheduleScope: expect.objectContaining({

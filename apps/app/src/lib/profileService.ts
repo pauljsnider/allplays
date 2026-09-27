@@ -14,11 +14,14 @@ import {
   updateUserProfile,
   upsertNotificationDeviceToken
 } from './adapters/legacyProfileDb';
+import { CapacitorHttp } from '@capacitor/core';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { createLogger } from './logger';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import { captureHandledAppError, createAppTimer } from './telemetry';
+import { getFriendInviteTargetError } from './friendInviteCapabilities';
+import { raceFirstSuccessfulRead } from './adapters/legacyHedgedRead';
 
 export {
   acquireProfilePhoto,
@@ -29,6 +32,7 @@ export {
 
 const profileTimeoutMs = 8000;
 const primaryDataTimeoutMs = 3000;
+const restReadHedgeDelayMs = 750;
 const nativeBatchTeamLookupSize = 10;
 const logger = createLogger('profile-service');
 
@@ -62,6 +66,7 @@ export type ProfileDocument = {
   displayName?: string;
   phone?: string;
   photoUrl?: string | null;
+  photoPath?: string | null;
   signInMethod?: string;
   hasPassword?: boolean;
   updatedAt?: unknown;
@@ -142,8 +147,8 @@ function getFirestoreBaseUrl() {
   return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(getProjectId())}/databases/(default)/documents`;
 }
 
-async function getNativeHeaders(requestUrl: string) {
-  const token = await getNativeAuthIdToken();
+async function getNativeHeaders(requestUrl: string, forceRefresh = false) {
+  const token = await getNativeAuthIdToken(forceRefresh);
   if (!token) {
     throw new Error('Native auth token is unavailable.');
   }
@@ -157,14 +162,19 @@ async function getNativeHeaders(requestUrl: string) {
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
   const url = `${getFirestoreBaseUrl()}${path}`;
   const runRequest = async () => {
-    const headers = await getNativeHeaders(url);
-    const response = await withTimeout(fetch(url, {
+    const method = String(init.method || 'GET').toUpperCase();
+    const isReadOnly = method === 'GET' || path.includes(':runQuery');
+    const execute = async (forceRefresh: boolean) => withTimeout(fetch(url, {
       ...init,
       headers: {
-        ...headers,
+        ...(await getNativeHeaders(url, forceRefresh)),
         ...(init.headers || {})
       }
     }), 'Firestore REST request');
+    let response = await execute(!isReadOnly);
+    if (response.status === 401) {
+      response = await execute(true);
+    }
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
@@ -288,6 +298,40 @@ async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUA
     : [];
 }
 
+export async function loadManagedTeamsFromNativeCallable(options: { includeChatMetadata?: boolean; timeoutMs?: number } = {}) {
+  const timeoutMs = options.timeoutMs ?? profileTimeoutMs;
+  const requestUrl = `https://us-central1-${getProjectId()}.cloudfunctions.net/listManagedTeams`;
+  const execute = async (forceRefresh: boolean) => {
+    const token = await getNativeAuthIdToken(forceRefresh);
+    if (!token) throw new Error('Native auth token is unavailable.');
+    return withTimeout(CapacitorHttp.post({
+      url: requestUrl,
+      headers: await getPrimaryAppCheckHeaders({
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }, requestUrl) as Record<string, string>,
+      data: { data: options.includeChatMetadata === true ? { includeChatMetadata: true } : {} },
+      connectTimeout: timeoutMs,
+      readTimeout: timeoutMs
+    }), 'Managed team load', timeoutMs);
+  };
+  let response = await execute(false);
+  if (response.status === 401) {
+    response = await execute(true);
+  }
+  const payload = response.data && typeof response.data === 'object' ? response.data : {};
+  const result = payload?.result || payload?.data;
+  if (response.status < 200 || response.status >= 300 || !Array.isArray(result?.items)) {
+    const error = new Error(payload?.error?.message || 'Managed teams response is invalid.') as Error & { status?: number };
+    error.status = response.status;
+    throw error;
+  }
+  return {
+    teams: result.items.filter((team: any) => team && typeof team === 'object' && !Array.isArray(team)),
+    isPartial: result.isPartial === true
+  };
+}
+
 function getProfileParentTeamIds(profile: ProfileDocument) {
   return [...new Set((Array.isArray((profile as any).parentOf) ? (profile as any).parentOf : [])
     .map((link: any) => link?.teamId)
@@ -330,26 +374,18 @@ async function nativeSaveProfileDocument(userId: string, profile: ProfileDocumen
   });
 }
 
-async function nativeLoadNotificationTeams(userId: string, email?: string | null): Promise<NotificationTeam[]> {
+async function nativeLoadNotificationTeams(userId: string, _email?: string | null): Promise<NotificationTeam[]> {
   const profile = await nativeLoadProfileDocument(userId).catch(() => ({}));
-  const emailCandidates = Array.from(new Set([
-    String(email || '').trim(),
-    String((profile as any)?.email || '').trim(),
-    String(email || (profile as any)?.email || '').trim().toLowerCase()
-  ].filter(Boolean)));
-  const normalizedEmail = emailCandidates.find((candidate) => candidate === candidate.toLowerCase()) || '';
-  const ownerEmailLookups = emailCandidates.map((ownerEmail) =>
-    nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail).catch(() => [])
-  );
-  const [ownedTeams, adminTeams, ownerEmailLowerTeams, ...ownerEmailTeams] = await Promise.all([
-    nativeRunQuery('teams', 'ownerId', 'EQUAL', userId).catch(() => []),
-    normalizedEmail ? nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', normalizedEmail).catch(() => []) : Promise.resolve([]),
-    normalizedEmail ? nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail).catch(() => []) : Promise.resolve([]),
-    ...ownerEmailLookups
+  const [managedTeamResult, parentTeams] = await Promise.all([
+    loadManagedTeamsFromNativeCallable(),
+    nativeLoadTeamsByIds(getProfileParentTeamIds(profile))
   ]);
-  const parentTeams = await nativeLoadTeamsByIds(getProfileParentTeamIds(profile));
+  if (managedTeamResult.isPartial) {
+    throw new Error('Managed team discovery returned partial results.');
+  }
   const map = new Map<string, NotificationTeam>();
-  filterActiveTeams([...ownedTeams, ...adminTeams, ...ownerEmailLowerTeams, ...ownerEmailTeams.flat(), ...parentTeams]).forEach((team: any) => {
+  filterActiveTeams([...managedTeamResult.teams, ...parentTeams])
+    .forEach((team: any) => {
     if (team?.id) {
       map.set(team.id, { id: team.id, name: team.name || team.id });
     }
@@ -529,19 +565,25 @@ export async function loadProfileDocument(userId: string): Promise<ProfileDocume
     operation: 'profile-load'
   });
   try {
-    const profile = await withTimeout(Promise.resolve(getUserProfile(userId)), 'Profile load', primaryDataTimeoutMs) || {};
-    timer.end({ path: 'sdk', userIdPresent: Boolean(userId) });
-    return profile;
-  } catch (error) {
-    logProfileWarning('Falling back to REST profile load.', 'profile-load', error, { userId });
-    try {
-      const profile = await nativeLoadProfileDocument(userId);
+    const result = await raceFirstSuccessfulRead({
+      primary: () => Promise.resolve(getUserProfile(userId)),
+      fallback: () => nativeLoadProfileDocument(userId),
+      label: 'Profile load',
+      fallbackDelayMs: restReadHedgeDelayMs,
+      primaryTimeoutMs: primaryDataTimeoutMs
+    });
+    if (result.source === 'fallback') {
+      const error = result.primaryError || new Error('Profile SDK read exceeded the REST hedge delay.');
+      logProfileWarning('Falling back to REST profile load.', 'profile-load', error, { userId });
       timer.end({ path: 'rest_fallback', fallback: true, userIdPresent: Boolean(userId) });
-      return profile;
-    } catch (fallbackError) {
-      timer.end({ path: 'rest_fallback', fallback: true, userIdPresent: Boolean(userId), error: fallbackError });
-      throw fallbackError;
+    } else {
+      timer.end({ path: 'sdk', userIdPresent: Boolean(userId) });
     }
+    return result.value || {};
+  } catch (error) {
+    logProfileWarning('REST profile load failed.', 'profile-load', error, { userId });
+    timer.end({ path: 'rest_fallback', fallback: true, userIdPresent: Boolean(userId), error });
+    throw error;
   }
 }
 
@@ -630,8 +672,9 @@ export async function saveNotificationDeviceToken(userId: string, input: Notific
 export async function createProfileAccessCode(userId: string, email: string, phone: string) {
   const normalizedEmail = String(email || '').trim();
   const normalizedPhone = String(phone || '').trim();
-  if (!normalizedEmail && !normalizedPhone) {
-    throw new Error('Enter an email or phone number for the invite.');
+  const targetError = getFriendInviteTargetError(normalizedEmail, normalizedPhone);
+  if (targetError) {
+    throw new Error(targetError);
   }
 
   const code = generateAccessCode();

@@ -9,6 +9,7 @@ const MAX_PUBLIC_REGISTRATION_FIELD_GROUP_BYTES = 64 * 1024;
 const MAX_PUBLIC_REGISTRATION_QUANTITY = 20;
 const MAX_PUBLIC_REGISTRATION_REQUEST_BYTES = 1024 * 1024;
 const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+const LEGACY_GUARDIAN_EMAIL_FIELD_NAMES = new Set(['email', 'guardianemail']);
 
 function normalizePublicRegistrationSecurityMode(value, fallback = 'observe') {
   const normalizedFallback = PUBLIC_REGISTRATION_SECURITY_MODES.has(String(fallback || '').trim().toLowerCase())
@@ -82,10 +83,44 @@ function normalizeBoundaryPart(value, fallback) {
   return normalized || fallback;
 }
 
+function normalizePublicRegistrationFields(fields = []) {
+  if (!Array.isArray(fields)) return [];
+  return fields
+    .map((field, index) => ({
+      id: String(field?.id || field?.key || `field_${index + 1}`).trim(),
+      label: String(field?.label || field?.name || field?.id || field?.key || `Field ${index + 1}`).trim(),
+      type: String(field?.type || '').trim().toLowerCase(),
+      required: field?.required === true
+    }))
+    .filter((field) => field.id && field.label);
+}
+
+function normalizeGuardianEmailFieldName(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function resolvePublicRegistrationGuardianEmail(form = {}, guardian = {}) {
+  const fields = Array.isArray(form.guardianFields) ? form.guardianFields : [];
+  const typedEmailField = fields.find((field) => String(field?.type || '').trim().toLowerCase() === 'email');
+  const legacyEmailField = fields.find((field) => (
+    LEGACY_GUARDIAN_EMAIL_FIELD_NAMES.has(normalizeGuardianEmailFieldName(field?.id))
+      || LEGACY_GUARDIAN_EMAIL_FIELD_NAMES.has(normalizeGuardianEmailFieldName(field?.label))
+  ));
+  const authoritativeEmailField = typedEmailField || legacyEmailField;
+  if (!authoritativeEmailField?.id) return '';
+  return normalizeBoundaryPart(guardian?.[authoritativeEmailField.id], '');
+}
+
 function buildPublicRegistrationRateLimitBoundaries(input = {}, context = {}, options = {}) {
   const operation = normalizeBoundaryPart(options.operation, 'submit');
   const requestIp = normalizeBoundaryPart(options.requestIp, 'unknown');
-  const guardianEmail = normalizeBoundaryPart(input.guardian?.email || input.guardian?.guardianEmail, 'no-email');
+  const suppliedCanonicalGuardianEmail = Object.prototype.hasOwnProperty.call(options, 'canonicalGuardianEmail');
+  const guardianEmail = normalizeBoundaryPart(
+    suppliedCanonicalGuardianEmail
+      ? options.canonicalGuardianEmail
+      : input.guardian?.email || input.guardian?.guardianEmail,
+    'no-email'
+  );
   const checkoutSubject = normalizeBoundaryPart(
     input.publicCheckoutCapability || input.checkoutAttemptToken || input.submissionIdempotencyKey || input.registrationId,
     'no-subject'
@@ -176,6 +211,8 @@ module.exports = {
   evaluatePublicRegistrationAppCheck,
   getPublicRegistrationRequestBodyBytes,
   getVerifiedAppCheckAppId,
+  normalizePublicRegistrationFields,
   normalizePublicRegistrationIdempotencyKey,
-  normalizePublicRegistrationSecurityMode
+  normalizePublicRegistrationSecurityMode,
+  resolvePublicRegistrationGuardianEmail
 };

@@ -1,8 +1,23 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
+const adminFirestore = require('firebase-admin/firestore');
+const FirestoreFieldPath = admin.firestore.FieldPath || adminFirestore.FieldPath;
+const FirestoreFieldValue = admin.firestore.FieldValue || adminFirestore.FieldValue;
+const FirestoreTimestamp = admin.firestore.Timestamp || adminFirestore.Timestamp;
 const Stripe = require('stripe');
 const { Resend } = require('resend');
 const crypto = require('node:crypto');
+const {
+  buildCanonicalConversationId,
+  canProjectChatConversation,
+  resolveCanonicalConversationParticipants,
+  serializeChatConversationProjection
+} = require('./chat-conversation-access-core.cjs');
+const {
+  canReadSocialPostForCaller,
+  getNextSocialPostLikeState,
+  normalizeSocialPostId
+} = require('./social-post-mutations-core.cjs');
 const publicUserProfileProjection = require('./public-user-profile-projection-core.cjs');
 const {
   createPublicProfileAuthDeleteHandler,
@@ -37,6 +52,7 @@ const {
   buildExternalCalendarEvents,
   getFamilyShareCalendarDedupTimestamps,
   hashFamilyShareCalendarEventUid,
+  isFamilyShareCalendarEventTracked,
   sanitizeFamilyShareViewResponse
 } = require('./family-share-view-core.cjs');
 const { createVerifiedEmailSensitiveActionGuard } = require('./verified-email-policy.cjs');
@@ -44,7 +60,11 @@ const { isAllPlaysFirebaseHostingOrigin } = require('./hosting-origin-policy.cjs
 const {
   normalizeTeamPassCheckoutInput,
   isEligibleTeamPassPurchaser,
+  buildTeamPassCheckoutAttemptId,
+  buildTeamPassCheckoutIdempotencyKey,
+  hasTeamPassMetadata,
   shouldUnlockTeamPassFromEvent,
+  isTeamPassEntitlementActive,
   buildTeamPassEntitlement
 } = require('./team-pass-core.cjs');
 const {
@@ -55,9 +75,15 @@ const {
   isTeamFeeCheckoutEligible,
   isEligibleTeamFeePayer,
   getTeamFeeRecipientTargetUserIds,
+  LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS,
+  sanitizeParentTeamFeeRecipient,
+  hasLegacyReadableTeamFeeCheckoutState,
+  buildLegacyReadableTeamFeeCheckoutAttempt,
   buildTeamFeeCheckoutUrls,
   buildTeamFeeCheckoutMetadata,
-  canReuseTeamFeeCheckoutSession,
+  isCanonicalStripeCheckoutUrl,
+  getTeamFeeCheckoutReuseFailure,
+  getNewTeamFeeCheckoutSessionFailure,
   getTeamFeeCheckoutGuardFailure,
   shouldApplyTeamFeeCheckoutSession,
   shouldMarkTeamFeePaidFromEvent,
@@ -68,10 +94,22 @@ const {
   buildTeamFeeStripeRefundUpdate
 } = require('./team-fees-core.cjs');
 const {
+  LEGACY_READABLE_REGISTRATION_CHECKOUT_FIELDS,
+  hasLegacyReadableRegistrationCheckoutState,
+  buildLegacyReadableRegistrationCheckoutAttempt,
   getRegistrationPaidCheckoutGuardFailure,
   normalizeRegistrationCheckoutCurrency
 } = require('./registration-payment-webhook-core.cjs');
-const { createFirestoreFixedWindowRateLimiter, createInMemoryRateLimiter, getRequestIp } = require('./rate-limit.cjs');
+const {
+  createFirestoreFixedWindowRateLimitReservation,
+  createFirestoreFixedWindowRateLimiter,
+  createInMemoryRateLimiter,
+  getRequestIp
+} = require('./rate-limit.cjs');
+const {
+  PUBLIC_RSVP_RATE_LIMITS,
+  buildPublicRsvpRateLimitBoundaries
+} = require('./public-rsvp-rate-limit-core.cjs');
 const {
   MAX_ATTESTED_EVENTS_PER_REQUEST,
   MAX_TELEMETRY_BODY_BYTES,
@@ -94,24 +132,66 @@ const {
   buildPublicRegistrationRateLimitBoundaries,
   buildPublicRegistrationSubmissionFingerprint,
   evaluatePublicRegistrationAppCheck,
+  normalizePublicRegistrationFields,
   normalizePublicRegistrationIdempotencyKey,
-  normalizePublicRegistrationSecurityMode
+  normalizePublicRegistrationSecurityMode,
+  resolvePublicRegistrationGuardianEmail
 } = require('./public-registration-abuse-core.cjs');
-const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
+const {
+  buildPublicGamesIcs,
+  canExposeEmptyPublicFeed,
+  isPublicFanGame,
+  normalizePublicCalendarTeamId
+} = require('./public-calendar-core.cjs');
 const {
   buildPublicGamesResponse,
   buildPublicRosterResponse,
+  canTrackedCalendarEventSuppressPublicProjection,
+  canProjectPublicGame,
+  getPublicOpponentStatKeys,
+  getPublicVideoLifecycle,
+  isRecordedReplayPaywallEnabled,
   isStrictPublicTeam,
+  isPublicProjectionItemAfterCursor,
   normalizeTeamId,
+  paginatePublicProjectionItems,
+  parsePublicProjectionCursor,
   parsePublicGamesQuery,
-  serializePublicGame
+  scanBoundedPublicCalendarTrackingEvents,
+  serializePublicCalendarEvent,
+  serializePublicDiamondGameIdentity,
+  serializePublicDiamondOpponentStats,
+  serializePublicGame,
+  serializePublicTeamDiscovery,
+  serializePublicTeamProfile
 } = require('./public-team-api-core.cjs');
+const { createDiamondStatConfigSnapshot } = require('./diamond-stat-config.cjs');
+const {
+  buildGameReportShareHtml,
+  buildGameReportShareMetadata,
+  buildLiveGameShareHtml,
+  buildLiveGameShareMetadata,
+  buildLiveGameShareParams
+} = require('./live-game-share-preview-core.cjs');
+const {
+  buildPlayerShareHtml,
+  buildPlayerShareMetadata,
+  buildPublicPlayerShareProjection,
+  normalizePlayerId
+} = require('./player-share-preview-core.cjs');
+const {
+  normalizePublicTeamSearch,
+  normalizePageSize,
+  searchDatastorePublicTeamPage,
+  scanDatastorePublicTeamPage
+} = require('./public-team-discovery-core.cjs');
 const {
   PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY,
   PUBLIC_HOMEPAGE_MAX_UNIQUE_TEAM_LOOKUPS,
   buildPublicHomepageCandidateBatch,
   buildPublicHomepageGamesResponse,
   buildPublicHomepageTeamIdBatch,
+  projectSharedGameForPublicTeam,
   serializePublicHomepageCandidates
 } = require('./public-homepage-games-core.cjs');
 const {
@@ -125,9 +205,17 @@ const {
   refreshPublicRsvpSummary
 } = require('./public-rsvp-summary-core.cjs');
 const {
+  isPublicRsvpReplay,
+  normalizePublicRsvpResponse
+} = require('./public-rsvp-idempotency-core.cjs');
+const {
   buildTeamCalendarIcs,
-  normalizeCalendarRequest
+  createTeamCalendarFeedCredentialResolver,
+  getCalendarTokenHolderId
 } = require('./team-calendar-feed-core.cjs');
+const {
+  createGetOrCreatePrivateTeamCalendarFeedHandler
+} = require('./team-calendar-subscription-core.cjs');
 const {
   isFamilyShareTokenReadable,
   resolveFamilyShareChildrenFromOwnerProfile
@@ -144,7 +232,10 @@ const {
   validateRsvpTokenRedemption,
   buildRsvpTokenAuditPayload
 } = require('./rsvp-token-core.cjs');
-const { isAllowedPublicRsvpOrigin } = require('./public-rsvp-cors-core.cjs');
+const {
+  isAllowedPublicRsvpAdminOrigin,
+  isAllowedPublicRsvpOrigin
+} = require('./public-rsvp-cors-core.cjs');
 const {
   normalizeText,
   resolveTeamEmailRecipients,
@@ -168,7 +259,8 @@ const {
   getAuthEmailActionSettings,
   getInviteContinueUrl,
   isValidAuthEmail,
-  normalizeAuthEmail
+  normalizeAuthEmail,
+  normalizeVerificationNextRoute
 } = require('./auth-email-core.cjs');
 const { createAuthEmailCallableHandlers } = require('./auth-email-callables.cjs');
 const { createAuthEmailDeliveryStore } = require('./auth-email-delivery-store.cjs');
@@ -206,7 +298,7 @@ const {
   shouldStopRegistrationPaymentReminders
 } = require('./registration-payment-reminders-core.cjs');
 const {
-  buildGenericPreAuthAccessCodeValidationResult,
+  createAccessCodeValidationHandler,
   isAccessCodeInactive,
   validateAccessCodeCandidates
 } = require('./access-code-validation.cjs');
@@ -252,11 +344,14 @@ const {
 } = require('./schedule-notification-utils.cjs');
 const {
   normalizeOpenOfficiatingSlotClaimInput,
+  normalizeOfficiatingAssignmentResponseInput,
   isEligibleOpenOfficiatingSlotParticipant,
   resolveOfficiatingGamePath,
   isTeamLinkedToSharedGame,
   buildOpenOfficiatingSlotClaimUpdate,
-  buildOfficiatingSelfAssignmentNotificationRecord
+  buildOfficiatingSelfAssignmentNotificationRecord,
+  buildOfficiatingAssignmentResponseUpdate,
+  buildOfficiatingAssignmentResponseNotificationRecord
 } = require('./officiating-self-assignment-core.cjs');
 const {
   assertSportsConnectSyncConfig,
@@ -282,29 +377,129 @@ const {
   createCheckAcceptedFriendMessageAccessHandler,
   hasCurrentTeamAccess
 } = require('./friend-message-access-core.cjs');
-const { hasAdminInviteIssuerAccess, hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
+const {
+  createFriendInviteRedemptionCallableHandler,
+  createFriendInviteRedemptionTransaction
+} = require('./friend-invite-redemption-core.cjs');
+const { hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
+const { createRedeemAdminInviteHandler } = require('./admin-invite-redemption-core.cjs');
+const {
+  serializeManagedTeamDocument,
+  serializeManagedTeamProfile,
+  serializeStaffTeamProfile
+} = require('./managed-team-projection-core.cjs');
+const { createOfficialTeamDiscoveryHandler } = require('./official-team-discovery-core.cjs');
+const { createStatConfigManagementHandlers } = require('./stat-config-management-core.cjs');
+const {
+  createDelegatedTeamContextHandler,
+  resolveDelegatedAccess
+} = require('./delegated-team-context-core.cjs');
+const { createDiamondScorebookHandlers } = require('./diamond-scorebook-handlers.cjs');
+const {
+  sanitizeDiamondPublicTeamStatDocument,
+  serializeDiamondPublicStatsResponse
+} = require('./diamond-scorebook-projections.cjs');
+const {
+  createDiamondLiveEngagementHandlers
+} = require('./diamond-live-engagement-handlers.cjs');
+const {
+  createDiamondScorebookProjectorHandlers
+} = require('./diamond-scorebook-projector-handlers.cjs');
+const {
+  loadDiamondClipTimings,
+  resolveDiamondSharedGame
+} = require('./diamond-scorebook-runtime.cjs');
+const {
+  createDiamondScorebookEffectHandlers
+} = require('./diamond-scorebook-effect-handlers.cjs');
+const {
+  createDiamondScorebookNotificationSender,
+  diamondNotificationProviderReceiptId
+} = require('./diamond-scorebook-notification-sender.cjs');
+const {
+  createDiamondScorebookAiHandlers
+} = require('./diamond-scorebook-ai-handlers.cjs');
+const {
+  REPLAY_ARCHIVE_MIGRATION_CONTROL_PATH,
+  buildReplayClipScrubUpdate,
+  buildReplayArchiveWrite,
+  buildReplayParentUpdate,
+  buildReplayServerProjectionGame,
+  canManageReplayArchive,
+  collectHighlightProtectedUrlIdentityRecords,
+  createReplayRevision,
+  getCompatibleReplayLifecycle,
+  getExactReplayLifecycle,
+  getReplayClipYouTubeIdentityRecord,
+  getReplayArchiveChildPath,
+  getReplayCompatibilityReceiptPath,
+  getReplayCompatibilityState,
+  getReplayMutationHash,
+  getReplayProjectionVideo,
+  getReplayProtectedYouTubeIdentityRecord,
+  isCanonicalReplayGame,
+  isReplayArchiveConsistent,
+  isReplayArchiveMigrationReady,
+  inspectLegacyReplayArchive,
+  normalizeHighlightClipPayload,
+  normalizeHighlightClipWrite,
+  normalizeReplayManagementInput,
+  normalizeReplayArchiveMigrationControl,
+  normalizeReplayPremiumConfig,
+  normalizeReplayClipIdentity,
+  normalizeReplayCompatibilityReceipt,
+  normalizeReplayProtectedIdentity,
+  normalizeReplayRevision,
+  normalizeReplayResourceId,
+  normalizeStoredReplayArchive,
+  replayClipValuesEqual,
+  resolveReplaySeasonId,
+  serializeReplayManagementState
+} = require('./replay-private-archive-core.cjs');
+const {
+  AUTOMATED_GAME_COPY_MARKER_FIELDS,
+  buildStructuredReplayClipIdentityReport,
+  extractStructuredReplayIdentitySources
+} = require('./replay-structured-media-core.cjs');
+const {
+  ATHLETE_PROFILE_PROJECTION_BOUNDARY_CONTROL_PATH,
+  createAthleteProfileProjectionSaveHandler,
+  isAthleteProfileProjectionBoundaryReady
+} = require('./athlete-profile-projection-core.cjs');
+const {
+  createStructuredMediaWriteHandler
+} = require('./structured-media-write-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
 const {
+  anonymizeAccountReplayArchiveAttribution,
   buildChatConversationAccountScrubPlan,
   buildDeletionAuditId,
   buildRegistrationAccountScrubPlan,
   buildRosterParentScrubPlan,
   buildTeamAccountGrantScrubPlan,
-  classifyAccountStoragePaths,
   collectAccountRosterScopes,
   collectAccountTeamIds,
-  collectAccountMediaStoragePaths,
+  cleanupAccountCalendarCredentials,
+  cleanupAccountDiamondPrivateNotes,
+  createAccountDiamondPrivateNoteAuthDeleteHandler,
   createAccountDeletionRequestHandler,
+  deleteAccountMediaStoragePages,
+  deleteAccountQueryPages,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   getAccountEmailQueryCandidates,
+  getCurrentEnabledAuthEmail,
   getAccountTeamPermissionQueryFields,
   getLegacyUnscopedProfilePhotoPaths,
   loadOwnedTeams,
   shouldProcessAccountDeletionRequest,
   summarizeOwnedTeams
 } = require('./account-deletion-core.cjs');
-const { createTeamOwnerAccessSyncHandler } = require('./team-owner-access-core.cjs');
+const {
+  createLegacyTeamOwnerAuthSyncHandler,
+  createLegacyTeamOwnerReconciliationHandler,
+  createTeamOwnerAccessSyncHandler
+} = require('./team-owner-access-core.cjs');
 const {
   buildAdminUserSearchHashes,
   haveAdminUserSearchFieldsChanged
@@ -315,17 +510,29 @@ const {
   appendUniqueValue,
   buildAutoAcceptedParentLink
 } = require('./parent-invite-auto-link-core.cjs');
+const { resolveAuthenticatedFamilyInviteEmail } = require('./family-invite-identity-core.cjs');
+const { createParentInviteHandler } = require('./parent-invite-creation-core.cjs');
+const { createCoParentInviteHandler } = require('./co-parent-invite-core.cjs');
+const { createNativeWebAuthTokenHandler } = require('./native-web-auth-token-core.cjs');
+const {
+  authenticatePrimaryCertificateSignatureReferences,
+  discoverLegacyImageSignatureReferences,
+  getEnabledCertificateAuthUserIds,
+  getCertificateLegacyManagerEmails,
+  getCertificateLegacySignatureInventoryId,
+  isAuthorizedCertificateSignatureCleanupTarget,
+  isCertificateSignatureTargetReferenced,
+  isMatchingCertificateLegacySignatureBinding,
+  normalizeCertificateTeamId,
+  planCertificateSignatureCleanup,
+  upgradeCertificateSignatureCleanupTarget
+} = require('./certificate-signature-cleanup-core.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
 }
 
 const firestore = admin.firestore();
-function assertPaymentsEnabled() {
-  if (process.env.PAYMENTS_ENABLED !== 'true') {
-    throw new functions.https.HttpsError('failed-precondition', 'Online payments are not enabled in this release.');
-  }
-}
 const assertSensitiveEmailVerified = createVerifiedEmailSensitiveActionGuard({
   firestore,
   HttpsError: functions.https.HttpsError,
@@ -334,15 +541,223 @@ const assertSensitiveEmailVerified = createVerifiedEmailSensitiveActionGuard({
     functions.config()?.security?.verified_email_mode ||
     'observe'
 });
+const createNativeWebAuthToken = createNativeWebAuthTokenHandler({
+  getAuth: () => admin.auth(),
+  HttpsError: functions.https.HttpsError
+});
+const listOfficialLinkedTeamIdsHandler = createOfficialTeamDiscoveryHandler({
+  firestore,
+  auth: admin.auth(),
+  HttpsError: functions.https.HttpsError
+});
+const statConfigManagementHandlers = createStatConfigManagementHandlers({
+  firestore,
+  auth: admin.auth(),
+  hasTeamAdminAccess,
+  HttpsError: functions.https.HttpsError
+});
+const diamondScorebookHandlers = createDiamondScorebookHandlers({
+  firestore,
+  auth: {
+    getUser: (...args) => admin.auth().getUser(...args),
+    getUsers: (...args) => admin.auth().getUsers(...args)
+  },
+  HttpsError: functions.https.HttpsError,
+  logger: functions.logger,
+  random: crypto,
+  resolveDelegatedAccess,
+  isPublicGame: canProjectPublicGame
+});
+const diamondLiveEngagementHandlers = createDiamondLiveEngagementHandlers({
+  firestore,
+  auth: {
+    getUser: (...args) => admin.auth().getUser(...args)
+  },
+  FieldValue: FirestoreFieldValue,
+  HttpsError: functions.https.HttpsError,
+  assertSensitiveWrite: assertSensitiveEmailVerified,
+  resolveDelegatedAccess,
+  isPublicGame: canProjectPublicGame,
+  logger: functions.logger
+});
+// Keep unrelated callable-loader tests and partial Firebase adapters from
+// eagerly requiring the projector's write-only batch surface. A real projector
+// invocation still fails before any work when the underlying SDK lacks it.
+const diamondProjectorFirestore = {
+  doc: (...args) => firestore.doc(...args),
+  collection: (...args) => firestore.collection(...args),
+  runTransaction: (...args) => firestore.runTransaction(...args),
+  batch: (...args) => {
+    if (typeof firestore.batch !== 'function') {
+      throw new TypeError('Firestore batch writes are unavailable for the Diamond projector.');
+    }
+    return firestore.batch(...args);
+  }
+};
+const diamondScorebookProjectorHandlers = createDiamondScorebookProjectorHandlers({
+  firestore: diamondProjectorFirestore,
+  logger: functions.logger,
+  random: crypto,
+  loadClipTimings: loadDiamondClipTimings,
+  resolveSharedGame: resolveDiamondSharedGame
+});
+function buildDiamondSharedGameNotificationAppRoute(request) {
+  const sharedGamePath = request?.sharedGamePath;
+  if (sharedGamePath === null || sharedGamePath === undefined || sharedGamePath === '') {
+    return null;
+  }
+  if (
+    typeof sharedGamePath !== 'string' ||
+    sharedGamePath !== sharedGamePath.trim() ||
+    sharedGamePath.length > 512 ||
+    /[\u0000-\u001f\u007f]/.test(sharedGamePath)
+  ) {
+    throw new TypeError('The Diamond notification shared-game path is invalid.');
+  }
+  const segments = sharedGamePath.split('/');
+  if (
+    segments.length !== 4 ||
+    !['organizations', 'tournaments'].includes(segments[0]) ||
+    segments[2] !== 'sharedGames' ||
+    segments.some((segment) => !segment || segment === '.' || segment === '..' || segment.length > 128)
+  ) {
+    throw new TypeError('The Diamond notification shared-game path is invalid.');
+  }
+  const teamId = normalizeFirestoreId(request.teamId, 'teamId');
+  normalizeFirestoreId(request.gameId, 'gameId');
+  const gameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+  const query = new URLSearchParams();
+  query.set('section', 'game');
+  query.set('sharedGamePath', sharedGamePath);
+  return {
+    teamId,
+    gameId,
+    appRoute: `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}?${query.toString()}`
+  };
+}
+function deliverDiamondScorebookNotification(request, delivery, hooks = {}) {
+  if (
+    delivery?.instanceId !== request.instanceId ||
+    delivery?.idempotencyKey !== request.idempotencyKey ||
+    delivery?.providerRequestId !== diamondNotificationProviderReceiptId(request)
+  ) {
+    throw new TypeError('The Diamond notification delivery generation is inconsistent.');
+  }
+  if (typeof hooks.beforeProviderDispatch !== 'function') {
+    throw new TypeError('The Diamond notification provider-dispatch boundary is required.');
+  }
+  const sharedRoute = buildDiamondSharedGameNotificationAppRoute(request);
+  return sendCategoryNotification({
+    teamId: request.teamId,
+    gameId: request.gameId,
+    eventId: request.sourceEventId,
+    category: request.category,
+    title: request.title,
+    body: request.body,
+    linkOverride: request.link,
+    appRouteOverride: sharedRoute?.appRoute || null,
+    navigationTeamId: sharedRoute?.teamId || null,
+    navigationGameId: sharedRoute?.gameId || null,
+    viewerTeamId: request.viewerTeamId || null,
+    viewerGameId: request.viewerGameId || null,
+    dedupKey: request.dedupKey,
+    deliveryIdempotencyKey: delivery.providerRequestId,
+    beforeProviderDispatch: hooks.beforeProviderDispatch,
+    suppressResourceTelemetry: true,
+    // The Diamond sender owns the durable receipt and writes an irreversible
+    // dispatch fence after the deterministic inbox is ready but before FCM.
+    dedupKeys: []
+  });
+}
+const diamondScorebookNotificationSender = createDiamondScorebookNotificationSender({
+  firestore,
+  logger: functions.logger,
+  deliverNotification: deliverDiamondScorebookNotification
+});
+const diamondScorebookEffectHandlers = createDiamondScorebookEffectHandlers({
+  firestore,
+  logger: functions.logger,
+  random: crypto,
+  sendNotification: diamondScorebookNotificationSender.sendDiamondNotification
+});
+const diamondScorebookAiHandlers = createDiamondScorebookAiHandlers({
+  firestore,
+  auth: {
+    getUser: (...args) => admin.auth().getUser(...args)
+  },
+  HttpsError: functions.https.HttpsError,
+  logger: functions.logger,
+  resolveDelegatedAccess
+});
+const saveAthleteProfileProjectionHandler = createAthleteProfileProjectionSaveHandler({
+  firestore,
+  auth: admin.auth(),
+  FieldValue: FirestoreFieldValue,
+  HttpsError: functions.https.HttpsError,
+  assertSensitiveWrite: assertSensitiveEmailVerified
+});
+const mutateStructuredMediaIdentityHandler = createStructuredMediaWriteHandler({
+  firestore,
+  auth: admin.auth(),
+  FieldValue: FirestoreFieldValue,
+  HttpsError: functions.https.HttpsError,
+  hasTeamAdminAccess,
+  assertSensitiveWrite: assertSensitiveEmailVerified
+});
+function assertPaymentsEnabled() {
+  if (process.env.PAYMENTS_ENABLED !== 'true') {
+    throw new functions.https.HttpsError('failed-precondition', 'Online payments are not enabled in this release.');
+  }
+}
+
+const PREMIUM_ACCESS_CONFIG_PATH = 'platformConfig/premium';
+
+async function readPremiumOpenToAll() {
+  let snapshot;
+  try {
+    snapshot = await firestore.doc(PREMIUM_ACCESS_CONFIG_PATH).get();
+  } catch (error) {
+    functions.logger.error('Unable to read the global premium access flag.', {
+      error: error?.message || error
+    });
+    throw new functions.https.HttpsError('unavailable', 'Premium access configuration could not be verified.');
+  }
+
+  if (!snapshot.exists) return true;
+  const value = snapshot.data()?.openToAll;
+  if (typeof value !== 'boolean') {
+    throw new functions.https.HttpsError('unavailable', 'Premium access configuration is invalid.');
+  }
+  return value;
+}
+
+async function assertTeamPassCheckoutAvailable() {
+  if (await readPremiumOpenToAll()) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'Premium features are currently open to everyone, so a Team Pass purchase is not needed.'
+    );
+  }
+}
 const INVITE_EMAIL_TYPES = new Set(['parent_invite', 'household_invite', 'coparent_invite']);
 const EMAIL_LINK_INVITE_TYPES = new Set(['parent_invite', 'household_invite', 'coparent_invite', 'admin_invite']);
 const AUTH_EMAIL_COOLDOWN_MS = 60 * 1000;
 const FAILED_INVITE_SIGNUP_CLEANUP_WINDOW_MS = 30 * 60 * 1000;
 const FAILED_INVITE_SIGNUP_CLEANUP_TYPES = new Set(['parent_invite', 'household_invite', 'coparent_invite']);
 const TEAM_MEDIA_NOTIFICATION_BATCH_WINDOW_MS = 60 * 60 * 1000;
-const TEAM_MEDIA_NOTIFICATION_DISPATCH_LIMIT = 50;
+const TEAM_MEDIA_NOTIFICATION_QUERY_PAGE_SIZE = PRE_EVENT_REMINDER_QUERY_PAGE_SIZE;
+const TEAM_MEDIA_NOTIFICATION_MAX_PAGES_PER_RUN = PRE_EVENT_REMINDER_MAX_PAGES_PER_RUN;
+const TEAM_MEDIA_NOTIFICATION_MAX_RUNTIME_MS = PRE_EVENT_REMINDER_MAX_RUNTIME_MS;
 const FIRESTORE_BATCH_SAFE_WRITE_LIMIT = 450;
 const NOTIFICATION_RECIPIENT_DEVICE_SYNC_CONCURRENCY = 5;
+const NOTIFICATION_INBOX_WRITE_CONCURRENCY = 10;
+function getPositiveIntegerEnvironmentValue(name, fallback) {
+  const value = Number.parseInt(process.env[name], 10);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+const TEAM_EMAIL_RATE_LIMIT_WINDOW_MS = getPositiveIntegerEnvironmentValue('TEAM_EMAIL_RATE_LIMIT_WINDOW_MS', 10 * 60 * 1000);
+const TEAM_EMAIL_SENDER_SEND_LIMIT = getPositiveIntegerEnvironmentValue('TEAM_EMAIL_SENDER_SEND_LIMIT', 3);
+const TEAM_EMAIL_TEAM_SEND_LIMIT = getPositiveIntegerEnvironmentValue('TEAM_EMAIL_TEAM_SEND_LIMIT', 10);
 const checkStripeWebhookRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 120,
@@ -407,6 +822,11 @@ const checkPublicTeamApiRateLimit = createInMemoryRateLimiter({
   maxRequests: 120,
   maxKeys: 5_000
 });
+const checkReplayPlaybackRateLimit = createInMemoryRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 120,
+  maxKeys: 5_000
+});
 const checkCalendarForceRefreshRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 10,
@@ -420,16 +840,50 @@ const checkCalendarTargetFetchRateLimit = createInMemoryRateLimiter({
   maxRequests: 30,
   maxKeys: 10_000
 });
-const checkFamilyShareViewRateLimit = createInMemoryRateLimiter({
+const checkFamilyShareRequestRateLimit = createFirestoreFixedWindowRateLimiter({
+  firestore,
+  collectionName: 'familyShareRequestRateLimits',
   windowMs: 60_000,
-  maxRequests: 60,
-  maxKeys: 10_000
+  maxRequests: 60
 });
 const checkFamilyShareCalendarTargetRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 20,
   maxKeys: 10_000
 });
+const checkPublicRsvpTokenReadRateLimit = createInMemoryRateLimiter({
+  windowMs: 10 * 60_000,
+  maxRequests: PUBLIC_RSVP_RATE_LIMITS.read.token,
+  maxKeys: 10_000
+});
+const checkPublicRsvpTokenWriteRateLimit = createInMemoryRateLimiter({
+  windowMs: 10 * 60_000,
+  maxRequests: PUBLIC_RSVP_RATE_LIMITS.write.token,
+  maxKeys: 10_000
+});
+const checkPublicRsvpNetworkReadRateLimit = createInMemoryRateLimiter({
+  windowMs: 10 * 60_000,
+  maxRequests: PUBLIC_RSVP_RATE_LIMITS.read.network,
+  maxKeys: 10_000
+});
+const checkPublicRsvpNetworkWriteRateLimit = createInMemoryRateLimiter({
+  windowMs: 10 * 60_000,
+  maxRequests: PUBLIC_RSVP_RATE_LIMITS.write.network,
+  maxKeys: 10_000
+});
+const publicRsvpDurableRateLimiters = new Map();
+function getPublicRsvpDurableRateLimiter(operation, scope) {
+  const key = `${operation}:${scope}`;
+  if (!publicRsvpDurableRateLimiters.has(key)) {
+    publicRsvpDurableRateLimiters.set(key, createFirestoreFixedWindowRateLimiter({
+      firestore,
+      collectionName: 'publicRsvpRateLimits',
+      windowMs: 10 * 60_000,
+      maxRequests: PUBLIC_RSVP_RATE_LIMITS[operation][scope]
+    }));
+  }
+  return publicRsvpDurableRateLimiters.get(key);
+}
 const checkTelemetryIngressRateLimit = createInMemoryRateLimiter({
   windowMs: TELEMETRY_RATE_LIMIT_WINDOW_MS,
   maxRequests: 120,
@@ -481,8 +935,564 @@ function buildTeamPassCheckoutUrls(appUrl, teamId) {
   };
 }
 
+function buildTeamPassCheckoutAttemptRef(input) {
+  const attemptId = buildTeamPassCheckoutAttemptId({
+    ...input
+  });
+  return firestore.doc(`teams/${input.teamId}/teamPassCheckoutAttempts/${attemptId}`);
+}
+
+function buildTeamPassCheckoutCreationRequest({
+  input,
+  purchaserUid,
+  email,
+  teamPassPriceId,
+  appUrl,
+  checkoutCreationReservationId
+}) {
+  const { successUrl, cancelUrl } = buildTeamPassCheckoutUrls(appUrl, input.teamId);
+  const customerEmail = String(email || '').trim();
+  return {
+    version: 1,
+    checkoutCreationReservationId,
+    idempotencyKey: buildTeamPassCheckoutIdempotencyKey({
+      ...input,
+      uid: purchaserUid,
+      checkoutCreationReservationId
+    }),
+    stripeParams: {
+      mode: 'payment',
+      line_items: [{ price: teamPassPriceId, quantity: 1 }],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      ...(customerEmail ? { customer_email: customerEmail } : {}),
+      client_reference_id: `${input.teamId}:${input.seasonId}:${purchaserUid}`,
+      metadata: {
+        teamId: input.teamId,
+        seasonId: input.seasonId,
+        tier: input.tier,
+        purchaserUid,
+        checkoutCreationReservationId
+      }
+    }
+  };
+}
+
+function isReusableTeamPassCheckoutCreationRequest(request, { input, purchaserUid, reservationId }) {
+  const params = request?.stripeParams;
+  const metadata = params?.metadata;
+  const lineItem = params?.line_items?.[0];
+  return Boolean(
+    request
+    && request.version === 1
+    && request.checkoutCreationReservationId === reservationId
+    && request.idempotencyKey === buildTeamPassCheckoutIdempotencyKey({
+      ...input,
+      uid: purchaserUid,
+      checkoutCreationReservationId: reservationId
+    })
+    && params?.mode === 'payment'
+    && typeof params.success_url === 'string'
+    && typeof params.cancel_url === 'string'
+    && params.client_reference_id === `${input.teamId}:${input.seasonId}:${purchaserUid}`
+    && Array.isArray(params.line_items)
+    && params.line_items.length === 1
+    && typeof lineItem?.price === 'string'
+    && lineItem.price.length > 0
+    && lineItem.quantity === 1
+    && metadata?.teamId === input.teamId
+    && metadata?.seasonId === input.seasonId
+    && metadata?.tier === input.tier
+    && metadata?.purchaserUid === purchaserUid
+    && metadata?.checkoutCreationReservationId === reservationId
+  );
+}
+
+function isExpectedTeamPassCheckoutSession(session, { input, purchaserUid, reservationId }) {
+  const metadata = session?.metadata;
+  return Boolean(
+    String(session?.id || '').trim()
+    && isCanonicalStripeCheckoutUrl(session?.url)
+    && metadata?.teamId === input.teamId
+    && metadata?.seasonId === input.seasonId
+    && metadata?.tier === input.tier
+    && metadata?.purchaserUid === purchaserUid
+    && metadata?.checkoutCreationReservationId === reservationId
+  );
+}
+
+async function reserveTeamPassCheckoutCreation({
+  input,
+  purchaserUid,
+  email,
+  teamPassPriceId,
+  appUrl,
+  proposedReservationId
+}) {
+  const attemptRef = buildTeamPassCheckoutAttemptRef(input);
+  const entitlementRef = firestore.doc(`teams/${input.teamId}/entitlements/${input.seasonId}_${input.tier}`);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  return firestore.runTransaction(async (transaction) => {
+    const [attemptSnap, entitlementSnap] = await Promise.all([
+      transaction.get(attemptRef),
+      transaction.get(entitlementRef)
+    ]);
+    if (entitlementSnap.exists && entitlementSnap.data()?.status === 'active') {
+      throw new functions.https.HttpsError('failed-precondition', 'This team already has an active team pass.');
+    }
+    const attempt = attemptSnap.exists ? attemptSnap.data() || {} : {};
+    const existingReservationId = String(attempt.checkoutCreationReservationId || '').trim();
+    if (existingReservationId) {
+      const reservedPurchaserUid = String(attempt.purchaserUid || '').trim();
+      if (!reservedPurchaserUid || reservedPurchaserUid !== purchaserUid) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Another purchaser already has a team-pass checkout in progress. Wait for it to complete or expire before retrying.'
+        );
+      }
+      if (!isReusableTeamPassCheckoutCreationRequest(attempt.checkoutCreationRequest, {
+        input,
+        purchaserUid,
+        reservationId: existingReservationId
+      })) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'This team-pass checkout has an incomplete prior creation attempt. Contact support before retrying.'
+        );
+      }
+      return {
+        attemptRef,
+        reservationId: existingReservationId,
+        checkoutCreationRequest: attempt.checkoutCreationRequest
+      };
+    }
+
+    const checkoutCreationRequest = buildTeamPassCheckoutCreationRequest({
+      input,
+      purchaserUid,
+      email,
+      teamPassPriceId,
+      appUrl,
+      checkoutCreationReservationId: proposedReservationId
+    });
+    transaction.set(attemptRef, {
+      version: 1,
+      teamId: input.teamId,
+      seasonId: input.seasonId,
+      tier: input.tier,
+      purchaserUid,
+      status: 'creating',
+      checkoutCreationReservationId: proposedReservationId,
+      checkoutCreationRequest,
+      createdAt: attempt.createdAt || now,
+      updatedAt: now
+    }, { merge: true });
+    return {
+      attemptRef,
+      reservationId: proposedReservationId,
+      checkoutCreationRequest
+    };
+  });
+}
+
+async function clearTeamPassCheckoutCreationReservation(attemptRef, reservationId, status = 'failed') {
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  return firestore.runTransaction(async (transaction) => {
+    const attemptSnap = await transaction.get(attemptRef);
+    if (!attemptSnap.exists) return false;
+    const attempt = attemptSnap.data() || {};
+    if (String(attempt.checkoutCreationReservationId || '').trim() !== reservationId) return false;
+    transaction.set(attemptRef, {
+      status,
+      checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+      checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+      stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+      checkoutUrl: admin.firestore.FieldValue.delete(),
+      updatedAt: now
+    }, { merge: true });
+    return true;
+  });
+}
+
+async function recordTeamPassCheckoutSession(attemptRef, reservationId, session) {
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  return firestore.runTransaction(async (transaction) => {
+    const attemptSnap = await transaction.get(attemptRef);
+    if (!attemptSnap.exists) return false;
+    const attempt = attemptSnap.data() || {};
+    if (String(attempt.checkoutCreationReservationId || '').trim() !== reservationId) return false;
+    transaction.set(attemptRef, {
+      status: 'open',
+      stripeCheckoutSessionId: session.id,
+      checkoutUrl: session.url,
+      updatedAt: now
+    }, { merge: true });
+    return true;
+  });
+}
+
+async function getTeamPassCheckoutPersistenceState({
+  attemptRef,
+  reservationId,
+  session,
+  purchaserUid
+}) {
+  try {
+    const attemptSnap = await attemptRef.get();
+    if (!attemptSnap.exists) return 'not-committed';
+    const attempt = attemptSnap.data() || {};
+    const persistedSessionId = String(attempt.stripeCheckoutSessionId || '').trim();
+    if (
+      persistedSessionId === String(session?.id || '').trim()
+      && attempt.checkoutUrl === session?.url
+      && attempt.status === 'open'
+      && String(attempt.purchaserUid || '').trim() === purchaserUid
+      && String(attempt.checkoutCreationReservationId || '').trim() === reservationId
+    ) {
+      return 'committed';
+    }
+    if (
+      String(attempt.checkoutCreationReservationId || '').trim() === reservationId
+      && !persistedSessionId
+    ) {
+      return 'not-committed';
+    }
+    return 'unknown';
+  } catch (error) {
+    functions.logger.error('Failed to determine whether a team-pass checkout was committed.', {
+      providerSessionId: String(session?.id || ''),
+      error: error?.message || error
+    });
+    return 'unknown';
+  }
+}
+
 function buildTeamFeeRecipientRef({ teamId, batchId, recipientId }) {
   return firestore.doc(`teams/${teamId}/feeBatches/${batchId}/feeRecipients/${recipientId}`);
+}
+
+function buildTeamFeeCheckoutAttemptRef(recipientRef) {
+  return recipientRef.collection('checkoutAttempts').doc('current');
+}
+
+async function migrateLegacyReadableTeamFeeCheckoutState(recipientRef) {
+  const checkoutAttemptRef = buildTeamFeeCheckoutAttemptRef(recipientRef);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  return firestore.runTransaction(async (transaction) => {
+    const [recipientSnap, checkoutAttemptSnap] = await Promise.all([
+      transaction.get(recipientRef),
+      transaction.get(checkoutAttemptRef)
+    ]);
+    if (!recipientSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
+    }
+
+    const recipient = recipientSnap.data() || {};
+    const existingAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
+    if (!hasLegacyReadableTeamFeeCheckoutState(recipient)) return existingAttempt;
+    const privateAttempt = buildLegacyReadableTeamFeeCheckoutAttempt({
+      recipient,
+      existingAttempt,
+      now
+    });
+    transaction.set(checkoutAttemptRef, privateAttempt, { merge: true });
+    transaction.set(recipientRef, {
+      checkoutUrl: admin.firestore.FieldValue.delete(),
+      paymentLink: admin.firestore.FieldValue.delete(),
+      stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+      checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+      checkoutAmountCents: admin.firestore.FieldValue.delete(),
+      checkoutCreationPayerUid: admin.firestore.FieldValue.delete(),
+      checkoutCreationAmountCents: admin.firestore.FieldValue.delete(),
+      checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+      updatedAt: now
+    }, { merge: true });
+    return privateAttempt;
+  });
+}
+
+function buildTeamFeeCheckoutIdempotencyKey(input, checkoutCreationReservationId) {
+  const hash = crypto.createHash('sha256')
+    .update([
+      input.teamId,
+      input.batchId,
+      input.recipientId,
+      checkoutCreationReservationId
+    ].join('|'))
+    .digest('hex');
+  return `team_fee_checkout_${hash}`;
+}
+
+function buildTeamFeeCheckoutCreationRequest({
+  appUrl,
+  input,
+  recipient,
+  amountCents,
+  email,
+  uid,
+  reservationId
+}) {
+  const checkoutAttemptToken = reservationId.replace(/-/g, '');
+  const { successUrl, cancelUrl } = buildTeamFeeCheckoutUrls(appUrl, input);
+  const title = recipient.feeTitle || recipient.title || 'Team fee';
+  const playerName = recipient.playerName || recipient.childName || '';
+  const description = playerName ? `${title} for ${playerName}` : title;
+  const customerEmail = String(email || recipient.parentEmail || recipient.email || '').trim();
+  const metadata = buildTeamFeeCheckoutMetadata({
+    ...input,
+    payerUid: uid,
+    checkoutAttemptToken,
+    checkoutAmountCents: amountCents
+  });
+  return {
+    version: 1,
+    idempotencyKey: buildTeamFeeCheckoutIdempotencyKey(input, reservationId),
+    checkoutAttemptToken,
+    stripeParams: {
+      mode: 'payment',
+      line_items: [{
+        price_data: {
+          currency: 'usd',
+          unit_amount: amountCents,
+          product_data: { name: description }
+        },
+        quantity: 1
+      }],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      ...(customerEmail ? { customer_email: customerEmail } : {}),
+      client_reference_id: `${input.teamId}:${input.batchId}:${input.recipientId}`,
+      metadata,
+      payment_intent_data: { metadata }
+    }
+  };
+}
+
+function isReusableTeamFeeCheckoutCreationRequest(request, { input, uid, amountCents, reservationId }) {
+  const params = request?.stripeParams;
+  const metadata = params?.metadata;
+  const lineItem = params?.line_items?.[0];
+  const expectedAttemptToken = reservationId.replace(/-/g, '');
+  return Boolean(
+    request
+    && request.version === 1
+    && request.idempotencyKey === buildTeamFeeCheckoutIdempotencyKey(input, reservationId)
+    && request.checkoutAttemptToken === expectedAttemptToken
+    && params?.mode === 'payment'
+    && typeof params.success_url === 'string'
+    && typeof params.cancel_url === 'string'
+    && params.client_reference_id === `${input.teamId}:${input.batchId}:${input.recipientId}`
+    && Array.isArray(params.line_items)
+    && params.line_items.length === 1
+    && lineItem?.quantity === 1
+    && lineItem?.price_data?.currency === 'usd'
+    && lineItem?.price_data?.unit_amount === amountCents
+    && typeof lineItem?.price_data?.product_data?.name === 'string'
+    && metadata?.product === 'team_fee'
+    && metadata?.teamId === input.teamId
+    && metadata?.batchId === input.batchId
+    && metadata?.recipientId === input.recipientId
+    && metadata?.payerUid === uid
+    && metadata?.checkoutAttemptToken === expectedAttemptToken
+    && metadata?.checkoutAmountCents === String(amountCents)
+  );
+}
+
+async function expireStripeCheckoutSessionForRollback(stripe, session, operation) {
+  const sessionId = String(session?.id || '').trim();
+  if (!sessionId || (session?.status && session.status !== 'open')) return true;
+  try {
+    await stripe.checkout.sessions.expire(sessionId);
+    return true;
+  } catch (error) {
+    const alreadyUnavailable = error?.code === 'resource_missing'
+      || error?.code === 'checkout_session_not_open';
+    if (alreadyUnavailable) return true;
+    functions.logger.error('Failed to expire a Stripe Checkout session after local persistence failed.', {
+      operation,
+      providerCode: String(error?.code || ''),
+      providerStatus: Number(error?.statusCode || 0) || null
+    });
+    return false;
+  }
+}
+
+async function getTeamFeeCheckoutPersistenceState({
+  recipientRef,
+  reservationId,
+  session,
+  amountCents,
+  payerUid
+}) {
+  try {
+    const attemptRef = buildTeamFeeCheckoutAttemptRef(recipientRef);
+    const [recipientSnap, attemptSnap] = await Promise.all([recipientRef.get(), attemptRef.get()]);
+    if (!recipientSnap.exists) return 'not-committed';
+    const recipient = recipientSnap.data() || {};
+    const attempt = attemptSnap.exists ? (attemptSnap.data() || {}) : {};
+    const persistedSessionId = String(attempt.stripeCheckoutSessionId || '').trim();
+    if (
+      persistedSessionId === String(session?.id || '').trim()
+      && attempt.checkoutUrl === session?.url
+      && attempt.checkoutStatus === 'open'
+      && String(attempt.payerUid || '').trim() === payerUid
+      && Math.round(Number(attempt.checkoutAmountCents || attempt.amountCents || 0)) === amountCents
+      && String(recipient.checkoutCreationReservationId || '').trim() === reservationId
+      && getTeamFeeBalanceCents(recipient) === amountCents
+    ) {
+      return 'committed';
+    }
+    if (
+      String(recipient.checkoutCreationReservationId || '').trim() === reservationId
+      && String(attempt.reservationId || '').trim() === reservationId
+      && !persistedSessionId
+    ) {
+      return 'not-committed';
+    }
+    return 'unknown';
+  } catch (error) {
+    functions.logger.error('Failed to determine whether a team fee checkout was committed.', {
+      providerSessionId: String(session?.id || ''),
+      error: error?.message || error
+    });
+    return 'unknown';
+  }
+}
+
+async function reserveTeamFeeCheckoutCreation({
+  input,
+  recipientRef,
+  team,
+  user,
+  uid,
+  email,
+  amountCents,
+  observedSessionId,
+  proposedReservationId,
+  appUrl
+}) {
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const attemptRef = buildTeamFeeCheckoutAttemptRef(recipientRef);
+  return firestore.runTransaction(async (transaction) => {
+    const latestSnap = await transaction.get(recipientRef);
+    const attemptSnap = await transaction.get(attemptRef);
+    if (!latestSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
+    }
+
+    const latestRecipient = { id: input.recipientId, ...(latestSnap.data() || {}) };
+    if (latestRecipient.teamId !== input.teamId || latestRecipient.batchId !== input.batchId) {
+      throw new functions.https.HttpsError('failed-precondition', 'Fee recipient does not match the requested fee batch.');
+    }
+    if (!isTeamFeeCheckoutEligible(latestRecipient) || getTeamFeeBalanceCents(latestRecipient) !== amountCents) {
+      throw new functions.https.HttpsError('aborted', 'The team fee balance changed before checkout creation began.');
+    }
+    if (!isEligibleTeamFeePayer({ team, user, uid, email, recipient: latestRecipient })) {
+      throw new functions.https.HttpsError('permission-denied', 'You no longer have access to pay this team fee.');
+    }
+
+    const latestAttempt = attemptSnap.exists ? (attemptSnap.data() || {}) : {};
+    const latestSessionId = String(latestAttempt.stripeCheckoutSessionId || '').trim();
+    if (latestSessionId !== String(observedSessionId || '').trim()) {
+      throw new functions.https.HttpsError('aborted', 'The team fee checkout changed. Retry to use the current session.');
+    }
+
+    const existingReservationId = String(latestRecipient.checkoutCreationReservationId || '').trim();
+    if (existingReservationId) {
+      const existingAttempt = latestAttempt;
+      const existingPayerUid = String(existingAttempt.payerUid || '').trim();
+      const existingAmountCents = Math.round(Number(existingAttempt.amountCents || 0));
+      if (existingPayerUid !== uid || existingAmountCents !== amountCents) {
+        throw new functions.https.HttpsError('failed-precondition', 'Team fee checkout creation is already in progress.');
+      }
+      if (String(existingAttempt.reservationId || '').trim() !== existingReservationId) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'This checkout has an incomplete prior creation attempt. Contact support before retrying.'
+        );
+      }
+      const existingRequest = existingAttempt.checkoutCreationRequest;
+      if (!isReusableTeamFeeCheckoutCreationRequest(existingRequest, {
+        input,
+        uid,
+        amountCents,
+        reservationId: existingReservationId
+      })) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'This checkout has an incomplete prior creation attempt. Contact support before retrying.'
+        );
+      }
+      return {
+        reservationId: existingReservationId,
+        checkoutCreationRequest: existingRequest
+      };
+    }
+
+    const checkoutCreationRequest = buildTeamFeeCheckoutCreationRequest({
+      appUrl,
+      input,
+      recipient: latestRecipient,
+      amountCents,
+      email,
+      uid,
+      reservationId: proposedReservationId
+    });
+
+    transaction.set(recipientRef, {
+      checkoutCreationReservationId: proposedReservationId,
+      checkoutCreationStartedAt: now,
+      checkoutUrl: admin.firestore.FieldValue.delete(),
+      paymentLink: admin.firestore.FieldValue.delete(),
+      stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+      checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+      checkoutAmountCents: admin.firestore.FieldValue.delete(),
+      checkoutCreationPayerUid: admin.firestore.FieldValue.delete(),
+      checkoutCreationAmountCents: admin.firestore.FieldValue.delete(),
+      checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+      updatedAt: now
+    }, { merge: true });
+    transaction.set(attemptRef, {
+      reservationId: proposedReservationId,
+      payerUid: uid,
+      amountCents,
+      checkoutCreationRequest,
+      createdAt: now,
+      updatedAt: now
+    });
+    return {
+      reservationId: proposedReservationId,
+      checkoutCreationRequest
+    };
+  });
+}
+
+async function clearTeamFeeCheckoutCreationReservation(recipientRef, reservationId) {
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const attemptRef = buildTeamFeeCheckoutAttemptRef(recipientRef);
+  return firestore.runTransaction(async (transaction) => {
+    const latestSnap = await transaction.get(recipientRef);
+    const attemptSnap = await transaction.get(attemptRef);
+    if (!latestSnap.exists) return false;
+    const latestRecipient = latestSnap.data() || {};
+    if (String(latestRecipient.checkoutCreationReservationId || '').trim() !== reservationId) return false;
+    if (attemptSnap.exists && String(attemptSnap.data()?.reservationId || '').trim() !== reservationId) return false;
+    transaction.set(recipientRef, {
+      checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+      checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
+      checkoutUrl: admin.firestore.FieldValue.delete(),
+      paymentLink: admin.firestore.FieldValue.delete(),
+      stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+      checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+      checkoutAmountCents: admin.firestore.FieldValue.delete(),
+      checkoutCreationPayerUid: admin.firestore.FieldValue.delete(),
+      checkoutCreationAmountCents: admin.firestore.FieldValue.delete(),
+      checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+      updatedAt: now
+    }, { merge: true });
+    if (attemptSnap.exists) transaction.delete(attemptRef);
+    return true;
+  });
 }
 
 function buildTeamFeeAdminBillingRef(recipientRef, id) {
@@ -520,7 +1530,7 @@ async function fetchTeamFeePaymentAdminBilling(recipientRef) {
   const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
   const latestRefs = getTeamFeeStripePaymentRefs(latest);
   if (latestRefs.paymentIntentId || latestRefs.chargeId) {
-    return latest;
+    return { ...latest, __billingId: 'latest' };
   }
 
   const querySnap = await recipientRef.collection('adminBilling')
@@ -531,10 +1541,109 @@ async function fetchTeamFeePaymentAdminBilling(recipientRef) {
     const data = doc.data() || {};
     const refs = getTeamFeeStripePaymentRefs(data);
     if (refs.paymentIntentId || refs.chargeId) {
-      return data;
+      return { ...data, __billingId: doc.id };
     }
   }
   return {};
+}
+
+function getStripeObjectId(value) {
+  return typeof value === 'string' ? value.trim() : String(value?.id || '').trim();
+}
+
+function hasStripeTeamFeeBindingMetadata(metadata = {}) {
+  return ['product', 'teamId', 'batchId', 'recipientId', 'checkoutAmountCents']
+    .some((field) => metadata?.[field] != null && String(metadata[field]).trim() !== '');
+}
+
+function stripeTeamFeeBindingMatches(metadata = {}, input, amountCents) {
+  return metadata?.product === 'team_fee'
+    && metadata?.teamId === input.teamId
+    && metadata?.batchId === input.batchId
+    && metadata?.recipientId === input.recipientId
+    && String(metadata?.checkoutAmountCents || '') === String(amountCents);
+}
+
+function getTeamFeeRefundAuthorityFailure({ input, recipient = {}, billing = {}, session = {}, paymentIntent = null, charge = null }) {
+  const recordedAmountCents = Math.round(Number(billing.amountPaidCents || 0));
+  const expectedCurrency = String(
+    recipient.receiptMetadata?.currency
+    || billing.currency
+    || recipient.currency
+    || 'usd'
+  ).trim().toLowerCase();
+  const sessionPaymentIntentId = getStripeObjectId(session.payment_intent);
+  const paymentIntentId = getStripeObjectId(paymentIntent);
+  const chargeId = getStripeObjectId(charge);
+  const latestChargeId = getStripeObjectId(paymentIntent?.latest_charge);
+
+  if (!recordedAmountCents || recordedAmountCents < 1) return 'recorded_amount_missing';
+  if (!expectedCurrency || !/^[a-z]{3}$/.test(expectedCurrency)) return 'recorded_currency_invalid';
+  if (getStripeObjectId(session) !== String(billing.stripeCheckoutSessionId || '').trim()) return 'checkout_session_mismatch';
+  if (session.payment_status !== 'paid' || session.status !== 'complete') return 'checkout_not_paid';
+  if (!stripeTeamFeeBindingMatches(session.metadata, input, recordedAmountCents)) return 'checkout_metadata_mismatch';
+  if (session.client_reference_id !== `${input.teamId}:${input.batchId}:${input.recipientId}`) return 'checkout_reference_mismatch';
+  if (Math.round(Number(session.amount_total || 0)) !== recordedAmountCents) return 'checkout_amount_mismatch';
+  if (String(session.currency || '').trim().toLowerCase() !== expectedCurrency) return 'checkout_currency_mismatch';
+  if (Math.round(Number(recipient.stripePaymentAmountCents || 0)) !== recordedAmountCents) return 'recipient_payment_amount_mismatch';
+  if (Math.round(Number(recipient.receiptMetadata?.amountPaidCents || 0)) !== recordedAmountCents) return 'recipient_receipt_amount_mismatch';
+  if (String(recipient.receiptMetadata?.currency || '').trim().toLowerCase() !== expectedCurrency) return 'recipient_currency_mismatch';
+
+  if (paymentIntent) {
+    if (!paymentIntentId || paymentIntentId !== String(billing.stripePaymentIntentId || '').trim()) return 'payment_intent_mismatch';
+    if (sessionPaymentIntentId !== paymentIntentId) return 'checkout_payment_intent_mismatch';
+    if (paymentIntent.status !== 'succeeded') return 'payment_intent_not_paid';
+    if (Math.round(Number(paymentIntent.amount_received || paymentIntent.amount || 0)) !== recordedAmountCents) return 'payment_intent_amount_mismatch';
+    if (String(paymentIntent.currency || '').trim().toLowerCase() !== expectedCurrency) return 'payment_intent_currency_mismatch';
+    if (hasStripeTeamFeeBindingMetadata(paymentIntent.metadata)
+      && !stripeTeamFeeBindingMatches(paymentIntent.metadata, input, recordedAmountCents)) return 'payment_intent_metadata_mismatch';
+    if (billing.stripeChargeId && latestChargeId !== String(billing.stripeChargeId).trim()) return 'payment_intent_charge_mismatch';
+  } else if (charge) {
+    if (!chargeId || chargeId !== String(billing.stripeChargeId || '').trim()) return 'charge_mismatch';
+    if (!sessionPaymentIntentId || getStripeObjectId(charge.payment_intent) !== sessionPaymentIntentId) return 'checkout_charge_mismatch';
+    if (charge.paid !== true || charge.status !== 'succeeded') return 'charge_not_paid';
+    if (Math.round(Number(charge.amount || 0)) !== recordedAmountCents) return 'charge_amount_mismatch';
+    if (String(charge.currency || '').trim().toLowerCase() !== expectedCurrency) return 'charge_currency_mismatch';
+    if (hasStripeTeamFeeBindingMetadata(charge.metadata)
+      && !stripeTeamFeeBindingMatches(charge.metadata, input, recordedAmountCents)) return 'charge_metadata_mismatch';
+  } else {
+    return 'payment_reference_missing';
+  }
+
+  return '';
+}
+
+async function retrieveTeamFeeRefundAuthority(stripe, { input, recipient, billing }) {
+  const sessionId = String(billing.stripeCheckoutSessionId || '').trim();
+  const { paymentIntentId, chargeId } = getTeamFeeStripePaymentRefs(billing);
+  if (!sessionId || (!paymentIntentId && !chargeId)) {
+    throw new functions.https.HttpsError('failed-precondition', 'This payment is missing server-verified payment authority.');
+  }
+
+  let session;
+  let paymentIntent = null;
+  let charge = null;
+  try {
+    [session, paymentIntent, charge] = await Promise.all([
+      stripe.checkout.sessions.retrieve(sessionId),
+      paymentIntentId ? stripe.paymentIntents.retrieve(paymentIntentId, { expand: ['latest_charge'] }) : null,
+      !paymentIntentId && chargeId ? stripe.charges.retrieve(chargeId) : null
+    ]);
+  } catch (error) {
+    functions.logger.warn('Stripe team fee refund authority lookup failed.', {
+      providerCode: String(error?.code || ''),
+      providerStatus: Number(error?.statusCode || 0) || null
+    });
+    throw new functions.https.HttpsError('unavailable', 'The payment authority could not be verified. Try again later.');
+  }
+
+  const failure = getTeamFeeRefundAuthorityFailure({ input, recipient, billing, session, paymentIntent, charge });
+  if (failure) {
+    functions.logger.warn('Stripe team fee refund authority mismatch.', { reason: failure });
+    throw new functions.https.HttpsError('failed-precondition', 'The payment reference does not match this fee recipient.');
+  }
+
+  return { paymentIntentId, chargeId, session, paymentIntent, charge };
 }
 
 function buildTeamFeeRefundRequestId(input, uid) {
@@ -632,6 +1741,10 @@ function normalizeRegistrationCheckoutCancelInput(data = {}) {
 
 function buildRegistrationRef({ teamId, formId, registrationId }) {
   return firestore.doc(`teams/${teamId}/registrationForms/${formId}/registrations/${registrationId}`);
+}
+
+function buildRegistrationCheckoutAttemptRef(registrationRef) {
+  return registrationRef.collection('checkoutAttempts').doc('current');
 }
 
 function buildRegistrationFormRef({ teamId, formId }) {
@@ -746,17 +1859,6 @@ function normalizePublicRegistrationInstallmentPlan(plan = null) {
     firstDueDate,
     intervalDays
   };
-}
-
-function normalizePublicRegistrationFields(fields = []) {
-  if (!Array.isArray(fields)) return [];
-  return fields
-    .map((field, index) => ({
-      id: String(field?.id || field?.key || `field_${index + 1}`).trim(),
-      label: String(field?.label || field?.name || field?.id || field?.key || `Field ${index + 1}`).trim(),
-      required: field?.required === true
-    }))
-    .filter((field) => field.id && field.label);
 }
 
 function normalizePublicRegistrationBackgroundCheck(settings = {}) {
@@ -1051,10 +2153,6 @@ function buildPublicPendingRegistrationRecord({
     record.submittedByUserId = submittedByUid;
   }
 
-  if (input.checkoutAttemptToken) {
-    record.checkoutAttemptToken = input.checkoutAttemptToken;
-  }
-
   if (form.backgroundCheck?.enabled === true) {
     record.screeningRequired = true;
     record.screeningStatus = form.backgroundCheck.initialScreeningStatus;
@@ -1080,15 +2178,16 @@ function buildPublicPendingRegistrationRecord({
   return record;
 }
 
-function buildPublicRegistrationRateLimitBoundary(input, context = {}) {
+function buildPublicRegistrationRateLimitBoundary(input, context = {}, canonicalGuardianEmail = '') {
   return buildPublicRegistrationRateLimitBoundaries(input, context, {
     operation: 'submit',
-    requestIp: getRequestIp(context.rawRequest || {})
+    requestIp: getRequestIp(context.rawRequest || {}),
+    canonicalGuardianEmail
   }).subject;
 }
 
-async function assertPublicRegistrationRateLimit(input, context = {}, reservationId = '') {
-  const boundary = buildPublicRegistrationRateLimitBoundary(input, context);
+async function assertPublicRegistrationRateLimit(input, context = {}, reservationId = '', canonicalGuardianEmail = '') {
+  const boundary = buildPublicRegistrationRateLimitBoundary(input, context, canonicalGuardianEmail);
   const rateLimit = await getPublicRegistrationSubmissionRateLimit()(boundary, Date.now(), reservationId);
   if (!rateLimit.allowed) {
     throwPublicRegistrationError('resource-exhausted', 'Too many registration attempts. Please wait a few minutes and try again.', {
@@ -1272,7 +2371,8 @@ exports.submitPublicRegistration = functions.https.onCall(async (data, context =
   });
   validatePublicRegistrationSubmission(initialForm, input, initialFeeSnapshot);
 
-  await assertPublicRegistrationRateLimit(input, context, submissionFingerprint);
+  const canonicalGuardianEmail = resolvePublicRegistrationGuardianEmail(initialForm, input.guardian);
+  await assertPublicRegistrationRateLimit(input, context, submissionFingerprint, canonicalGuardianEmail);
   await applyStagedPublicRegistrationRateLimits(input, context, 'submit', submissionFingerprint);
 
   let result = null;
@@ -1350,6 +2450,14 @@ exports.submitPublicRegistration = functions.https.onCall(async (data, context =
     });
 
     transaction.set(registrationRef, registrationRecord);
+    if (input.checkoutAttemptToken) {
+      transaction.set(buildRegistrationCheckoutAttemptRef(registrationRef), {
+        version: 1,
+        checkoutAttemptToken: input.checkoutAttemptToken,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    }
     result = {
       success: true,
       status,
@@ -1553,46 +2661,183 @@ function getRegistrationCustomerEmail(registration = {}) {
     .find(Boolean) || undefined;
 }
 
-function getRegistrationCheckoutAttemptToken(registration = {}) {
-  return normalizeCheckoutAttemptToken(registration.checkoutAttemptToken);
+function getRegistrationCheckoutAuthorityState(registration = {}, checkoutAttempt = {}) {
+  return {
+    ...registration,
+    ...checkoutAttempt,
+    checkoutAttemptToken: checkoutAttempt.checkoutAttemptToken || registration.checkoutAttemptToken || '',
+    publicCheckoutCapabilityHash: checkoutAttempt.publicCheckoutCapabilityHash || registration.publicCheckoutCapabilityHash || ''
+  };
 }
 
-function registrationCheckoutAttemptMatches(registration = {}, input = {}) {
-  const registrationToken = getRegistrationCheckoutAttemptToken(registration);
+function getRegistrationCheckoutAttemptToken(checkoutAuthority = {}) {
+  return normalizeCheckoutAttemptToken(checkoutAuthority.checkoutAttemptToken);
+}
+
+function registrationCheckoutAttemptMatches(checkoutAuthority = {}, input = {}) {
+  const registrationToken = getRegistrationCheckoutAttemptToken(checkoutAuthority);
   const inputToken = normalizeCheckoutAttemptToken(input.checkoutAttemptToken);
   return Boolean(registrationToken && inputToken && registrationToken === inputToken);
 }
 
-function registrationCheckoutAttemptStrictlyMatches(registration = {}, input = {}) {
-  const registrationToken = getRegistrationCheckoutAttemptToken(registration);
+function registrationCheckoutAttemptStrictlyMatches(checkoutAuthority = {}, input = {}) {
+  const registrationToken = getRegistrationCheckoutAttemptToken(checkoutAuthority);
   const inputToken = normalizeCheckoutAttemptToken(input.checkoutAttemptToken);
   return Boolean(registrationToken && inputToken && registrationToken === inputToken);
 }
 
-function registrationPublicCheckoutCapabilityMatches(registration = {}, input = {}) {
-  const registrationCapabilityHash = String(registration.publicCheckoutCapabilityHash || '').trim();
+function registrationPublicCheckoutCapabilityMatches(checkoutAuthority = {}, input = {}) {
+  const registrationCapabilityHash = String(checkoutAuthority.publicCheckoutCapabilityHash || '').trim();
   const inputCapabilityHash = hashPublicCheckoutCapability(input.publicCheckoutCapability);
   return Boolean(registrationCapabilityHash && inputCapabilityHash && registrationCapabilityHash === inputCapabilityHash);
 }
 
-function registrationCheckoutAuthorityMatches(registration = {}, input = {}) {
-  return registrationPublicCheckoutCapabilityMatches(registration, input)
-    || registrationCheckoutAttemptMatches(registration, input);
+function registrationCheckoutAuthorityMatches(checkoutAuthority = {}, input = {}) {
+  return registrationPublicCheckoutCapabilityMatches(checkoutAuthority, input)
+    || registrationCheckoutAttemptMatches(checkoutAuthority, input);
 }
 
-function registrationCheckoutAuthorityStrictlyMatches(registration = {}, input = {}) {
-  return registrationPublicCheckoutCapabilityMatches(registration, input)
-    || registrationCheckoutAttemptStrictlyMatches(registration, input);
+function registrationCheckoutAuthorityStrictlyMatches(checkoutAuthority = {}, input = {}) {
+  return registrationPublicCheckoutCapabilityMatches(checkoutAuthority, input)
+    || registrationCheckoutAttemptStrictlyMatches(checkoutAuthority, input);
 }
 
-function canReuseRegistrationCheckoutSession(registration = {}, amountCents, input = {}) {
+function canReuseRegistrationCheckoutSession(checkoutAuthority = {}, amountCents, input = {}) {
   return Boolean(
-    registration.checkoutUrl
-    && registration.stripeCheckoutSessionId
-    && registration.checkoutStatus === 'open'
-    && Number(registration.checkoutAmountCents || 0) === amountCents
-    && registrationCheckoutAuthorityMatches(registration, input)
+    isCanonicalStripeCheckoutUrl(checkoutAuthority.checkoutUrl)
+    && checkoutAuthority.stripeCheckoutSessionId
+    && checkoutAuthority.checkoutStatus === 'open'
+    && Number(checkoutAuthority.checkoutAmountCents || 0) === amountCents
+    && registrationCheckoutAuthorityMatches(checkoutAuthority, input)
   );
+}
+
+function buildRegistrationCheckoutIdempotencyKey({ input, registration, amountCents, currency }) {
+  const publicCapabilityHash = input.publicCheckoutCapability
+    ? hashPublicCheckoutCapability(input.publicCheckoutCapability)
+    : '';
+  const digest = crypto.createHash('sha256')
+    .update([
+      input.teamId,
+      input.formId,
+      input.registrationId,
+      input.checkoutAttemptToken || '',
+      publicCapabilityHash,
+      amountCents,
+      currency,
+      String(registration.paymentPlan?.id || 'pay_full'),
+      getRegistrationPaymentPlanPaidInstallmentCount(registration)
+    ].join('|'))
+    .digest('hex');
+  return `registration_checkout_${digest}`;
+}
+
+function createRegistrationCheckoutCapability(idempotencyKey) {
+  const { secretKey } = getStripeConfig();
+  const capabilitySecret = process.env.PUBLIC_CHECKOUT_CAPABILITY_SECRET || secretKey;
+  if (!capabilitySecret) {
+    throw new functions.https.HttpsError('failed-precondition', 'Checkout capability secret is not configured.');
+  }
+  return crypto.createHmac('sha256', capabilitySecret)
+    .update(`registration-checkout-capability|${idempotencyKey}`)
+    .digest('base64url');
+}
+
+function buildRegistrationCheckoutCreationRequest({
+  appUrl,
+  input,
+  registration,
+  form,
+  amountCents,
+  currency
+}) {
+  const idempotencyKey = buildRegistrationCheckoutIdempotencyKey({
+    input,
+    registration,
+    amountCents,
+    currency
+  });
+  const issuedPublicCheckoutCapability = createRegistrationCheckoutCapability(idempotencyKey);
+  const checkoutUrlInput = {
+    ...input,
+    publicCheckoutCapability: issuedPublicCheckoutCapability,
+    paymentPlanId: String(registration.paymentPlan?.id || 'pay_full').trim() || 'pay_full',
+    paidInstallmentCount: registration.paymentPlan?.id === 'installments'
+      ? getRegistrationPaymentPlanPaidInstallmentCount(registration) + 1
+      : 0
+  };
+  const { successUrl, cancelUrl } = buildRegistrationCheckoutUrls(appUrl, checkoutUrlInput);
+  const title = registration.programName || form.programName || form.title || form.name || 'Program registration';
+  const customerEmail = getRegistrationCustomerEmail(registration);
+  const stripeParams = {
+    mode: 'payment',
+    line_items: [{
+      price_data: {
+        currency,
+        unit_amount: amountCents,
+        product_data: { name: title }
+      },
+      quantity: 1
+    }],
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    client_reference_id: `${input.teamId}:${input.formId}:${input.registrationId}`,
+    metadata: buildRegistrationCheckoutMetadata({ input: checkoutUrlInput, registration }),
+    ...(customerEmail ? { customer_email: customerEmail } : {})
+  };
+  return {
+    version: 1,
+    idempotencyKey,
+    issuedPublicCheckoutCapabilityHash: hashPublicCheckoutCapability(issuedPublicCheckoutCapability),
+    stripeParams
+  };
+}
+
+function getRegistrationCheckoutCreationRequestCapability(request) {
+  if (!request || typeof request !== 'object' || Array.isArray(request)) return '';
+  try {
+    const capability = normalizePublicCheckoutCapability(
+      request.stripeParams?.metadata?.publicCheckoutCapability
+    );
+    if (!capability) return '';
+    return hashPublicCheckoutCapability(capability) === String(request.issuedPublicCheckoutCapabilityHash || '').trim()
+      ? capability
+      : '';
+  } catch {
+    return '';
+  }
+}
+
+function isReusableRegistrationCheckoutCreationRequest(request, expectedRequest) {
+  if (!request || typeof request !== 'object' || Array.isArray(request)) return false;
+  if (request.version !== 1 || request.idempotencyKey !== expectedRequest.idempotencyKey) return false;
+  const storedCapability = getRegistrationCheckoutCreationRequestCapability(request);
+  if (!storedCapability) return false;
+  const params = request.stripeParams;
+  return Boolean(
+    params
+    && typeof params === 'object'
+    && !Array.isArray(params)
+    && params.mode === 'payment'
+    && params.client_reference_id === expectedRequest.stripeParams.client_reference_id
+    && params.metadata?.teamId === expectedRequest.stripeParams.metadata.teamId
+    && params.metadata?.formId === expectedRequest.stripeParams.metadata.formId
+    && params.metadata?.registrationId === expectedRequest.stripeParams.metadata.registrationId
+    && params.metadata?.publicCheckoutCapability === storedCapability
+    && Number(params.line_items?.[0]?.price_data?.unit_amount || 0)
+      === Number(expectedRequest.stripeParams.line_items?.[0]?.price_data?.unit_amount || 0)
+    && params.line_items?.[0]?.price_data?.currency
+      === expectedRequest.stripeParams.line_items?.[0]?.price_data?.currency
+  );
+}
+
+function isUncertainStripeCheckoutCreationError(error) {
+  const type = String(error?.type || error?.name || '');
+  const code = String(error?.code || '').toUpperCase();
+  const statusCode = Number(error?.statusCode || error?.status || 0);
+  return ['StripeConnectionError', 'StripeAPIError'].includes(type)
+    || ['ETIMEDOUT', 'ECONNRESET', 'ECONNABORTED', 'EAI_AGAIN', 'ENETUNREACH'].includes(code)
+    || statusCode >= 500;
 }
 
 function buildRegistrationCheckoutMetadata({ input, registration }) {
@@ -1621,20 +2866,29 @@ async function resolveRegistrationCheckoutInput(input = {}) {
   }
 
   const capabilityHash = hashPublicCheckoutCapability(input.publicCheckoutCapability);
-  const querySnap = await firestore.collectionGroup('registrations')
+  let querySnap = await firestore.collectionGroup('checkoutAttempts')
     .where('publicCheckoutCapabilityHash', '==', capabilityHash)
     .limit(2)
     .get();
+
+  let legacyRegistrationLookup = false;
+  if (querySnap.empty) {
+    querySnap = await firestore.collectionGroup('registrations')
+      .where('publicCheckoutCapabilityHash', '==', capabilityHash)
+      .limit(2)
+      .get();
+    legacyRegistrationLookup = true;
+  }
 
   if (querySnap.empty || querySnap.size !== 1) {
     throw buildPublicCheckoutCapabilityError();
   }
 
-  const registrationSnap = querySnap.docs[0];
-  const pathParts = registrationSnap.ref.path.split('/');
+  const checkoutAttemptSnap = querySnap.docs[0];
+  const pathParts = checkoutAttemptSnap.ref.path.split('/');
   const resolvedTeamId = pathParts[1] || '';
   const resolvedFormId = pathParts[3] || '';
-  const resolvedRegistrationId = pathParts[5] || registrationSnap.id;
+  const resolvedRegistrationId = pathParts[5] || '';
   if ((input.teamId && input.teamId !== resolvedTeamId) || (input.formId && input.formId !== resolvedFormId)) {
     throw buildPublicCheckoutCapabilityError();
   }
@@ -1644,7 +2898,8 @@ async function resolveRegistrationCheckoutInput(input = {}) {
     teamId: resolvedTeamId,
     formId: resolvedFormId,
     registrationId: resolvedRegistrationId,
-    registrationRef: registrationSnap.ref,
+    registrationRef: firestore.doc(pathParts.slice(0, 6).join('/')),
+    checkoutAttemptRef: legacyRegistrationLookup ? null : checkoutAttemptSnap.ref,
     resolvedPublicCheckoutCapabilityHash: capabilityHash
   };
 }
@@ -1727,16 +2982,20 @@ function buildRegistrationReminderStopUpdate({ reason = 'resolved', nowIso = '' 
 const REGISTRATION_PAYMENT_REMINDER_QUERY_PAGE_SIZE = PRE_EVENT_REMINDER_QUERY_PAGE_SIZE;
 const REGISTRATION_PAYMENT_REMINDER_MAX_PAGES_PER_RUN = PRE_EVENT_REMINDER_MAX_PAGES_PER_RUN;
 const REGISTRATION_PAYMENT_REMINDER_MAX_RUNTIME_MS = PRE_EVENT_REMINDER_MAX_RUNTIME_MS;
-const REGISTRATION_CHECKOUT_CREATION_RESERVATION_TIMEOUT_MS = 15 * 60 * 1000;
 
 async function processDueRegistrationFailedPaymentReminder(docSnap, { now, nowIso, appUrl }) {
   const registrationRef = docSnap.ref;
+  const checkoutAttemptRef = buildRegistrationCheckoutAttemptRef(registrationRef);
   let result = null;
   await firestore.runTransaction(async (transaction) => {
-    const freshSnap = await transaction.get(registrationRef);
+    const [freshSnap, checkoutAttemptSnap] = await Promise.all([
+      transaction.get(registrationRef),
+      transaction.get(checkoutAttemptRef)
+    ]);
     if (!freshSnap.exists) return;
 
     const registration = freshSnap.data() || {};
+    const checkoutAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
     const reminder = registration.paymentReminder || {};
     const nextReminderAt = String(reminder.nextReminderAt || '').trim();
     if (!nextReminderAt || nextReminderAt > nowIso) return;
@@ -1777,7 +3036,10 @@ async function processDueRegistrationFailedPaymentReminder(docSnap, { now, nowIs
       eventId: reminder.lastEventId || 'manual',
       sequence: `followup_${reminderNumber}`
     });
-    const retryUrl = String(reminder.retryUrl || '').trim() || buildRegistrationPaymentRetryUrl(appUrl, registrationInput);
+    const legacyRetryUrl = String(reminder.retryUrl || '').trim();
+    const retryUrl = String(checkoutAttempt.paymentRetryUrl || '').trim()
+      || legacyRetryUrl
+      || buildRegistrationPaymentRetryUrl(appUrl, registrationInput);
     const form = {
       programName: registration.programName || 'Program registration'
     };
@@ -1798,10 +3060,16 @@ async function processDueRegistrationFailedPaymentReminder(docSnap, { now, nowIs
     });
 
     transaction.set(buildRegistrationReminderMailRef(mailDocId), mailJob);
+    if (retryUrl && (!checkoutAttempt.paymentRetryUrl || legacyRetryUrl)) {
+      transaction.set(checkoutAttemptRef, {
+        paymentRetryUrl: retryUrl,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    }
     transaction.update(registrationRef, {
+      'paymentReminder.retryUrl': admin.firestore.FieldValue.delete(),
       'paymentReminder.status': 'active',
       'paymentReminder.recipientEmail': recipientEmail,
-      'paymentReminder.retryUrl': retryUrl,
       'paymentReminder.reminderCount': reminderNumber,
       'paymentReminder.lastQueuedAt': nowIso,
       'paymentReminder.lastMailId': mailDocId,
@@ -1864,13 +3132,15 @@ async function queueDueRegistrationFailedPaymentReminders(now = new Date()) {
 async function reserveRegistrationCheckoutCapacityForRetry(input, options = {}) {
   const formRef = buildRegistrationFormRef(input);
   const registrationRef = buildRegistrationRef(input);
+  const checkoutAttemptRef = buildRegistrationCheckoutAttemptRef(registrationRef);
   const now = admin.firestore.FieldValue.serverTimestamp();
   const retryCapacityReservationId = String(options.retryCapacityReservationId || '').trim();
 
   return firestore.runTransaction(async (transaction) => {
-    const [formSnap, registrationSnap] = await Promise.all([
+    const [formSnap, registrationSnap, checkoutAttemptSnap] = await Promise.all([
       transaction.get(formRef),
-      transaction.get(registrationRef)
+      transaction.get(registrationRef),
+      transaction.get(checkoutAttemptRef)
     ]);
     if (!formSnap.exists) {
       throw new functions.https.HttpsError('not-found', 'Registration form not found.');
@@ -1881,10 +3151,14 @@ async function reserveRegistrationCheckoutCapacityForRetry(input, options = {}) 
 
     const form = formSnap.data() || {};
     const registration = registrationSnap.data() || {};
+    const checkoutAuthority = getRegistrationCheckoutAuthorityState(
+      registration,
+      checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {}
+    );
     if (registration.teamId !== input.teamId || registration.formId !== input.formId) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration does not match the requested form.');
     }
-    if (!registrationCheckoutAuthorityStrictlyMatches(registration, input)) {
+    if (!registrationCheckoutAuthorityStrictlyMatches(checkoutAuthority, input)) {
       throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required to retry this payment.');
     }
     if (registration.registrationCapacityReleased !== true) {
@@ -1929,17 +3203,24 @@ async function reserveRegistrationCheckoutCapacityForRetry(input, options = {}) 
 
 async function reserveRegistrationCheckoutCreation(input, options = {}) {
   const registrationRef = buildRegistrationRef(input);
+  const checkoutAttemptRef = buildRegistrationCheckoutAttemptRef(registrationRef);
   const checkoutCreationReservationId = String(options.checkoutCreationReservationId || '').trim();
   const amountCents = Math.max(0, Math.round(Number(options.amountCents || 0) || 0));
+  const checkoutCreationRequest = options.checkoutCreationRequest;
   const now = admin.firestore.FieldValue.serverTimestamp();
 
   return firestore.runTransaction(async (transaction) => {
-    const registrationSnap = await transaction.get(registrationRef);
+    const [registrationSnap, checkoutAttemptSnap] = await Promise.all([
+      transaction.get(registrationRef),
+      transaction.get(checkoutAttemptRef)
+    ]);
     if (!registrationSnap.exists) {
       throw new functions.https.HttpsError('not-found', 'Registration not found.');
     }
 
     const registration = registrationSnap.data() || {};
+    const checkoutAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
+    const checkoutAuthority = getRegistrationCheckoutAuthorityState(registration, checkoutAttempt);
     if (registration.teamId !== input.teamId || registration.formId !== input.formId) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration does not match the requested form.');
     }
@@ -1952,32 +3233,59 @@ async function reserveRegistrationCheckoutCreation(input, options = {}) {
     if (registration.paymentStatus === 'paid') {
       throw new functions.https.HttpsError('failed-precondition', 'This registration has already been paid.');
     }
-    if (!registrationCheckoutAuthorityMatches(registration, input)) {
+    if (!registrationCheckoutAuthorityMatches(checkoutAuthority, input)) {
       throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required.');
     }
-    if (canReuseRegistrationCheckoutSession(registration, amountCents, input)) {
+    if (canReuseRegistrationCheckoutSession(checkoutAuthority, amountCents, input)) {
       return {
         reserved: false,
-        checkoutUrl: registration.checkoutUrl,
-        sessionId: registration.stripeCheckoutSessionId
+        checkoutUrl: checkoutAuthority.checkoutUrl,
+        sessionId: checkoutAuthority.stripeCheckoutSessionId
       };
     }
     const existingReservationId = String(registration.checkoutCreationReservationId || '').trim();
-    const existingReservationStartedAtMillis = firestoreTimestampToMillis(registration.checkoutCreationStartedAt);
-    const existingReservationIsActive = existingReservationId
-      && Number.isFinite(existingReservationStartedAtMillis)
-      && Date.now() - existingReservationStartedAtMillis < REGISTRATION_CHECKOUT_CREATION_RESERVATION_TIMEOUT_MS;
-    if (existingReservationIsActive) {
+    if (existingReservationId) {
+      if (
+        String(checkoutAttempt.reservationId || '').trim() === existingReservationId
+        && isReusableRegistrationCheckoutCreationRequest(checkoutAttempt.checkoutCreationRequest, checkoutCreationRequest)
+      ) {
+        return {
+          reserved: true,
+          reservationId: existingReservationId,
+          checkoutCreationRequest: checkoutAttempt.checkoutCreationRequest,
+          retryCapacityReservationId: String(registration.retryCapacityReservationId || '').trim() || null
+        };
+      }
       throw new functions.https.HttpsError('failed-precondition', 'Registration checkout creation is already in progress.');
     }
 
     transaction.set(registrationRef, {
       checkoutCreationReservationId,
       checkoutCreationStartedAt: now,
+      checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+      checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+      publicCheckoutCapabilityHash: admin.firestore.FieldValue.delete(),
+      checkoutUrl: admin.firestore.FieldValue.delete(),
+      paymentLink: admin.firestore.FieldValue.delete(),
+      stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+      checkoutAmountCents: admin.firestore.FieldValue.delete(),
+      checkoutCurrency: admin.firestore.FieldValue.delete(),
+      updatedAt: now
+    }, { merge: true });
+    transaction.set(checkoutAttemptRef, {
+      version: 1,
+      reservationId: checkoutCreationReservationId,
+      amountCents,
+      checkoutCreationRequest,
+      checkoutAttemptToken: input.checkoutAttemptToken || checkoutAuthority.checkoutAttemptToken || admin.firestore.FieldValue.delete(),
+      publicCheckoutCapabilityHash: checkoutAuthority.publicCheckoutCapabilityHash || admin.firestore.FieldValue.delete(),
+      createdAt: now,
       updatedAt: now
     }, { merge: true });
     return {
       reserved: true,
+      reservationId: checkoutCreationReservationId,
+      checkoutCreationRequest,
       retryCapacityReservationId: String(registration.retryCapacityReservationId || '').trim() || null
     };
   });
@@ -1985,31 +3293,128 @@ async function reserveRegistrationCheckoutCreation(input, options = {}) {
 
 async function clearRegistrationCheckoutCreationReservation(input, checkoutCreationReservationId) {
   const registrationRef = buildRegistrationRef(input);
+  const checkoutAttemptRef = buildRegistrationCheckoutAttemptRef(registrationRef);
   const now = admin.firestore.FieldValue.serverTimestamp();
 
   return firestore.runTransaction(async (transaction) => {
-    const registrationSnap = await transaction.get(registrationRef);
+    const [registrationSnap, checkoutAttemptSnap] = await Promise.all([
+      transaction.get(registrationRef),
+      transaction.get(checkoutAttemptRef)
+    ]);
     if (!registrationSnap.exists) return false;
     const registration = registrationSnap.data() || {};
     if (String(registration.checkoutCreationReservationId || '') !== checkoutCreationReservationId) return false;
     transaction.set(registrationRef, {
       checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
       checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
+      checkoutCreationRequest: admin.firestore.FieldValue.delete(),
       updatedAt: now
     }, { merge: true });
+    if (
+      checkoutAttemptSnap.exists
+      && String(checkoutAttemptSnap.data()?.reservationId || '').trim() === checkoutCreationReservationId
+    ) {
+      transaction.set(checkoutAttemptRef, {
+        reservationId: admin.firestore.FieldValue.delete(),
+        amountCents: admin.firestore.FieldValue.delete(),
+        checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+        checkoutUrl: admin.firestore.FieldValue.delete(),
+        checkoutStatus: admin.firestore.FieldValue.delete(),
+        stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+        stripePaymentStatus: admin.firestore.FieldValue.delete(),
+        checkoutAmountCents: admin.firestore.FieldValue.delete(),
+        checkoutCurrency: admin.firestore.FieldValue.delete(),
+        updatedAt: now
+      }, { merge: true });
+    }
     return true;
   });
+}
+
+async function migrateLegacyReadableRegistrationCheckoutState(registrationRef) {
+  const checkoutAttemptRef = buildRegistrationCheckoutAttemptRef(registrationRef);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  return firestore.runTransaction(async (transaction) => {
+    const [registrationSnap, checkoutAttemptSnap] = await Promise.all([
+      transaction.get(registrationRef),
+      transaction.get(checkoutAttemptRef)
+    ]);
+    if (!registrationSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Registration not found.');
+    }
+    const registration = registrationSnap.data() || {};
+    const existingAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
+    if (!hasLegacyReadableRegistrationCheckoutState(registration)) return existingAttempt;
+    const privateAttempt = buildLegacyReadableRegistrationCheckoutAttempt({
+      registration,
+      existingAttempt,
+      now
+    });
+    transaction.set(checkoutAttemptRef, privateAttempt, { merge: true });
+    transaction.update(registrationRef, {
+      ...Object.fromEntries(LEGACY_READABLE_REGISTRATION_CHECKOUT_FIELDS.map((field) => [
+        field,
+        admin.firestore.FieldValue.delete()
+      ])),
+      'paymentReminder.retryUrl': admin.firestore.FieldValue.delete(),
+      updatedAt: now
+    });
+    return privateAttempt;
+  });
+}
+
+async function getRegistrationCheckoutPersistenceState({
+  registrationRef,
+  reservationId,
+  session,
+  amountCents,
+  currency
+}) {
+  try {
+    const checkoutAttemptRef = buildRegistrationCheckoutAttemptRef(registrationRef);
+    const [registrationSnap, checkoutAttemptSnap] = await Promise.all([
+      registrationRef.get(),
+      checkoutAttemptRef.get()
+    ]);
+    if (!registrationSnap.exists) return 'not-committed';
+    const registration = registrationSnap.data() || {};
+    const checkoutAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
+    if (
+      String(checkoutAttempt.stripeCheckoutSessionId || '').trim() === String(session?.id || '').trim()
+      && checkoutAttempt.checkoutUrl === session?.url
+      && checkoutAttempt.checkoutStatus === 'open'
+      && Number(checkoutAttempt.checkoutAmountCents || 0) === amountCents
+      && String(checkoutAttempt.checkoutCurrency || '').toLowerCase() === currency
+    ) {
+      return 'committed';
+    }
+    if (
+      String(registration.checkoutCreationReservationId || '').trim() === reservationId
+      && String(checkoutAttempt.reservationId || '').trim() === reservationId
+    ) {
+      return 'not-committed';
+    }
+    return 'unknown';
+  } catch (error) {
+    functions.logger.error('Failed to determine whether a registration checkout was committed.', {
+      providerSessionId: String(session?.id || ''),
+      error: error?.message || error
+    });
+    return 'unknown';
+  }
 }
 
 async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, options = {}) {
   const formRef = buildRegistrationFormRef(input);
   const registrationRef = buildRegistrationRef(input);
+  const checkoutAttemptRef = buildRegistrationCheckoutAttemptRef(registrationRef);
   const now = admin.firestore.FieldValue.serverTimestamp();
 
   return firestore.runTransaction(async (transaction) => {
-    const [formSnap, registrationSnap] = await Promise.all([
+    const [formSnap, registrationSnap, checkoutAttemptSnap] = await Promise.all([
       transaction.get(formRef),
-      transaction.get(registrationRef)
+      transaction.get(registrationRef),
+      transaction.get(checkoutAttemptRef)
     ]);
     if (!formSnap.exists) {
       throw new functions.https.HttpsError('not-found', 'Registration form not found.');
@@ -2020,12 +3425,14 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, opt
 
     const form = formSnap.data() || {};
     const registration = registrationSnap.data() || {};
+    const checkoutAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
+    const checkoutAuthority = getRegistrationCheckoutAuthorityState(registration, checkoutAttempt);
     if (registration.teamId !== input.teamId || registration.formId !== input.formId) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration does not match the requested form.');
     }
-    if (registration.publicCheckoutCapabilityHash) {
+    if (checkoutAuthority.publicCheckoutCapabilityHash) {
       const inputCapabilityHash = hashPublicCheckoutCapability(input.publicCheckoutCapability);
-      if (!inputCapabilityHash || inputCapabilityHash !== String(registration.publicCheckoutCapabilityHash || '')) {
+      if (!inputCapabilityHash || inputCapabilityHash !== String(checkoutAuthority.publicCheckoutCapabilityHash || '')) {
         throw buildPublicCheckoutCapabilityError();
       }
     }
@@ -2051,6 +3458,13 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, opt
     const registrationUpdate = {
       ...statusUpdate,
       retryCapacityReservationId: admin.firestore.FieldValue.delete(),
+      checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+      publicCheckoutCapabilityHash: admin.firestore.FieldValue.delete(),
+      checkoutUrl: admin.firestore.FieldValue.delete(),
+      paymentLink: admin.firestore.FieldValue.delete(),
+      stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+      checkoutAmountCents: admin.firestore.FieldValue.delete(),
+      checkoutCurrency: admin.firestore.FieldValue.delete(),
       updatedAt: now
     };
 
@@ -2067,13 +3481,13 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, opt
     if (!checkoutIsOpen && !canReleasePreCheckoutReservation && !canReleaseRetryCapacityReservation) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration checkout is not releasable.');
     }
-    if (canReleasePreCheckoutReservation && !registrationCheckoutAuthorityStrictlyMatches(registration, input)) {
+    if (canReleasePreCheckoutReservation && !registrationCheckoutAuthorityStrictlyMatches(checkoutAuthority, input)) {
       throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required to release this reservation.');
     }
-    if (canReleaseRetryCapacityReservation && !registrationCheckoutAuthorityStrictlyMatches(registration, input)) {
+    if (canReleaseRetryCapacityReservation && !registrationCheckoutAuthorityStrictlyMatches(checkoutAuthority, input)) {
       throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required to release this reservation.');
     }
-    if (!canReleasePreCheckoutReservation && !registrationCheckoutAuthorityMatches(registration, input)) {
+    if (!canReleasePreCheckoutReservation && !registrationCheckoutAuthorityMatches(checkoutAuthority, input)) {
       if (!canReleaseRetryCapacityReservation) {
         throw new functions.https.HttpsError('failed-precondition', 'Public checkout capability does not match.');
       }
@@ -2108,10 +3522,27 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, opt
     let nextPublicCheckoutCapability = '';
     if (options.suppressPublicCheckoutCapabilityRotation !== true) {
       nextPublicCheckoutCapability = createRawPublicCheckoutCapability();
-      capacityReleaseUpdate.publicCheckoutCapabilityHash = hashPublicCheckoutCapability(nextPublicCheckoutCapability);
     }
 
     transaction.set(registrationRef, capacityReleaseUpdate, { merge: true });
+    if (checkoutAttemptSnap.exists || nextPublicCheckoutCapability) {
+      transaction.set(checkoutAttemptRef, {
+        checkoutAttemptToken: checkoutAuthority.checkoutAttemptToken || admin.firestore.FieldValue.delete(),
+        publicCheckoutCapabilityHash: nextPublicCheckoutCapability
+          ? hashPublicCheckoutCapability(nextPublicCheckoutCapability)
+          : checkoutAuthority.publicCheckoutCapabilityHash || admin.firestore.FieldValue.delete(),
+        reservationId: admin.firestore.FieldValue.delete(),
+        amountCents: admin.firestore.FieldValue.delete(),
+        checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+        checkoutUrl: admin.firestore.FieldValue.delete(),
+        checkoutStatus: admin.firestore.FieldValue.delete(),
+        stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+        stripePaymentStatus: admin.firestore.FieldValue.delete(),
+        checkoutAmountCents: admin.firestore.FieldValue.delete(),
+        checkoutCurrency: admin.firestore.FieldValue.delete(),
+        updatedAt: now
+      }, { merge: true });
+    }
 
     return { released, nextPublicCheckoutCapability };
   });
@@ -2237,7 +3668,7 @@ exports.claimOpenOfficiatingSlot = functions.https.onCall(async (data, context) 
     throw new functions.https.HttpsError('permission-denied', 'Only team owners, admins, or parents can claim open officiating slots.');
   }
 
-  const gameRef = firestore.doc(resolveOfficiatingGamePath(input.teamId, input.gameId));
+  const gameRef = firestore.doc(resolveOfficiatingGamePath(input.teamId, input.gameId, input.sharedGamePath));
   const notificationRef = firestore.collection(`teams/${input.teamId}/officiatingNotifications`).doc();
   const now = admin.firestore.FieldValue.serverTimestamp();
 
@@ -2286,6 +3717,77 @@ exports.claimOpenOfficiatingSlot = functions.https.onCall(async (data, context) 
       gameId: input.gameId,
       slotId: input.slotId,
       ...result
+    };
+  } catch (error) {
+    throw toHttpsError(error, error?.code || 'internal');
+  }
+});
+
+exports.respondToOfficiatingAssignment = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before responding to an officiating assignment.');
+  }
+
+  let input;
+  try {
+    input = normalizeOfficiatingAssignmentResponseInput(data || {});
+  } catch (error) {
+    throw toHttpsError(error, 'invalid-argument');
+  }
+
+  const uid = context.auth.uid;
+  const callerEmail = context.auth.token?.email_verified === true
+    ? String(context.auth.token?.email || '').trim().toLowerCase()
+    : '';
+  const displayName = String(context.auth.token?.name || callerEmail || 'Official').trim();
+  const gameRef = firestore.doc(resolveOfficiatingGamePath(input.teamId, input.gameId, input.sharedGamePath));
+  const notificationRef = firestore.collection(`teams/${input.teamId}/officiatingNotifications`).doc();
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  try {
+    const result = await firestore.runTransaction(async (transaction) => {
+      const gameSnap = await transaction.get(gameRef);
+      if (!gameSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Game not found.');
+      }
+
+      const game = { id: input.gameId, ...(gameSnap.data() || {}) };
+      if (!gameRef.path.startsWith(`teams/${input.teamId}/games/`) && !isTeamLinkedToSharedGame(game, input.teamId)) {
+        throw new functions.https.HttpsError('permission-denied', 'Game is not available to this team.');
+      }
+
+      const { update, updatedSlot } = buildOfficiatingAssignmentResponseUpdate({
+        game,
+        slotId: input.slotId,
+        status: input.status,
+        official: { uid, email: callerEmail, displayName },
+        now
+      });
+      const notificationRecord = buildOfficiatingAssignmentResponseNotificationRecord({
+        teamId: input.teamId,
+        gameId: input.gameId,
+        game,
+        slot: updatedSlot,
+        status: input.status,
+        actor: { uid, email: callerEmail, displayName },
+        timestamp: now
+      });
+
+      transaction.update(gameRef, update);
+      transaction.set(notificationRef, {
+        ...notificationRecord,
+        createdAt: now
+      });
+
+      return updatedSlot;
+    });
+
+    return {
+      success: true,
+      teamId: input.teamId,
+      gameId: input.gameId,
+      slotId: input.slotId,
+      status: result.status
     };
   } catch (error) {
     throw toHttpsError(error, error?.code || 'internal');
@@ -2479,7 +3981,7 @@ function getResendAuthEmailDelivery() {
   if (!apiKey) throw new Error('RESEND_API_KEY is not configured.');
   resendAuthEmailDelivery = createResendAuthEmailDelivery({
     firestore,
-    FieldValue: admin.firestore.FieldValue,
+    FieldValue: FirestoreFieldValue,
     logger: functions.logger,
     resend: new Resend(apiKey),
     webhookSecret: String(process.env.RESEND_WEBHOOK_SECRET || '').trim(),
@@ -2490,8 +3992,8 @@ function getResendAuthEmailDelivery() {
 
 const authEmailDeliveryStore = createAuthEmailDeliveryStore({
   firestore,
-  Timestamp: admin.firestore.Timestamp,
-  FieldValue: admin.firestore.FieldValue,
+  Timestamp: FirestoreTimestamp,
+  FieldValue: FirestoreFieldValue,
   logger: functions.logger,
   cooldownMs: AUTH_EMAIL_COOLDOWN_MS,
   buildRateLimitId: buildAuthEmailRateLimitId,
@@ -2591,6 +4093,7 @@ const authEmailCallableHandlers = createAuthEmailCallableHandlers({
   enqueuePasswordResetRequest,
   getActionSettings: getAuthEmailActionSettings,
   canonicalizeActionUrl: buildCanonicalAuthActionUrl,
+  normalizeVerificationNextRoute,
   getInviteContinueUrl,
   findOwnedInviteCode,
   allowedInviteTypes: EMAIL_LINK_INVITE_TYPES,
@@ -2598,6 +4101,7 @@ const authEmailCallableHandlers = createAuthEmailCallableHandlers({
 });
 
 exports.queuePasswordResetEmail = functions.https.onCall(authEmailCallableHandlers.queuePasswordResetEmail);
+exports.createNativeWebAuthToken = functions.https.onCall(createNativeWebAuthToken);
 exports.queueEmailVerification = functions
   .runWith({ secrets: ['RESEND_API_KEY'] })
   .https.onCall(authEmailCallableHandlers.queueEmailVerification);
@@ -2723,7 +4227,7 @@ exports.queueInviteEmail = functions.https.onCall(async (data, context) => {
 
 const autoAcceptParentInviteHandler = createAutoAcceptParentInviteHandler({
   firestore,
-  Timestamp: admin.firestore.Timestamp,
+  Timestamp: FirestoreTimestamp,
   HttpsError: functions.https.HttpsError,
   normalizeFirestoreId,
   validateCode: validateAutoAcceptParentInviteCode
@@ -2770,6 +4274,18 @@ exports.cleanupInviteSignupOnAuthDelete = functions.auth.user().onDelete(async (
   return null;
 });
 
+const cleanupAccountDiamondPrivateNotesOnAuthDelete = createAccountDiamondPrivateNoteAuthDeleteHandler({
+  firestore,
+  getDocumentIdField: () => admin.firestore.FieldPath.documentId(),
+  deleteFieldValue: () => admin.firestore.FieldValue.delete()
+});
+
+exports.cleanupAccountDiamondPrivateNotesOnAuthDelete = functions
+  .runWith({ timeoutSeconds: 540, memory: '1GB', failurePolicy: true })
+  .auth
+  .user()
+  .onDelete(cleanupAccountDiamondPrivateNotesOnAuthDelete);
+
 exports.cleanupPublicUserProfileOnAuthDelete = functions.auth
   .user()
   .onDelete(createPublicProfileAuthDeleteHandler({
@@ -2787,7 +4303,7 @@ exports.sweepIneligiblePublicUserProfiles = functions
     const publicProfileEligibilitySweepHandler = createPublicProfileEligibilitySweepHandler({
       firestore,
       auth: admin.auth(),
-      documentIdField: admin.firestore.FieldPath.documentId(),
+      documentIdField: FirestoreFieldPath.documentId(),
       isAuthUserNotFound: publicUserProfileProjection.isPublicProfileAuthUserNotFound,
       reconcileAuthIdentity: async (userId, authIdentity) => {
         const authIdentitySnap = await firestore.doc(`publicProfileAuthIdentities/${userId}`).get();
@@ -2796,6 +4312,7 @@ exports.sweepIneligiblePublicUserProfiles = functions
           : null;
         const currentEmail = String(authIdentity.email || '').trim().toLowerCase();
         const isIneligible = authIdentity.userMissing === true
+          || authIdentity.userDisabled === true
           || authIdentity.emailVerified !== true;
         if (!isIneligible && indexedEmail === currentEmail) return null;
 
@@ -2833,7 +4350,7 @@ exports.sweepIneligiblePublicUserProfiles = functions
             userId,
             currentStaffTeamIds: [],
             buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            updatedAt: FirestoreFieldValue.serverTimestamp()
           });
           await firestore.doc(`publicProfileAuthIdentities/${userId}`).delete();
         }
@@ -2876,7 +4393,7 @@ function compactPublicProfileString(value) {
 function buildTrustedPublicUserProfileProjectionPayload(userData = {}, options = {}) {
   return {
     ...publicUserProfileProjection.buildPublicUserProfileProjection(userData, options),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    updatedAt: FirestoreFieldValue.serverTimestamp()
   };
 }
 
@@ -2887,7 +4404,8 @@ async function loadPublicUserProfileAuthIdentity(userId) {
       email: authRecord.email || null,
       displayName: authRecord.displayName || null,
       photoUrl: authRecord.photoURL || null,
-      emailVerified: authRecord.emailVerified === true
+      emailVerified: authRecord.emailVerified === true,
+      userDisabled: authRecord.disabled === true
     };
   } catch (error) {
     if (publicUserProfileProjection.isPublicProfileAuthUserNotFound(error)) {
@@ -2911,7 +4429,7 @@ async function loadPublicProfileStaffTeamIdsForIdentity(userId, email = '') {
     firestore.collection('teams').where('ownerId', '==', normalizedUserId).get(),
     loadCaseInsensitivePublicProfileStaffTeamIds(firestore, {
       email,
-      documentIdField: admin.firestore.FieldPath.documentId()
+      documentIdField: FirestoreFieldPath.documentId()
     })
   ]);
   return uniqueNonEmptyStrings([
@@ -2923,7 +4441,11 @@ async function loadPublicProfileStaffTeamIdsForIdentity(userId, email = '') {
 async function removePublicProfileAuthorizationForIneligibleAuth(userId, authIdentity) {
   const normalizedUserId = String(userId || '').trim();
   const publicProfileRef = firestore.doc(`publicUserProfiles/${normalizedUserId}`);
-  if (authIdentity.userMissing !== true && authIdentity.emailVerified === true) return false;
+  if (
+    authIdentity.userMissing !== true &&
+    authIdentity.userDisabled !== true &&
+    authIdentity.emailVerified === true
+  ) return false;
 
   const authIdentityRef = firestore.doc(`publicProfileAuthIdentities/${normalizedUserId}`);
   const [cleanupScope, indexedAuthIdentitySnap] = await Promise.all([
@@ -2953,7 +4475,7 @@ async function removePublicProfileAuthorizationForIneligibleAuth(userId, authIde
     userId: normalizedUserId,
     currentStaffTeamIds: [],
     buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    updatedAt: FirestoreFieldValue.serverTimestamp()
   });
   await authIdentityRef.delete();
   await publicProfileRef.delete();
@@ -3012,7 +4534,7 @@ async function reconcileRoutinePublicProfileAuthIdentity(
   if (currentEmail) {
     await authIdentityRef.set({
       email: currentEmail,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      updatedAt: FirestoreFieldValue.serverTimestamp()
     });
   } else {
     await authIdentityRef.delete();
@@ -3045,7 +4567,7 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
       userId: normalizedUserId,
       currentStaffTeamIds: [],
       buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      updatedAt: FirestoreFieldValue.serverTimestamp()
     });
     await authIdentityRef.delete();
     await publicProfileRef.delete();
@@ -3061,7 +4583,11 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
   if (removedForIneligibleAuth) {
     functions.logger.info('Public profile projection removed for ineligible Auth identity.', {
       userId: normalizedUserId,
-      reason: authIdentity.userMissing === true ? 'auth-user-missing' : 'email-unverified'
+      reason: authIdentity.userMissing === true
+        ? 'auth-user-missing'
+        : authIdentity.userDisabled === true
+          ? 'auth-user-disabled'
+          : 'email-unverified'
     });
     return null;
   }
@@ -3102,7 +4628,7 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
   if (options.updateAuthIdentityIndex === true) {
     batch.set(authIdentityRef, {
       email: String(authIdentity.email || '').trim().toLowerCase(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      updatedAt: FirestoreFieldValue.serverTimestamp()
     });
   }
   await batch.commit();
@@ -3128,7 +4654,7 @@ async function reconcilePublicProfileStaffMembershipsForAuthUser(
     firestore.collection('teams').where('ownerId', '==', normalizedUserId).get(),
     loadCaseInsensitivePublicProfileStaffTeamIds(firestore, {
       email: rawEmail,
-      documentIdField: admin.firestore.FieldPath.documentId()
+      documentIdField: FirestoreFieldPath.documentId()
     })
   ]);
   (ownedTeamSnap.docs || [])
@@ -3147,7 +4673,7 @@ async function reconcilePublicProfileStaffMembershipsForAuthUser(
     userId: normalizedUserId,
     currentStaffTeamIds: authoritativeTeamIds,
     buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    updatedAt: FirestoreFieldValue.serverTimestamp()
   });
   return uniqueNonEmptyStrings([
     ...publicUserProfileProjection.derivePublicProfileTeamIds(userData),
@@ -3169,7 +4695,7 @@ async function syncPublicUserProfilesForTeamChange(teamId, beforeTeam, afterTeam
     teamId,
     currentStaffUserIds: afterUserIds,
     buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    updatedAt: FirestoreFieldValue.serverTimestamp()
   });
   const candidateUserIds = new Set([
     ...beforeUserIds,
@@ -3680,6 +5206,49 @@ exports.confirmParentAccountMerge = functions.https.onCall(async (data, context)
 
 exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(autoAcceptParentInviteHandler);
 
+const parentInviteConfig = functions.config()?.parent_invite || {};
+const createParentInviteCallableHandler = createParentInviteHandler({
+  firestore,
+  Timestamp: admin.firestore.Timestamp,
+  HttpsError: functions.https.HttpsError,
+  rateLimitWindowMs: process.env.PARENT_INVITE_RATE_LIMIT_WINDOW_MS
+    ?? parentInviteConfig.rate_limit_window_ms,
+  senderMaxInvites: process.env.PARENT_INVITE_SENDER_MAX_INVITES
+    ?? parentInviteConfig.sender_max_invites,
+  recipientMaxInvites: process.env.PARENT_INVITE_RECIPIENT_MAX_INVITES
+    ?? parentInviteConfig.recipient_max_invites
+});
+
+exports.createParentInvite = functions.https.onCall(createParentInviteCallableHandler);
+
+const coParentInviteConfig = functions.config()?.co_parent_invite || {};
+const createCoParentInviteCallableHandler = createCoParentInviteHandler({
+  firestore,
+  Timestamp: admin.firestore.Timestamp,
+  HttpsError: functions.https.HttpsError,
+  rateLimitWindowMs: process.env.CO_PARENT_INVITE_RATE_LIMIT_WINDOW_MS
+    ?? coParentInviteConfig.rate_limit_window_ms,
+  senderMaxInvites: process.env.CO_PARENT_INVITE_SENDER_MAX_INVITES
+    ?? coParentInviteConfig.sender_max_invites,
+  recipientMaxInvites: process.env.CO_PARENT_INVITE_RECIPIENT_MAX_INVITES
+    ?? coParentInviteConfig.recipient_max_invites
+});
+
+exports.createCoParentInvite = functions.https.onCall(createCoParentInviteCallableHandler);
+
+function assertFamilyInviteRecipientEmail(codeData, signedInEmail) {
+  const invitedEmail = normalizeParentInviteEmail(codeData?.email);
+  if (invitedEmail && !signedInEmail) {
+    throw new functions.https.HttpsError(
+      'permission-denied',
+      'Verify your email before accepting this family invite.',
+      { reason: 'email-verification-required' }
+    );
+  }
+  if (invitedEmail && invitedEmail !== signedInEmail) {
+    throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
+  }
+}
 
 exports.redeemParentInvite = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
@@ -3696,12 +5265,18 @@ exports.redeemParentInvite = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
   }
 
+  const signedInEmail = await resolveAuthenticatedFamilyInviteEmail({
+    auth: context.auth,
+    getUser: (uid) => admin.auth().getUser(uid)
+  });
+
   const codeQuerySnap = await firestore.collection('accessCodes').where('code', '==', code).limit(1).get();
   if (codeQuerySnap.empty) {
     throw new functions.https.HttpsError('not-found', 'Parent invite could not be found.');
   }
 
   const codeRef = codeQuerySnap.docs[0].ref;
+  assertFamilyInviteRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail);
   let responsePayload = null;
 
   await firestore.runTransaction(async (transaction) => {
@@ -3721,11 +5296,7 @@ exports.redeemParentInvite = functions.https.onCall(async (data, context) => {
       throw new functions.https.HttpsError('failed-precondition', 'Parent invite has expired.');
     }
 
-    const invitedEmail = normalizeParentInviteEmail(codeData.email);
-    const signedInEmail = normalizeParentInviteEmail(context.auth.token?.email || data?.authEmail);
-    if (invitedEmail && (!signedInEmail || invitedEmail !== signedInEmail)) {
-      throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
-    }
+    assertFamilyInviteRecipientEmail(codeData, signedInEmail);
 
     const teamId = normalizeFirestoreId(codeData.teamId, 'teamId');
     const playerId = normalizeFirestoreId(codeData.playerId, 'playerId');
@@ -3770,7 +5341,7 @@ exports.redeemParentInvite = functions.https.onCall(async (data, context) => {
     }, { merge: true });
 
     transaction.set(publicProfileRef, buildTrustedPublicUserProfileProjectionPayload(nextUserData, {
-      trustedEmail: context.auth.token?.email || userData.email || null
+      trustedEmail: signedInEmail || null
     }), { merge: true });
 
     transaction.set(privateProfileRef, {
@@ -3818,12 +5389,18 @@ exports.redeemHouseholdInvite = functions.https.onCall(async (data, context) => 
     throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
   }
 
+  const signedInEmail = await resolveAuthenticatedFamilyInviteEmail({
+    auth: context.auth,
+    getUser: (uid) => admin.auth().getUser(uid)
+  });
+
   const codeQuerySnap = await firestore.collection('accessCodes').where('code', '==', code).limit(1).get();
   if (codeQuerySnap.empty) {
     throw new functions.https.HttpsError('not-found', 'Household invite could not be found.');
   }
 
   const codeRef = codeQuerySnap.docs[0].ref;
+  assertFamilyInviteRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail);
   let responsePayload = null;
 
   await firestore.runTransaction(async (transaction) => {
@@ -3843,11 +5420,7 @@ exports.redeemHouseholdInvite = functions.https.onCall(async (data, context) => 
       throw new functions.https.HttpsError('failed-precondition', 'Household invite has expired.');
     }
 
-    const invitedEmail = normalizeParentInviteEmail(codeData.email);
-    const signedInEmail = normalizeParentInviteEmail(context.auth.token?.email || data?.authEmail);
-    if (invitedEmail && (!signedInEmail || invitedEmail !== signedInEmail)) {
-      throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
-    }
+    assertFamilyInviteRecipientEmail(codeData, signedInEmail);
 
     const teamId = normalizeFirestoreId(codeData.teamId, 'teamId');
     const playerId = normalizeFirestoreId(codeData.playerId, 'playerId');
@@ -3907,7 +5480,7 @@ exports.redeemHouseholdInvite = functions.https.onCall(async (data, context) => 
     }, { merge: true });
 
     transaction.set(publicProfileRef, buildTrustedPublicUserProfileProjectionPayload(nextUserData, {
-      trustedEmail: context.auth.token?.email || userData.email || null
+      trustedEmail: signedInEmail || null
     }), { merge: true });
 
     transaction.set(privateProfileRef, {
@@ -4112,12 +5685,18 @@ exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
   }
 
+  const signedInEmail = await resolveAuthenticatedFamilyInviteEmail({
+    auth: context.auth,
+    getUser: (uid) => admin.auth().getUser(uid)
+  });
+
   const codeQuerySnap = await firestore.collection('accessCodes').where('code', '==', code).limit(1).get();
   if (codeQuerySnap.empty) {
     throw new functions.https.HttpsError('not-found', 'Co-parent invite could not be found.');
   }
 
   const codeRef = codeQuerySnap.docs[0].ref;
+  assertFamilyInviteRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail);
   let responsePayload = null;
 
   await firestore.runTransaction(async (transaction) => {
@@ -4137,11 +5716,7 @@ exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
       throw new functions.https.HttpsError('failed-precondition', 'Co-parent invite has expired.');
     }
 
-    const invitedEmail = normalizeParentInviteEmail(codeData.email);
-    const signedInEmail = normalizeParentInviteEmail(context.auth.token?.email || data?.authEmail);
-    if (invitedEmail && (!signedInEmail || invitedEmail !== signedInEmail)) {
-      throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
-    }
+    assertFamilyInviteRecipientEmail(codeData, signedInEmail);
 
     const teamId = normalizeFirestoreId(codeData.teamId, 'teamId');
     const playerId = normalizeFirestoreId(codeData.playerId, 'playerId');
@@ -4195,7 +5770,7 @@ exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
     }, { merge: true });
 
     transaction.set(publicProfileRef, buildTrustedPublicUserProfileProjectionPayload(nextUserData, {
-      trustedEmail: context.auth.token?.email || userData.email || null
+      trustedEmail: signedInEmail || null
     }), { merge: true });
 
     transaction.set(privateProfileRef, {
@@ -4230,126 +5805,24 @@ exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
   return responsePayload;
 });
 
-exports.redeemAdminInvite = functions.https.onCall(async (data, context) => {
-  if (!context.auth?.uid) {
-    throw new functions.https.HttpsError('unauthenticated', 'Sign in before accepting an admin invite.');
-  }
-
-  const userId = normalizeFirestoreId(data?.userId || context.auth.uid, 'userId');
-  if (userId !== context.auth.uid) {
-    throw new functions.https.HttpsError('permission-denied', 'You can only accept an invite for your own account.');
-  }
-
-  const codeId = normalizeFirestoreId(data?.codeId, 'codeId');
-  const codeRef = firestore.doc(`accessCodes/${codeId}`);
-  let responsePayload = null;
-
-  await firestore.runTransaction(async (transaction) => {
-    const codeSnap = await transaction.get(codeRef);
-    if (!codeSnap.exists) {
-      throw new functions.https.HttpsError('not-found', 'Admin invite could not be found.');
-    }
-
-    const codeData = codeSnap.data() || {};
-    if (codeData.type !== 'admin_invite') {
-      throw new functions.https.HttpsError('failed-precondition', 'Not an admin invite code.');
-    }
-    if (codeData.used || codeData.revoked === true || codeData.active === false || ['removed', 'cancelled', 'revoked'].includes(codeData.status)) {
-      throw new functions.https.HttpsError('failed-precondition', 'Admin invite is no longer available.');
-    }
-    if (isParentInviteExpired(codeData.expiresAt)) {
-      throw new functions.https.HttpsError('failed-precondition', 'Admin invite has expired.');
-    }
-
-    const invitedEmail = normalizeParentInviteEmail(codeData.email);
-    if (!invitedEmail) {
-      throw new functions.https.HttpsError('failed-precondition', 'Admin invite is missing an invited email.');
-    }
-
-    const issuerUid = String(codeData.generatedBy || '').trim();
-    if (!issuerUid) {
-      throw new functions.https.HttpsError('permission-denied', 'The admin invite issuer no longer has access to this team.');
-    }
-
-    const teamId = normalizeFirestoreId(codeData.teamId, 'teamId');
-    const teamRef = firestore.doc(`teams/${teamId}`);
-    const userRef = firestore.doc(`users/${userId}`);
-    const issuerRef = firestore.doc(`users/${issuerUid}`);
-    const [teamSnap, userSnap, issuerSnap, issuerAuthUser] = await Promise.all([
-      transaction.get(teamRef),
-      transaction.get(userRef),
-      transaction.get(issuerRef),
-      admin.auth().getUser(issuerUid).catch(() => null)
-    ]);
-
-    if (!teamSnap.exists) {
-      throw new functions.https.HttpsError('not-found', 'Team not found.');
-    }
-
-    const teamData = teamSnap.data() || {};
-    const userData = userSnap.exists ? userSnap.data() || {} : {};
-    const issuerData = issuerSnap.exists ? issuerSnap.data() || {} : {};
-    if (!hasAdminInviteIssuerAccess({
-      team: teamData,
-      user: issuerData,
-      uid: issuerUid,
-      authUser: issuerAuthUser
-    })) {
-      throw new functions.https.HttpsError('permission-denied', 'The admin invite issuer no longer has access to this team.');
-    }
-
-    const signedInEmail = normalizeParentInviteEmail(context.auth.token?.email || userData.email);
-    if (!signedInEmail || invitedEmail !== signedInEmail) {
-      throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
-    }
-
-    const now = admin.firestore.Timestamp.now();
-
-    transaction.set(teamRef, {
-      adminEmails: appendUniqueValue(teamData.adminEmails, invitedEmail),
-      updatedAt: now
-    }, { merge: true });
-    transaction.set(userRef, {
-      coachOf: appendUniqueValue(userData.coachOf, teamId),
-      roles: appendUniqueValue(userData.roles, 'coach'),
-      updatedAt: now
-    }, { merge: true });
-    transaction.update(codeRef, {
-      used: true,
-      usedBy: userId,
-      usedAt: now
-    });
-
-    responsePayload = {
-      success: true,
-      codeId,
-      teamId,
-      teamName: teamData.name || codeData.teamName || null
-    };
-  });
-
-  return responsePayload;
-});
+exports.redeemAdminInvite = functions.https.onCall(createRedeemAdminInviteHandler({
+  firestore,
+  getAuthUser: (uid) => admin.auth().getUser(uid),
+  getTimestamp: () => admin.firestore.Timestamp.now(),
+  HttpsError: functions.https.HttpsError,
+  normalizeFirestoreId
+}));
 
 exports.validateAccessCodeForAcceptance = functions.https.onCall(async (data, context) => {
-  const code = String(data?.code || '').trim().toUpperCase();
-  if (!code) {
-    throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
-  }
-  const nativeAuthToken = String(data?.nativeAuthToken || '').trim();
-  const nativeAuthUser = nativeAuthToken
-    ? await admin.auth().verifyIdToken(nativeAuthToken).catch(() => null)
-    : null;
-  const acceptingUserId = String(context?.auth?.uid || nativeAuthUser?.uid || nativeAuthUser?.sub || '').trim();
-  if (!acceptingUserId) {
-    return buildGenericPreAuthAccessCodeValidationResult();
-  }
-
-  const snapshot = await firestore.collection('accessCodes').where('code', '==', code).get();
-  return validateAccessCodeCandidates(snapshot.docs.map((docSnap) => ({
-    id: docSnap.id,
-    data: docSnap.data() || {}
-  })), Date.now(), acceptingUserId);
+  const handler = createAccessCodeValidationHandler({
+    firestore,
+    auth: admin.auth(),
+    HttpsError: functions.https.HttpsError,
+    rateLimitWindowMs: process.env.ACCESS_CODE_VALIDATION_RATE_LIMIT_WINDOW_MS,
+    uidMaxRequests: process.env.ACCESS_CODE_VALIDATION_UID_MAX_REQUESTS,
+    networkMaxRequests: process.env.ACCESS_CODE_VALIDATION_NETWORK_MAX_REQUESTS
+  });
+  return handler(data, context);
 });
 
 function accountMergePreviewAuditRef() {
@@ -4525,8 +5998,7 @@ exports.createScopedRsvpToken = functions.https.onCall(async (data, context) => 
   }
 
   const team = teamSnap.data() || {};
-  const user = await getUserForEligibility(context.auth.uid);
-  const email = context.auth.token?.email || user.email || '';
+  const email = String(context.auth.token?.email || '').trim().toLowerCase();
   if (!hasTeamAdminAccess({ team, uid: context.auth.uid, email })) {
     throw new functions.https.HttpsError('permission-denied', 'Only team owners and admins can create RSVP tokens.');
   }
@@ -4686,22 +6158,939 @@ exports.redeemScopedRsvpToken = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, context) => {
+exports.getPublicTeamPassStatus = functions.https.onCall(async (data, context = {}) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to view team pass status.');
+  }
+
+  let input;
+  try {
+    input = normalizeTeamPassCheckoutInput(data || {});
+  } catch (error) {
+    throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid Team Pass status request.');
+  }
+
+  const { teamId, seasonId, tier } = input;
+  const [teamSnap, user] = await Promise.all([
+    firestore.doc(`teams/${teamId}`).get(),
+    getUserForEligibility(context.auth.uid)
+  ]);
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  const team = { id: teamId, ...(teamSnap.data() || {}) };
+  const email = String(context.auth.token?.email || '').trim().toLowerCase();
+  if (!hasCurrentTeamAccess({ team, user, userId: context.auth.uid, email })) {
+    throw new functions.https.HttpsError('permission-denied', 'You do not have access to this team.');
+  }
+
+  const entitlementSnap = await firestore.doc(`teams/${teamId}/entitlements/${seasonId}_${tier}`).get();
+  const active = entitlementSnap.exists && isTeamPassEntitlementActive(
+    entitlementSnap.data(),
+    { teamId, seasonId, tier }
+  );
+  return {
+    active,
+    reason: active ? 'active' : 'not-active',
+    seasonId,
+    tier
+  };
+});
+
+exports.saveAthleteProfileProjection = functions.https.onCall(saveAthleteProfileProjectionHandler);
+exports.mutateStructuredMediaIdentity = functions.https.onCall(mutateStructuredMediaIdentityHandler);
+
+function toReplayArchiveHttpsError(error, fallbackCode = 'internal') {
+  if (error instanceof functions.https.HttpsError) return error;
+  const supportedCodes = new Set([
+    'aborted',
+    'already-exists',
+    'failed-precondition',
+    'invalid-argument',
+    'not-found',
+    'permission-denied',
+    'unauthenticated',
+    'unavailable'
+  ]);
+  const code = supportedCodes.has(error?.code) ? error.code : fallbackCode;
+  return new functions.https.HttpsError(code, error?.message || 'Replay archive request failed.');
+}
+
+function setReplayCallableNoStore(context = {}) {
+  const response = context?.rawRequest?.res;
+  if (typeof response?.set === 'function') response.set('Cache-Control', 'private, no-store, max-age=0');
+  if (typeof response?.setHeader === 'function') response.setHeader('Cache-Control', 'private, no-store, max-age=0');
+}
+
+async function loadEnabledReplayAuthUser(context = {}) {
+  const uid = String(context?.auth?.uid || '').trim();
+  if (!uid) return null;
+  try {
+    const authUser = await admin.auth().getUser(uid);
+    if (!authUser || authUser.uid !== uid) {
+      throw new functions.https.HttpsError('unauthenticated', 'The signed-in account could not be verified.');
+    }
+    if (authUser.disabled === true) {
+      throw new functions.https.HttpsError('permission-denied', 'This account is disabled.');
+    }
+    return authUser;
+  } catch (error) {
+    if (error instanceof functions.https.HttpsError) throw error;
+    if (error?.code === 'auth/user-not-found') {
+      throw new functions.https.HttpsError('unauthenticated', 'The signed-in account no longer exists.');
+    }
+    throw new functions.https.HttpsError('unavailable', 'The signed-in account could not be verified.');
+  }
+}
+
+function getReplayDelegatedAccess({ context, authUser, teamId, team, game, user }) {
+  const uid = String(context?.auth?.uid || '').trim();
+  const email = String(authUser?.email || '').trim().toLowerCase();
+  return resolveDelegatedAccess({ uid, email, user: user || {}, teamId, team, game, rsvp: null });
+}
+
+function getEmptyReplayManagementState() {
+  return {
+    state: 'none',
+    hasRecordedReplay: false,
+    replayArchiveRevision: null,
+    lastMutationId: null
+  };
+}
+
+function serializeReplayCompatibilityManagementState(state = {}) {
+  return {
+    state: state.state,
+    hasRecordedReplay: state.state === 'ready',
+    replayArchiveRevision: state.state === 'none' ? null : state.replayArchiveRevision,
+    lastMutationId: state.lastMutationId || null,
+    ...(state.state === 'ready' && state.replayVideo ? { replayVideo: state.replayVideo } : {})
+  };
+}
+
+const REPLAY_PRIVACY_CACHE_EPOCH = 'private-replay-v2';
+
+// This callable is deliberately capability-free and anonymous. It lets a
+// shipped web/native client decide whether an old Firestore IndexedDB may be
+// reused without reading Firestore itself (which could hydrate retired replay
+// fields before the migration boundary is authoritative).
+exports.getReplayPrivacyMigrationStatus = functions.https.onCall(async (_data, context = {}) => {
+  setReplayCallableNoStore(context);
+  let controlSnapshot;
+  try {
+    controlSnapshot = await firestore.doc(REPLAY_ARCHIVE_MIGRATION_CONTROL_PATH).get();
+  } catch {
+    throw new functions.https.HttpsError(
+      'unavailable',
+      'Replay privacy readiness could not be verified.'
+    );
+  }
+  if (!controlSnapshot.exists) {
+    return { ready: false, cacheEpoch: null };
+  }
+  const control = normalizeReplayArchiveMigrationControl(controlSnapshot.data() || {});
+  if (!control) {
+    throw new functions.https.HttpsError(
+      'unavailable',
+      'Replay privacy readiness could not be verified.'
+    );
+  }
+  const ready = control.status === 'ready';
+  return {
+    ready,
+    cacheEpoch: ready ? REPLAY_PRIVACY_CACHE_EPOCH : null
+  };
+});
+
+exports.manageGameReplayArchive = functions.https.onCall(async (data, context = {}) => {
+  setReplayCallableNoStore(context);
+  const uid = String(context.auth?.uid || '').trim();
+  if (!uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to manage a game replay.');
+  }
+  const authUser = await loadEnabledReplayAuthUser(context);
+
+  let input;
+  try {
+    input = normalizeReplayManagementInput(data || {});
+  } catch (error) {
+    throw toReplayArchiveHttpsError(error, 'invalid-argument');
+  }
+
+  const teamRef = firestore.doc(`teams/${input.teamId}`);
+  const gameRef = firestore.doc(`teams/${input.teamId}/games/${input.gameId}`);
+  const userRef = firestore.doc(`users/${uid}`);
+  const archiveRef = firestore.doc(`${gameRef.path}/privateReplay/archive`);
+  const compatibilityReceiptRef = firestore.doc(getReplayCompatibilityReceiptPath(gameRef.path));
+  const migrationControlRef = firestore.doc(REPLAY_ARCHIVE_MIGRATION_CONTROL_PATH);
+  const boundaryControlRef = firestore.doc(ATHLETE_PROFILE_PROJECTION_BOUNDARY_CONTROL_PATH);
+  const clipIdentityRecord = input.action === 'set'
+    ? getReplayClipYouTubeIdentityRecord(input.replay.videoId)
+    : null;
+  const clipIdentityRef = clipIdentityRecord
+    ? firestore.doc(clipIdentityRecord.path)
+    : null;
+  const proposedRevision = input.action === 'read' ? null : createReplayRevision();
+
+  try {
+    return await firestore.runTransaction(async (transaction) => {
+      const [
+        teamSnap,
+        gameSnap,
+        userSnap,
+        archiveSnap,
+        compatibilityReceiptSnap,
+        migrationControlSnap,
+        boundaryControlSnap,
+        clipIdentitySnap
+      ] = await Promise.all([
+        transaction.get(teamRef),
+        transaction.get(gameRef),
+        transaction.get(userRef),
+        transaction.get(archiveRef),
+        transaction.get(compatibilityReceiptRef),
+        transaction.get(migrationControlRef),
+        transaction.get(boundaryControlRef),
+        clipIdentityRef ? transaction.get(clipIdentityRef) : Promise.resolve(null)
+      ]);
+      if (!teamSnap.exists || !gameSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Game not found.');
+      }
+      const team = { id: input.teamId, ...(teamSnap.data() || {}) };
+      const game = gameSnap.data() || {};
+      const user = userSnap.exists ? userSnap.data() || {} : {};
+      if (!isCanonicalReplayGame(input.gameId, game)) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Replay links must be managed on the original team game, not a shared schedule copy.'
+        );
+      }
+      const access = getReplayDelegatedAccess({
+        context,
+        authUser,
+        teamId: input.teamId,
+        team,
+        game,
+        user
+      });
+      if (!canManageReplayArchive(access)) {
+        throw new functions.https.HttpsError(
+          'permission-denied',
+          'Only a team manager or selected videographer can manage this replay.'
+        );
+      }
+
+      const archive = archiveSnap.exists ? normalizeStoredReplayArchive(archiveSnap.data() || {}) : null;
+      if (archiveSnap.exists && !archive) {
+        throw new functions.https.HttpsError('failed-precondition', 'The replay archive is unavailable for safe updates.');
+      }
+      const compatibilityReceipt = compatibilityReceiptSnap.exists
+        ? normalizeReplayCompatibilityReceipt(compatibilityReceiptSnap.data() || {})
+        : null;
+      if (compatibilityReceiptSnap.exists && (!compatibilityReceipt
+        || compatibilityReceipt.teamId !== input.teamId
+        || compatibilityReceipt.gameId !== input.gameId
+        || compatibilityReceiptSnap.ref?.path !== compatibilityReceiptRef.path)) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'The legacy replay mutation receipt is unavailable for safe updates.'
+        );
+      }
+      const parentHasMarkers = typeof game.hasRecordedReplay === 'boolean'
+        || (game.replayArchiveRevision !== null && game.replayArchiveRevision !== undefined);
+      if ((archive && !isReplayArchiveConsistent(game, archive))
+        || (archive && compatibilityReceipt)
+        || (!archive && parentHasMarkers && !compatibilityReceipt)) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'The replay archive markers are inconsistent. Retry after the archive is repaired.'
+        );
+      }
+      const migrationControl = migrationControlSnap.exists
+        ? normalizeReplayArchiveMigrationControl(migrationControlSnap.data() || {})
+        : null;
+      const migrationReady = migrationControl?.status === 'ready';
+      const boundaryReady = boundaryControlSnap.exists
+        && isAthleteProfileProjectionBoundaryReady(boundaryControlSnap.data() || {});
+      const compatibilityBoundary = !migrationControlSnap.exists
+        && !boundaryControlSnap.exists
+        && !archive;
+
+      if (input.action === 'read') {
+        if (archive) return serializeReplayManagementState(game, archive);
+        if (compatibilityBoundary) {
+          const compatibilityState = getReplayCompatibilityState(
+            game,
+            compatibilityReceiptSnap.exists ? compatibilityReceiptSnap.data() || {} : null,
+            { teamId: input.teamId, gameId: input.gameId }
+          );
+          if (!compatibilityState.receiptValid || compatibilityState.state === 'unavailable') {
+            throw new functions.https.HttpsError(
+              'failed-precondition',
+              'This legacy replay requires migration review before it can be managed.'
+            );
+          }
+          return serializeReplayCompatibilityManagementState(compatibilityState);
+        }
+        if (migrationReady && boundaryReady && !parentHasMarkers) {
+          return getEmptyReplayManagementState();
+        }
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Replay management is temporarily unavailable while private storage is verified.'
+        );
+      }
+
+      if (compatibilityBoundary) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Replay changes are temporarily unavailable until the private replay migration completes.',
+          { reason: 'private-replay-migration-pending' }
+        );
+      }
+
+      if (!migrationReady || !boundaryReady || compatibilityReceipt) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Replay archive updates are temporarily unavailable while private storage is verified.'
+        );
+      }
+      if (clipIdentitySnap?.exists) {
+        const clipIdentity = normalizeReplayClipIdentity(clipIdentitySnap.data() || {});
+        if (!clipIdentity
+          || clipIdentity.kind !== clipIdentityRecord.data.kind
+          || clipIdentity.identityHash !== clipIdentityRecord.data.identityHash
+          || clipIdentitySnap.ref?.path !== clipIdentityRecord.path) {
+          throw new functions.https.HttpsError(
+            'failed-precondition',
+            'The replay clip exclusion index is unavailable for safe updates.'
+          );
+        }
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'This YouTube video is already published as a standalone clip and cannot become a protected replay.'
+        );
+      }
+      if (input.action === 'set') {
+        const structuredReport = buildStructuredReplayClipIdentityReport([
+          ...extractStructuredReplayIdentitySources(teamRef.path, team),
+          ...extractStructuredReplayIdentitySources(gameRef.path, game)
+        ], {
+          protectedVideoIds: [input.replay.videoId]
+        });
+        if (structuredReport.protectedSources.length) {
+          throw new functions.https.HttpsError(
+            'failed-precondition',
+            'This YouTube video is already published through the team or game stream and cannot become a protected replay.'
+          );
+        }
+      }
+
+      const mutationHash = getReplayMutationHash(input);
+      if (archive?.lastMutationId === input.mutationId) {
+        if (archive.lastMutationHash !== mutationHash) {
+          throw new functions.https.HttpsError(
+            'already-exists',
+            'This replay mutation ID was already used for a different request.'
+          );
+        }
+        return serializeReplayManagementState(game, archive);
+      }
+      const currentRevision = archive?.revision || null;
+      if (!archive && inspectLegacyReplayArchive(game).state !== 'none') {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Refresh this legacy replay before changing it so its exact state can be promoted safely.'
+        );
+      }
+      if (input.expectedRevision !== currentRevision) {
+        throw new functions.https.HttpsError(
+          'aborted',
+          'The replay changed since it was loaded. Refresh the game and try again.',
+          { currentRevision }
+        );
+      }
+
+      const lifecycle = getExactReplayLifecycle(game);
+      if (input.action === 'set' && !lifecycle.isCompleted) {
+        throw new functions.https.HttpsError('failed-precondition', 'Mark the game final before linking its replay.');
+      }
+      if (input.action === 'remove') {
+        if (!archive || archive.state !== 'ready') {
+          throw new functions.https.HttpsError('failed-precondition', 'This game does not have a replay to remove.');
+        }
+        if (!lifecycle.isCompleted && access.full !== true) {
+          throw new functions.https.HttpsError(
+            'failed-precondition',
+            'Only a full team manager can remove a replay while the game is not final.'
+          );
+        }
+      }
+
+      const timestamp = admin.firestore.FieldValue.serverTimestamp();
+      const protectedIdentity = input.action === 'set'
+        ? getReplayProtectedYouTubeIdentityRecord(input.replay.videoId)
+        : null;
+      const nextArchive = buildReplayArchiveWrite({
+        input,
+        uid,
+        revision: proposedRevision,
+        timestamp,
+        existingArchive: archive
+      });
+      const parentUpdate = {
+        ...buildReplayParentUpdate({
+          state: nextArchive.state,
+          revision: proposedRevision,
+          deleteValue: admin.firestore.FieldValue.delete(),
+          timestamp,
+          isCompleted: lifecycle.isCompleted
+        }),
+        ...(input.action === 'set' ? buildReplayClipScrubUpdate(game, nextArchive) : {})
+      };
+      transaction.set(archiveRef, nextArchive);
+      if (protectedIdentity && migrationReady) {
+        transaction.set(firestore.doc(protectedIdentity.path), {
+          ...protectedIdentity.data,
+          updatedAt: timestamp
+        }, { merge: false });
+      }
+      transaction.set(gameRef, parentUpdate, { merge: true });
+      return serializeReplayManagementState({
+        ...game,
+        hasRecordedReplay: nextArchive.state === 'ready',
+        replayArchiveRevision: proposedRevision
+      }, nextArchive);
+    });
+  } catch (error) {
+    throw toReplayArchiveHttpsError(error);
+  }
+});
+
+function normalizeHighlightClipManagementInput(data = {}) {
+  const input = {
+    teamId: normalizeReplayResourceId(data.teamId, 'teamId'),
+    gameId: normalizeReplayResourceId(data.gameId, 'gameId'),
+    mutationId: normalizeReplayResourceId(data.mutationId, 'mutationId'),
+    expectedRevision: normalizeReplayRevision(data.expectedRevision),
+    highlightClips: normalizeHighlightClipPayload(data.highlightClips)
+  };
+  if (!Object.prototype.hasOwnProperty.call(data, 'expectedRevision')) {
+    const error = new Error('expectedRevision must be supplied (use null when no clip revision exists).');
+    error.code = 'invalid-argument';
+    throw error;
+  }
+  return input;
+}
+
+function serializeHighlightClipManagementState(game = {}) {
+  return {
+    highlightClips: Array.isArray(game.highlightClips) ? game.highlightClips : [],
+    highlightClipsRevision: normalizeReplayRevision(game.highlightClipsRevision),
+    lastMutationId: typeof game.highlightClipsLastMutationId === 'string'
+      ? game.highlightClipsLastMutationId
+      : null
+  };
+}
+
+// Clip URLs live on a parent-readable game document, so the server must own
+// this write. The migration reserves existing standalone YouTube identities;
+// this boundary lets users remove them, requires every retained entry to stay
+// byte-for-byte unchanged, and rejects introductions without a client flag.
+exports.saveGameHighlightClips = functions.https.onCall(async (data, context = {}) => {
+  setReplayCallableNoStore(context);
+  const uid = String(context.auth?.uid || '').trim();
+  if (!uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to save game highlights.');
+  }
+  const authUser = await loadEnabledReplayAuthUser(context);
+
+  let input;
+  try {
+    input = normalizeHighlightClipManagementInput(data || {});
+  } catch (error) {
+    throw toReplayArchiveHttpsError(error, 'invalid-argument');
+  }
+
+  const teamRef = firestore.doc(`teams/${input.teamId}`);
+  const gameRef = firestore.doc(`teams/${input.teamId}/games/${input.gameId}`);
+  const userRef = firestore.doc(`users/${uid}`);
+  const migrationControlRef = firestore.doc(REPLAY_ARCHIVE_MIGRATION_CONTROL_PATH);
+  const boundaryControlRef = firestore.doc(ATHLETE_PROFILE_PROJECTION_BOUNDARY_CONTROL_PATH);
+  const protectedUrlIdentityRecords = collectHighlightProtectedUrlIdentityRecords(input.highlightClips);
+  const protectedUrlIdentityRefs = protectedUrlIdentityRecords.map((record) => firestore.doc(record.path));
+  const proposedRevision = createReplayRevision();
+
+  try {
+    return await firestore.runTransaction(async (transaction) => {
+      const [
+        teamSnap,
+        gameSnap,
+        userSnap,
+        migrationControlSnap,
+        boundaryControlSnap,
+        protectedUrlIdentitySnaps
+      ] = await Promise.all([
+        transaction.get(teamRef),
+        transaction.get(gameRef),
+        transaction.get(userRef),
+        transaction.get(migrationControlRef),
+        transaction.get(boundaryControlRef),
+        Promise.all(protectedUrlIdentityRefs.map((ref) => transaction.get(ref)))
+      ]);
+      if (!teamSnap.exists || !gameSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Game not found.');
+      }
+      const finalizedBoundary = migrationControlSnap.exists
+        && isReplayArchiveMigrationReady(migrationControlSnap.data() || {})
+        && boundaryControlSnap.exists
+        && isAthleteProfileProjectionBoundaryReady(boundaryControlSnap.data() || {});
+      const compatibilityBoundary = !migrationControlSnap.exists && !boundaryControlSnap.exists;
+      if (!finalizedBoundary && !compatibilityBoundary) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Highlight updates are temporarily unavailable while private replay storage is verified.'
+        );
+      }
+
+      const team = { id: input.teamId, ...(teamSnap.data() || {}) };
+      const game = gameSnap.data() || {};
+      const user = userSnap.exists ? userSnap.data() || {} : {};
+      if (!isCanonicalReplayGame(input.gameId, game)) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Highlights must be saved on the original team game, not a shared schedule copy.'
+        );
+      }
+      const access = getReplayDelegatedAccess({
+        context,
+        authUser,
+        teamId: input.teamId,
+        team,
+        game,
+        user
+      });
+      if (!canManageReplayArchive(access)) {
+        throw new functions.https.HttpsError(
+          'permission-denied',
+          'Only a team manager or selected videographer can save game highlights.'
+        );
+      }
+
+      const current = serializeHighlightClipManagementState(game);
+      const normalizedHighlightClips = normalizeHighlightClipWrite(input.highlightClips, {
+        existingClips: current.highlightClips
+      });
+      protectedUrlIdentitySnaps.forEach((snapshot, index) => {
+        if (!snapshot.exists) return;
+        const expected = protectedUrlIdentityRecords[index];
+        const identity = normalizeReplayProtectedIdentity(snapshot.data() || {});
+        if (!identity
+          || identity.kind !== expected.data.kind
+          || identity.identityHash !== expected.data.identityHash
+          || snapshot.ref?.path !== expected.path) {
+          throw new functions.https.HttpsError(
+            'failed-precondition',
+            'The protected replay identity index is unavailable for safe highlight updates.'
+          );
+        }
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'A highlight URL is protected replay media and cannot be published.'
+        );
+      });
+      if (current.lastMutationId === input.mutationId) {
+        if (!replayClipValuesEqual(current.highlightClips, normalizedHighlightClips)) {
+          throw new functions.https.HttpsError(
+            'already-exists',
+            'This highlight mutation ID was already used for a different request.'
+          );
+        }
+        return current;
+      }
+      if (current.highlightClipsRevision !== input.expectedRevision) {
+        throw new functions.https.HttpsError(
+          'aborted',
+          'The game highlights changed since they were loaded. Refresh the game and try again.',
+          { currentRevision: current.highlightClipsRevision }
+        );
+      }
+
+      const next = {
+        highlightClips: normalizedHighlightClips,
+        highlightClipsRevision: proposedRevision,
+        highlightClipsLastMutationId: input.mutationId,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      };
+      transaction.set(gameRef, next, { merge: true });
+      return serializeHighlightClipManagementState(next);
+    });
+  } catch (error) {
+    throw toReplayArchiveHttpsError(error);
+  }
+});
+
+function normalizeReplayPlaybackInput(data = {}) {
+  const teamId = normalizeReplayResourceId(data.teamId, 'teamId');
+  const gameId = typeof data.gameId === 'string' ? data.gameId.trim() : '';
+  if (!gameId || gameId.length > 1000 || gameId.includes('/')) {
+    const error = new Error('gameId is invalid.');
+    error.code = 'invalid-argument';
+    throw error;
+  }
+  const requestedSeasonId = data.seasonId === null || data.seasonId === undefined || data.seasonId === ''
+    ? ''
+    : String(data.seasonId).trim();
+  if (requestedSeasonId && !/^[A-Za-z0-9_-]{1,40}$/.test(requestedSeasonId)) {
+    const error = new Error('seasonId is invalid.');
+    error.code = 'invalid-argument';
+    throw error;
+  }
+  return { teamId, gameId, requestedSeasonId };
+}
+
+function assertReplayPlaybackRateLimit(context = {}) {
+  const uid = String(context.auth?.uid || '').trim();
+  const boundary = uid
+    ? `principal:${uid}`
+    : `network:${getRequestIp(context.rawRequest || {})}`;
+  const rateLimit = checkReplayPlaybackRateLimit({ ip: `replay-playback|${boundary}` });
+  if (!rateLimit.allowed) {
+    throw new functions.https.HttpsError(
+      'resource-exhausted',
+      'Too many replay requests. Please wait a moment and try again.',
+      { retryAfterSeconds: rateLimit.retryAfterSeconds }
+    );
+  }
+}
+
+exports.getGameReplayPlayback = functions.https.onCall(async (data, context = {}) => {
+  setReplayCallableNoStore(context);
+  let input;
+  try {
+    input = normalizeReplayPlaybackInput(data || {});
+  } catch (error) {
+    throw toReplayArchiveHttpsError(error, 'invalid-argument');
+  }
+
+  const sharedPath = decodePublicSharedGamePath(input.gameId);
+  const canonicalGameId = sharedPath ? '' : (() => {
+    try {
+      return normalizeReplayResourceId(input.gameId, 'gameId');
+    } catch {
+      return '';
+    }
+  })();
+  if (!sharedPath && !canonicalGameId) {
+    throw new functions.https.HttpsError('invalid-argument', 'gameId is invalid.');
+  }
+  assertReplayPlaybackRateLimit(context);
+  const gameRef = firestore.doc(sharedPath || `teams/${input.teamId}/games/${canonicalGameId}`);
+  const archiveRef = firestore.doc(`${gameRef.path}/privateReplay/archive`);
+  const compatibilityReceiptRef = firestore.doc(getReplayCompatibilityReceiptPath(gameRef.path));
+  const migrationControlRef = firestore.doc(REPLAY_ARCHIVE_MIGRATION_CONTROL_PATH);
+  const boundaryControlRef = firestore.doc(ATHLETE_PROFILE_PROJECTION_BOUNDARY_CONTROL_PATH);
+  const uid = String(context.auth?.uid || '').trim();
+  const authUser = uid ? await loadEnabledReplayAuthUser(context) : null;
+  const [
+    teamSnap,
+    gameSnap,
+    archiveSnap,
+    compatibilityReceiptSnap,
+    migrationControlSnap,
+    boundaryControlSnap,
+    userSnap
+  ] = await Promise.all([
+    firestore.doc(`teams/${input.teamId}`).get(),
+    gameRef.get(),
+    archiveRef.get(),
+    compatibilityReceiptRef.get(),
+    migrationControlRef.get(),
+    boundaryControlRef.get(),
+    uid ? firestore.doc(`users/${uid}`).get() : Promise.resolve(null)
+  ]).catch((error) => {
+    throw new functions.https.HttpsError('unavailable', 'Replay playback is temporarily unavailable.', {
+      reason: error?.code || 'read-failed'
+    });
+  });
+  if (!teamSnap.exists || !gameSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Replay not found.');
+  }
+  const team = { id: input.teamId, ...(teamSnap.data() || {}) };
+  const rawGame = gameSnap.data() || {};
+  const game = sharedPath
+    ? projectSharedGameForPublicTeam({
+        id: gameSnap.id,
+        ...rawGame,
+        _sharedGamePath: gameRef.path,
+        isSharedGame: true
+      }, input.teamId)
+    : { id: canonicalGameId, ...rawGame };
+  if (!game) throw new functions.https.HttpsError('not-found', 'Replay not found.');
+
+  const user = userSnap?.exists ? userSnap.data() || {} : {};
+  const email = String(authUser?.email || '').trim().toLowerCase();
+  const access = uid
+    ? getReplayDelegatedAccess({ context, authUser, teamId: input.teamId, team, game, user })
+    : {};
+  const managerAccess = !sharedPath && canManageReplayArchive(access);
+  const currentTeamAccess = Boolean(uid && (
+    access.full === true
+    || hasCurrentTeamAccess({
+      team,
+      user,
+      userId: uid,
+      email
+    })
+  ));
+  const publicAccess = canProjectPublicGame(team, game);
+  if (!managerAccess && !currentTeamAccess && !publicAccess) {
+    throw new functions.https.HttpsError('permission-denied', 'You do not have access to this replay.');
+  }
+
+  const archive = archiveSnap.exists ? normalizeStoredReplayArchive(archiveSnap.data() || {}) : null;
+  if (archiveSnap.exists && !archive) {
+    throw new functions.https.HttpsError('unavailable', 'Replay playback is temporarily unavailable.');
+  }
+  if (archive && !isReplayArchiveConsistent(rawGame, archive)) {
+    throw new functions.https.HttpsError('unavailable', 'Replay playback is temporarily unavailable.');
+  }
+  const migrationControl = migrationControlSnap.exists
+    ? normalizeReplayArchiveMigrationControl(migrationControlSnap.data() || {})
+    : null;
+  const migrationReady = migrationControl?.status === 'ready';
+  const boundaryReady = boundaryControlSnap.exists
+    && isAthleteProfileProjectionBoundaryReady(boundaryControlSnap.data() || {});
+  const compatibilityBoundary = !migrationControlSnap.exists && !boundaryControlSnap.exists;
+  let replayVideo = archive ? getReplayProjectionVideo(rawGame, archive) : null;
+  if (archive?.state === 'ready' && !replayVideo) {
+    throw new functions.https.HttpsError('unavailable', 'Replay playback is temporarily unavailable.');
+  }
+  let resolvedRevision = archive?.revision || null;
+  let compatibilityState = null;
+  if (!archive && compatibilityBoundary) {
+    if (sharedPath && compatibilityReceiptSnap.exists) {
+      throw new functions.https.HttpsError('unavailable', 'Replay playback is temporarily unavailable.');
+    }
+    compatibilityState = getReplayCompatibilityState(
+      rawGame,
+      compatibilityReceiptSnap.exists ? compatibilityReceiptSnap.data() || {} : null,
+      { teamId: input.teamId, gameId: canonicalGameId }
+    );
+    if (!compatibilityState.receiptValid || compatibilityState.state === 'unavailable') {
+      throw new functions.https.HttpsError('unavailable', 'Replay playback is temporarily unavailable.');
+    }
+    replayVideo = compatibilityState.state === 'ready' ? compatibilityState.replayVideo : null;
+    resolvedRevision = compatibilityState.replayArchiveRevision;
+  } else if (!archive && (!migrationReady || !boundaryReady)) {
+    throw new functions.https.HttpsError('unavailable', 'Replay playback is temporarily unavailable.');
+  }
+  const markerRevision = typeof game.replayArchiveRevision === 'string' ? game.replayArchiveRevision : null;
+  if (!replayVideo) {
+    const unavailableState = archive?.state === 'removed' || compatibilityState?.state === 'removed'
+      ? 'removed'
+      : 'none';
+    return {
+      state: unavailableState,
+      available: false,
+      reason: archiveSnap.exists || markerRevision || compatibilityState?.state === 'removed'
+        ? 'archive-unavailable'
+        : 'not-available',
+      hasRecordedReplay: false,
+      replayArchiveRevision: compatibilityState?.state === 'removed'
+        ? resolvedRevision
+        : compatibilityState?.state === 'none'
+          ? null
+          : markerRevision
+    };
+  }
+
+  const seasonId = resolveReplaySeasonId(game, team);
+  if (!seasonId || (input.requestedSeasonId && input.requestedSeasonId !== seasonId)) {
+    throw new functions.https.HttpsError('failed-precondition', 'The replay season could not be verified.');
+  }
+  if (managerAccess) {
+    return {
+      state: 'ready',
+      available: true,
+      reason: 'manager-access',
+      seasonId,
+      tier: 'team-pass',
+      hasRecordedReplay: true,
+      replayArchiveRevision: resolvedRevision,
+      replayVideo
+    };
+  }
+  const paywallEnabled = isRecordedReplayPaywallEnabled(game, team);
+  if (!paywallEnabled) {
+    return {
+      state: 'ready',
+      available: true,
+      reason: 'normal-access',
+      seasonId,
+      tier: 'team-pass',
+      hasRecordedReplay: true,
+      replayArchiveRevision: resolvedRevision,
+      replayVideo
+    };
+  }
+  const premiumConfigSnap = await firestore.doc('platformConfig/premium').get().catch(() => {
+    throw new functions.https.HttpsError('unavailable', 'Premium replay access is temporarily unavailable.');
+  });
+  const premiumConfig = normalizeReplayPremiumConfig(
+    premiumConfigSnap.exists ? premiumConfigSnap.data() || {} : null,
+    { exists: premiumConfigSnap.exists }
+  );
+  if (premiumConfig.state !== 'ready') {
+    throw new functions.https.HttpsError('unavailable', 'Premium replay access is temporarily unavailable.');
+  }
+
+  if (premiumConfig.openToAll !== true) {
+    if (!uid || !currentTeamAccess) {
+      return {
+        state: 'ready',
+        available: false,
+        reason: 'team-pass-required',
+        seasonId,
+        tier: 'team-pass',
+        hasRecordedReplay: true,
+        replayArchiveRevision: resolvedRevision
+      };
+    }
+    const entitlementSnap = await firestore.doc(`teams/${input.teamId}/entitlements/${seasonId}_team-pass`)
+      .get()
+      .catch(() => {
+        throw new functions.https.HttpsError('unavailable', 'Team Pass status is temporarily unavailable.');
+      });
+    if (!entitlementSnap.exists || !isTeamPassEntitlementActive(entitlementSnap.data() || {}, {
+      teamId: input.teamId,
+      seasonId,
+      tier: 'team-pass'
+    })) {
+      return {
+        state: 'ready',
+        available: false,
+        reason: 'team-pass-required',
+        seasonId,
+        tier: 'team-pass',
+        hasRecordedReplay: true,
+        replayArchiveRevision: resolvedRevision
+      };
+    }
+  }
+
+  return {
+    state: 'ready',
+    available: true,
+    reason: premiumConfig.openToAll === true ? premiumConfig.reason : 'team-pass-active',
+    seasonId,
+    tier: 'team-pass',
+    hasRecordedReplay: true,
+    replayArchiveRevision: resolvedRevision,
+    replayVideo
+  };
+});
+
+async function cleanupReplayArchiveForDeletedParent(snapshot) {
+  const parentPath = String(snapshot?.ref?.path || '').trim();
+  const archivePath = getReplayArchiveChildPath(parentPath);
+  const compatibilityReceiptPath = getReplayCompatibilityReceiptPath(parentPath);
+  try {
+    const parentRef = firestore.doc(parentPath);
+    const archiveRef = firestore.doc(archivePath);
+    const compatibilityReceiptRef = firestore.doc(compatibilityReceiptPath);
+    const migrationControlRef = firestore.doc(REPLAY_ARCHIVE_MIGRATION_CONTROL_PATH);
+    const boundaryControlRef = firestore.doc(ATHLETE_PROFILE_PROJECTION_BOUNDARY_CONTROL_PATH);
+    await firestore.runTransaction(async (transaction) => {
+      const [parentSnap, archiveSnap, compatibilityReceiptSnap, migrationControlSnap, boundaryControlSnap] = await Promise.all([
+        transaction.get(parentRef),
+        transaction.get(archiveRef),
+        transaction.get(compatibilityReceiptRef),
+        transaction.get(migrationControlRef),
+        transaction.get(boundaryControlRef)
+      ]);
+      const finalBoundaryReady = migrationControlSnap.exists
+        && boundaryControlSnap.exists
+        && isReplayArchiveMigrationReady(migrationControlSnap.data() || {})
+        && isAthleteProfileProjectionBoundaryReady(boundaryControlSnap.data() || {});
+      if (!parentSnap.exists) {
+        if (archiveSnap.exists) transaction.delete(archiveRef);
+        if (finalBoundaryReady && compatibilityReceiptSnap.exists) {
+          transaction.delete(compatibilityReceiptRef);
+        }
+        return;
+      }
+
+      // A delayed retry can observe a recreated parent at the same path. Keep
+      // only a child that is exactly bound to that new generation; otherwise
+      // the old private capability would survive while every runtime reader
+      // correctly rejects its stale revision.
+      if (archiveSnap.exists) {
+        const parent = parentSnap.data() || {};
+        const archive = normalizeStoredReplayArchive(archiveSnap.data() || {});
+        const archiveIsCurrent = archive
+          && isReplayArchiveConsistent(parent, archive)
+          && (archive.state !== 'ready' || getCompatibleReplayLifecycle(parent).isCompleted);
+        if (!archiveIsCurrent) transaction.delete(archiveRef);
+      }
+      // Compatibility receipts are migration-only hash evidence. Once both
+      // final controls are ready, any residual receipt is stale and safe to
+      // remove; before then it must survive for the migration's orphan sweep.
+      if (finalBoundaryReady && compatibilityReceiptSnap.exists) {
+        transaction.delete(compatibilityReceiptRef);
+      }
+    });
+  } catch (error) {
+    functions.logger.error('Failed to clean up a private replay archive after parent deletion.', {
+      parentPath,
+      archivePath,
+      compatibilityReceiptPath,
+      error: error?.message || String(error)
+    });
+    throw error;
+  }
+}
+
+exports.cleanupPrivateReplayArchiveOnGameDelete = functions
+  .runWith({ failurePolicy: true })
+  .firestore
+  .document('teams/{teamId}/games/{gameId}')
+  .onDelete(cleanupReplayArchiveForDeletedParent);
+
+exports.cleanupPrivateReplayArchiveOnSharedGameDelete = functions
+  .runWith({ failurePolicy: true })
+  .firestore
+  // First-generation Firestore triggers require one wildcard per path
+  // segment. All supported shared-game parents are four-segment documents
+  // (organizations, tournaments, and retained legacy roots).
+  .document('{rootCollection}/{rootId}/sharedGames/{gameId}')
+  .onDelete(cleanupReplayArchiveForDeletedParent);
+
+async function createStripeTeamPassCheckoutLegacyForTest(data, context) {
   assertPaymentsEnabled();
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before purchasing a team pass.');
   }
   await assertSensitiveEmailVerified(context, 'create-team-pass-checkout');
+  await assertTeamPassCheckoutAvailable();
 
-  const { teamId, seasonId, tier } = normalizeTeamPassCheckoutInput(data || {});
-  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  const input = normalizeTeamPassCheckoutInput(data || {});
+  const { teamId, seasonId, tier } = input;
+  const entitlementRef = firestore.doc(`teams/${teamId}/entitlements/${seasonId}_${tier}`);
+  const [teamSnap, entitlementSnap] = await Promise.all([
+    firestore.doc(`teams/${teamId}`).get(),
+    entitlementRef.get()
+  ]);
   if (!teamSnap.exists) {
     throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  if (entitlementSnap.exists && entitlementSnap.data()?.status === 'active') {
+    throw new functions.https.HttpsError('failed-precondition', 'This team already has an active team pass.');
   }
 
   const team = { id: teamId, ...(teamSnap.data() || {}) };
   const user = await getUserForEligibility(context.auth.uid);
-  const email = context.auth.token?.email || user.email || '';
+  const email = String(context.auth.token?.email || '').trim().toLowerCase();
   if (!isEligibleTeamPassPurchaser({ team, user, uid: context.auth.uid, email })) {
     throw new functions.https.HttpsError('permission-denied', 'You do not have team access for this purchase.');
   }
@@ -4712,23 +7101,98 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
   }
 
   const stripe = createStripeClient();
-  const { successUrl, cancelUrl } = buildTeamPassCheckoutUrls(appUrl, teamId);
-  const session = await stripe.checkout.sessions.create({
-    mode: 'payment',
-    line_items: [{ price: teamPassPriceId, quantity: 1 }],
-    success_url: successUrl,
-    cancel_url: cancelUrl,
-    customer_email: email || undefined,
-    client_reference_id: `${teamId}:${seasonId}:${context.auth.uid}`,
-    metadata: {
-      teamId,
-      seasonId,
-      tier,
-      purchaserUid: context.auth.uid
-    }
+  const checkoutCreationReservation = await reserveTeamPassCheckoutCreation({
+    input,
+    purchaserUid: context.auth.uid,
+    email,
+    teamPassPriceId,
+    appUrl,
+    proposedReservationId: crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')
   });
+  const {
+    attemptRef,
+    reservationId,
+    checkoutCreationRequest
+  } = checkoutCreationReservation;
+
+  let session;
+  try {
+    session = await stripe.checkout.sessions.create(checkoutCreationRequest.stripeParams, {
+      idempotencyKey: checkoutCreationRequest.idempotencyKey
+    });
+  } catch (error) {
+    if (!isUncertainStripeCheckoutCreationError(error)) {
+      await clearTeamPassCheckoutCreationReservation(attemptRef, reservationId).catch((clearError) => {
+        functions.logger.error('Failed to clear team-pass checkout creation reservation.', {
+          teamId,
+          seasonId,
+          clearError: clearError?.message || clearError
+        });
+      });
+    }
+    throw error;
+  }
+
+  if (!isExpectedTeamPassCheckoutSession(session, {
+    input,
+    purchaserUid: context.auth.uid,
+    reservationId
+  })) {
+    const expired = await expireStripeCheckoutSessionForRollback(stripe, session, 'team-pass-validation');
+    if (expired) {
+      await clearTeamPassCheckoutCreationReservation(attemptRef, reservationId, 'invalid').catch(() => {});
+    }
+    throw new functions.https.HttpsError('internal', 'Stripe returned an invalid team pass checkout session.');
+  }
+
+  if (session.status === 'expired') {
+    await clearTeamPassCheckoutCreationReservation(attemptRef, reservationId, 'expired').catch(() => {});
+    throw new functions.https.HttpsError('aborted', 'The prior team-pass checkout expired. Retry to create a new checkout.');
+  }
+
+  let persistenceError = null;
+  try {
+    const recorded = await recordTeamPassCheckoutSession(attemptRef, reservationId, session);
+    if (!recorded) {
+      persistenceError = new functions.https.HttpsError(
+        'aborted',
+        'The team-pass checkout creation reservation changed before the session was saved.'
+      );
+    }
+  } catch (error) {
+    persistenceError = error;
+  }
+
+  if (persistenceError) {
+    const persistenceState = await getTeamPassCheckoutPersistenceState({
+      attemptRef,
+      reservationId,
+      session,
+      purchaserUid: context.auth.uid
+    });
+    if (persistenceState === 'committed') {
+      return { checkoutUrl: session.url, sessionId: session.id };
+    }
+    if (persistenceState === 'not-committed') {
+      const expired = await expireStripeCheckoutSessionForRollback(stripe, session, 'team-pass-persistence');
+      if (expired) {
+        await clearTeamPassCheckoutCreationReservation(attemptRef, reservationId).catch(() => {});
+      }
+    }
+    throw persistenceError;
+  }
 
   return { checkoutUrl: session.url, sessionId: session.id };
+}
+
+exports.createStripeTeamPassCheckout = functions.https.onCall(async () => {
+  // Keep the deployed callable name so installed older clients fail closed.
+  // The legacy implementation remains private for durability/webhook regression
+  // coverage and cannot be invoked as a deployed Firebase function.
+  throw new functions.https.HttpsError(
+    'failed-precondition',
+    'Team Pass sales are not available.'
+  );
 });
 
 exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, context) => {
@@ -4767,99 +7231,237 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
   }
 
   const user = await getUserForEligibility(context.auth.uid);
-  const email = context.auth.token?.email || user.email || '';
+  const email = String(context.auth.token?.email || '').trim().toLowerCase();
   if (!isEligibleTeamFeePayer({ team, user, uid: context.auth.uid, email, recipient })) {
     throw new functions.https.HttpsError('permission-denied', 'You do not have access to pay this team fee.');
   }
 
   const amountCents = getTeamFeeBalanceCents(recipient);
-  if (canReuseTeamFeeCheckoutSession(recipient, amountCents)) {
-    return { checkoutUrl: recipient.checkoutUrl, sessionId: recipient.stripeCheckoutSessionId };
+  const stripe = createStripeClient();
+  const checkoutAttemptRef = buildTeamFeeCheckoutAttemptRef(recipientRef);
+  let checkoutAttemptSnap = await checkoutAttemptRef.get();
+  let checkoutAttempt = hasLegacyReadableTeamFeeCheckoutState(recipient)
+    ? await migrateLegacyReadableTeamFeeCheckoutState(recipientRef)
+    : (checkoutAttemptSnap.exists ? (checkoutAttemptSnap.data() || {}) : {});
+  let persistedSessionId = String(checkoutAttempt.stripeCheckoutSessionId || '').trim();
+  if (persistedSessionId) {
+    const storedPayerUid = String(checkoutAttempt.payerUid || '').trim();
+    if (storedPayerUid && storedPayerUid !== context.auth.uid) {
+      throw new functions.https.HttpsError('failed-precondition', 'An active checkout belongs to another payer or balance.');
+    }
+    if (Math.round(Number(checkoutAttempt.checkoutAmountCents || checkoutAttempt.amountCents || 0)) !== amountCents) {
+      throw new functions.https.HttpsError('failed-precondition', 'An active checkout belongs to another payer or balance.');
+    }
+    let existingSession;
+    try {
+      existingSession = await stripe.checkout.sessions.retrieve(persistedSessionId);
+    } catch (error) {
+      const sessionIsMissing = error?.code === 'resource_missing' || error?.statusCode === 404;
+      if (!sessionIsMissing) {
+        throw new functions.https.HttpsError('unavailable', 'Stripe could not validate the existing team fee checkout. Try again later.');
+      }
+    }
+
+    if (existingSession) {
+      const providerPayerUid = String(existingSession.metadata?.payerUid || '').trim();
+      if (storedPayerUid && providerPayerUid && storedPayerUid !== providerPayerUid) {
+        throw new functions.https.HttpsError('failed-precondition', 'The existing team fee checkout has conflicting payer metadata.');
+      }
+      const authoritativePayerUid = storedPayerUid || providerPayerUid;
+      if (!authoritativePayerUid) {
+        throw new functions.https.HttpsError('failed-precondition', 'The existing team fee checkout is missing payer ownership.');
+      }
+      if (!storedPayerUid) {
+        await checkoutAttemptRef.set({
+          payerUid: authoritativePayerUid,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        checkoutAttempt = { ...checkoutAttempt, payerUid: authoritativePayerUid };
+      }
+      if (authoritativePayerUid !== context.auth.uid) {
+        throw new functions.https.HttpsError('failed-precondition', 'An active checkout belongs to another payer or balance.');
+      }
+      const reuseFailure = getTeamFeeCheckoutReuseFailure({
+        recipient: checkoutAttempt,
+        session: existingSession,
+        input,
+        amountCents,
+        payerUid: context.auth.uid
+      });
+      if (!reuseFailure) {
+        return { checkoutUrl: existingSession.url, sessionId: existingSession.id };
+      }
+
+      const sessionIsDefinitivelyStale = existingSession.status === 'expired';
+      if (!sessionIsDefinitivelyStale) {
+        throw new functions.https.HttpsError('failed-precondition', 'The existing team fee checkout could not be safely reused.');
+      }
+    }
+
+    const existingReservationId = String(checkoutAttempt.reservationId || recipient.checkoutCreationReservationId || '').trim();
+    if (existingReservationId) {
+      await clearTeamFeeCheckoutCreationReservation(recipientRef, existingReservationId);
+    }
+    checkoutAttemptSnap = await checkoutAttemptRef.get();
+    checkoutAttempt = checkoutAttemptSnap.exists ? (checkoutAttemptSnap.data() || {}) : {};
+    persistedSessionId = String(checkoutAttempt.stripeCheckoutSessionId || '').trim();
   }
 
-  const stripe = createStripeClient();
   const { appUrl } = getStripeConfig();
-  const { successUrl, cancelUrl } = buildTeamFeeCheckoutUrls(appUrl, input);
-  const checkoutAttemptToken = (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')).replace(/-/g, '');
-  const title = recipient.feeTitle || recipient.title || 'Team fee';
-  const playerName = recipient.playerName || recipient.childName || '';
-  const description = playerName ? `${title} for ${playerName}` : title;
-  const session = await stripe.checkout.sessions.create({
-    mode: 'payment',
-    line_items: [{
-      price_data: {
-        currency: 'usd',
-        unit_amount: amountCents,
-        product_data: {
-          name: description
-        }
-      },
-      quantity: 1
-    }],
-    success_url: successUrl,
-    cancel_url: cancelUrl,
-    customer_email: email || recipient.parentEmail || recipient.email || undefined,
-    client_reference_id: `${input.teamId}:${input.batchId}:${input.recipientId}`,
-    metadata: buildTeamFeeCheckoutMetadata({
-      ...input,
-      payerUid: context.auth.uid,
-      checkoutAttemptToken,
-      checkoutAmountCents: amountCents
-    })
+  const proposedReservationId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+  const reservation = await reserveTeamFeeCheckoutCreation({
+    input,
+    recipientRef,
+    team,
+    user,
+    uid: context.auth.uid,
+    email,
+    amountCents,
+    observedSessionId: persistedSessionId,
+    proposedReservationId,
+    appUrl
   });
+  const checkoutCreationReservationId = reservation.reservationId;
+  const checkoutCreationRequest = reservation.checkoutCreationRequest;
+  const checkoutAttemptToken = checkoutCreationRequest.checkoutAttemptToken;
+  let session;
+  try {
+    session = await stripe.checkout.sessions.create(checkoutCreationRequest.stripeParams, {
+      idempotencyKey: checkoutCreationRequest.idempotencyKey
+    });
+  } catch (error) {
+    if (!isUncertainStripeCheckoutCreationError(error)) {
+      await clearTeamFeeCheckoutCreationReservation(recipientRef, checkoutCreationReservationId).catch(() => {});
+    }
+    throw error;
+  }
+
+  const newSessionFailure = getNewTeamFeeCheckoutSessionFailure({
+    session,
+    input,
+    checkoutAttemptToken,
+    amountCents,
+    payerUid: context.auth.uid
+  });
+  if (newSessionFailure) {
+    const expired = await expireStripeCheckoutSessionForRollback(stripe, session, 'team-fee-validation');
+    if (expired) {
+      await clearTeamFeeCheckoutCreationReservation(recipientRef, checkoutCreationReservationId).catch(() => {});
+    }
+    throw new functions.https.HttpsError('internal', 'Stripe returned an invalid team fee checkout session.');
+  }
 
   const changedAt = admin.firestore.FieldValue.serverTimestamp();
   const checkoutAuditRef = buildTeamFeeAuditRef(recipientRef, `stripe_checkout_${session.id}`);
-  await firestore.runTransaction(async (transaction) => {
-    const latestSnap = await transaction.get(recipientRef);
-    if (!latestSnap.exists) {
-      throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
-    }
+  try {
+    await firestore.runTransaction(async (transaction) => {
+      const latestSnap = await transaction.get(recipientRef);
+      const attemptSnap = await transaction.get(checkoutAttemptRef);
+      if (!latestSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
+      }
 
-    const latestRecipient = { id: input.recipientId, ...(latestSnap.data() || {}) };
-    if (latestRecipient.teamId !== input.teamId || latestRecipient.batchId !== input.batchId) {
-      throw new functions.https.HttpsError('failed-precondition', 'Fee recipient does not match the requested fee batch.');
-    }
-    if (!isTeamFeeCheckoutEligible(latestRecipient) || getTeamFeeBalanceCents(latestRecipient) !== amountCents) {
-      throw new functions.https.HttpsError('aborted', 'The team fee balance changed before checkout was saved.');
-    }
-    if (!isEligibleTeamFeePayer({ team, user, uid: context.auth.uid, email, recipient: latestRecipient })) {
-      throw new functions.https.HttpsError('permission-denied', 'You no longer have access to pay this team fee.');
-    }
+      const latestRecipient = { id: input.recipientId, ...(latestSnap.data() || {}) };
+      const latestAttempt = attemptSnap.exists ? (attemptSnap.data() || {}) : {};
+      const latestSessionId = String(latestAttempt.stripeCheckoutSessionId || '').trim();
+      if (
+        latestSessionId === session.id
+        && latestAttempt.checkoutUrl === session.url
+        && String(latestAttempt.payerUid || '').trim() === context.auth.uid
+        && getTeamFeeBalanceCents(latestRecipient) === amountCents
+      ) {
+        return;
+      }
+      if (String(latestRecipient.checkoutCreationReservationId || '').trim() !== checkoutCreationReservationId) {
+        throw new functions.https.HttpsError('aborted', 'Team fee checkout creation reservation was lost.');
+      }
+      if (
+        String(latestAttempt.reservationId || '').trim() !== checkoutCreationReservationId ||
+        String(latestAttempt.payerUid || '').trim() !== context.auth.uid ||
+        Math.round(Number(latestAttempt.amountCents || 0)) !== amountCents ||
+        !isReusableTeamFeeCheckoutCreationRequest(latestAttempt.checkoutCreationRequest, {
+          input,
+          uid: context.auth.uid,
+          amountCents,
+          reservationId: checkoutCreationReservationId
+        })
+      ) {
+        throw new functions.https.HttpsError('aborted', 'Team fee checkout creation request was lost.');
+      }
+      if (latestRecipient.teamId !== input.teamId || latestRecipient.batchId !== input.batchId) {
+        throw new functions.https.HttpsError('failed-precondition', 'Fee recipient does not match the requested fee batch.');
+      }
+      if (!isTeamFeeCheckoutEligible(latestRecipient) || getTeamFeeBalanceCents(latestRecipient) !== amountCents) {
+        throw new functions.https.HttpsError('aborted', 'The team fee balance changed before checkout was saved.');
+      }
+      if (!isEligibleTeamFeePayer({ team, user, uid: context.auth.uid, email, recipient: latestRecipient })) {
+        throw new functions.https.HttpsError('permission-denied', 'You no longer have access to pay this team fee.');
+      }
 
-    const recipientUpdate = {
-      checkoutUrl: session.url,
-      paymentLink: session.url,
-      checkoutStatus: 'open',
-      paymentProvider: 'stripe',
-      stripeCheckoutSessionId: session.id,
-      checkoutAttemptToken,
-      stripePaymentStatus: session.payment_status || 'unpaid',
-      checkoutAmountCents: amountCents,
-      balanceDueCents: amountCents,
-      checkoutCreatedAt: changedAt,
-      updatedAt: changedAt
-    };
-    const changedFields = getChangedTeamFeeFinancialFields(latestRecipient, recipientUpdate);
-    const auditedUpdate = changedFields.length > 0 ? {
-      ...recipientUpdate,
-      latestAuditId: checkoutAuditRef.id,
-      latestAuditAt: changedAt
-    } : recipientUpdate;
+      const recipientUpdate = {
+        checkoutUrl: admin.firestore.FieldValue.delete(),
+        paymentLink: admin.firestore.FieldValue.delete(),
+        checkoutStatus: 'open',
+        paymentProvider: 'stripe',
+        stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+        checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+        stripePaymentStatus: session.payment_status || 'unpaid',
+        checkoutAmountCents: admin.firestore.FieldValue.delete(),
+        balanceDueCents: amountCents,
+        checkoutCreatedAt: changedAt,
+        checkoutCreationPayerUid: admin.firestore.FieldValue.delete(),
+        checkoutCreationAmountCents: admin.firestore.FieldValue.delete(),
+        checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+        updatedAt: changedAt
+      };
+      const changedFields = getChangedTeamFeeFinancialFields(latestRecipient, recipientUpdate);
+      const auditedUpdate = changedFields.length > 0 ? {
+        ...recipientUpdate,
+        latestAuditId: checkoutAuditRef.id,
+        latestAuditAt: changedAt
+      } : recipientUpdate;
 
-    transaction.set(recipientRef, auditedUpdate, { merge: true });
-    if (changedFields.length > 0) {
-      transaction.set(checkoutAuditRef, {
-        teamId: input.teamId,
-        batchId: input.batchId,
-        recipientId: input.recipientId,
-        actorId: context.auth.uid,
-        changedFields,
-        mutationType: 'stripe_checkout_created',
-        changedAt
-      });
+      transaction.set(recipientRef, auditedUpdate, { merge: true });
+      transaction.set(checkoutAttemptRef, {
+        checkoutUrl: session.url,
+        checkoutStatus: 'open',
+        stripeCheckoutSessionId: session.id,
+        checkoutAttemptToken,
+        checkoutAmountCents: amountCents,
+        payerUid: context.auth.uid,
+        updatedAt: changedAt
+      }, { merge: true });
+      if (changedFields.length > 0) {
+        transaction.set(checkoutAuditRef, {
+          teamId: input.teamId,
+          batchId: input.batchId,
+          recipientId: input.recipientId,
+          actorId: context.auth.uid,
+          changedFields,
+          mutationType: 'stripe_checkout_created',
+          changedAt
+        });
+      }
+    });
+  } catch (error) {
+    const persistenceState = await getTeamFeeCheckoutPersistenceState({
+      recipientRef,
+      reservationId: checkoutCreationReservationId,
+      session,
+      amountCents,
+      payerUid: context.auth.uid
+    });
+    if (persistenceState === 'committed') {
+      return { checkoutUrl: session.url, sessionId: session.id };
     }
-  });
+    if (persistenceState === 'not-committed') {
+      const expired = await expireStripeCheckoutSessionForRollback(stripe, session, 'team-fee-persistence');
+      if (expired) {
+        await clearTeamFeeCheckoutCreationReservation(recipientRef, checkoutCreationReservationId).catch(() => {});
+      }
+    }
+    throw error;
+  }
 
   return { checkoutUrl: session.url, sessionId: session.id };
 });
@@ -4892,7 +7494,7 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
   }
 
   const team = { id: input.teamId, ...(teamSnap.data() || {}) };
-  const email = context.auth.token?.email || user.email || '';
+  const email = String(context.auth.token?.email || '').trim().toLowerCase();
   if (!hasTeamAdminAccess({ team, user, uid: context.auth.uid, email })) {
     throw new functions.https.HttpsError('permission-denied', 'Only team admins can issue team fee refunds.');
   }
@@ -4906,7 +7508,7 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
   }
 
   const paymentAdminBilling = await fetchTeamFeePaymentAdminBilling(recipientRef);
-  const { paymentIntentId, chargeId } = getTeamFeeStripePaymentRefs(recipient, paymentAdminBilling);
+  const { paymentIntentId, chargeId } = getTeamFeeStripePaymentRefs(paymentAdminBilling);
   if (!paymentIntentId && !chargeId) {
     throw new functions.https.HttpsError('failed-precondition', 'This payment is missing a Stripe payment intent or charge reference.');
   }
@@ -4918,6 +7520,29 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
 
   const refundRequestId = buildTeamFeeRefundRequestId(input, context.auth.uid);
   const refundIntentRef = recipientRef.collection('refundIntents').doc(refundRequestId);
+  const recordedIntentSnap = await refundIntentRef.get();
+  if (recordedIntentSnap.exists) {
+    const recordedIntent = recordedIntentSnap.data() || {};
+    if (Number(recordedIntent.amountCents || 0) !== input.amountCents) {
+      throw new functions.https.HttpsError('already-exists', 'Refund request ID already exists for a different amount.');
+    }
+    if (recordedIntent.status === 'recorded' && recordedIntent.stripeRefundId) {
+      return {
+        refundId: recordedIntent.stripeRefundId,
+        status: recordedIntent.stripeRefundStatus || 'succeeded',
+        amountCents: Number(recordedIntent.amountCents || input.amountCents)
+      };
+    }
+  }
+
+  const stripe = createStripeClient();
+  const refundAuthority = await retrieveTeamFeeRefundAuthority(stripe, {
+    input,
+    recipient,
+    billing: paymentAdminBilling
+  });
+
+  const paymentAdminBillingRef = buildTeamFeeAdminBillingRef(recipientRef, paymentAdminBilling.__billingId || 'latest');
   let existingRefundResult = null;
   await firestore.runTransaction(async (transaction) => {
     const latestSnap = await transaction.get(recipientRef);
@@ -4931,6 +7556,22 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
     }
     if (latestRecipient.paymentProvider !== 'stripe') {
       throw new functions.https.HttpsError('failed-precondition', 'Only Stripe team fee payments can be refunded online.');
+    }
+
+    const latestPaymentAdminBillingSnap = await transaction.get(paymentAdminBillingRef);
+    const latestPaymentAdminBilling = latestPaymentAdminBillingSnap.exists
+      ? (latestPaymentAdminBillingSnap.data() || {})
+      : {};
+    const authorityFailure = getTeamFeeRefundAuthorityFailure({
+      input,
+      recipient: latestRecipient,
+      billing: latestPaymentAdminBilling,
+      session: refundAuthority.session,
+      paymentIntent: refundAuthority.paymentIntent,
+      charge: refundAuthority.charge
+    });
+    if (authorityFailure) {
+      throw new functions.https.HttpsError('failed-precondition', 'The payment authority changed before the refund could be reserved.');
     }
 
     const intentSnap = await transaction.get(refundIntentRef);
@@ -4970,7 +7611,6 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
     return existingRefundResult;
   }
 
-  const stripe = createStripeClient();
   let refund;
   try {
     refund = await stripe.refunds.create({
@@ -5054,7 +7694,8 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
       }
 
       const { ledgerEntries = [], adminBilling, ...update } = buildTeamFeeStripeRefundUpdate({
-        recipient: { ...latestRecipient, adminBilling: paymentAdminBilling },
+        recipient: latestRecipient,
+        paymentBilling: paymentAdminBilling,
         refund,
         amountCents: actualRefundAmount,
         actorId: context.auth.uid,
@@ -5124,9 +7765,12 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
   await applyStagedPublicRegistrationLookupRateLimit(context, 'create-checkout');
   const resolvedInput = await resolveRegistrationCheckoutInput(input);
 
-  const [formSnap, registrationSnap] = await Promise.all([
+  const registrationCheckoutAttemptRef = resolvedInput.checkoutAttemptRef
+    || buildRegistrationCheckoutAttemptRef(resolvedInput.registrationRef);
+  const [formSnap, registrationSnap, registrationCheckoutAttemptSnap] = await Promise.all([
     firestore.doc(`teams/${resolvedInput.teamId}/registrationForms/${resolvedInput.formId}`).get(),
-    resolvedInput.registrationRef.get()
+    resolvedInput.registrationRef.get(),
+    registrationCheckoutAttemptRef.get()
   ]);
   if (!formSnap.exists) {
     throw new functions.https.HttpsError('not-found', 'Registration form not found.');
@@ -5137,10 +7781,17 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
 
   const form = formSnap.data() || {};
   const registration = registrationSnap.data() || {};
-  if (registration.publicCheckoutCapabilityHash && !resolvedInput.publicCheckoutCapability) {
+  let checkoutAttempt = registrationCheckoutAttemptSnap.exists
+    ? registrationCheckoutAttemptSnap.data() || {}
+    : {};
+  if (hasLegacyReadableRegistrationCheckoutState(registration)) {
+    checkoutAttempt = await migrateLegacyReadableRegistrationCheckoutState(resolvedInput.registrationRef);
+  }
+  const checkoutAuthority = getRegistrationCheckoutAuthorityState(registration, checkoutAttempt);
+  if (checkoutAuthority.publicCheckoutCapabilityHash && !resolvedInput.publicCheckoutCapability) {
     throw new functions.https.HttpsError('failed-precondition', 'Public checkout capability is required.');
   }
-  if (resolvedInput.publicCheckoutCapability && String(registration.publicCheckoutCapabilityHash || '') !== String(resolvedInput.resolvedPublicCheckoutCapabilityHash || '')) {
+  if (resolvedInput.publicCheckoutCapability && String(checkoutAuthority.publicCheckoutCapabilityHash || '') !== String(resolvedInput.resolvedPublicCheckoutCapabilityHash || '')) {
     throw buildPublicCheckoutCapabilityError();
   }
   if (form.published !== true && form.status !== 'published') {
@@ -5171,10 +7822,24 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
     throw new functions.https.HttpsError('failed-precondition', 'This registration does not have a payment due.');
   }
   const currency = getRegistrationCheckoutCurrency(registration, form);
-  if (!registrationCheckoutAuthorityMatches(registration, resolvedInput)) {
+  if (!registrationCheckoutAuthorityMatches(checkoutAuthority, resolvedInput)) {
     throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required.');
   }
   await applyStagedPublicRegistrationRateLimits(resolvedInput, context, 'create-checkout');
+  if (canReuseRegistrationCheckoutSession(checkoutAuthority, amountCents, resolvedInput)) {
+    return { checkoutUrl: checkoutAuthority.checkoutUrl, sessionId: checkoutAuthority.stripeCheckoutSessionId };
+  }
+
+  const stripe = createStripeClient();
+  const { appUrl } = getStripeConfig();
+  const proposedCheckoutCreationRequest = buildRegistrationCheckoutCreationRequest({
+    appUrl,
+    input: resolvedInput,
+    registration,
+    form,
+    amountCents,
+    currency
+  });
   const retryCapacityReservationId = resolvedInput.retryPayment ? crypto.randomUUID() : '';
   let retryCapacityReservation = { reserved: false, retryCapacityReservationId: null };
   if (resolvedInput.retryPayment && registration.registrationCapacityReleased === true) {
@@ -5182,22 +7847,20 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
       retryCapacityReservationId
     });
   }
-  if (canReuseRegistrationCheckoutSession(registration, amountCents, resolvedInput)) {
-    return { checkoutUrl: registration.checkoutUrl, sessionId: registration.stripeCheckoutSessionId };
-  }
 
-  const checkoutCreationReservationId = crypto.randomUUID();
+  const proposedCheckoutCreationReservationId = crypto.randomUUID();
   let checkoutCreationReservation;
   try {
     checkoutCreationReservation = await reserveRegistrationCheckoutCreation(resolvedInput, {
-      checkoutCreationReservationId,
-      amountCents
+      checkoutCreationReservationId: proposedCheckoutCreationReservationId,
+      amountCents,
+      checkoutCreationRequest: proposedCheckoutCreationRequest
     });
   } catch (error) {
     if (retryCapacityReservation.reserved) {
       await releaseRegistrationCheckoutCapacity(resolvedInput, {}, {
         retryCapacityReservationId: retryCapacityReservation.retryCapacityReservationId,
-        checkoutCreationReservationId,
+        checkoutCreationReservationId: proposedCheckoutCreationReservationId,
         suppressPublicCheckoutCapabilityRotation: true
       }).catch(() => {});
     }
@@ -5209,6 +7872,8 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
       sessionId: checkoutCreationReservation.sessionId
     };
   }
+  const checkoutCreationReservationId = checkoutCreationReservation.reservationId;
+  const checkoutCreationRequest = checkoutCreationReservation.checkoutCreationRequest;
   if (!retryCapacityReservation.reserved && checkoutCreationReservation.retryCapacityReservationId) {
     retryCapacityReservation = {
       reserved: true,
@@ -5216,40 +7881,22 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
     };
   }
 
-  const stripe = createStripeClient();
-  const { appUrl } = getStripeConfig();
-  const issuedPublicCheckoutCapability = createRawPublicCheckoutCapability();
-  const checkoutUrlInput = {
-    ...resolvedInput,
-    publicCheckoutCapability: issuedPublicCheckoutCapability,
-    paymentPlanId: String(registration.paymentPlan?.id || 'pay_full').trim() || 'pay_full',
-    paidInstallmentCount: registration.paymentPlan?.id === 'installments'
-      ? getRegistrationPaymentPlanPaidInstallmentCount(registration) + 1
-      : 0
-  };
-  const { successUrl, cancelUrl } = buildRegistrationCheckoutUrls(appUrl, checkoutUrlInput);
-  const title = registration.programName || form.programName || form.title || form.name || 'Program registration';
+  // The exact provider request owns the issued capability. Re-deriving it
+  // from the current secret would strand an uncertain request after a normal
+  // secret rotation, so validate and replay the stored private value instead.
+  const issuedPublicCheckoutCapability = getRegistrationCheckoutCreationRequestCapability(checkoutCreationRequest);
+  if (!issuedPublicCheckoutCapability) {
+    throw new functions.https.HttpsError('failed-precondition', 'Stored registration checkout request is invalid.');
+  }
   let session;
   try {
-    session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      line_items: [{
-        price_data: {
-          currency,
-          unit_amount: amountCents,
-          product_data: {
-            name: title
-          }
-        },
-        quantity: 1
-      }],
-      success_url: successUrl,
-      cancel_url: cancelUrl,
-      customer_email: getRegistrationCustomerEmail(registration),
-      client_reference_id: `${resolvedInput.teamId}:${resolvedInput.formId}:${resolvedInput.registrationId}`,
-      metadata: buildRegistrationCheckoutMetadata({ input: checkoutUrlInput, registration })
+    session = await stripe.checkout.sessions.create(checkoutCreationRequest.stripeParams, {
+      idempotencyKey: checkoutCreationRequest.idempotencyKey
     });
   } catch (error) {
+    if (isUncertainStripeCheckoutCreationError(error)) {
+      throw error;
+    }
     await clearRegistrationCheckoutCreationReservation(resolvedInput, checkoutCreationReservationId).catch((clearError) => {
       functions.logger.error('Failed to clear registration checkout creation reservation.', {
         teamId: resolvedInput.teamId,
@@ -5280,38 +7927,110 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
     throw error;
   }
 
+  if (!String(session?.id || '').trim() || !isCanonicalStripeCheckoutUrl(session?.url)) {
+    const expired = await expireStripeCheckoutSessionForRollback(stripe, session, 'registration-validation');
+    if (expired) {
+      await clearRegistrationCheckoutCreationReservation(resolvedInput, checkoutCreationReservationId).catch(() => {});
+      if (retryCapacityReservation.reserved) {
+        await releaseRegistrationCheckoutCapacity({
+          ...resolvedInput,
+          publicCheckoutCapability: resolvedInput.publicCheckoutCapability || issuedPublicCheckoutCapability
+        }, {}, {
+          retryCapacityReservationId: retryCapacityReservation.retryCapacityReservationId,
+          checkoutCreationReservationId,
+          suppressPublicCheckoutCapabilityRotation: true
+        }).catch(() => {});
+      }
+    }
+    throw new functions.https.HttpsError('internal', 'Stripe returned an invalid registration checkout session.');
+  }
+
   const now = admin.firestore.FieldValue.serverTimestamp();
-  await firestore.runTransaction(async (transaction) => {
-    const latestSnap = await transaction.get(resolvedInput.registrationRef);
-    if (!latestSnap.exists) {
-      throw new functions.https.HttpsError('not-found', 'Registration not found.');
+  try {
+    await firestore.runTransaction(async (transaction) => {
+      const checkoutAttemptRef = buildRegistrationCheckoutAttemptRef(resolvedInput.registrationRef);
+      const [latestSnap, checkoutAttemptSnap] = await Promise.all([
+        transaction.get(resolvedInput.registrationRef),
+        transaction.get(checkoutAttemptRef)
+      ]);
+      if (!latestSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Registration not found.');
+      }
+      const latestRegistration = latestSnap.data() || {};
+      if (String(latestRegistration.checkoutCreationReservationId || '') !== checkoutCreationReservationId) {
+        throw new functions.https.HttpsError('aborted', 'Registration checkout creation reservation was lost.');
+      }
+      const checkoutAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
+      if (
+        String(checkoutAttempt.reservationId || '').trim() !== checkoutCreationReservationId
+        || !isReusableRegistrationCheckoutCreationRequest(
+          checkoutAttempt.checkoutCreationRequest,
+          checkoutCreationRequest
+        )
+      ) {
+        throw new functions.https.HttpsError('aborted', 'Registration checkout creation request was lost.');
+      }
+      if (latestRegistration.status === 'rejected') {
+        throw new functions.https.HttpsError('failed-precondition', 'Rejected registrations cannot be paid online.');
+      }
+      transaction.set(resolvedInput.registrationRef, {
+        checkoutUrl: admin.firestore.FieldValue.delete(),
+        paymentLink: admin.firestore.FieldValue.delete(),
+        checkoutStatus: 'open',
+        paymentProvider: 'stripe',
+        paymentStatus: 'checkout_open',
+        stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+        stripePaymentStatus: session.payment_status || 'unpaid',
+        checkoutAmountCents: admin.firestore.FieldValue.delete(),
+        checkoutCurrency: admin.firestore.FieldValue.delete(),
+        checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+        publicCheckoutCapabilityHash: admin.firestore.FieldValue.delete(),
+        checkoutCreatedAt: now,
+        checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+        retryCapacityReservationId: admin.firestore.FieldValue.delete(),
+        updatedAt: now
+      }, { merge: true });
+      transaction.set(checkoutAttemptRef, {
+        checkoutUrl: session.url,
+        checkoutStatus: 'open',
+        stripeCheckoutSessionId: session.id,
+        stripePaymentStatus: session.payment_status || 'unpaid',
+        checkoutAmountCents: amountCents,
+        checkoutCurrency: currency,
+        checkoutAttemptToken: input.checkoutAttemptToken || checkoutAttempt.checkoutAttemptToken || admin.firestore.FieldValue.delete(),
+        publicCheckoutCapabilityHash: hashPublicCheckoutCapability(issuedPublicCheckoutCapability),
+        updatedAt: now
+      }, { merge: true });
+    });
+  } catch (error) {
+    const persistenceState = await getRegistrationCheckoutPersistenceState({
+      registrationRef: resolvedInput.registrationRef,
+      reservationId: checkoutCreationReservationId,
+      session,
+      amountCents,
+      currency
+    });
+    if (persistenceState === 'committed') {
+      return { checkoutUrl: session.url, sessionId: session.id };
     }
-    const latestRegistration = latestSnap.data() || {};
-    if (String(latestRegistration.checkoutCreationReservationId || '') !== checkoutCreationReservationId) {
-      throw new functions.https.HttpsError('aborted', 'Registration checkout creation reservation was lost.');
+    if (persistenceState === 'not-committed') {
+      const expired = await expireStripeCheckoutSessionForRollback(stripe, session, 'registration-persistence');
+      if (expired) {
+        await clearRegistrationCheckoutCreationReservation(resolvedInput, checkoutCreationReservationId).catch(() => {});
+        if (retryCapacityReservation.reserved) {
+          await releaseRegistrationCheckoutCapacity({
+            ...resolvedInput,
+            publicCheckoutCapability: resolvedInput.publicCheckoutCapability || issuedPublicCheckoutCapability
+          }, {}, {
+            retryCapacityReservationId: retryCapacityReservation.retryCapacityReservationId,
+            checkoutCreationReservationId,
+            suppressPublicCheckoutCapabilityRotation: true
+          }).catch(() => {});
+        }
+      }
     }
-    if (latestRegistration.status === 'rejected') {
-      throw new functions.https.HttpsError('failed-precondition', 'Rejected registrations cannot be paid online.');
-    }
-    transaction.set(resolvedInput.registrationRef, {
-      checkoutUrl: session.url,
-      paymentLink: session.url,
-      checkoutStatus: 'open',
-      paymentProvider: 'stripe',
-      paymentStatus: 'checkout_open',
-      stripeCheckoutSessionId: session.id,
-      stripePaymentStatus: session.payment_status || 'unpaid',
-      checkoutAmountCents: amountCents,
-      checkoutCurrency: currency,
-      checkoutAttemptToken: input.checkoutAttemptToken || null,
-      publicCheckoutCapabilityHash: hashPublicCheckoutCapability(issuedPublicCheckoutCapability),
-      checkoutCreatedAt: now,
-      checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
-      checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
-      retryCapacityReservationId: admin.firestore.FieldValue.delete(),
-      updatedAt: now
-    }, { merge: true });
-  });
+    throw error;
+  }
 
   return { checkoutUrl: session.url, sessionId: session.id };
 });
@@ -5328,13 +8047,25 @@ exports.cancelStripeRegistrationCheckout = functions.https.onCall(async (data, c
 
   await applyStagedPublicRegistrationLookupRateLimit(context, 'cancel-checkout');
   const resolvedInput = await resolveRegistrationCheckoutInput(input);
-  const registrationSnap = await resolvedInput.registrationRef.get();
+  const checkoutAttemptRef = resolvedInput.checkoutAttemptRef
+    || buildRegistrationCheckoutAttemptRef(resolvedInput.registrationRef);
+  const [registrationSnap, checkoutAttemptSnap] = await Promise.all([
+    resolvedInput.registrationRef.get(),
+    checkoutAttemptRef.get()
+  ]);
   if (!registrationSnap.exists) {
     throw new functions.https.HttpsError('not-found', 'Registration not found.');
   }
 
   const registration = registrationSnap.data() || {};
-  if (!registrationCheckoutAuthorityMatches(registration, resolvedInput)) {
+  const checkoutAttempt = hasLegacyReadableRegistrationCheckoutState(registration)
+    ? await migrateLegacyReadableRegistrationCheckoutState(resolvedInput.registrationRef)
+    : (checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {});
+  const checkoutAuthority = getRegistrationCheckoutAuthorityState(
+    registration,
+    checkoutAttempt
+  );
+  if (!registrationCheckoutAuthorityMatches(checkoutAuthority, resolvedInput)) {
     throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required.');
   }
 
@@ -5382,6 +8113,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
       const { appUrl } = getStripeConfig();
       const eventRef = firestore.doc(`stripeEvents/${event.id}`);
       const registrationRef = buildRegistrationRefFromStripeSession(session);
+      const checkoutAttemptRef = buildRegistrationCheckoutAttemptRef(registrationRef);
       const registrationInput = normalizeRegistrationCheckoutCancelInput(session.metadata || {});
       const formRef = buildRegistrationFormRef(registrationInput);
 
@@ -5389,9 +8121,10 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
         const eventSnap = await transaction.get(eventRef);
         if (eventSnap.exists) return;
 
-        const [registrationSnap, formSnap] = await Promise.all([
+        const [registrationSnap, formSnap, checkoutAttemptSnap] = await Promise.all([
           transaction.get(registrationRef),
-          transaction.get(formRef)
+          transaction.get(formRef),
+          transaction.get(checkoutAttemptRef)
         ]);
         if (!registrationSnap.exists) {
           throw new Error('Registration not found for Stripe webhook.');
@@ -5402,11 +8135,33 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
 
         const form = formSnap.data() || {};
         const registration = registrationSnap.data() || {};
+        const hasLegacyReadableCheckout = hasLegacyReadableRegistrationCheckoutState(registration);
+        const persistedCheckoutAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
+        const checkoutAttempt = hasLegacyReadableCheckout
+          ? buildLegacyReadableRegistrationCheckoutAttempt({
+            registration,
+            existingAttempt: persistedCheckoutAttempt,
+            now: receivedAt
+          })
+          : persistedCheckoutAttempt;
+        if (hasLegacyReadableCheckout) {
+          transaction.set(checkoutAttemptRef, checkoutAttempt, { merge: true });
+          transaction.update(registrationRef, {
+            ...Object.fromEntries(LEGACY_READABLE_REGISTRATION_CHECKOUT_FIELDS.map((field) => [
+              field,
+              admin.firestore.FieldValue.delete()
+            ])),
+            'paymentReminder.retryUrl': admin.firestore.FieldValue.delete(),
+            updatedAt: receivedAt
+          });
+        }
+        const checkoutAuthority = getRegistrationCheckoutAuthorityState(registration, checkoutAttempt);
         if (shouldMarkRegistrationPaidFromEvent(event)) {
           const paidCheckoutGuardFailure = getRegistrationPaidCheckoutGuardFailure({
             registration,
+            checkoutAttempt,
             session,
-            authorityMatches: registrationCheckoutAuthorityMatches(registration, registrationInput),
+            authorityMatches: registrationCheckoutAuthorityMatches(checkoutAuthority, registrationInput),
             expectedCurrency: getRegistrationCheckoutCurrency(registration, form)
           });
           if (paidCheckoutGuardFailure) {
@@ -5433,11 +8188,19 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
               paidAt: receivedAt,
               balanceDueCents: installmentState.remainingBalanceCents,
               nextPaymentDueDate: installmentState.nextDueDate || null,
-              stripeCheckoutSessionId: session.id || null,
-              stripePaymentIntentId: session.payment_intent || null,
+              checkoutUrl: admin.firestore.FieldValue.delete(),
+              paymentLink: admin.firestore.FieldValue.delete(),
+              stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+              stripePaymentIntentId: admin.firestore.FieldValue.delete(),
               stripePaymentStatus: session.payment_status || 'paid',
               stripeEventId: event.id,
-              lastPaidStripeCheckoutSessionId: session.id,
+              lastPaidStripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+              checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+              publicCheckoutCapabilityHash: admin.firestore.FieldValue.delete(),
+              checkoutAmountCents: admin.firestore.FieldValue.delete(),
+              checkoutCurrency: admin.firestore.FieldValue.delete(),
+              checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+              checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
               paymentPlan: {
                 ...registration.paymentPlan,
                 totalBalanceDueCents: installmentState.totalBalanceDueCents,
@@ -5458,17 +8221,38 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
               paidAt: receivedAt,
               balanceDueCents: 0,
               nextPaymentDueDate: null,
-              stripeCheckoutSessionId: session.id || null,
-              stripePaymentIntentId: session.payment_intent || null,
+              checkoutUrl: admin.firestore.FieldValue.delete(),
+              paymentLink: admin.firestore.FieldValue.delete(),
+              stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+              stripePaymentIntentId: admin.firestore.FieldValue.delete(),
               stripePaymentStatus: session.payment_status || 'paid',
               stripeEventId: event.id,
-              lastPaidStripeCheckoutSessionId: session.id,
+              lastPaidStripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+              checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+              publicCheckoutCapabilityHash: admin.firestore.FieldValue.delete(),
+              checkoutAmountCents: admin.firestore.FieldValue.delete(),
+              checkoutCurrency: admin.firestore.FieldValue.delete(),
+              checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+              checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
               updatedAt: receivedAt
             }, { merge: true });
             transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: 'paid', nowIso: queuedAtIso }));
           }
+          transaction.set(checkoutAttemptRef, {
+            checkoutUrl: admin.firestore.FieldValue.delete(),
+            checkoutStatus: 'complete',
+            stripeCheckoutSessionId: session.id || null,
+            stripePaymentIntentId: session.payment_intent || null,
+            stripePaymentStatus: session.payment_status || 'paid',
+            stripeEventId: event.id,
+            lastPaidStripeCheckoutSessionId: session.id,
+            reservationId: admin.firestore.FieldValue.delete(),
+            amountCents: admin.firestore.FieldValue.delete(),
+            checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+            updatedAt: receivedAt
+          }, { merge: true });
         } else {
-          if (!registrationCheckoutAuthorityMatches(registration, registrationInput)) {
+          if (!registrationCheckoutAuthorityMatches(checkoutAuthority, registrationInput)) {
             transaction.set(eventRef, {
               provider: 'stripe',
               product: 'registration',
@@ -5486,6 +8270,20 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             transaction.set(registrationRef, {
               checkoutStatus: 'async_pending',
               paymentStatus: 'pending_payment',
+              checkoutUrl: admin.firestore.FieldValue.delete(),
+              paymentLink: admin.firestore.FieldValue.delete(),
+              stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+              stripePaymentIntentId: admin.firestore.FieldValue.delete(),
+              stripePaymentStatus: session.payment_status || 'open',
+              stripeEventId: event.id,
+              checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+              publicCheckoutCapabilityHash: admin.firestore.FieldValue.delete(),
+              checkoutAmountCents: admin.firestore.FieldValue.delete(),
+              checkoutCurrency: admin.firestore.FieldValue.delete(),
+              updatedAt: receivedAt
+            }, { merge: true });
+            transaction.set(checkoutAttemptRef, {
+              checkoutStatus: 'async_pending',
               stripeCheckoutSessionId: session.id || null,
               stripePaymentIntentId: session.payment_intent || null,
               stripePaymentStatus: session.payment_status || 'open',
@@ -5515,13 +8313,34 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           transaction.set(registrationRef, {
             checkoutStatus: event.type === 'checkout.session.expired' ? 'expired' : 'payment_failed',
             paymentStatus: event.type === 'checkout.session.expired' ? 'checkout_expired' : 'payment_failed',
-            stripeCheckoutSessionId: session.id || null,
+            checkoutUrl: admin.firestore.FieldValue.delete(),
+            paymentLink: admin.firestore.FieldValue.delete(),
+            stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+            stripePaymentIntentId: admin.firestore.FieldValue.delete(),
             stripePaymentStatus: session.payment_status || 'unpaid',
             stripeEventId: event.id,
+            checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+            publicCheckoutCapabilityHash: admin.firestore.FieldValue.delete(),
+            checkoutAmountCents: admin.firestore.FieldValue.delete(),
+            checkoutCurrency: admin.firestore.FieldValue.delete(),
+            checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+            checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
             ...(shouldReleaseCapacity ? {
               registrationCapacityReleased: true,
               capacityReleasedAt: receivedAt
             } : {}),
+            updatedAt: receivedAt
+          }, { merge: true });
+          transaction.set(checkoutAttemptRef, {
+            checkoutUrl: admin.firestore.FieldValue.delete(),
+            checkoutStatus: event.type === 'checkout.session.expired' ? 'expired' : 'payment_failed',
+            stripeCheckoutSessionId: session.id || null,
+            stripePaymentIntentId: session.payment_intent || null,
+            stripePaymentStatus: session.payment_status || 'unpaid',
+            stripeEventId: event.id,
+            reservationId: admin.firestore.FieldValue.delete(),
+            amountCents: admin.firestore.FieldValue.delete(),
+            checkoutCreationRequest: admin.firestore.FieldValue.delete(),
             updatedAt: receivedAt
           }, { merge: true });
 
@@ -5543,10 +8362,11 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
                 queuedAtIso,
                 mailDocId
               });
+              const { retryUrl, ...publicReminderState } = reminderState;
               transaction.set(buildRegistrationReminderMailRef(mailDocId), buildRegistrationReminderMailJob({
                 registration,
                 form,
-                retryUrl: reminderState.retryUrl,
+                retryUrl,
                 reminderLabel: 'We could not process your registration payment.',
                 metadata: {
                   recipientEmail,
@@ -5560,9 +8380,13 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
               }));
               transaction.set(registrationRef, {
                 paymentReminder: {
-                  ...reminderState,
+                  ...publicReminderState,
                   recipientEmail
                 }
+              }, { merge: true });
+              transaction.set(checkoutAttemptRef, {
+                paymentRetryUrl: retryUrl || admin.firestore.FieldValue.delete(),
+                updatedAt: receivedAt
               }, { merge: true });
             } else {
               transaction.set(registrationRef, {
@@ -5607,25 +8431,37 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
       const receivedAt = admin.firestore.FieldValue.serverTimestamp();
       const eventRef = firestore.doc(`stripeEvents/${event.id}`);
       const recipientRef = buildTeamFeeRecipientRef({ teamId, batchId, recipientId });
+      const checkoutAttemptRef = buildTeamFeeCheckoutAttemptRef(recipientRef);
 
       await firestore.runTransaction(async (transaction) => {
         const eventSnap = await transaction.get(eventRef);
         if (eventSnap.exists) return;
 
         const recipientSnap = await transaction.get(recipientRef);
+        const checkoutAttemptSnap = await transaction.get(checkoutAttemptRef);
         if (!recipientSnap.exists) {
           throw new Error('Team fee recipient not found for Stripe webhook.');
         }
 
         const recipient = recipientSnap.data() || {};
-        const shouldApplyCheckoutEvent = shouldApplyTeamFeeCheckoutSession({ recipient, session });
+        const hasLegacyReadableCheckout = hasLegacyReadableTeamFeeCheckoutState(recipient);
+        const persistedCheckoutAttempt = checkoutAttemptSnap.exists ? (checkoutAttemptSnap.data() || {}) : {};
+        const checkoutAttempt = hasLegacyReadableCheckout
+          ? buildLegacyReadableTeamFeeCheckoutAttempt({
+            recipient,
+            existingAttempt: persistedCheckoutAttempt,
+            now: receivedAt
+          })
+          : persistedCheckoutAttempt;
+        const shouldApplyCheckoutEvent = shouldApplyTeamFeeCheckoutSession({ recipient, checkoutAttempt, session });
         const ignoredReason = shouldApplyCheckoutEvent
           ? null
-          : getTeamFeeCheckoutGuardFailure({ recipient, session });
+          : getTeamFeeCheckoutGuardFailure({ recipient, checkoutAttempt, session });
 
         if (shouldMarkTeamFeePaidFromEvent(event) && shouldApplyCheckoutEvent) {
           const { adminBilling, ...recipientUpdate } = buildTeamFeePaidUpdate({
             recipient,
+            checkoutAttempt,
             session,
             eventId: event.id,
             receivedAt
@@ -5634,6 +8470,12 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           const changedFields = getChangedTeamFeeFinancialFields(recipient, recipientUpdate);
           transaction.set(recipientRef, {
             ...withTeamFeeParentBillingClears(recipientUpdate),
+            ...Object.fromEntries(LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS.map((field) => [
+              field,
+              admin.firestore.FieldValue.delete()
+            ])),
+            checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+            checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
             latestAuditId: paymentAuditRef.id,
             latestAuditAt: receivedAt
           }, { merge: true });
@@ -5650,19 +8492,24 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             transaction.set(buildTeamFeeAdminBillingRef(recipientRef, event.id), adminBilling, { merge: true });
             transaction.set(buildTeamFeeAdminBillingRef(recipientRef, 'latest'), adminBilling, { merge: true });
           }
+          transaction.delete(checkoutAttemptRef);
         } else if (shouldRecordTeamFeeCheckoutNotPaidFromEvent(event) && shouldApplyCheckoutEvent) {
           transaction.set(recipientRef, {
             checkoutStatus: event.type === 'checkout.session.expired' ? 'expired' : 'payment_failed',
+            checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+            checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
             stripeCheckoutSessionId: null,
             stripePaymentIntentId: null,
             stripeCustomerId: null,
             stripeEventId: null,
             checkoutAttemptToken: null,
-            checkoutUrl: null,
-            paymentLink: null,
-            checkoutAmountCents: null,
+            ...Object.fromEntries(LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS.map((field) => [
+              field,
+              admin.firestore.FieldValue.delete()
+            ])),
             updatedAt: receivedAt
           }, { merge: true });
+          transaction.delete(checkoutAttemptRef);
           transaction.set(buildTeamFeeAdminBillingRef(recipientRef, event.id), {
             type: event.type,
             provider: 'stripe',
@@ -5670,6 +8517,15 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             stripeEventId: event.id,
             paymentStatus: session.payment_status || null,
             recordedAt: receivedAt,
+            updatedAt: receivedAt
+          }, { merge: true });
+        } else if (hasLegacyReadableCheckout) {
+          transaction.set(checkoutAttemptRef, checkoutAttempt, { merge: true });
+          transaction.set(recipientRef, {
+            ...Object.fromEntries(LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS.map((field) => [
+              field,
+              admin.firestore.FieldValue.delete()
+            ])),
             updatedAt: receivedAt
           }, { merge: true });
         }
@@ -5695,35 +8551,65 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
     }
   }
 
-  if (!shouldUnlockTeamPassFromEvent(event)) {
+  const shouldUnlockTeamPass = shouldUnlockTeamPassFromEvent(event);
+  const shouldReleaseTeamPassAttempt = event?.type === 'checkout.session.expired'
+    && hasTeamPassMetadata(event?.data?.object || {});
+  if (!shouldUnlockTeamPass && !shouldReleaseTeamPassAttempt) {
     res.status(200).json({ received: true, unlocked: false });
     return;
   }
 
   try {
     const receivedAt = admin.firestore.FieldValue.serverTimestamp();
-    const entitlement = buildTeamPassEntitlement({
-      session: event.data.object,
-      eventId: event.id,
-      receivedAt
-    });
+    const session = event.data.object;
+    const entitlement = shouldUnlockTeamPass
+      ? buildTeamPassEntitlement({ session, eventId: event.id, receivedAt })
+      : null;
     const eventRef = firestore.doc(`stripeEvents/${event.id}`);
-    const entitlementRef = firestore.doc(entitlement.refPath);
+    const entitlementRef = entitlement ? firestore.doc(entitlement.refPath) : null;
+    const teamPassInput = normalizeTeamPassCheckoutInput(session.metadata || {});
+    const attemptRef = buildTeamPassCheckoutAttemptRef(teamPassInput);
 
     await firestore.runTransaction(async (transaction) => {
-      const eventSnap = await transaction.get(eventRef);
+      const [eventSnap, attemptSnap] = await Promise.all([
+        transaction.get(eventRef),
+        transaction.get(attemptRef)
+      ]);
       if (eventSnap.exists) return;
-      transaction.set(entitlementRef, entitlement.data, { merge: true });
+      if (entitlementRef) {
+        transaction.set(entitlementRef, entitlement.data, { merge: true });
+      }
+      if (attemptSnap.exists) {
+        const attempt = attemptSnap.data() || {};
+        const storedSessionId = String(attempt.stripeCheckoutSessionId || '').trim();
+        const storedReservationId = String(attempt.checkoutCreationReservationId || '').trim();
+        const eventReservationId = String(session.metadata?.checkoutCreationReservationId || '').trim();
+        if (
+          (storedSessionId && storedSessionId === String(session.id || '').trim())
+          || (storedReservationId && storedReservationId === eventReservationId)
+        ) {
+          transaction.set(attemptRef, {
+            status: shouldUnlockTeamPass ? 'completed' : 'expired',
+            stripeCheckoutSessionId: session.id || storedSessionId || null,
+            checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+            checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+            checkoutUrl: admin.firestore.FieldValue.delete(),
+            updatedAt: receivedAt
+          }, { merge: true });
+        }
+      }
       transaction.set(eventRef, {
         provider: 'stripe',
+        product: 'team_pass',
         type: event.type,
-        checkoutSessionId: event.data.object.id || null,
-        entitlementPath: entitlement.refPath,
+        checkoutSessionId: session.id || null,
+        entitlementPath: entitlement?.refPath || null,
+        checkoutAttemptPath: attemptRef.path,
         receivedAt
       });
     });
 
-    res.status(200).json({ received: true, unlocked: true });
+    res.status(200).json({ received: true, unlocked: shouldUnlockTeamPass });
   } catch (error) {
     console.error('Failed to process Stripe team pass webhook:', error);
     res.status(500).send('Webhook processing failed');
@@ -5745,13 +8631,15 @@ function getAllowedOriginPolicy() {
   if (Array.isArray(configuredOrigins)) {
     return {
       origins: configuredOrigins.map((origin) => String(origin).trim()).filter(Boolean),
-      allowFirebaseHosting: false
+      allowFirebaseHosting: false,
+      allowNativeCalendarOrigins: false
     };
   }
   if (typeof configuredOrigins === 'string') {
     return {
       origins: configuredOrigins.split(',').map((origin) => origin.trim()).filter(Boolean),
-      allowFirebaseHosting: false
+      allowFirebaseHosting: false,
+      allowNativeCalendarOrigins: false
     };
   }
   return {
@@ -5763,16 +8651,26 @@ function getAllowedOriginPolicy() {
       'http://localhost:5174',
       'http://127.0.0.1:5174'
     ],
-    allowFirebaseHosting: true
+    allowFirebaseHosting: true,
+    allowNativeCalendarOrigins: true
   };
 }
 
 const allowedOriginPolicy = getAllowedOriginPolicy();
 const allowedOriginSet = new Set(allowedOriginPolicy.origins);
-// Capacitor's WebViews use these exact origins. Keep the exception scoped to
-// passive telemetry so it does not broaden the calendar endpoint's CORS policy.
+// Capacitor's exact WebView origins keep installed native clients on the
+// legacy HTTP calendar bridge. Configured allowlists remain authoritative.
+const calendarAllowedOriginSet = new Set([
+  ...allowedOriginSet,
+  ...(allowedOriginPolicy.allowNativeCalendarOrigins
+    ? ['https://localhost', 'capacitor://localhost']
+    : [])
+]);
+// Passive telemetry has its own exact native-origin policy, separate from the
+// calendar allowlist and its configured-origin compatibility behavior.
 const telemetryAllowedOriginSet = new Set([
   ...allowedOriginSet,
+  'https://localhost',
   'capacitor://localhost',
   'http://localhost'
 ]);
@@ -5781,7 +8679,7 @@ function isAllowedOrigin(origin) {
   if (!origin) {
     return true;
   }
-  return allowedOriginSet.has(origin) ||
+  return calendarAllowedOriginSet.has(origin) ||
     (allowedOriginPolicy.allowFirebaseHosting && isAllPlaysFirebaseHostingOrigin(origin));
 }
 
@@ -6394,6 +9292,149 @@ async function getStrictPublicTeam(teamId) {
   return isStrictPublicTeam(team) ? team : null;
 }
 
+function hasReplayArchiveMarker(game = {}) {
+  return typeof game?.hasRecordedReplay === 'boolean'
+    || (typeof game?.replayArchiveRevision === 'string' && Boolean(game.replayArchiveRevision));
+}
+
+function buildSanitizedReplayServerProjection(game = {}, archive = null, documentPath = '') {
+  const isCanonicalSharedDocument = /(^|\/)sharedGames\/[^/]+$/.test(documentPath)
+    && !/^teams\/[^/]+\/games\/[^/]+$/.test(documentPath);
+  const hasAutomatedCopyMarker = game?.isSharedGame === true
+    || game?.isPublicProjection === true
+    || AUTOMATED_GAME_COPY_MARKER_FIELDS.some((field) => {
+      const value = game?.[field];
+      return value !== null && value !== undefined && value !== '';
+    });
+  // The exact Firestore reference is trusted provenance. Stored `isSharedGame`
+  // and path-like fields are not: a forged marker on a team game must never
+  // turn an automated active/generic capability into a canonical shared feed.
+  const stripNonCompletedVideoUrl = hasAutomatedCopyMarker && !isCanonicalSharedDocument;
+  return buildReplayServerProjectionGame(game, archive, { stripNonCompletedVideoUrl });
+}
+
+function getReplayCompatibilityProjectionBinding(documentPath) {
+  const path = String(documentPath || '');
+  const teamGameMatch = path.match(/^teams\/([^/]+)\/games\/([^/]+)$/);
+  if (teamGameMatch) {
+    return { kind: 'team-game', teamId: teamGameMatch[1], gameId: teamGameMatch[2] };
+  }
+  if (/(^|\/)sharedGames\/[^/]+$/.test(path)) {
+    return { kind: 'shared-game', teamId: '', gameId: path.split('/').pop() };
+  }
+  return null;
+}
+
+async function loadReplayCompatibilityServerProjection(game = {}, documentPath = '', {
+  requireReceipt = false
+} = {}) {
+  const binding = getReplayCompatibilityProjectionBinding(documentPath);
+  if (!binding) return null;
+  let migrationControlSnap;
+  let boundaryControlSnap;
+  let receiptSnap = null;
+  try {
+    [migrationControlSnap, boundaryControlSnap, receiptSnap] = await Promise.all([
+      firestore.doc(REPLAY_ARCHIVE_MIGRATION_CONTROL_PATH).get(),
+      firestore.doc(ATHLETE_PROFILE_PROJECTION_BOUNDARY_CONTROL_PATH).get(),
+      binding.kind === 'team-game'
+        ? firestore.doc(getReplayCompatibilityReceiptPath(documentPath)).get()
+        : Promise.resolve(null)
+    ]);
+  } catch (error) {
+    throw new functions.https.HttpsError(
+      'unavailable',
+      'Replay archive status is temporarily unavailable.',
+      { reason: error?.code || 'compatibility-state-read-failed' }
+    );
+  }
+  if (migrationControlSnap.exists || boundaryControlSnap.exists) return null;
+  if (requireReceipt && !receiptSnap?.exists) return null;
+  const receipt = receiptSnap?.exists
+    ? normalizeReplayCompatibilityReceipt(receiptSnap.data() || {})
+    : null;
+  if (receiptSnap?.exists && (!receipt
+    || receipt.teamId !== binding.teamId
+    || receipt.gameId !== binding.gameId)) {
+    throw new functions.https.HttpsError(
+      'unavailable',
+      'Replay archive status is temporarily unavailable.',
+      { reason: 'compatibility-receipt-invalid' }
+    );
+  }
+  const compatibilityState = getReplayCompatibilityState(game, receipt, binding);
+  if (!compatibilityState.receiptValid || compatibilityState.state === 'unavailable') {
+    throw new functions.https.HttpsError(
+      'unavailable',
+      'Replay archive status is temporarily unavailable.',
+      { reason: 'compatibility-state-invalid' }
+    );
+  }
+  if (!receipt && compatibilityState.state === 'none') return null;
+  const projected = buildSanitizedReplayServerProjection(game, null, documentPath);
+  projected.hasRecordedReplay = compatibilityState.state === 'ready';
+  if (compatibilityState.replayArchiveRevision) {
+    projected.replayArchiveRevision = compatibilityState.replayArchiveRevision;
+  } else {
+    delete projected.replayArchiveRevision;
+  }
+  delete projected.replayVideo;
+  return { game: projected, compatibilityState };
+}
+
+async function loadServerReplayProjection(game = {}, documentPath = '') {
+  const hasMarker = hasReplayArchiveMarker(game);
+  if (!hasMarker) {
+    const rawCompatibilityState = getReplayCompatibilityState(game);
+    if (['ready', 'removed'].includes(rawCompatibilityState.state)) {
+      const compatibilityProjection = await loadReplayCompatibilityServerProjection(
+        game,
+        documentPath
+      );
+      if (compatibilityProjection) return compatibilityProjection.game;
+      throw new functions.https.HttpsError(
+        'unavailable',
+        'Replay archive status is temporarily unavailable.',
+        { reason: 'legacy-replay-state-not-compatible' }
+      );
+    }
+    return buildSanitizedReplayServerProjection(game, null, documentPath);
+  }
+  if (!documentPath) {
+    throw new functions.https.HttpsError('unavailable', 'Replay archive status is temporarily unavailable.');
+  }
+  let archiveSnap;
+  try {
+    archiveSnap = await firestore.doc(`${documentPath}/privateReplay/archive`).get();
+  } catch (error) {
+    throw new functions.https.HttpsError('unavailable', 'Replay archive status is temporarily unavailable.', {
+      reason: error?.code || 'archive-read-failed'
+    });
+  }
+  const archive = archiveSnap.exists ? normalizeStoredReplayArchive(archiveSnap.data() || {}) : null;
+  if (!archiveSnap.exists) {
+    const compatibilityProjection = await loadReplayCompatibilityServerProjection(
+      game,
+      documentPath,
+      { requireReceipt: true }
+    );
+    if (compatibilityProjection) return compatibilityProjection.game;
+  }
+  const lifecycleMismatch = archive?.state === 'ready' && !getCompatibleReplayLifecycle(game).isCompleted;
+  if (!archive || !isReplayArchiveConsistent(game, archive) || lifecycleMismatch) {
+    throw new functions.https.HttpsError('unavailable', 'Replay archive status is temporarily unavailable.', {
+      reason: !archiveSnap.exists
+        ? 'archive-missing'
+        : !archive
+          ? 'archive-invalid'
+          : lifecycleMismatch
+            ? 'archive-lifecycle-mismatch'
+            : 'archive-marker-mismatch'
+    });
+  }
+  return buildSanitizedReplayServerProjection(game, archive, documentPath);
+}
+
 async function getPublicTeamPlayers(teamId) {
   const playersSnap = await firestore.collection(`teams/${teamId}/players`)
     .limit(PUBLIC_TEAM_API_MAX_ROSTER_SCAN_DOCUMENTS + 1)
@@ -6407,11 +9448,13 @@ async function getPublicTeamPlayers(teamId) {
   return players;
 }
 
-async function getPublicTeamGames(teamId, range) {
+async function getPublicTeamGames(teamId, range, cursor = null) {
   const games = [];
   const batchSize = Math.min(range.limit + 1, 500);
   let lastDoc = null;
   let scannedDocuments = 0;
+  const cursorDate = cursor ? new Date(cursor.startsAt) : null;
+  const queryFromDate = cursorDate && cursorDate > range.fromDate ? cursorDate : range.fromDate;
 
   while (games.length <= range.limit && scannedDocuments < PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS) {
     const currentBatchSize = Math.min(
@@ -6419,7 +9462,7 @@ async function getPublicTeamGames(teamId, range) {
       PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS - scannedDocuments
     );
     let query = firestore.collection(`teams/${teamId}/games`)
-      .where('date', '>=', range.fromDate)
+      .where('date', '>=', queryFromDate)
       .where('date', '<=', range.toDate)
       .orderBy('date');
     if (lastDoc) query = query.startAfter(lastDoc);
@@ -6429,7 +9472,10 @@ async function getPublicTeamGames(teamId, range) {
 
     gamesSnap.forEach((docSnap) => {
       const game = { id: docSnap.id, ...(docSnap.data() || {}) };
-      if (serializePublicGame(game)) games.push(game);
+      const projection = serializePublicGame(game);
+      if (projection && isPublicProjectionItemAfterCursor(projection, cursor)) {
+        games.push({ game, documentPath: docSnap.ref.path });
+      }
     });
     scannedDocuments += gamesSnap.size;
     lastDoc = gamesSnap.docs[gamesSnap.docs.length - 1];
@@ -6439,7 +9485,389 @@ async function getPublicTeamGames(teamId, range) {
   if (games.length <= range.limit && scannedDocuments >= PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS) {
     throw new Error('Public games scan limit exceeded.');
   }
-  return games;
+
+  const sharedGamesRef = firestore.collectionGroup('sharedGames');
+  const sharedQueries = [
+    sharedGamesRef.where('homeTeamId', '==', teamId),
+    sharedGamesRef.where('awayTeamId', '==', teamId)
+  ].map((query) => query
+    .where('date', '>=', queryFromDate)
+    .where('date', '<=', range.toDate)
+    .orderBy('date')
+    .limit(PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS + 1)
+    .get());
+  const sharedSnapshots = await Promise.all(sharedQueries);
+  const sharedGamesByPath = new Map();
+  sharedSnapshots.forEach((snapshot) => {
+    if (snapshot.size > PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS) {
+      throw new Error('Public shared games scan limit exceeded.');
+    }
+    snapshot.docs.forEach((docSnap) => {
+      const projected = projectSharedGameForPublicTeam({
+        id: docSnap.id,
+        ...(docSnap.data() || {}),
+        _sharedGamePath: docSnap.ref.path,
+        isSharedGame: true
+      }, teamId);
+      const projection = projected && serializePublicGame(projected);
+      if (projection && isPublicProjectionItemAfterCursor(projection, cursor)) {
+        sharedGamesByPath.set(docSnap.ref.path, {
+          game: projected,
+          documentPath: docSnap.ref.path
+        });
+      }
+    });
+  });
+  return Promise.all([...games, ...sharedGamesByPath.values()].map(({ game, documentPath }) => {
+    return loadServerReplayProjection(game, documentPath);
+  }));
+}
+
+async function getPublicOpponentStatKeysByGameId(teamId, games = []) {
+  const configIds = [...new Set(
+    games.map((game) => normalizeTeamId(game?.statTrackerConfigId)).filter(Boolean)
+  )];
+  const configsById = new Map(await Promise.all(configIds.map(async (configId) => {
+    const configSnap = await firestore.doc(`teams/${teamId}/statTrackerConfigs/${configId}`).get();
+    return [configId, configSnap.exists ? configSnap.data() || {} : null];
+  })));
+  const keysByGameId = new Map();
+  games.forEach((game) => {
+    const gameId = String(game?.id || game?.gameId || '');
+    const configId = normalizeTeamId(game?.statTrackerConfigId);
+    if (gameId && configId && configsById.has(configId)) {
+      keysByGameId.set(gameId, getPublicOpponentStatKeys(configsById.get(configId)));
+    }
+  });
+  return keysByGameId;
+}
+
+function decodePublicSharedGamePath(gameId) {
+  if (typeof gameId !== 'string' || !gameId.startsWith('shared_')) return '';
+  try {
+    const path = decodeURIComponent(gameId.slice('shared_'.length));
+    const segments = path.split('/').filter(Boolean);
+    return segments.length >= 2 &&
+      segments.length % 2 === 0 &&
+      segments[segments.length - 2] === 'sharedGames' &&
+      segments.every((segment) => /^[A-Za-z0-9_-]{1,128}$/.test(segment))
+      ? segments.join('/')
+      : '';
+  } catch {
+    return '';
+  }
+}
+
+function exactPublicDiamondResourceId(value) {
+  return typeof value === 'string' &&
+    value.length >= 1 &&
+    value.length <= 128 &&
+    value === value.trim() &&
+    value !== '.' &&
+    value !== '..' &&
+    !value.includes('/') &&
+    !/[\u0000-\u001f\u007f]/.test(value)
+    ? value
+    : '';
+}
+
+function normalizePublicDiamondSharedGamePath(value) {
+  if (typeof value !== 'string' || value !== value.trim() || !value || value.length > 512) return '';
+  const segments = value.split('/');
+  return segments.length === 4 &&
+    ['organizations', 'tournaments'].includes(segments[0]) &&
+    segments[2] === 'sharedGames' &&
+    segments.every((segment) => exactPublicDiamondResourceId(segment))
+    ? value
+    : '';
+}
+
+function publicDiamondProjectionUnavailable(reason, message = 'Diamond game report data is temporarily unavailable.') {
+  return new functions.https.HttpsError('unavailable', message, { reason });
+}
+
+function hasExactPublicDiamondSharedBacklink(game = {}, sharedGamePath = '') {
+  const candidates = [
+    game.diamondSharedGamePath,
+    game.sharedGamePath,
+    game._sharedGamePath
+  ].filter((value) => value !== null && value !== undefined && value !== '');
+  if (!candidates.length) return false;
+  const normalized = [...new Set(candidates.map(normalizePublicDiamondSharedGamePath))];
+  return normalized.length === 1 && normalized[0] === sharedGamePath;
+}
+
+function hasMatchingPublicDiamondSharedHead(sharedGame = {}, identity = {}) {
+  const requiredMatches = [
+    sharedGame.trackingEngine === 'diamond-v2',
+    sharedGame.diamondProjectionStatus === identity.diamondProjectionStatus,
+    sharedGame.diamondProjectionRevision === identity.diamondProjectionRevision,
+    sharedGame.diamondProjectionCheckpointHash === identity.diamondProjectionCheckpointHash,
+    sharedGame.diamondScorebookInstanceId === identity.diamondScorebookInstanceId,
+    sharedGame.diamondProjectionHash === identity.diamondProjectionHash
+  ];
+  if (Object.prototype.hasOwnProperty.call(sharedGame, 'diamondProjectionComplete')) {
+    requiredMatches.push(sharedGame.diamondProjectionComplete === true);
+  }
+  if (Object.prototype.hasOwnProperty.call(sharedGame, 'diamondStatConfigSnapshotHash')) {
+    requiredMatches.push(
+      sharedGame.diamondStatConfigSnapshotHash === identity.diamondStatConfigSnapshotHash
+    );
+  }
+  return requiredMatches.every(Boolean);
+}
+
+function publicDiamondProjectionCoherenceToken(state = {}) {
+  const replayFields = [
+    'hasRecordedReplay',
+    'replayArchiveRevision',
+    'replayVideoFallbackDisabled',
+    'replayStatus',
+    'recordedReplayStatus',
+    'videoReplayStatus',
+    'replayVideo',
+    'recordedVideo',
+    'videoReplay',
+    'replayVideoUrl',
+    'recordedVideoUrl',
+    'videoReplayUrl',
+    'archivedVideoUrl',
+    'replayVideoPublicUrl'
+  ];
+  const replayState = Object.fromEntries(replayFields.map((field) => [
+    field,
+    state.requestedGame?.[field] ?? null
+  ]));
+  return JSON.stringify({
+    publicGame: serializePublicGame(state.displayGame, {
+      team: state.team,
+      recordedReplayMarkerOnly: true
+    }),
+    identity: state.publicIdentity,
+    diamondStats: state.diamondStats,
+    sourceOpponentStats: state.sourceGame?.opponentStats ?? null,
+    replayState
+  });
+}
+
+async function loadPublicDiamondProjectionState({ teamId, gameId, sharedPath = '' } = {}) {
+  const requestedGameRef = sharedPath
+    ? firestore.doc(sharedPath)
+    : firestore.doc(`teams/${teamId}/games/${gameId}`);
+  return firestore.runTransaction(async (transaction) => {
+    const teamRef = firestore.doc(`teams/${teamId}`);
+    const [teamSnap, requestedGameSnap] = await Promise.all([
+      transaction.get(teamRef),
+      transaction.get(requestedGameRef)
+    ]);
+    if (!teamSnap.exists || !requestedGameSnap.exists) return null;
+
+    const team = { id: teamId, ...(teamSnap.data() || {}) };
+    const requestedGame = {
+      id: requestedGameSnap.id,
+      ...(requestedGameSnap.data() || {}),
+      ...(sharedPath ? { _sharedGamePath: requestedGameSnap.ref.path, isSharedGame: true } : {})
+    };
+    const displayGame = sharedPath
+      ? projectSharedGameForPublicTeam(requestedGame, teamId)
+      : requestedGame;
+    if (!displayGame || !canProjectPublicGame(team, displayGame)) return null;
+    if (requestedGame.trackingEngine !== 'diamond-v2') {
+      throw publicDiamondProjectionUnavailable('public-game-projection-changed');
+    }
+
+    let sourceTeamId = teamId;
+    let sourceGameId = gameId;
+    let sourceGame = requestedGame;
+    if (sharedPath) {
+      const canonicalSharedPath = normalizePublicDiamondSharedGamePath(sharedPath);
+      if (!canonicalSharedPath) {
+        throw publicDiamondProjectionUnavailable('diamond-shared-binding-invalid');
+      }
+      sourceTeamId = exactPublicDiamondResourceId(requestedGame.diamondSourceTeamId);
+      sourceGameId = exactPublicDiamondResourceId(requestedGame.diamondSourceGameId);
+      if (!sourceTeamId || !sourceGameId) {
+        throw publicDiamondProjectionUnavailable('diamond-shared-binding-invalid');
+      }
+      // Diamond public stat documents are source-team oriented. Until a
+      // complete opponent-oriented projection exists, never present them as
+      // the viewing team's statistics or infer source authority from that team.
+      if (sourceTeamId !== teamId) {
+        throw publicDiamondProjectionUnavailable(
+          'diamond-shared-source-inaccessible',
+          'Diamond statistics for this shared-game side are unavailable.'
+        );
+      }
+      const sourceGameSnap = await transaction.get(
+        firestore.doc(`teams/${sourceTeamId}/games/${sourceGameId}`)
+      );
+      if (!sourceGameSnap.exists) {
+        throw publicDiamondProjectionUnavailable('diamond-shared-binding-invalid');
+      }
+      sourceGame = {
+        ...(sourceGameSnap.data() || {}),
+        id: sourceGameId,
+        teamId: sourceTeamId
+      };
+      if (!canProjectPublicGame(team, sourceGame)) {
+        throw publicDiamondProjectionUnavailable('diamond-source-not-public');
+      }
+      if (!hasExactPublicDiamondSharedBacklink(sourceGame, canonicalSharedPath)) {
+        throw publicDiamondProjectionUnavailable('diamond-shared-binding-invalid');
+      }
+    } else {
+      sourceGame = { ...sourceGame, id: sourceGameId, teamId: sourceTeamId };
+    }
+
+    const canonicalIdentity = serializePublicDiamondGameIdentity(sourceGame);
+    if (!canonicalIdentity) {
+      throw publicDiamondProjectionUnavailable('diamond-projection-head-incomplete');
+    }
+    if (sharedPath && !hasMatchingPublicDiamondSharedHead(requestedGame, canonicalIdentity)) {
+      throw publicDiamondProjectionUnavailable('diamond-shared-head-mismatch');
+    }
+    const configSnap = await transaction.get(firestore.doc(
+      `teams/${sourceTeamId}/statTrackerConfigs/${canonicalIdentity.statTrackerConfigId}`
+    ));
+    let statConfigSnapshot = null;
+    if (configSnap.exists) {
+      try {
+        statConfigSnapshot = createDiamondStatConfigSnapshot({
+          teamId: sourceTeamId,
+          configId: canonicalIdentity.statTrackerConfigId,
+          config: configSnap.data() || {}
+        });
+      } catch {
+        statConfigSnapshot = null;
+      }
+    }
+    if (statConfigSnapshot?.snapshotHash !== canonicalIdentity.diamondStatConfigSnapshotHash) {
+      throw publicDiamondProjectionUnavailable('diamond-stat-config-snapshot-unavailable');
+    }
+    const opponentStatKeys = [...statConfigSnapshot.publicPlayerStatIds];
+    const opponentStats = serializePublicDiamondOpponentStats(
+      sourceGame.opponentStats,
+      opponentStatKeys,
+      canonicalIdentity
+    );
+    if (opponentStats === null) {
+      throw publicDiamondProjectionUnavailable('diamond-public-opponent-stats-incomplete');
+    }
+    const serializedDiamondStats = serializeDiamondPublicStatsResponse({
+      game: sourceGame,
+      teamId: sourceTeamId,
+      gameId: sourceGameId
+    });
+    const configBoundPublicTeamStats = sanitizeDiamondPublicTeamStatDocument({
+      game: sourceGame,
+      teamId: sourceTeamId,
+      gameId: sourceGameId,
+      allowedStatIds: statConfigSnapshot.publicTeamStatIds
+    });
+    if (
+      serializedDiamondStats.status !== 'complete' ||
+      serializedDiamondStats.complete !== true ||
+      !configBoundPublicTeamStats ||
+      JSON.stringify(configBoundPublicTeamStats.publicStatIds) !==
+        JSON.stringify(serializedDiamondStats.publicTeamStats.publicStatIds)
+    ) {
+      throw publicDiamondProjectionUnavailable('diamond-public-stats-incomplete');
+    }
+    const diamondStats = Object.freeze({
+      ...serializedDiamondStats,
+      publicTeamStats: configBoundPublicTeamStats
+    });
+    const publicIdentity = sharedPath
+      ? serializePublicDiamondGameIdentity({
+          ...displayGame,
+          ...canonicalIdentity,
+          diamondSourceTeamId: sourceTeamId,
+          diamondSourceGameId: sourceGameId
+        }, { sharedGamePath: sharedPath })
+      : canonicalIdentity;
+    if (!publicIdentity) {
+      throw publicDiamondProjectionUnavailable('diamond-shared-binding-invalid');
+    }
+    const state = {
+      team,
+      requestedGame,
+      displayGame,
+      sourceGame,
+      sourceTeamId,
+      sourceGameId,
+      publicIdentity,
+      diamondStats,
+      opponentStatKeys,
+      opponentStats,
+      requestedGamePath: requestedGameSnap.ref.path,
+      sharedPath
+    };
+    return {
+      ...state,
+      coherenceToken: publicDiamondProjectionCoherenceToken(state)
+    };
+  });
+}
+
+async function getPublicGameProjection(teamId, gameId, team) {
+  const sharedPath = decodePublicSharedGamePath(gameId);
+  const canonicalGameId = sharedPath ? '' : normalizeTeamId(gameId);
+  if (!sharedPath && !canonicalGameId) return null;
+  const gameRef = sharedPath
+    ? firestore.doc(sharedPath)
+    : firestore.doc(`teams/${teamId}/games/${canonicalGameId}`);
+  const gameSnap = await gameRef.get();
+  if (!gameSnap.exists) return null;
+  const rawGame = {
+    id: gameSnap.id,
+    ...(gameSnap.data() || {}),
+    ...(sharedPath ? { _sharedGamePath: gameSnap.ref.path, isSharedGame: true } : {})
+  };
+  const rawDisplayGame = sharedPath ? projectSharedGameForPublicTeam(rawGame, teamId) : rawGame;
+  if (!rawDisplayGame || !canProjectPublicGame(team, rawDisplayGame)) return null;
+  if (rawGame.trackingEngine === 'diamond-v2') {
+    const initial = await loadPublicDiamondProjectionState({ teamId, gameId, sharedPath });
+    if (!initial) return null;
+    const privateProjectedGame = await loadServerReplayProjection(
+      initial.requestedGame,
+      initial.requestedGamePath
+    );
+    const displayGame = sharedPath
+      ? projectSharedGameForPublicTeam(privateProjectedGame, teamId)
+      : privateProjectedGame;
+    if (!displayGame) return null;
+    const finalState = await loadPublicDiamondProjectionState({ teamId, gameId, sharedPath });
+    if (!finalState || finalState.coherenceToken !== initial.coherenceToken) {
+      throw publicDiamondProjectionUnavailable('public-game-projection-changed');
+    }
+    const exactGame = {
+      ...displayGame,
+      ...finalState.publicIdentity,
+      opponentStats: finalState.opponentStats,
+      diamondPublicTeamStats: finalState.diamondStats.publicTeamStats
+    };
+    const projection = serializePublicGame(exactGame, {
+      team: finalState.team,
+      recordedReplayMarkerOnly: true,
+      opponentStatKeys: finalState.opponentStatKeys,
+      includeDiamondIdentity: true,
+      sharedGamePath: sharedPath,
+      diamondPublicTeamStats: finalState.diamondStats.publicTeamStats
+    });
+    if (!projection || projection.id !== gameId) {
+      throw publicDiamondProjectionUnavailable('public-game-projection-id-mismatch');
+    }
+    return projection;
+  }
+  const privateProjectedGame = await loadServerReplayProjection(rawGame, gameSnap.ref.path);
+  const game = sharedPath ? projectSharedGameForPublicTeam(privateProjectedGame, teamId) : privateProjectedGame;
+  if (!game || !canProjectPublicGame(team, game)) return null;
+  const opponentStatKeysByGameId = await getPublicOpponentStatKeysByGameId(teamId, [game]);
+  return serializePublicGame(game, {
+    team,
+    recordedReplayMarkerOnly: true,
+    opponentStatKeys: opponentStatKeysByGameId.get(String(game.id || game.gameId || ''))
+  });
 }
 
 function sendPublicTeamApiSuccess(req, res, body) {
@@ -6488,32 +9916,61 @@ function buildPublicHomepageCandidateQuery(collectionName, category, now = new D
   } else {
     const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     query = query
-      .where('liveStatus', '==', 'completed')
+      .where('liveStatus', 'in', ['completed', 'final', 'complete', 'finished'])
       .where('date', '>=', start)
       .orderBy('date', 'desc');
   }
   return query.limit(PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY + 1);
 }
 
+function buildPublicHomepageStatsheetReplayCandidateQuery(collectionName, now = new Date()) {
+  const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  return firestore.collectionGroup(collectionName)
+    .where('status', 'in', ['completed', 'final', 'complete', 'finished'])
+    .where('date', '>=', start)
+    .orderBy('date', 'desc')
+    .limit(PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY + 1);
+}
+
 async function getPublicHomepageCandidateDocuments(collectionName, category, now) {
   const snapshot = await buildPublicHomepageCandidateQuery(collectionName, category, now).get();
-  const batch = buildPublicHomepageCandidateBatch(snapshot.docs);
-  if (batch.truncated) {
+  const statsheetSnapshot = category === 'replays'
+    ? await buildPublicHomepageStatsheetReplayCandidateQuery(collectionName, now).get()
+    : null;
+  const candidateDocs = [...snapshot.docs, ...(statsheetSnapshot?.docs || [])];
+  const uniqueDocs = [...new Map(candidateDocs.map((docSnap) => [
+    String(docSnap.ref?.path || `${collectionName}/${docSnap.id}`),
+    docSnap
+  ])).values()]
+    .sort((left, right) => {
+      const rightMillis = firestoreTimestampToMillis(right.data()?.date) ?? Number.NEGATIVE_INFINITY;
+      const leftMillis = firestoreTimestampToMillis(left.data()?.date) ?? Number.NEGATIVE_INFINITY;
+      return rightMillis - leftMillis
+        || String(left.ref?.path || left.id).localeCompare(String(right.ref?.path || right.id));
+    });
+  const batch = buildPublicHomepageCandidateBatch(uniqueDocs);
+  const queryTruncated = snapshot.docs.length > PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY
+    || (statsheetSnapshot?.docs.length || 0) > PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY;
+  if (batch.truncated || queryTruncated) {
     functions.logger.warn('Truncating a public homepage candidate query at the scan limit.', {
       collectionName,
       category,
       candidateLimit: PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY
     });
   }
-  return {
-    truncated: batch.truncated,
-    candidates: batch.candidates.map((docSnap) => ({
+  const candidates = await Promise.all(batch.candidates.map(async (docSnap) => {
+    const projected = await loadServerReplayProjection({
       id: docSnap.id,
       ...(docSnap.data() || {}),
       _sharedGamePath: collectionName === 'sharedGames' ? docSnap.ref.path : null,
       _teamId: collectionName === 'games' ? docSnap.ref?.parent?.parent?.id || '' : '',
       isSharedGame: collectionName === 'sharedGames'
-    }))
+    }, docSnap.ref?.path || '');
+    return projected;
+  }));
+  return {
+    truncated: batch.truncated || queryTruncated,
+    candidates
   };
 }
 
@@ -6642,13 +10099,16 @@ exports.publicTeamGamesV1 = functions
       }
 
       const games = await getPublicTeamGames(request.teamId, range);
+      const opponentStatKeysByGameId = await getPublicOpponentStatKeysByGameId(request.teamId, games);
       const body = buildPublicGamesResponse({
         teamId: request.teamId,
         team,
         games,
         from: range.from,
         to: range.to,
-        limit: range.limit
+        limit: range.limit,
+        opponentStatKeysByGameId,
+        recordedReplayMarkerOnly: true
       });
       sendPublicTeamApiSuccess(req, res, body);
     } catch (error) {
@@ -6669,8 +10129,8 @@ exports.publicTeamGamesIcs = functions
       return;
     }
 
-    const teamId = String(req.query.teamId || '').trim();
-    if (!teamId || !/^[A-Za-z0-9_-]{1,128}$/.test(teamId)) {
+    const teamId = normalizePublicCalendarTeamId(req.query.teamId);
+    if (!teamId) {
       res.status(400).send('Missing or invalid teamId');
       return;
     }
@@ -6695,7 +10155,7 @@ exports.publicTeamGamesIcs = functions
 
       const icsText = buildPublicGamesIcs({ teamId, team, games: publicGames });
       res.set('Content-Type', 'text/calendar; charset=utf-8');
-      res.set('Content-Disposition', `inline; filename="${teamId}-public-games.ics"`);
+      res.set('Content-Disposition', 'inline; filename="allplays-public-games.ics"');
       res.set('Cache-Control', 'public, max-age=300');
       res.status(200).send(req.method === 'HEAD' ? '' : icsText);
     } catch (error) {
@@ -6715,24 +10175,63 @@ async function getCalendarTokenSnapshot(teamId, tokenHash, token) {
   return legacyRef.get();
 }
 
-async function getCalendarTokenHolderUser(tokenData) {
-  const uid = tokenData.uid || tokenData.userId || tokenData.createdBy || null;
+async function getCalendarTokenHolderContext(tokenData) {
+  const uid = getCalendarTokenHolderId(tokenData);
   if (!uid) return null;
-  const userSnap = await firestore.doc(`users/${uid}`).get();
-  if (!userSnap.exists) return null;
-  return { uid, ...(userSnap.data() || {}) };
+  const [userSnap, deletionRequestSnap, authUser] = await Promise.all([
+    firestore.doc(`users/${uid}`).get(),
+    firestore.doc(`accountDeletionRequests/${uid}`).get(),
+    admin.auth().getUser(uid).catch((error) => {
+      if (error?.code === 'auth/user-not-found') return null;
+      throw error;
+    })
+  ]);
+  if (!userSnap.exists || !authUser || authUser.disabled === true) return null;
+  return {
+    profile: userSnap.data() || {},
+    authUser,
+    accountDeletionRequested: deletionRequestSnap.exists
+  };
 }
 
-function calendarTokenHasTeamAccess({ team, user, tokenData }) {
-  if (!team || !tokenData) return false;
-  const uid = user?.uid || tokenData.uid || tokenData.userId || tokenData.createdBy || null;
-  const email = String(user?.email || tokenData.email || tokenData.userEmail || '').trim().toLowerCase();
-  const adminEmails = Array.isArray(team.adminEmails) ? team.adminEmails.map((entry) => String(entry || '').toLowerCase()) : [];
-  const parentTeamIds = Array.isArray(user?.parentTeamIds) ? user.parentTeamIds : [];
-  return team.ownerId === uid ||
-    (email && adminEmails.includes(email)) ||
-    parentTeamIds.includes(tokenData.teamId);
-}
+const resolveTeamCalendarFeedCredential = createTeamCalendarFeedCredentialResolver({
+  loadTeam: async (teamId) => {
+    const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+    return teamSnap.exists ? teamSnap.data() || {} : null;
+  },
+  loadToken: async ({ teamId, tokenHash, token }) => {
+    const tokenSnap = await getCalendarTokenSnapshot(teamId, tokenHash, token);
+    return tokenSnap.exists ? tokenSnap.data() || {} : null;
+  },
+  loadTokenHolder: getCalendarTokenHolderContext
+});
+
+const getPrivateTeamCalendarFeedTokenHandler = createGetOrCreatePrivateTeamCalendarFeedHandler({
+  firestore,
+  auth: admin.auth(),
+  HttpsError: functions.https.HttpsError,
+  serverTimestamp: () => admin.firestore.FieldValue.serverTimestamp(),
+  assertFreshAuthUser: async ({ authUser }) => {
+    const verification = await assertSensitiveEmailVerified({
+      auth: {
+        uid: authUser.uid,
+        token: {
+          ...(authUser.customClaims || {}),
+          email: authUser.email || '',
+          email_verified: authUser.emailVerified === true
+        }
+      }
+    }, 'private-team-calendar-feed');
+    if (authUser.email && !verification.verified && !verification.exempt) {
+      throw new functions.https.HttpsError(
+        'failed-precondition',
+        'Verify your email before creating a private calendar feed.'
+      );
+    }
+  }
+});
+
+exports.getPrivateTeamCalendarFeedToken = functions.https.onCall(getPrivateTeamCalendarFeedTokenHandler);
 
 exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
   if (req.method !== 'GET') {
@@ -6740,41 +10239,14 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
     return;
   }
 
-  const { teamId, token, tokenHash } = normalizeCalendarRequest(req.query || {});
-  if (!teamId || !token || !tokenHash) {
-    res.status(401).send('Missing calendar token');
-    return;
-  }
-
   try {
-    const [teamSnap, tokenSnap] = await Promise.all([
-      firestore.doc(`teams/${teamId}`).get(),
-      getCalendarTokenSnapshot(teamId, tokenHash, token)
-    ]);
-
-    if (!teamSnap.exists || !tokenSnap.exists) {
-      res.status(403).send('Invalid calendar token');
+    const authorization = await resolveTeamCalendarFeedCredential(req.query || {});
+    if (!authorization.allowed) {
+      res.status(authorization.status).send(authorization.message);
       return;
     }
-
-    const team = teamSnap.data() || {};
-    const tokenData = { ...(tokenSnap.data() || {}), teamId };
-    if (tokenData.revoked === true || tokenData.disabled === true || tokenData.active === false) {
-      res.status(403).send('Revoked calendar token');
-      return;
-    }
-
-    const expiresAt = tokenData.expiresAt?.toDate ? tokenData.expiresAt.toDate() : (tokenData.expiresAt ? new Date(tokenData.expiresAt) : null);
-    if (expiresAt && !Number.isNaN(expiresAt.getTime()) && expiresAt <= new Date()) {
-      res.status(403).send('Expired calendar token');
-      return;
-    }
-
-    const tokenUser = await getCalendarTokenHolderUser(tokenData);
-    if (!calendarTokenHasTeamAccess({ team, user: tokenUser, tokenData })) {
-      res.status(403).send('Calendar token no longer has team access');
-      return;
-    }
+    const { teamId } = authorization.request;
+    const { team } = authorization;
 
     const [eventsSnap, recurringMastersSnap] = await Promise.all([
       getCalendarFeedGamesQuery(teamId).get(),
@@ -6795,7 +10267,7 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
     const icsText = buildTeamCalendarIcs({ teamId, team, events });
 
     res.set('Content-Type', 'text/calendar; charset=utf-8');
-    res.set('Content-Disposition', `inline; filename="${teamId}-schedule.ics"`);
+    res.set('Content-Disposition', 'inline; filename="allplays-team-schedule.ics"');
     res.set('Cache-Control', 'private, max-age=300');
     res.status(200).send(icsText);
   } catch (error) {
@@ -6823,6 +10295,8 @@ const FAMILY_SHARE_GAME_PROJECTION_FIELDS = [
   'opponent',
   'location',
   'status',
+  'liveStatus',
+  'isCancelled',
   'homeScore',
   'awayScore',
   'sharedGameId',
@@ -6978,7 +10452,11 @@ function serializeFamilyShareOverrides(value) {
     }));
 }
 
-function serializeFamilyShareGame(docSnap, { includeInternalCalendarUidHash = false } = {}) {
+function serializeFamilyShareGame(docSnap, {
+  includeInternalCalendarUidHash = false,
+  team = null,
+  replayProjection = null
+} = {}) {
   const data = docSnap.data() || {};
   const game = {
     id: docSnap.id,
@@ -6999,12 +10477,54 @@ function serializeFamilyShareGame(docSnap, { includeInternalCalendarUidHash = fa
           .map(normalizeFamilyShareText)
           .filter((dateKey) => /^\d{4}-\d{2}-\d{2}$/.test(dateKey))
           .slice(0, 1000);
+      } else if (field === 'liveStatus') {
+        game[field] = normalizeFamilyShareText(data[field]).slice(0, 32).toLowerCase();
       } else {
         game[field] = serializeFamilyShareValue(data[field]);
       }
     }
   });
+  const serverProjectionData = replayProjection || buildSanitizedReplayServerProjection(
+    data,
+    null,
+    normalizeFamilyShareText(docSnap?.ref?.path)
+  );
+  const publicProjection = canProjectPublicGame(team || {}, serverProjectionData)
+    ? serializePublicGame({ id: docSnap.id, ...serverProjectionData }, {
+        team: team || {},
+        recordedReplayMarkerOnly: true
+      })
+    : null;
+  if (publicProjection) {
+    game.status = publicProjection.sourceStatus || publicProjection.status || null;
+    game.liveStatus = publicProjection.liveStatus || null;
+  }
+  if (data.isCancelled === true
+    || ['cancelled', 'canceled'].includes(normalizeFamilyShareText(game.status).toLowerCase())
+    || ['cancelled', 'canceled'].includes(normalizeFamilyShareText(game.liveStatus).toLowerCase())) {
+    game.isCancelled = true;
+  } else {
+    delete game.isCancelled;
+  }
+  game.canOpenPublicViewer = Boolean(publicProjection);
+  game.hasReplayVideo = serverProjectionData.hasRecordedReplay === true;
   return game;
+}
+
+async function loadFamilyShareReplayProjection(docSnap, projectedData = null) {
+  const data = projectedData || docSnap?.data?.() || {};
+  const path = normalizeFamilyShareText(docSnap?.ref?.path);
+  if (!path) {
+    throw new functions.https.HttpsError('unavailable', 'Family replay status is temporarily unavailable.');
+  }
+  try {
+    return await loadServerReplayProjection(data, path);
+  } catch (error) {
+    if (error instanceof functions.https.HttpsError) throw error;
+    throw new functions.https.HttpsError('unavailable', 'Family replay status is temporarily unavailable.', {
+      reason: error?.code || 'archive-read-failed'
+    });
+  }
 }
 
 function getFamilyShareSharedGamePath(docSnap) {
@@ -7066,7 +10586,7 @@ function chargeFamilyShareReadBudget(teamBudget, count) {
   teamBudget.remaining -= charged;
 }
 
-async function loadFamilyShareSharedGamesForTeam(teamId, teamBudget, includeInternalCalendarUidHash) {
+async function loadFamilyShareSharedGamesForTeam(teamId, team, teamBudget, includeInternalCalendarUidHash) {
   if (
     typeof firestore.collectionGroup !== 'function'
     || teamBudget.remaining <= 0
@@ -7098,16 +10618,17 @@ async function loadFamilyShareSharedGamesForTeam(teamId, teamBudget, includeInte
     }
   }
 
-  return [...docsByPath.values()]
-    .map((docSnap) => {
+  return (await Promise.all([...docsByPath.values()]
+    .map(async (docSnap) => {
       const projected = projectFamilyShareSharedGameForTeam(docSnap, teamId);
       if (!projected) return null;
+      const replayProjection = await loadFamilyShareReplayProjection(docSnap, projected);
       const sharedGamePath = projected.sharedGamePath || getFamilyShareSharedGamePath(docSnap);
       return serializeFamilyShareGame({
         id: buildFamilyShareSharedGameSyntheticId(sharedGamePath),
         data: () => projected
-      }, { includeInternalCalendarUidHash });
-    })
+      }, { includeInternalCalendarUidHash, team, replayProjection });
+    })))
     .filter(Boolean);
 }
 
@@ -7148,12 +10669,15 @@ async function loadFamilyShareScheduleTeams(children, {
         .get();
       const boundedDocs = gamesSnap.docs.slice(0, directQueryLimit);
       chargeFamilyShareReadBudget(teamBudget, boundedDocs.length);
-      directGames = boundedDocs.map((docSnap) => serializeFamilyShareGame(docSnap, {
-        includeInternalCalendarUidHash
-      }));
+      directGames = await Promise.all(boundedDocs.map(async (docSnap) => serializeFamilyShareGame(docSnap, {
+        includeInternalCalendarUidHash,
+        team,
+        replayProjection: await loadFamilyShareReplayProjection(docSnap)
+      })));
     }
     const sharedGames = await loadFamilyShareSharedGamesForTeam(
       teamId,
+      team,
       teamBudget,
       includeInternalCalendarUidHash
     );
@@ -7173,20 +10697,23 @@ async function loadFamilyShareScheduleTeams(children, {
   }));
 }
 
-exports.resolveFamilyShareTokenChildren = functions.https.onCall(async (data) => {
+exports.resolveFamilyShareTokenChildren = functions.https.onCall(async (data, context) => {
+  await assertFamilyShareRequestRateLimit(context);
   const token = await loadReadableFamilyShareToken(requireFamilyShareTokenId(data));
   return { children: await resolveReadableFamilyShareChildren(token) };
 });
 
-exports.getFamilyShareSchedule = functions.https.onCall(async (data) => {
+exports.getFamilyShareSchedule = functions.https.onCall(async (data, context) => {
+  await assertFamilyShareRequestRateLimit(context);
   const token = await loadReadableFamilyShareToken(requireFamilyShareTokenId(data));
   const children = await resolveReadableFamilyShareChildren(token);
   const teams = await loadFamilyShareScheduleTeams(children);
   return { children, teams };
 });
 
-function assertFamilyShareViewRateLimit(context) {
-  const result = checkFamilyShareViewRateLimit(context?.rawRequest || {});
+async function assertFamilyShareRequestRateLimit(context) {
+  const requestIp = getRequestIp(context?.rawRequest || {});
+  const result = await checkFamilyShareRequestRateLimit(`family-share:${requestIp}`);
   if (!result.allowed) {
     throw new functions.https.HttpsError('resource-exhausted', 'Too many family page requests. Try again shortly.', {
       retryAfterSeconds: result.retryAfterSeconds
@@ -7306,7 +10833,7 @@ exports.getFamilyShareView = functions
   .runWith({ timeoutSeconds: 30, memory: '256MB' })
   .https
   .onCall(async (data, context) => {
-    assertFamilyShareViewRateLimit(context);
+    await assertFamilyShareRequestRateLimit(context);
     const token = await loadReadableFamilyShareToken(requireFamilyShareTokenId(data));
     const children = await resolveReadableFamilyShareChildren(token);
     const teams = await loadFamilyShareScheduleTeams(children, {
@@ -7447,7 +10974,18 @@ async function getNotificationTargetTeamAccessMap(uid, teamIds) {
   }
 
   const user = userSnap.data() || {};
-  const email = String(user.email || user.profileEmail || '').trim().toLowerCase();
+  let email = '';
+  try {
+    const authUser = await admin.auth().getUser(uid);
+    if (authUser?.disabled !== true) {
+      email = String(authUser?.email || '').trim().toLowerCase();
+    }
+  } catch (error) {
+    if (!['auth/user-not-found', 'auth/user-disabled'].includes(error?.code)) {
+      console.warn('Unable to resolve notification target auth email', uid, error);
+      throw error;
+    }
+  }
   const parentTeamIds = new Set(Array.isArray(user.parentTeamIds) ? user.parentTeamIds.map((teamId) => String(teamId || '').trim()).filter(Boolean) : []);
   const teamSnaps = await Promise.all(uniqueTeamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get()));
 
@@ -7532,6 +11070,18 @@ async function teamNotificationRecipientIndexIsEmpty(teamId) {
   return !(recipientSnap.docs || []).some((docSnap) => isAggregateNotificationRecipientDoc(docSnap));
 }
 
+function hasCurrentTeamOwnerIdentity({ team, uid, email = '' }) {
+  const normalizedUid = String(uid || '').trim();
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const ownerId = String(team?.ownerId || '').trim();
+  if (ownerId) return Boolean(normalizedUid && ownerId === normalizedUid);
+
+  const ownerEmails = [...new Set([team?.ownerEmail, team?.ownerEmailLower]
+    .map((entry) => String(entry || '').trim().toLowerCase())
+    .filter(Boolean))];
+  return Boolean(normalizedEmail && ownerEmails.length === 1 && ownerEmails[0] === normalizedEmail);
+}
+
 function getNotificationRecipientRoles({ teamId, team, user, uid, email = '' }) {
   const normalizedTeamId = String(teamId || '').trim();
   const normalizedUid = String(uid || '').trim();
@@ -7539,7 +11089,7 @@ function getNotificationRecipientRoles({ teamId, team, user, uid, email = '' }) 
   if (!normalizedTeamId || !normalizedUid || !team || !user) return [];
 
   const roles = new Set();
-  if (team.ownerId === normalizedUid) {
+  if (hasCurrentTeamOwnerIdentity({ team, uid: normalizedUid, email: normalizedEmail })) {
     roles.add('staff');
   }
 
@@ -7618,11 +11168,29 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
     return null;
   }
 
-  const email = String(
-    options.authEmail !== undefined
-      ? options.authEmail
-      : (resolvedUser.email || resolvedUser.profileEmail || '')
-  ).trim().toLowerCase();
+  let authoritativeAuthEmail = options.authEmail;
+  let authUserEnabled = true;
+  if (authoritativeAuthEmail === undefined) {
+    try {
+      const authUser = await admin.auth().getUser(normalizedUid);
+      authUserEnabled = authUser?.disabled !== true;
+      authoritativeAuthEmail = authUserEnabled ? (authUser?.email || '') : '';
+    } catch (error) {
+      if (!['auth/user-not-found', 'auth/user-disabled'].includes(error?.code)) {
+        throw error;
+      }
+      authUserEnabled = false;
+      authoritativeAuthEmail = '';
+    }
+  }
+  if (!authUserEnabled) {
+    if (!skipLegacyCleanup) {
+      await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
+    }
+    await recipientRef.delete();
+    return null;
+  }
+  const email = String(authoritativeAuthEmail || '').trim().toLowerCase();
   const roles = getNotificationRecipientRoles({
     teamId,
     team: resolvedTeam,
@@ -7664,7 +11232,7 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
     roles,
     categories: normalizeNotificationTargetCategories(preferences),
     tokens,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    updatedAt: FirestoreFieldValue.serverTimestamp()
   }, { merge: true });
   return { uid: normalizedUid, teamId, roles, tokenCount: tokens.length };
 }
@@ -7688,6 +11256,7 @@ async function getNotificationRecipientTeamIdsForUser(user, uid, extraTeamIds = 
   const authIdentity = await loadPublicUserProfileAuthIdentity(normalizedUid);
   const forceRemove = !user
     || authIdentity.userMissing === true
+    || authIdentity.userDisabled === true
     || authIdentity.emailVerified !== true;
   if (forceRemove) {
     const indexedStaffTeamIds = await loadPublicProfileStaffTeamIds(firestore, normalizedUid);
@@ -7881,10 +11450,35 @@ exports.syncTeamOwnerAccessOnCreate = functions
   .document('teams/{teamId}')
   .onCreate(createTeamOwnerAccessSyncHandler({
     firestore,
-    fieldValue: admin.firestore.FieldValue
+    fieldValue: FirestoreFieldValue
   }));
 
-exports.syncTeamNotificationTargetsOnPreferenceWrite = functions.firestore
+const legacyTeamOwnerAuthSyncHandler = createLegacyTeamOwnerAuthSyncHandler({
+  firestore,
+  fieldValue: FirestoreFieldValue
+});
+
+exports.syncLegacyTeamOwnershipOnAuthCreate = functions
+  .runWith({ failurePolicy: true })
+  .auth
+  .user()
+  .onCreate(legacyTeamOwnerAuthSyncHandler);
+
+exports.reconcileLegacyTeamOwnership = functions
+  .runWith({ timeoutSeconds: 540, memory: '512MB', failurePolicy: true })
+  .pubsub
+  .schedule('every 24 hours')
+  .onRun(createLegacyTeamOwnerReconciliationHandler({
+    firestore,
+    auth: admin.auth(),
+    documentIdField: () => FirestoreFieldPath.documentId(),
+    checkpointRef: firestore.doc('systemJobs/legacyTeamOwnerReconciliation'),
+    syncAuthUser: legacyTeamOwnerAuthSyncHandler
+  }));
+
+exports.syncTeamNotificationTargetsOnPreferenceWrite = functions
+  .runWith({ failurePolicy: true })
+  .firestore
   .document('users/{uid}/notificationPreferences/{teamId}')
   .onWrite(async (change, context) => {
     const { uid, teamId } = context.params;
@@ -7896,7 +11490,9 @@ exports.syncTeamNotificationTargetsOnPreferenceWrite = functions.firestore
     return null;
   });
 
-exports.syncTeamNotificationTargetsOnDeviceWrite = functions.firestore
+exports.syncTeamNotificationTargetsOnDeviceWrite = functions
+  .runWith({ failurePolicy: true })
+  .firestore
   .document('users/{uid}/notificationDevices/{deviceId}')
   .onWrite(async (change, context) => {
     const { uid, deviceId } = context.params;
@@ -8764,62 +12360,107 @@ async function releaseTeamMediaNotificationBatchAfterFailure(batchRef, claimId, 
   });
 }
 
-async function dispatchDueTeamMediaNotificationBatches(now = new Date()) {
-  const dueSnap = await firestore.collection('teamMediaNotificationBatches')
-    .where('status', '==', 'pending')
-    .where('dueAt', '<=', admin.firestore.Timestamp.fromDate(now))
-    .limit(TEAM_MEDIA_NOTIFICATION_DISPATCH_LIMIT)
-    .get();
-  const results = [];
-
-  for (const docSnap of dueSnap.docs) {
-    const batchRef = docSnap.ref;
-    const claimId = `team-media-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const batch = await claimTeamMediaNotificationBatch(batchRef, claimId, now);
-    if (!batch) continue;
-
-    try {
-      const folderSnap = await firestore.doc(`teams/${batch.teamId}/mediaFolders/${batch.folderId}`).get();
-      if (!folderSnap.exists) {
-        await markTeamMediaNotificationBatchSkipped(batchRef, claimId, 'album_not_found');
-        continue;
+async function dispatchDueTeamMediaNotificationBatches(now = new Date(), options = {}) {
+  const drainSummary = await drainDueReminderPages({
+    now,
+    maxPages: options.maxPages || TEAM_MEDIA_NOTIFICATION_MAX_PAGES_PER_RUN,
+    maxRuntimeMs: options.maxRuntimeMs || TEAM_MEDIA_NOTIFICATION_MAX_RUNTIME_MS,
+    loadPage: async ({ dueIso, cursor, limit }) => {
+      let query = firestore.collection('teamMediaNotificationBatches')
+        .where('status', '==', 'pending')
+        .where('dueAt', '<=', admin.firestore.Timestamp.fromDate(new Date(dueIso)))
+        .orderBy('dueAt', 'asc');
+      if (cursor) {
+        query = query.startAfter(cursor);
       }
+      const dueSnap = await query
+        .limit(limit || TEAM_MEDIA_NOTIFICATION_QUERY_PAGE_SIZE)
+        .get();
+      return {
+        docs: dueSnap.docs,
+        nextCursor: dueSnap.docs[dueSnap.docs.length - 1] || null
+      };
+    },
+    processReminder: async (docSnap) => {
+      const batchRef = docSnap.ref;
+      const claimId = `team-media-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const batch = await claimTeamMediaNotificationBatch(batchRef, claimId, now);
+      if (!batch) return null;
 
-      const folder = folderSnap.data() || {};
-      const audienceContext = buildTeamMediaNotificationAudienceContext({
-        ...folder,
-        visibility: folder.visibility || batch.albumVisibility || batch.audienceContext?.albumVisibility
-      });
-      const albumVisibility = audienceContext.albumVisibility;
+      try {
+        const folderSnap = await firestore.doc(`teams/${batch.teamId}/mediaFolders/${batch.folderId}`).get();
+        if (!folderSnap.exists) {
+          await markTeamMediaNotificationBatchSkipped(batchRef, claimId, 'album_not_found');
+          return { status: 'skipped', batchId: batch.id };
+        }
 
-      const payload = buildTeamMediaNotificationPayload({
-        ...batch,
-        albumName: normalizeTeamMediaNotificationText(folder.name || batch.albumName),
-        albumVisibility
-      });
-      const sendResult = await sendCategoryNotification({
-        teamId: batch.teamId,
-        category: 'media',
-        title: payload.title,
-        body: payload.body,
-        dedupKey: `team-media:${batch.id}`,
-        audienceContext
-      });
-      await markTeamMediaNotificationBatchSent(batchRef, claimId, sendResult);
-      results.push({
-        teamId: batch.teamId,
-        folderId: batch.folderId,
-        itemCount: Number(batch.itemCount || 0),
-        successCount: Number(sendResult?.successCount || 0),
-        failureCount: Number(sendResult?.failureCount || 0)
-      });
-    } catch (error) {
-      await releaseTeamMediaNotificationBatchAfterFailure(batchRef, claimId, error);
-      console.error('Failed to dispatch team media notification batch', { batchId: batch.id, error });
+        const folder = folderSnap.data() || {};
+        const audienceContext = buildTeamMediaNotificationAudienceContext({
+          ...folder,
+          visibility: folder.visibility || batch.albumVisibility || batch.audienceContext?.albumVisibility
+        });
+        const albumVisibility = audienceContext.albumVisibility;
+
+        const payload = buildTeamMediaNotificationPayload({
+          ...batch,
+          albumName: normalizeTeamMediaNotificationText(folder.name || batch.albumName),
+          albumVisibility
+        });
+        const sendResult = await sendCategoryNotification({
+          teamId: batch.teamId,
+          category: 'media',
+          title: payload.title,
+          body: payload.body,
+          dedupKey: `team-media:${batch.id}`,
+          audienceContext
+        });
+        await markTeamMediaNotificationBatchSent(batchRef, claimId, sendResult);
+        return {
+          status: 'sent',
+          batchId: batch.id,
+          result: {
+            teamId: batch.teamId,
+            folderId: batch.folderId,
+            itemCount: Number(batch.itemCount || 0),
+            successCount: Number(sendResult?.successCount || 0),
+            failureCount: Number(sendResult?.failureCount || 0)
+          }
+        };
+      } catch (error) {
+        await releaseTeamMediaNotificationBatchAfterFailure(batchRef, claimId, error);
+        console.error('Failed to dispatch team media notification batch', { batchId: batch.id, error });
+        if (isNotificationAuthResolutionFailure(error)) throw error;
+        return { status: 'releasedPending', batchId: batch.id };
+      }
     }
-  }
-
-  return results;
+  });
+  const processedResults = drainSummary.results.filter(Boolean);
+  const sentResults = processedResults.filter((result) => result.status === 'sent');
+  const skippedCount = processedResults.filter((result) => result.status === 'skipped').length;
+  const releasedPendingCount = processedResults.filter((result) => result.status === 'releasedPending').length;
+  const summary = {
+    ...drainSummary,
+    stoppedBecause: drainSummary.stoppedBecause,
+    results: sentResults.map((result) => result.result),
+    examinedCount: drainSummary.results.length,
+    processedCount: processedResults.length,
+    sentCount: sentResults.length,
+    skippedCount,
+    releasedPendingCount,
+    backlogDrained: drainSummary.stoppedBecause === 'drained' && releasedPendingCount === 0
+  };
+  console.info('Team media notification drain summary', {
+    dueIso: summary.dueIso,
+    pagesAttempted: summary.pagesAttempted,
+    stoppedBecause: summary.stoppedBecause,
+    examinedCount: summary.examinedCount,
+    processedCount: summary.processedCount,
+    sentCount: summary.sentCount,
+    skippedCount: summary.skippedCount,
+    releasedPendingCount: summary.releasedPendingCount,
+    backlogDrained: summary.backlogDrained
+  });
+  return summary;
 }
 
 async function getUserIdsByEmails(emails) {
@@ -8835,12 +12476,72 @@ async function getUserIdsByEmails(emails) {
     uniqueEmails.map((email) => admin.auth().getUserByEmail(email))
   );
   lookupResults.forEach((result) => {
-    if (result.status === 'fulfilled' && result.value?.uid) {
+    if (
+      result.status === 'fulfilled'
+      && result.value?.uid
+      && result.value?.disabled !== true
+    ) {
       ids.add(result.value.uid);
     }
   });
   return Array.from(ids);
 }
+
+async function getEnabledNotificationAuthUsers(userIds) {
+  const uniqueUserIds = Array.from(new Set(
+    (Array.isArray(userIds) ? userIds : [])
+      .map((uid) => String(uid || '').trim())
+      .filter((uid) => uid && uid.length <= 128 && !/[\u0000-\u001f\u007f]/.test(uid))
+  ));
+  const enabledUsers = new Map();
+  for (let offset = 0; offset < uniqueUserIds.length; offset += 100) {
+    const identifiers = uniqueUserIds.slice(offset, offset + 100).map((uid) => ({ uid }));
+    let result;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        result = await admin.auth().getUsers(identifiers);
+        break;
+      } catch (error) {
+        const code = String(error?.code || error?.errorInfo?.code || '').toLowerCase();
+        const retryable = [
+          'auth/internal-error',
+          'auth/network-request-failed',
+          'auth/too-many-requests',
+          'auth/service-unavailable',
+          'unavailable',
+          'deadline-exceeded'
+        ].some((candidate) => code === candidate || code.endsWith(`/${candidate}`));
+        if (!retryable || attempt === 2) {
+          const taggedError = error instanceof Error
+            ? error
+            : new Error(String(error || 'Firebase Auth user resolution failed.'));
+          taggedError.notificationAuthResolutionFailed = true;
+          throw taggedError;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50 * (2 ** attempt)));
+      }
+    }
+    (result.users || []).forEach((authUser) => {
+      const uid = String(authUser?.uid || '').trim();
+      if (uid && authUser?.disabled !== true) enabledUsers.set(uid, authUser);
+    });
+  }
+  return enabledUsers;
+}
+
+async function getEnabledNotificationAuthUserIds(userIds) {
+  return new Set((await getEnabledNotificationAuthUsers(userIds)).keys());
+}
+
+function isNotificationAuthResolutionFailure(error) {
+  return error?.notificationAuthResolutionFailed === true;
+}
+
+const retryableNotificationFunctions = functions.runWith({ failurePolicy: true });
+const retryableTeamMediaNotificationFunctions = functions.runWith({
+  failurePolicy: true,
+  timeoutSeconds: 540
+});
 
 async function getCandidateUsersForTeam(teamId) {
   const teamSnap = await firestore.doc(`teams/${teamId}`).get();
@@ -8864,7 +12565,8 @@ async function getCandidateUsersForTeam(teamId) {
   const adminUserIds = await getUserIdsByEmails(team.adminEmails || []);
   adminUserIds.forEach((id) => addRole(id, 'staff'));
 
-  return Array.from(users.values()).map((entry) => ({
+  const enabledUserIds = await getEnabledNotificationAuthUserIds(Array.from(users.keys()));
+  return Array.from(users.values()).filter((entry) => enabledUserIds.has(entry.uid)).map((entry) => ({
     uid: entry.uid,
     roles: Array.from(entry.roles)
   }));
@@ -8961,8 +12663,60 @@ function canReceiveCategoryNotification(category, user, audienceContext = {}) {
   return mediaAudienceAllowsUser(user, audienceContext);
 }
 
+async function revalidateNotificationEffectTargets({
+  targets,
+  teamId,
+  category,
+  audienceContext = {},
+  requireCanonicalTeamAccess = false
+}) {
+  const logicalTargets = dedupeNotificationTargets(targets);
+  const userIds = Array.from(new Set(
+    logicalTargets.map((target) => String(target?.uid || '').trim()).filter(Boolean)
+  ));
+  if (!userIds.length) return [];
+
+  const enabledAuthUsers = await getEnabledNotificationAuthUsers(userIds);
+  if (!requireCanonicalTeamAccess) {
+    return logicalTargets.filter((target) => enabledAuthUsers.has(String(target?.uid || '').trim()));
+  }
+
+  const normalizedTeamId = String(teamId || '').trim();
+  if (!normalizedTeamId) return [];
+  const userRefs = userIds.map((uid) => firestore.doc(`users/${uid}`));
+  const [teamSnap, userSnaps] = await Promise.all([
+    firestore.doc(`teams/${normalizedTeamId}`).get(),
+    userRefs.length ? firestore.getAll(...userRefs) : Promise.resolve([])
+  ]);
+  if (!teamSnap.exists) return [];
+
+  const team = teamSnap.data() || {};
+  const eligibleUserIds = new Set();
+  userSnaps.forEach((userSnap, index) => {
+    const uid = userIds[index];
+    const authUser = enabledAuthUsers.get(uid);
+    if (!authUser || !userSnap?.exists) return;
+    const roles = getNotificationRecipientRoles({
+      teamId: normalizedTeamId,
+      team,
+      user: userSnap.data() || {},
+      uid,
+      email: String(authUser.email || '').trim().toLowerCase()
+    });
+    if (canReceiveCategoryNotification(category, { uid, roles }, audienceContext)) {
+      eligibleUserIds.add(uid);
+    }
+  });
+
+  return logicalTargets.filter((target) => eligibleUserIds.has(String(target?.uid || '').trim()));
+}
+
 async function getLegacyTargetsForCategory(teamId, category, users, actorUid = null, audienceContext = {}) {
+  const enabledUserIds = await getEnabledNotificationAuthUserIds(
+    (Array.isArray(users) ? users : []).map((user) => user?.uid)
+  );
   const queryTasks = users
+    .filter((user) => enabledUserIds.has(String(user?.uid || '').trim()))
     .filter((user) => user?.uid && user.uid !== actorUid && canReceiveCategoryNotification(category, user, audienceContext))
     .map(async (user) => {
       const uid = user.uid;
@@ -9150,13 +12904,29 @@ function dedupeNotificationTargets(targets) {
   });
 }
 
-async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}, additionalUsers = []) {
+async function getTargetsForCategory(
+  teamId,
+  category,
+  actorUid = null,
+  audienceContext = {},
+  additionalUsers = [],
+  telemetryOptions = {},
+) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
 
   const targetSnap = await firestore.collection(`teams/${teamId}/notificationRecipients`)
     .where(`categories.${category}`, '==', true)
     .get();
-  const categoryRecipientDocs = targetSnap.docs || [];
+  const rawCategoryRecipientDocs = targetSnap.docs || [];
+  const enabledAuthUserIds = await getEnabledNotificationAuthUserIds([
+    ...rawCategoryRecipientDocs.map((docSnap) => getNotificationRecipientDocUid(docSnap)),
+    ...(Array.isArray(additionalUsers) ? additionalUsers.map((user) => user?.uid) : [])
+  ]);
+  const categoryRecipientDocs = rawCategoryRecipientDocs.filter((docSnap) => (
+    enabledAuthUserIds.has(getNotificationRecipientDocUid(docSnap))
+  ));
+  const enabledAdditionalUsers = (Array.isArray(additionalUsers) ? additionalUsers : [])
+    .filter((user) => enabledAuthUserIds.has(String(user?.uid || '').trim()));
   const indexedRecipientDocs = categoryRecipientDocs.filter(isAggregateNotificationRecipientDoc);
   if (indexedRecipientDocs.length) {
     const { eligibleUsers, fallbackTargets } = await resolveMixedNotificationRecipientIndex({
@@ -9165,7 +12935,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
       actorUid,
       audienceContext,
       recipientDocs: categoryRecipientDocs,
-      additionalUsers
+      additionalUsers: enabledAdditionalUsers
     });
     const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (
       isLegacyTargetNotificationRecipientDoc(docSnap)
@@ -9192,7 +12962,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
       actorUid,
       audienceContext,
       recipientDocs: categoryRecipientDocs,
-      additionalUsers
+      additionalUsers: enabledAdditionalUsers
     });
     const legacyTargets = legacyTargetRecipientDocs
       .filter((docSnap) => eligibleUsers.has(getNotificationRecipientDocUid(docSnap)))
@@ -9211,7 +12981,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
       actorUid,
       audienceContext,
       recipientDocs: categoryRecipientDocs,
-      additionalUsers
+      additionalUsers: enabledAdditionalUsers
     });
     const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (
       !isAggregateNotificationRecipientDoc(docSnap)
@@ -9226,7 +12996,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
   const candidateUsers = await getCandidateUsersForTeam(teamId);
   const mergedUsers = new Map();
   candidateUsers.forEach((user) => mergeNotificationResolutionUser(mergedUsers, user));
-  (Array.isArray(additionalUsers) ? additionalUsers : []).forEach((user) => mergeNotificationResolutionUser(mergedUsers, user));
+  enabledAdditionalUsers.forEach((user) => mergeNotificationResolutionUser(mergedUsers, user));
 
   const users = Array.from(mergedUsers.values()).map((entry) => ({
     uid: entry.uid,
@@ -9238,11 +13008,16 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
       await backfillNotificationRecipientsForTeam(teamId, users, { skipLegacyCleanup: true });
     } catch (error) {
       const logger = typeof functions !== 'undefined' ? functions.logger : null;
-      logger?.warn?.('Failed to backfill notification recipient index after empty lookup', {
-        teamId,
-        category,
-        error: error?.message || String(error || 'Unknown error')
-      });
+      logger?.warn?.(
+        'Failed to backfill notification recipient index after empty lookup',
+        telemetryOptions.suppressResourceTelemetry === true
+          ? { category }
+          : {
+              teamId,
+              category,
+              error: error?.message || String(error || 'Unknown error')
+            },
+      );
     }
   }
 
@@ -9252,10 +13027,11 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
 
 async function getTargetsForCategoryUserIds(teamId, category, userIds = [], actorUid = null, audienceContext = {}) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
+  const enabledAuthUserIds = await getEnabledNotificationAuthUserIds(userIds);
   const recipientUserIds = new Set(
     (Array.isArray(userIds) ? userIds : [])
       .map((uid) => String(uid || '').trim())
-      .filter(Boolean)
+      .filter((uid) => uid && enabledAuthUserIds.has(uid))
   );
   if (!recipientUserIds.size) return [];
 
@@ -9639,7 +13415,9 @@ async function writeNotificationInboxRecords({
   teamId,
   gameId = null,
   eventId = null,
-  conversationId = null
+  conversationId = null,
+  deliveryIdempotencyKey = null,
+  suppressResourceTelemetry = false,
 }) {
   const uniqueTargets = getUniqueNotificationInboxTargets(targets);
   if (!uniqueTargets.length) {
@@ -9648,22 +13426,64 @@ async function writeNotificationInboxRecords({
 
   const createdAt = admin.firestore.FieldValue.serverTimestamp();
   const readAt = null;
-  const results = await Promise.allSettled(uniqueTargets.map(async (target) => {
-    const inboxRef = firestore.collection(`users/${target.uid}/notificationInbox`);
-    await inboxRef.add(buildNotificationInboxPayload({
-      category,
-      title,
-      body,
-      appRoute,
-      teamId,
-      gameId,
-      eventId,
-      conversationId,
-      createdAt,
-      readAt
-    }));
-    return cleanupNotificationInbox(inboxRef);
-  }));
+  const results = await runWithConcurrencyLimit(
+    uniqueTargets,
+    NOTIFICATION_INBOX_WRITE_CONCURRENCY,
+    async (target) => {
+      try {
+        const inboxRef = firestore.collection(`users/${target.uid}/notificationInbox`);
+        const candidatePayload = buildNotificationInboxPayload({
+          category,
+          title,
+          body,
+          appRoute,
+          teamId,
+          gameId,
+          eventId,
+          conversationId,
+          createdAt,
+          readAt
+        });
+        if (deliveryIdempotencyKey) {
+          const itemRef = firestore.doc(
+            `users/${target.uid}/notificationInbox/${deliveryIdempotencyKey}`,
+          );
+          await firestore.runTransaction(async (transaction) => {
+            const existingSnapshot = await transaction.get(itemRef);
+            const existing = existingSnapshot.exists
+              ? existingSnapshot.data() || {}
+              : null;
+            if (
+              existing &&
+              (existing.category !== candidatePayload.category ||
+                existing.title !== candidatePayload.title ||
+                existing.body !== candidatePayload.body ||
+                existing.appRoute !== candidatePayload.appRoute ||
+                existing.teamId !== candidatePayload.teamId ||
+                existing.gameId !== candidatePayload.gameId ||
+                existing.eventId !== candidatePayload.eventId ||
+                existing.conversationId !== candidatePayload.conversationId)
+            ) {
+              throw new Error(
+                'The notification inbox idempotency key is already bound to another notification.',
+              );
+            }
+            transaction.set(itemRef, {
+              ...candidatePayload,
+              deliveryIdempotencyKey,
+              createdAt: existing?.createdAt ?? createdAt,
+              readAt: existing?.readAt ?? readAt,
+            });
+          });
+        } else {
+          await inboxRef.add(candidatePayload);
+        }
+        return { status: 'fulfilled', value: await cleanupNotificationInbox(inboxRef) };
+      } catch (reason) {
+        return { status: 'rejected', reason };
+      }
+    }
+  );
 
   let writeCount = 0;
   let cleanupCount = 0;
@@ -9675,11 +13495,16 @@ async function writeNotificationInboxRecords({
       return;
     }
     failureCount += 1;
-    functions.logger.warn('Failed to write notification inbox record', {
-      category,
-      teamId,
-      error: result.reason?.message || String(result.reason || 'Unknown error')
-    });
+    functions.logger.warn(
+      'Failed to write notification inbox record',
+      suppressResourceTelemetry
+        ? { category }
+        : {
+            category,
+            teamId,
+            error: result.reason?.message || String(result.reason || 'Unknown error')
+          },
+    );
   });
 
   return { writeCount, cleanupCount, failureCount };
@@ -9701,7 +13526,8 @@ async function writeNotificationAuditRecord({
   conversationId = null,
   batchId = null,
   recipientId = null,
-  dedupGuardApplied = false
+  dedupGuardApplied = false,
+  suppressResourceTelemetry = false,
 }) {
   if (!teamId || !category) return;
 
@@ -9735,11 +13561,16 @@ async function writeNotificationAuditRecord({
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
   } catch (error) {
-    functions.logger.warn('Failed to write notification audit record', {
-      teamId,
-      category,
-      error: error?.message || String(error || 'Unknown error')
-    });
+    functions.logger.warn(
+      'Failed to write notification audit record',
+      suppressResourceTelemetry
+        ? { category }
+        : {
+            teamId,
+            category,
+            error: error?.message || String(error || 'Unknown error')
+          },
+    );
   }
 }
 
@@ -9874,9 +13705,40 @@ function mergeNotificationWebpushOptions(baseWebpush = {}, deliveryOptions = {})
   };
 }
 
+function normalizeNotificationDeliveryIdempotencyKey(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (
+    typeof value !== 'string' ||
+    value !== value.trim() ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)
+  ) {
+    throw new TypeError('deliveryIdempotencyKey must be an exact safe identifier of at most 128 characters.');
+  }
+  return value;
+}
+
+function normalizeNotificationAppRouteOverride(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (
+    typeof value !== 'string' ||
+    value !== value.trim() ||
+    value.length > 8192 ||
+    !value.startsWith('/') ||
+    value.startsWith('//') ||
+    /[\u0000-\u001f\u007f]/.test(value)
+  ) {
+    throw new TypeError('appRouteOverride must be an exact internal application route.');
+  }
+  return value;
+}
+
 async function sendCategoryNotification({
   teamId,
   gameId = null,
+  viewerTeamId = null,
+  viewerGameId = null,
+  navigationTeamId = null,
+  navigationGameId = null,
   eventId = null,
   conversationId = null,
   childId = null,
@@ -9885,36 +13747,123 @@ async function sendCategoryNotification({
   body,
   actorUid = null,
   linkOverride = null,
+  appRouteOverride = null,
   dedupKey = null,
+  dedupKeys = [],
   excludeUids = [],
   audienceContext = {},
-  timeSensitive = false
+  timeSensitive = false,
+  deliveryIdempotencyKey = null,
+  beforeProviderDispatch = null,
+  suppressResourceTelemetry = false,
 }) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return null;
-
-  const ALWAYS_SEND_CATEGORIES = new Set(['liveScore', 'mentions', 'liveChat']);
-  if (!ALWAYS_SEND_CATEGORIES.has(category)) {
-    const canSend = await checkAndSetNotificationDedup(teamId, category, gameId, dedupKey);
-    if (!canSend) {
-      functions.logger.info('Notification dedup: skipping duplicate send', { teamId, category, gameId, dedupKey });
-      return null;
-    }
+  const hasViewerTeamId = viewerTeamId !== null && viewerTeamId !== undefined;
+  const hasViewerGameId = viewerGameId !== null && viewerGameId !== undefined;
+  if (hasViewerTeamId !== hasViewerGameId) {
+    throw new TypeError('Notification viewerTeamId and viewerGameId must be provided together.');
   }
+  const viewerRouteTeamId = hasViewerTeamId
+    ? normalizeFirestoreId(viewerTeamId, 'viewerTeamId')
+    : teamId;
+  const viewerRouteGameId = hasViewerGameId
+    ? normalizeFirestoreId(viewerGameId, 'viewerGameId')
+    : gameId;
+  const hasNavigationTeamId = navigationTeamId !== null && navigationTeamId !== undefined;
+  const hasNavigationGameId = navigationGameId !== null && navigationGameId !== undefined;
+  if (hasNavigationTeamId !== hasNavigationGameId) {
+    throw new TypeError('Notification navigationTeamId and navigationGameId must be provided together.');
+  }
+  const notificationRouteTeamId = hasNavigationTeamId
+    ? normalizeFirestoreId(navigationTeamId, 'navigationTeamId')
+    : teamId;
+  const notificationRouteGameId = hasNavigationGameId
+    ? normalizeFirestoreId(navigationGameId, 'navigationGameId')
+    : gameId;
+  const normalizedAppRouteOverride =
+    normalizeNotificationAppRouteOverride(appRouteOverride);
+  const normalizedDeliveryIdempotencyKey =
+    normalizeNotificationDeliveryIdempotencyKey(deliveryIdempotencyKey);
 
-  const allTargets = await getTargetsForCategory(teamId, category, actorUid, audienceContext);
+  const allTargets = await getTargetsForCategory(
+    teamId,
+    category,
+    actorUid,
+    audienceContext,
+    [],
+    { suppressResourceTelemetry },
+  );
   const excludeSet = new Set(Array.isArray(excludeUids) ? excludeUids : []);
-  const targets = excludeSet.size
+  const candidateTargets = excludeSet.size
     ? allTargets.filter((t) => !excludeSet.has(t.uid))
     : allTargets;
+  if (!candidateTargets.length) return null;
+
+  // Resolve final recipients before claiming dedup. If current Auth or team
+  // authorization cannot be verified, the event must remain retryable.
+  const targets = await revalidateNotificationEffectTargets({
+    targets: candidateTargets,
+    teamId,
+    category,
+    audienceContext,
+    requireCanonicalTeamAccess: true
+  });
   const inboxTargets = getUniqueNotificationInboxTargets(targets);
   const pushTargets = targets.filter((target) => String(target?.token || '').trim());
   if (!pushTargets.length && !inboxTargets.length) return null;
 
-  const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
-  const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
-  const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
-    ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId, timeSensitive })
+  const normalizedDedupKeys = [...new Set((Array.isArray(dedupKeys) ? dedupKeys : [dedupKeys])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean))];
+  if (normalizedDedupKeys.length) {
+    const canSend = await checkAndSetNotificationDedupKeys(teamId, category, gameId, normalizedDedupKeys);
+    if (!canSend) {
+      functions.logger.info(
+        'Notification dedup: skipping duplicate send',
+        suppressResourceTelemetry
+          ? { category }
+          : {
+              teamId,
+              category,
+              gameId,
+              dedupKeys: normalizedDedupKeys
+            },
+      );
+      return null;
+    }
+  }
+
+  const ALWAYS_SEND_CATEGORIES = new Set(['liveScore', 'mentions', 'liveChat']);
+  if (!ALWAYS_SEND_CATEGORIES.has(category) && !normalizedDedupKeys.length) {
+    const canSend = await checkAndSetNotificationDedup(teamId, category, gameId, dedupKey);
+    if (!canSend) {
+      functions.logger.info(
+        'Notification dedup: skipping duplicate send',
+        suppressResourceTelemetry
+          ? { category }
+          : { teamId, category, gameId, dedupKey },
+      );
+      return null;
+    }
+  }
+
+  const link = linkOverride || buildNotificationLink({ category, teamId: viewerRouteTeamId, gameId: viewerRouteGameId, eventId: eventId || viewerRouteGameId, conversationId, childId });
+  const appRoute = normalizedAppRouteOverride || buildNotificationAppRoute({ category, teamId: notificationRouteTeamId, gameId: notificationRouteGameId, eventId: eventId || notificationRouteGameId, conversationId, childId });
+  const baseDeliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
+    ? buildNotificationDeliveryOptions({ category, teamId: notificationRouteTeamId, gameId: notificationRouteGameId, eventId: eventId || notificationRouteGameId, timeSensitive })
     : {};
+  const deliveryOptions = normalizedDeliveryIdempotencyKey
+    ? {
+        ...baseDeliveryOptions,
+        webpush: {
+          ...(baseDeliveryOptions.webpush || {}),
+          notification: {
+            ...(baseDeliveryOptions.webpush?.notification || {}),
+            tag: normalizedDeliveryIdempotencyKey
+          }
+        }
+      }
+    : baseDeliveryOptions;
   const mergeWebpushOptions = typeof mergeNotificationWebpushOptions === 'function'
     ? mergeNotificationWebpushOptions
     : (baseWebpush = {}, runtimeDeliveryOptions = {}) => {
@@ -9936,6 +13885,31 @@ async function sendCategoryNotification({
   const allResponses = [];
   let successCount = 0;
   let failureCount = 0;
+  let uncertainFailureCount = 0;
+  let inboxResult = { writeCount: 0, cleanupCount: 0, failureCount: 0 };
+
+  if (normalizedDeliveryIdempotencyKey) {
+    inboxResult = await writeNotificationInboxRecords({
+      targets: inboxTargets,
+      category,
+      title,
+      body,
+      appRoute,
+      teamId: notificationRouteTeamId,
+      gameId: notificationRouteGameId,
+      eventId: eventId || notificationRouteGameId,
+      conversationId,
+      deliveryIdempotencyKey: normalizedDeliveryIdempotencyKey,
+      suppressResourceTelemetry,
+    });
+    if (inboxResult.failureCount > 0) {
+      throw new Error('Notification inbox idempotency validation failed before push delivery.');
+    }
+  }
+
+  if (pushTargets.length && typeof beforeProviderDispatch === 'function') {
+    await beforeProviderDispatch();
+  }
 
   for (let i = 0; i < pushTargets.length; i += maxMulticastTokens) {
     const targetChunk = pushTargets.slice(i, i + maxMulticastTokens);
@@ -9944,9 +13918,9 @@ async function sendCategoryNotification({
         tokens: targetChunk.map((target) => target.token),
         notification: { title, body },
         data: {
-          teamId: String(teamId),
-          gameId: String(gameId || ''),
-          eventId: String(eventId || gameId || ''),
+          teamId: String(notificationRouteTeamId),
+          gameId: String(notificationRouteGameId || ''),
+          eventId: String(eventId || notificationRouteGameId || ''),
           conversationId: String(conversationId || ''),
           childId: String(childId || ''),
           rsvpId: String(childId || ''),
@@ -9966,30 +13940,42 @@ async function sendCategoryNotification({
       await pruneInvalidTokens(sendResult, targetChunk);
     } catch (error) {
       failureCount += targetChunk.length;
+      // A thrown multicast call can mean FCM accepted the request but its
+      // response was lost. Preserve that distinction so callers never replay
+      // the whole generation as though the push provider were idempotent.
+      uncertainFailureCount += targetChunk.length;
       allResponses.push(...targetChunk.map((target) => ({
         success: false,
         error: new Error(`Push delivery failed for ${target.uid || 'unknown-user'}: ${error?.message || String(error || 'Unknown error')}`)
       })));
-      functions.logger.warn('Failed to send push notification chunk', {
-        teamId,
-        category,
-        targetCount: targetChunk.length,
-        error: error?.message || String(error || 'Unknown error')
-      });
+      functions.logger.warn(
+        'Failed to send push notification chunk',
+        suppressResourceTelemetry
+          ? { category, targetCount: targetChunk.length }
+          : {
+              teamId,
+              category,
+              targetCount: targetChunk.length,
+              error: error?.message || String(error || 'Unknown error')
+            },
+      );
     }
   }
 
-  const inboxResult = await writeNotificationInboxRecords({
-    targets: inboxTargets,
-    category,
-    title,
-    body,
-    appRoute,
-    teamId,
-    gameId,
-    eventId: eventId || gameId,
-    conversationId
-  });
+  if (!normalizedDeliveryIdempotencyKey) {
+    inboxResult = await writeNotificationInboxRecords({
+      targets: inboxTargets,
+      category,
+      title,
+      body,
+      appRoute,
+      teamId: notificationRouteTeamId,
+      gameId: notificationRouteGameId,
+      eventId: eventId || notificationRouteGameId,
+      conversationId,
+      suppressResourceTelemetry,
+    });
+  }
 
   await writeNotificationAuditRecord({
     teamId,
@@ -10005,7 +13991,8 @@ async function sendCategoryNotification({
     gameId,
     eventId: eventId || gameId,
     conversationId,
-    dedupGuardApplied: !ALWAYS_SEND_CATEGORIES.has(category)
+    dedupGuardApplied: !ALWAYS_SEND_CATEGORIES.has(category),
+    suppressResourceTelemetry,
   });
 
   return {
@@ -10014,7 +14001,10 @@ async function sendCategoryNotification({
     failureCount,
     inboxWriteCount: inboxResult.writeCount,
     inboxCleanupCount: inboxResult.cleanupCount,
-    inboxFailureCount: inboxResult.failureCount
+    inboxFailureCount: inboxResult.failureCount,
+    providerDispatchAttempted: pushTargets.length > 0,
+    providerDeliveryUncertain: uncertainFailureCount > 0,
+    uncertainFailureCount
   };
 }
 
@@ -10177,7 +14167,10 @@ async function registerScheduleImportBatchEvent({ teamId, gameId, game, batch })
     const totalCount = current.importCompletedAt && currentTotalCount > 0
       ? currentTotalCount
       : Math.max(batch.totalCount, currentTotalCount);
-    const shouldSendSummary = !current.sentAt && !current.notificationClaimedAt && nextEventIds.length >= totalCount;
+    const claimBelongsToCurrentEvent = current.notificationClaimedByGameId === gameId;
+    const shouldSendSummary = !current.sentAt
+      && (!current.notificationClaimedAt || claimBelongsToCurrentEvent)
+      && nextEventIds.length >= totalCount;
 
     txn.set(batchRef, {
       batchId: batch.batchId,
@@ -10206,14 +14199,37 @@ async function registerScheduleImportBatchEvent({ teamId, gameId, game, batch })
     return null;
   }
 
-  return sendScheduleImportBatchNotifications({
-    teamId,
-    batchId: batch.batchId,
-    batch: {
-      ...batchState,
-      finalizedBy: game.createdBy || null
+  try {
+    return await sendScheduleImportBatchNotifications({
+      teamId,
+      batchId: batch.batchId,
+      batch: {
+        ...batchState,
+        finalizedBy: game.createdBy || null
+      }
+    });
+  } catch (error) {
+    try {
+      await firestore.runTransaction(async (txn) => {
+        const latestSnap = await txn.get(batchRef);
+        const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
+        if (latest.sentAt || latest.notificationClaimedByGameId !== gameId) return;
+        txn.update(batchRef, {
+          notificationClaimedAt: admin.firestore.FieldValue.delete(),
+          notificationClaimedByGameId: admin.firestore.FieldValue.delete(),
+          notificationLastFailedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+      });
+    } catch (releaseError) {
+      functions.logger.error('Failed to release schedule import notification claim', {
+        teamId,
+        batchId: batch.batchId,
+        gameId,
+        error: releaseError?.message || String(releaseError || 'Unknown error')
+      });
     }
-  });
+    throw error;
+  }
 }
 
 async function sendDirectTargetsNotification({
@@ -10231,16 +14247,57 @@ async function sendDirectTargetsNotification({
   childId = null,
   linkOverride = null,
   appRouteOverride = null,
-  timeSensitive = false
+  timeSensitive = false,
+  requireCanonicalTeamAccess = false,
+  audienceContext = {},
+  beforeEffects = null,
+  onEffectsStarting = null
 }) {
   const logicalTargets = Array.isArray(targets) ? targets : [];
-  const pushTargets = logicalTargets.filter((target) => String(target?.token || '').trim());
-  const inboxTargets = getUniqueNotificationInboxTargets(
-    Array.isArray(inboxUids)
-      ? inboxUids.map((uid) => ({ uid }))
-      : logicalTargets
+  const requestedInboxTargets = Array.isArray(inboxUids)
+    ? inboxUids.map((uid) => ({ uid }))
+    : logicalTargets;
+  const authorizedTargets = await revalidateNotificationEffectTargets({
+    targets: [...logicalTargets, ...requestedInboxTargets],
+    teamId,
+    category,
+    audienceContext,
+    requireCanonicalTeamAccess
+  });
+  const authorizedUserIds = new Set(
+    authorizedTargets.map((target) => String(target?.uid || '').trim()).filter(Boolean)
+  );
+  let pushTargets = logicalTargets.filter((target) => (
+    authorizedUserIds.has(String(target?.uid || '').trim())
+    && String(target?.token || '').trim()
+  ));
+  let inboxTargets = getUniqueNotificationInboxTargets(
+    requestedInboxTargets.filter((target) => authorizedUserIds.has(String(target?.uid || '').trim()))
   );
   if (!pushTargets.length && !inboxTargets.length) return null;
+
+  // Callers that need durable dedup can commit their marker after the final
+  // authorization check but before any inbox or push effect becomes visible.
+  if (typeof beforeEffects === 'function') {
+    const beforeEffectsResult = await beforeEffects({ authorizedTargets, pushTargets, inboxTargets });
+    if (beforeEffectsResult === false) return null;
+    if (Array.isArray(beforeEffectsResult?.allowedUserIds)) {
+      const allowedUserIds = new Set(
+        beforeEffectsResult.allowedUserIds.map((uid) => String(uid || '').trim()).filter(Boolean)
+      );
+      pushTargets = pushTargets.filter((target) => allowedUserIds.has(String(target?.uid || '').trim()));
+      inboxTargets = inboxTargets.filter((target) => allowedUserIds.has(String(target?.uid || '').trim()));
+      if (!pushTargets.length && !inboxTargets.length) return null;
+    }
+  }
+  if (typeof onEffectsStarting === 'function') {
+    const canStartEffects = await onEffectsStarting();
+    if (canStartEffects === false) {
+      const effectsStartError = new Error('Notification effects could not acquire their delivery boundary.');
+      effectsStartError.code = 'notification/effects-start-failed';
+      throw effectsStartError;
+    }
+  }
 
   const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId, childId });
   const appRoute = appRouteOverride || buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId, childId });
@@ -10483,7 +14540,11 @@ function getNewOpenOfficiatingSlots(beforeGame = {}, afterGame = {}) {
     .filter((slot) => slot.id && isOpenOfficiatingSlotForNotification(slot) && !beforeOpenIds.has(slot.id));
 }
 
+const FEE_REMINDER_CLAIM_LEASE_MS = 10 * 60 * 1000;
+const FEE_REMINDER_STALE_RECOVERY_GRACE_MS = 48 * 60 * 60 * 1000;
+
 exports._internal = {
+  createStripeTeamPassCheckoutLegacyForTest,
   getTargetsForCategoryUserIds,
   buildTeamMediaNotificationBatchId,
   buildTeamMediaNotificationBatchMetadata,
@@ -10492,16 +14553,26 @@ exports._internal = {
   dispatchDueTeamMediaNotificationBatches,
   getTargetsForCategory,
   sendCategoryNotification,
+  deliverDiamondScorebookNotification,
+  sendDirectTargetsNotification,
   sweepStaleNotificationDeviceTokens,
   sendRsvpReminderPushNotifications,
+  hydratePublicRsvpPrivateProfileParents,
   sendPracticePacketDueTomorrowReminders,
   sendFeeUnpaidDueReminders,
   getFeeReminderDueDateMillis,
   isFeeDueReminderCandidateEligible,
   buildFeeReminderNotificationBody,
   resolveEligibleFeeReminderRecipient,
+  claimFeeDueReminder,
+  markFeeDueReminderClaimSent,
+  releaseFeeDueReminderClaim,
+  finalizeFeeDueReminderClaim,
+  FEE_REMINDER_CLAIM_LEASE_MS,
+  FEE_REMINDER_STALE_RECOVERY_GRACE_MS,
   FIRESTORE_BATCH_SAFE_WRITE_LIMIT,
   NOTIFICATION_RECIPIENT_DEVICE_SYNC_CONCURRENCY,
+  NOTIFICATION_INBOX_WRITE_CONCURRENCY,
   createBoundedFirestoreBatchWriter,
   runWithConcurrencyLimit,
   syncNotificationRecipientForTeamUser,
@@ -10513,7 +14584,7 @@ exports.sweepStaleNotificationDeviceTokens = functions.pubsub
   .schedule('every 24 hours')
   .onRun(() => sweepStaleNotificationDeviceTokens());
 
-exports.notifyOfficiatingNotificationCreated = functions.firestore
+exports.notifyOfficiatingNotificationCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/officiatingNotifications/{notificationId}')
   .onCreate(async (snapshot, context) => {
     const record = snapshot.data() || {};
@@ -10537,7 +14608,7 @@ exports.notifyOfficiatingNotificationCreated = functions.firestore
     });
   });
 
-exports.notifyOpenOfficiatingSlots = functions.firestore
+exports.notifyOpenOfficiatingSlots = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}')
   .onWrite(async (change, context) => {
     if (!change.after?.exists) return null;
@@ -10582,7 +14653,7 @@ exports.queueTeamMediaNotificationBatch = functions.firestore
     return null;
   });
 
-exports.dispatchDueTeamMediaNotificationBatches = functions.pubsub
+exports.dispatchDueTeamMediaNotificationBatches = retryableTeamMediaNotificationFunctions.pubsub
   .schedule('every 15 minutes')
   .timeZone('America/Chicago')
   .onRun(() => dispatchDueTeamMediaNotificationBatches());
@@ -10933,6 +15004,7 @@ async function dispatchDuePreEventReminders(now = new Date()) {
         } catch (pushError) {
           rsvpPushError = pushError;
           console.error('Failed to send RSVP reminder push notifications', { teamId, gameId, error: pushError });
+          if (isNotificationAuthResolutionFailure(pushError)) throw pushError;
         }
         await markReminderSent(eventRef, claimId, {
           ...sendResult,
@@ -10960,6 +15032,7 @@ async function dispatchDuePreEventReminders(now = new Date()) {
       } catch (error) {
         await markReminderPendingAfterFailure(eventRef, claimId, error);
         console.error('Failed to dispatch pre-event reminder', { teamId, gameId, error });
+        if (isNotificationAuthResolutionFailure(error)) throw error;
         return null;
       }
     }
@@ -10968,11 +15041,11 @@ async function dispatchDuePreEventReminders(now = new Date()) {
   return drainSummary.results.filter(Boolean);
 }
 
-exports.dispatchDuePreEventReminders = functions.pubsub
+exports.dispatchDuePreEventReminders = retryableNotificationFunctions.pubsub
   .schedule('every 15 minutes')
   .onRun(() => dispatchDuePreEventReminders());
 
-exports.queueDueRegistrationFailedPaymentReminders = functions.pubsub
+exports.queueDueRegistrationFailedPaymentReminders = retryableNotificationFunctions.pubsub
   .schedule('every 6 hours')
   .onRun(() => queueDueRegistrationFailedPaymentReminders());
 
@@ -11193,6 +15266,7 @@ async function sendPracticePacketDueTomorrowReminders(now = new Date()) {
             playerId,
             error: error?.message || error
           });
+          if (isNotificationAuthResolutionFailure(error)) throw error;
         }
       }
     }
@@ -11261,7 +15335,7 @@ async function sendPracticePacketDueTomorrowReminders(now = new Date()) {
   return results;
 }
 
-exports.sendPracticePacketDueTomorrowReminders = functions.pubsub
+exports.sendPracticePacketDueTomorrowReminders = retryableNotificationFunctions.pubsub
   .schedule('every 24 hours')
   .onRun(() => sendPracticePacketDueTomorrowReminders());
 
@@ -11310,7 +15384,8 @@ function getFeeReminderDueDateMillis(recipient = {}) {
 
 function isFeeDueReminderCandidateEligible(recipient = {}, {
   nowMillis = Date.now(),
-  reminderThresholdHours = 72
+  reminderThresholdHours = 72,
+  allowRecentlyOverdueRecovery = false
 } = {}) {
   const status = String(recipient?.status || '').trim().toLowerCase();
   if (!['unpaid', 'pending'].includes(status)) return false;
@@ -11320,7 +15395,13 @@ function isFeeDueReminderCandidateEligible(recipient = {}, {
   if (!Number.isFinite(dueDateMillis)) return false;
 
   const effectiveNowMillis = Number(nowMillis);
-  if (!Number.isFinite(effectiveNowMillis) || dueDateMillis < effectiveNowMillis) return false;
+  if (!Number.isFinite(effectiveNowMillis)) return false;
+  if (dueDateMillis < effectiveNowMillis) {
+    if (
+      !allowRecentlyOverdueRecovery
+      || dueDateMillis < effectiveNowMillis - FEE_REMINDER_STALE_RECOVERY_GRACE_MS
+    ) return false;
+  }
 
   const reminderThresholdMillis = Number(reminderThresholdHours) * 60 * 60 * 1000;
   if (!Number.isFinite(reminderThresholdMillis) || reminderThresholdMillis <= 0) return false;
@@ -11358,9 +15439,14 @@ async function resolveEligibleFeeReminderRecipient({
   recipientId,
   recipient,
   nowMillis,
-  reminderThresholdHours
+  reminderThresholdHours,
+  allowRecentlyOverdueRecovery = false
 }) {
-  if (!isFeeDueReminderCandidateEligible(recipient, { nowMillis, reminderThresholdHours })) {
+  if (!isFeeDueReminderCandidateEligible(recipient, {
+    nowMillis,
+    reminderThresholdHours,
+    allowRecentlyOverdueRecovery
+  })) {
     return null;
   }
 
@@ -11381,27 +15467,394 @@ async function resolveEligibleFeeReminderRecipient({
   };
 }
 
+function buildFeeReminderClaimId() {
+  return `fee-reminder-${crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')}`;
+}
+
+function isFeeReminderDeliveryClaimActive(recipient = {}, nowMillis = Date.now()) {
+  const existingClaimId = String(recipient.reminderDeliveryClaimId || '').trim();
+  if (!existingClaimId) return false;
+  const existingClaimExpiresAtMillis = Number(recipient.reminderDeliveryClaimExpiresAtMillis);
+  const existingClaimDate = coerceDate(recipient.reminderDeliveryClaimedAt);
+  const existingClaimMillis = existingClaimDate?.getTime();
+  return Number.isFinite(existingClaimExpiresAtMillis)
+    ? existingClaimExpiresAtMillis > nowMillis
+    : !Number.isFinite(existingClaimMillis)
+      || existingClaimMillis > nowMillis - FEE_REMINDER_CLAIM_LEASE_MS;
+}
+
+async function claimFeeDueReminder(recipientRef, {
+  nowMillis,
+  reminderThresholdHours,
+  allowRecentlyOverdueRecovery = false
+}) {
+  const claimId = buildFeeReminderClaimId();
+  let claimResult;
+  try {
+    claimResult = await firestore.runTransaction(async (transaction) => {
+      const recipientSnap = await transaction.get(recipientRef);
+      const recipient = recipientSnap.exists ? (recipientSnap.data() || {}) : {};
+      if (!recipientSnap.exists || !isFeeDueReminderCandidateEligible(recipient, {
+        nowMillis,
+        reminderThresholdHours,
+        allowRecentlyOverdueRecovery
+      })) {
+        return null;
+      }
+
+      const existingClaimId = String(recipient.reminderDeliveryClaimId || '').trim();
+      const existingClaimIsActive = isFeeReminderDeliveryClaimActive(recipient, nowMillis);
+      if (existingClaimIsActive) {
+        if (existingClaimId === claimId) return claimId;
+        return { activeClaimId: existingClaimId };
+      }
+
+      transaction.update(recipientRef, {
+        reminderDeliveryClaimId: claimId,
+        reminderDeliveryClaimedAt: admin.firestore.Timestamp.fromMillis(nowMillis),
+        reminderDeliveryClaimExpiresAtMillis: nowMillis + FEE_REMINDER_CLAIM_LEASE_MS
+      });
+      return claimId;
+    });
+  } catch (error) {
+    try {
+      const reconciledSnap = await recipientRef.get();
+      const reconciledRecipient = reconciledSnap.exists ? (reconciledSnap.data() || {}) : {};
+      if (reconciledRecipient.reminderDeliveryClaimId === claimId) return claimId;
+    } catch (reconciliationError) {
+      functions.logger.error('Failed to reconcile fee reminder claim acquisition', {
+        claimId,
+        error: reconciliationError?.message || String(reconciliationError || 'Unknown error')
+      });
+    }
+    error.code = error.code || 'fee-reminder/pre-effect-failed';
+    error.feeReminderPreEffectFailed = true;
+    throw error;
+  }
+
+  if (claimResult && typeof claimResult === 'object' && claimResult.activeClaimId) {
+    const activeClaimError = new Error('Fee reminder delivery is already leased by another attempt.');
+    activeClaimError.code = 'fee-reminder/claim-active';
+    activeClaimError.feeReminderClaimActive = true;
+    throw activeClaimError;
+  }
+  return claimResult;
+}
+
+function isFeeReminderClaimActiveFailure(error) {
+  return error?.feeReminderClaimActive === true || error?.code === 'fee-reminder/claim-active';
+}
+
+function isFeeReminderPreEffectFailure(error) {
+  return error?.feeReminderPreEffectFailed === true || error?.code === 'fee-reminder/pre-effect-failed';
+}
+
+function feeReminderSentMarkerBelongsToClaim(recipient = {}, claimId, reminderThresholdHours) {
+  return recipient.reminderDeliveryClaimId === claimId
+    && recipient.reminderSentClaimId === claimId
+    && wasFeeReminderSentForThreshold(recipient, reminderThresholdHours);
+}
+
+function getFeeReminderSentTargetUserIds(recipient = {}, authorizedUserIdSet = new Set()) {
+  return normalizeNotificationAudienceUserIds(recipient.reminderSentTargetUserIds)
+    .filter((uid) => authorizedUserIdSet.has(uid));
+}
+
+async function markFeeDueReminderClaimSent(
+  recipientRef,
+  claimId,
+  {
+    nowMillis,
+    reminderThresholdHours,
+    teamId,
+    authorizedPayerUserIds = [],
+    allowRecentlyOverdueRecovery = false
+  }
+) {
+  try {
+    return await firestore.runTransaction(async (transaction) => {
+      const recipientSnap = await transaction.get(recipientRef);
+      const recipient = recipientSnap.exists ? (recipientSnap.data() || {}) : {};
+      if (!recipientSnap.exists || recipient.reminderDeliveryClaimId !== claimId) return false;
+      const authorizedUserIdSet = new Set(
+        (Array.isArray(authorizedPayerUserIds) ? authorizedPayerUserIds : [])
+          .map((uid) => String(uid || '').trim())
+          .filter(Boolean)
+      );
+      if (feeReminderSentMarkerBelongsToClaim(recipient, claimId, reminderThresholdHours)) {
+        const reconciledTargetUserIds = getFeeReminderSentTargetUserIds(recipient, authorizedUserIdSet);
+        return reconciledTargetUserIds.length ? reconciledTargetUserIds : false;
+      }
+      if (
+        wasFeeReminderSentForThreshold(recipient, reminderThresholdHours)
+        || !isFeeDueReminderCandidateEligible(recipient, {
+          nowMillis,
+          reminderThresholdHours,
+          allowRecentlyOverdueRecovery
+        })
+      ) {
+        return false;
+      }
+
+      if (!authorizedUserIdSet.size) return false;
+
+      const playerKey = getFeeReminderPlayerKey(recipient, teamId);
+      let deliverablePayerUserIds = [];
+      if (playerKey) {
+        const [playerTeamId, playerId] = playerKey.split('::');
+        if (!playerTeamId || playerTeamId !== String(teamId || '').trim() || !playerId) return false;
+        const playerRef = firestore.doc(`teams/${playerTeamId}/players/${playerId}`);
+        const linkedParentsQuery = firestore.collection('users')
+          .where('parentPlayerKeys', 'array-contains', playerKey);
+        const [playerSnap, linkedParentsSnap] = await Promise.all([
+          transaction.get(playerRef),
+          transaction.get(linkedParentsQuery)
+        ]);
+        const player = playerSnap.exists ? (playerSnap.data() || {}) : {};
+        if (!playerSnap.exists || player.active === false) return false;
+        const linkedParentUserIds = new Set(linkedParentsSnap.docs.map((docSnap) => docSnap.id));
+        deliverablePayerUserIds = [...authorizedUserIdSet]
+          .filter((uid) => linkedParentUserIds.has(uid));
+      } else {
+        const directPayerIds = new Set(buildFeeReminderCandidateUserIds(recipient));
+        deliverablePayerUserIds = [...authorizedUserIdSet]
+          .filter((uid) => directPayerIds.has(uid));
+      }
+      if (!deliverablePayerUserIds.length) return false;
+
+      transaction.update(recipientRef, {
+        reminderSentAt: admin.firestore.FieldValue.serverTimestamp(),
+        reminderThresholdHours,
+        reminderSentClaimId: claimId,
+        reminderSentTargetUserIds: deliverablePayerUserIds
+      });
+      return deliverablePayerUserIds;
+    });
+  } catch (error) {
+    // A transaction commit can succeed even when its acknowledgement is lost.
+    // Reconcile the claim-owned marker before treating the pre-effect write as failed.
+    try {
+      const reconciledSnap = await recipientRef.get();
+      const reconciledRecipient = reconciledSnap.exists ? (reconciledSnap.data() || {}) : {};
+      if (feeReminderSentMarkerBelongsToClaim(
+        reconciledRecipient,
+        claimId,
+        reminderThresholdHours
+      )) {
+        const authorizedUserIdSet = new Set(
+          (Array.isArray(authorizedPayerUserIds) ? authorizedPayerUserIds : [])
+            .map((uid) => String(uid || '').trim())
+            .filter(Boolean)
+        );
+        const reconciledTargetUserIds = getFeeReminderSentTargetUserIds(
+          reconciledRecipient,
+          authorizedUserIdSet
+        );
+        if (reconciledTargetUserIds.length) return reconciledTargetUserIds;
+      }
+    } catch (reconciliationError) {
+      functions.logger.error('Failed to reconcile fee reminder sent marker', {
+        claimId,
+        error: reconciliationError?.message || String(reconciliationError || 'Unknown error')
+      });
+    }
+    throw error;
+  }
+}
+
+async function markFeeDueReminderEffectsStarted(recipientRef, claimId) {
+  try {
+    return await firestore.runTransaction(async (transaction) => {
+      const recipientSnap = await transaction.get(recipientRef);
+      const recipient = recipientSnap.exists ? (recipientSnap.data() || {}) : {};
+      if (
+        !recipientSnap.exists
+        || recipient.reminderDeliveryClaimId !== claimId
+        || recipient.reminderSentClaimId !== claimId
+      ) return false;
+      if (recipient.reminderEffectsStartedAt) return true;
+      transaction.update(recipientRef, {
+        reminderEffectsStartedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      return true;
+    });
+  } catch (error) {
+    try {
+      const reconciledSnap = await recipientRef.get();
+      const reconciledRecipient = reconciledSnap.exists ? (reconciledSnap.data() || {}) : {};
+      if (
+        reconciledRecipient.reminderDeliveryClaimId === claimId
+        && reconciledRecipient.reminderSentClaimId === claimId
+        && reconciledRecipient.reminderEffectsStartedAt
+      ) return true;
+    } catch (reconciliationError) {
+      functions.logger.error('Failed to reconcile fee reminder effects boundary', {
+        claimId,
+        error: reconciliationError?.message || String(reconciliationError || 'Unknown error')
+      });
+    }
+    throw error;
+  }
+}
+
+async function releaseFeeDueReminderClaim(recipientRef, claimId, error = null, {
+  requireExpiredAtMillis = null,
+  requireNoEffectsStarted = false,
+  requirePreparedMarker = false
+} = {}) {
+  return firestore.runTransaction(async (transaction) => {
+    const recipientSnap = await transaction.get(recipientRef);
+    const recipient = recipientSnap.exists ? (recipientSnap.data() || {}) : {};
+    if (!recipientSnap.exists || recipient.reminderDeliveryClaimId !== claimId) {
+      return false;
+    }
+    if (requireNoEffectsStarted && recipient.reminderEffectsStartedAt) return false;
+    if (
+      requireExpiredAtMillis !== null
+      && Number.isFinite(Number(requireExpiredAtMillis))
+      && isFeeReminderDeliveryClaimActive(recipient, Number(requireExpiredAtMillis))
+    ) return false;
+    if (
+      requirePreparedMarker
+      && (
+        recipient.reminderSentClaimId !== claimId
+        || !recipient.reminderSentAt
+      )
+    ) return false;
+
+    transaction.update(recipientRef, {
+      reminderDeliveryClaimId: admin.firestore.FieldValue.delete(),
+      reminderDeliveryClaimedAt: admin.firestore.FieldValue.delete(),
+      reminderDeliveryClaimExpiresAtMillis: admin.firestore.FieldValue.delete(),
+      ...(recipient.reminderSentClaimId === claimId ? {
+        reminderSentAt: admin.firestore.FieldValue.delete(),
+        reminderThresholdHours: admin.firestore.FieldValue.delete(),
+        reminderSentClaimId: admin.firestore.FieldValue.delete(),
+        reminderSentTargetUserIds: admin.firestore.FieldValue.delete(),
+        reminderEffectsStartedAt: admin.firestore.FieldValue.delete()
+      } : {}),
+      ...(error ? {
+        reminderLastError: String(error?.message || error || 'Unknown fee reminder error').slice(0, 500)
+      } : {})
+    });
+    return true;
+  });
+}
+
+async function finalizeFeeDueReminderClaim(recipientRef, claimId, {
+  error = null
+} = {}) {
+  return firestore.runTransaction(async (transaction) => {
+    const recipientSnap = await transaction.get(recipientRef);
+    const recipient = recipientSnap.exists ? (recipientSnap.data() || {}) : {};
+    if (!recipientSnap.exists || recipient.reminderDeliveryClaimId !== claimId) {
+      return false;
+    }
+
+    const update = {
+      reminderDeliveryClaimId: admin.firestore.FieldValue.delete(),
+      reminderDeliveryClaimedAt: admin.firestore.FieldValue.delete(),
+      reminderDeliveryClaimExpiresAtMillis: admin.firestore.FieldValue.delete(),
+      reminderSentClaimId: admin.firestore.FieldValue.delete(),
+      reminderSentTargetUserIds: admin.firestore.FieldValue.delete(),
+      reminderEffectsStartedAt: admin.firestore.FieldValue.delete()
+    };
+    if (error) {
+      update.reminderLastError = String(error?.message || error || 'Unknown fee reminder error').slice(0, 500);
+    } else {
+      update.reminderLastError = admin.firestore.FieldValue.delete();
+    }
+    transaction.update(recipientRef, update);
+    return true;
+  });
+}
+
 async function sendFeeUnpaidDueReminders() {
   const now = admin.firestore.Timestamp.now();
   const nowMillis = now.toMillis();
   const maxReminderThresholdLater = admin.firestore.Timestamp.fromMillis(now.toMillis() + 72 * 60 * 60 * 1000);
   const teamReminderThresholdHours = new Map();
 
-  // Use 'in' filter instead of '!=' to avoid Firestore inequality-on-different-field restriction
-  const snap = await firestore.collectionGroup('feeRecipients')
-    .where('status', 'in', ['unpaid', 'pending'])
-    .where('dueDate', '>=', now)
-    .where('dueDate', '<=', maxReminderThresholdLater)
-    .get();
+  // Keep leased recipients in the retry set even if they cross their due time
+  // while a crashed attempt's lease is active.
+  const [upcomingSnap, leasedSnap] = await Promise.all([
+    firestore.collectionGroup('feeRecipients')
+      .where('status', 'in', ['unpaid', 'pending'])
+      .where('dueDate', '>=', now)
+      .where('dueDate', '<=', maxReminderThresholdLater)
+      .get(),
+    firestore.collectionGroup('feeRecipients')
+      .where('reminderDeliveryClaimExpiresAtMillis', '>', 0)
+      .get()
+  ]);
+  const reminderDocs = [...new Map(
+    [...upcomingSnap.docs, ...leasedSnap.docs].map((docSnap) => [docSnap.ref.path, docSnap])
+  ).values()];
 
-  const promises = snap.docs.map(async (doc) => {
-    const data = doc.data();
+  const promises = reminderDocs.map(async (doc) => {
+    let data = doc.data();
     const pathParts = doc.ref.path.split('/');
     // Path structure: teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}
     const teamId = pathParts[1];
     const batchId = pathParts[3];
     const recipientId = pathParts[5];
     if (!teamId) return null;
+
+    let recoveredExpiredLease = false;
+    const preparedClaimId = String(data.reminderDeliveryClaimId || '').trim();
+    const hasPreparedMarker = Boolean(
+      preparedClaimId
+      && data.reminderSentClaimId === preparedClaimId
+      && data.reminderSentAt
+    );
+    if (hasPreparedMarker && data.reminderEffectsStartedAt) {
+      if (isFeeReminderDeliveryClaimActive(data, nowMillis)) return null;
+      try {
+        await finalizeFeeDueReminderClaim(doc.ref, preparedClaimId);
+        return null;
+      } catch (error) {
+        error.code = error.code || 'fee-reminder/pre-effect-failed';
+        error.feeReminderPreEffectFailed = true;
+        throw error;
+      }
+    }
+    if (hasPreparedMarker && isFeeReminderDeliveryClaimActive(data, nowMillis)) {
+      const activeClaimError = new Error('Prepared fee reminder delivery is still leased by another attempt.');
+      activeClaimError.code = 'fee-reminder/claim-active';
+      activeClaimError.feeReminderClaimActive = true;
+      throw activeClaimError;
+    }
+    if (preparedClaimId && !isFeeReminderDeliveryClaimActive(data, nowMillis)) {
+      try {
+        const released = await releaseFeeDueReminderClaim(
+          doc.ref,
+          preparedClaimId,
+          new Error('Recovering an expired fee reminder claim with no started effects.'),
+          {
+            requireExpiredAtMillis: nowMillis,
+            requireNoEffectsStarted: true,
+            requirePreparedMarker: hasPreparedMarker
+          }
+        );
+        if (!released) {
+          return null;
+        }
+        const refreshedSnap = await doc.ref.get();
+        data = refreshedSnap.exists ? (refreshedSnap.data() || {}) : {};
+        recoveredExpiredLease = true;
+      } catch (error) {
+        error.code = error.code || 'fee-reminder/pre-effect-failed';
+        error.feeReminderPreEffectFailed = true;
+        throw error;
+      }
+    }
+
+    const dueDateMillis = getFeeReminderDueDateMillis(data);
+    const hasDeliveryLease = Boolean(String(data.reminderDeliveryClaimId || '').trim());
+    const allowRecentlyOverdueRecovery = Number.isFinite(dueDateMillis)
+      && dueDateMillis < nowMillis
+      && dueDateMillis >= nowMillis - FEE_REMINDER_STALE_RECOVERY_GRACE_MS
+      && (hasDeliveryLease || recoveredExpiredLease);
 
     let reminderThresholdHours = teamReminderThresholdHours.get(teamId);
     if (!reminderThresholdHours) {
@@ -11421,38 +15874,109 @@ async function sendFeeUnpaidDueReminders() {
         recipientId,
         recipient: data,
         nowMillis,
-        reminderThresholdHours
+        reminderThresholdHours,
+        allowRecentlyOverdueRecovery
       });
       if (!eligibleRecipient) return null;
 
-      // Mark reminderSentAt only when targets exist, to prevent duplicate sends if function retries
-      await doc.ref.update({
-        reminderSentAt: admin.firestore.FieldValue.serverTimestamp(),
-        reminderThresholdHours
+      // Acquire a short lease without marking the reminder sent. Concurrent
+      // scheduler invocations cannot deliver the same fee recipient.
+      const claimId = await claimFeeDueReminder(doc.ref, {
+        nowMillis,
+        reminderThresholdHours,
+        allowRecentlyOverdueRecovery
       });
+      if (!claimId) return null;
 
-      await sendDirectTargetsNotification({
-        targets: eligibleRecipient.payerTargets,
-        category: 'fees',
-        title: `Reminder: ${title} is due soon`,
-        body,
-        teamId,
-        batchId,
-        recipientId,
-      });
-      return { teamId, payerUserIds: eligibleRecipient.candidateUserIds, feeTitle: title };
+      let sentMarkerCommitted = false;
+      let effectsStarted = false;
+      try {
+        await sendDirectTargetsNotification({
+          targets: eligibleRecipient.payerTargets,
+          category: 'fees',
+          title: `Reminder: ${title} is due soon`,
+          body,
+          teamId,
+          batchId,
+          recipientId,
+          requireCanonicalTeamAccess: true,
+          beforeEffects: async ({ authorizedTargets }) => {
+            const deliverablePayerUserIds = await markFeeDueReminderClaimSent(
+              doc.ref,
+              claimId,
+              {
+                nowMillis,
+                reminderThresholdHours,
+                teamId,
+                authorizedPayerUserIds: authorizedTargets.map((target) => target.uid),
+                allowRecentlyOverdueRecovery
+              }
+            );
+            sentMarkerCommitted = Array.isArray(deliverablePayerUserIds)
+              && deliverablePayerUserIds.length > 0;
+            return sentMarkerCommitted
+              ? { allowedUserIds: deliverablePayerUserIds }
+              : false;
+          },
+          onEffectsStarting: async () => {
+            effectsStarted = await markFeeDueReminderEffectsStarted(doc.ref, claimId);
+            return effectsStarted;
+          }
+        });
+        if (!sentMarkerCommitted || !effectsStarted) {
+          await releaseFeeDueReminderClaim(doc.ref, claimId);
+          return null;
+        }
+        await finalizeFeeDueReminderClaim(doc.ref, claimId);
+        return { teamId, payerUserIds: eligibleRecipient.candidateUserIds, feeTitle: title };
+      } catch (err) {
+        if (!effectsStarted && !isNotificationAuthResolutionFailure(err) && !isFeeReminderClaimActiveFailure(err)) {
+          err.code = err.code || 'fee-reminder/pre-effect-failed';
+          err.feeReminderPreEffectFailed = true;
+        }
+        try {
+          if (effectsStarted) {
+            await finalizeFeeDueReminderClaim(doc.ref, claimId, { error: err });
+          } else {
+            await releaseFeeDueReminderClaim(doc.ref, claimId, err);
+          }
+        } catch (claimError) {
+          functions.logger.error('Failed to finalize fee reminder delivery claim', {
+            teamId,
+            batchId,
+            recipientId,
+            claimId,
+            error: claimError?.message || String(claimError || 'Unknown error')
+          });
+        }
+        throw err;
+      }
     } catch (err) {
       console.error('sendFeeUnpaidDueReminders: failed to notify', { teamId, candidateUserIds: buildFeeReminderCandidateUserIds(data), error: err });
+      if (
+        isNotificationAuthResolutionFailure(err)
+        || isFeeReminderClaimActiveFailure(err)
+        || isFeeReminderPreEffectFailure(err)
+      ) throw err;
       return null;
     }
   });
 
   const results = await Promise.allSettled(promises);
+  const retryableFailure = results.find((result) => (
+    result.status === 'rejected'
+    && (
+      isNotificationAuthResolutionFailure(result.reason)
+      || isFeeReminderClaimActiveFailure(result.reason)
+      || isFeeReminderPreEffectFailure(result.reason)
+    )
+  ));
+  if (retryableFailure) throw retryableFailure.reason;
   const sent = results.filter((r) => r.status === 'fulfilled' && r.value).length;
-  console.log(`sendFeeUnpaidDueReminders: processed ${snap.docs.length} docs, sent ${sent} reminders`);
+  console.log(`sendFeeUnpaidDueReminders: processed ${reminderDocs.length} docs, sent ${sent} reminders`);
 }
 
-exports.sendFeeUnpaidDueReminders = functions.pubsub
+exports.sendFeeUnpaidDueReminders = retryableNotificationFunctions.pubsub
   .schedule('every 24 hours')
   .onRun(() => sendFeeUnpaidDueReminders());
 
@@ -12118,6 +16642,11 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
     members = members.filter((member) => scopedParticipantUids.has(member.uid));
   }
 
+  const enabledMemberUserIds = await getEnabledNotificationAuthUserIds(
+    members.map((member) => member.uid)
+  );
+  members = members.filter((member) => enabledMemberUserIds.has(member.uid));
+
   const [userRecords, memberPreferenceEntries] = await Promise.all([
     getUserRecordsByIds(members.map((member) => member.uid)),
     Promise.all(members.map(async (member) => {
@@ -12339,6 +16868,24 @@ async function handleTeamChatMessageCreated(snapshot, context) {
     recipientContext
   });
 
+  const enabledDeliveryUids = await getEnabledNotificationAuthUserIds([
+    ...notificationPlan.mentionedUids,
+    ...notificationPlan.mentionInboxUids,
+    ...notificationPlan.mentionTargets.map((target) => target.uid),
+    ...notificationPlan.liveChatInboxUids,
+    ...notificationPlan.liveChatTargets.map((target) => target.uid)
+  ]);
+  notificationPlan.mentionedUids = notificationPlan.mentionedUids
+    .filter((uid) => enabledDeliveryUids.has(uid));
+  notificationPlan.mentionInboxUids = notificationPlan.mentionInboxUids
+    .filter((uid) => enabledDeliveryUids.has(uid));
+  notificationPlan.mentionTargets = notificationPlan.mentionTargets
+    .filter((target) => enabledDeliveryUids.has(target.uid));
+  notificationPlan.liveChatInboxUids = notificationPlan.liveChatInboxUids
+    .filter((uid) => enabledDeliveryUids.has(uid));
+  notificationPlan.liveChatTargets = notificationPlan.liveChatTargets
+    .filter((target) => enabledDeliveryUids.has(target.uid));
+
   const mentionedUids = notificationPlan.mentionedUids;
   const results = [];
 
@@ -12375,11 +16922,11 @@ async function handleTeamChatMessageCreated(snapshot, context) {
   return results;
 }
 
-exports.notifyTeamChatMessageCreated = functions.firestore
+exports.notifyTeamChatMessageCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/chatMessages/{messageId}')
   .onCreate(handleTeamChatMessageCreated);
 
-exports.notifyConversationChatMessageCreated = functions.firestore
+exports.notifyConversationChatMessageCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/chatConversations/{conversationId}/chatMessages/{messageId}')
   .onCreate(handleTeamChatMessageCreated);
 
@@ -12556,6 +17103,448 @@ exports.postSharedGameCancellationNotification = functions.https.onCall(async (d
   };
 });
 
+async function requireCertificateTeamAdmin(teamId, context) {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to save certificate defaults.');
+  }
+  await assertSensitiveEmailVerified(context, 'certificate-defaults-save');
+  const [teamSnap, userSnap] = await Promise.all([
+    firestore.doc(`teams/${teamId}`).get(),
+    firestore.doc(`users/${context.auth.uid}`).get()
+  ]);
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  const team = teamSnap.data() || {};
+  const user = userSnap.exists ? userSnap.data() || {} : {};
+  const callerEmail = String(context.auth.token?.email || '').trim().toLowerCase();
+  const canManage = hasTeamAdminAccess({
+    team,
+    user,
+    uid: context.auth.uid,
+    email: callerEmail
+  });
+  if (!canManage) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team coaches and admins can save certificate defaults.');
+  }
+  return { team, user, callerEmail };
+}
+
+function getCertificateSignatureCleanupId(teamId, target = {}) {
+  const storageBucket = String(target.storageBucket || 'primary').trim();
+  const storagePath = String(target.storagePath || '').trim();
+  const identity = storageBucket === 'primary'
+    ? `${teamId}\n${storagePath}`
+    : `${teamId}\n${storageBucket}\n${storagePath}`;
+  return crypto.createHash('sha256').update(identity).digest('hex');
+}
+
+async function getCertificateLegacyUploaderIds(team = {}, context = {}) {
+  const uploaderIds = new Set();
+  const managerIdentifiers = [...new Map([
+    String(context.auth?.uid || '').trim(),
+    String(team.ownerId || '').trim()
+  ].filter(Boolean).map((uid) => [`uid:${uid}`, { uid }])).values()];
+  getCertificateLegacyManagerEmails(team).forEach((email) => {
+    managerIdentifiers.push({ email });
+  });
+  for (let offset = 0; offset < managerIdentifiers.length; offset += 100) {
+    const result = await admin.auth().getUsers(managerIdentifiers.slice(offset, offset + 100));
+    getEnabledCertificateAuthUserIds(result.users).forEach((uid) => uploaderIds.add(uid));
+  }
+  return [...uploaderIds];
+}
+
+async function discoverCertificateLegacySignatureReferences({ defaults, teamId, team, context = {} }) {
+  const legacyImageBucketName = process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app';
+  const legacyImageBucket = admin.storage().bucket(legacyImageBucketName);
+  return discoverLegacyImageSignatureReferences({
+    defaults,
+    teamId,
+    legacyBucketName: legacyImageBucketName,
+    allowedUploaderIds: await getCertificateLegacyUploaderIds(team, context),
+    lookupExistingUserIds: async (candidates) => {
+      const result = await admin.auth().getUsers(candidates.map((uid) => ({ uid })));
+      return getEnabledCertificateAuthUserIds(result.users);
+    },
+    getObjectMetadata: async (storagePath) => {
+      const [metadata] = await legacyImageBucket.file(storagePath).getMetadata();
+      return metadata;
+    }
+  });
+}
+
+async function registerCertificateLegacySignatureInventoryReferences(references = []) {
+  const authenticated = [];
+  for (const reference of references) {
+    const bindingId = getCertificateLegacySignatureInventoryId(reference);
+    if (!bindingId) continue;
+    const bindingRef = firestore.doc(`certificateLegacySignatureInventory/${bindingId}`);
+    const bound = await firestore.runTransaction(async (transaction) => {
+      const bindingSnap = await transaction.get(bindingRef);
+      const existing = bindingSnap.exists ? bindingSnap.data() || {} : null;
+      if (existing && !isMatchingCertificateLegacySignatureBinding(existing, reference)) {
+        transaction.set(bindingRef, {
+          conflicted: true,
+          lastConflictAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        return false;
+      }
+      transaction.set(bindingRef, {
+        conflicted: false,
+        legacyOwnerId: reference.legacyOwnerId,
+        objectGeneration: reference.objectGeneration,
+        objectKey: reference.objectKey,
+        signerField: reference.legacySignerField,
+        sourceUrlHash: reference.sourceUrlHash,
+        storageBucketName: reference.storageBucketName,
+        storagePath: reference.storagePath,
+        teamId: reference.legacyTeamId,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...(bindingSnap.exists ? {} : { createdAt: admin.firestore.FieldValue.serverTimestamp() })
+      }, { merge: true });
+      return true;
+    });
+    if (bound) {
+      authenticated.push({
+        ...reference,
+        legacyProvenance: 'server-inventory-team-binding'
+      });
+    }
+  }
+  return authenticated;
+}
+
+async function lookupCertificateLegacySignatureBinding(reference) {
+  const bindingId = getCertificateLegacySignatureInventoryId(reference);
+  if (!bindingId) return null;
+  const bindingSnap = await firestore.doc(`certificateLegacySignatureInventory/${bindingId}`).get();
+  if (!bindingSnap.exists) return null;
+  const binding = bindingSnap.data() || {};
+  let teamId;
+  try {
+    teamId = normalizeCertificateTeamId(binding.teamId);
+  } catch {
+    return { ...binding, conflicted: true };
+  }
+  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) return { ...binding, conflicted: true };
+  const authorizedUploaderIds = await getCertificateLegacyUploaderIds(teamSnap.data() || {});
+  return authorizedUploaderIds.includes(String(binding.legacyOwnerId || '').trim())
+    ? binding
+    : { ...binding, conflicted: true };
+}
+
+exports.indexCertificateLegacySignaturesOnDefaultsWrite = functions
+  .runWith({ failurePolicy: true })
+  .firestore
+  .document('teams/{teamId}/settings/certificateDefaults')
+  .onWrite(async (change, triggerContext) => {
+    const teamId = normalizeCertificateTeamId(triggerContext.params.teamId);
+    const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+    if (!teamSnap.exists) return null;
+    const discovered = [];
+    for (const snapshot of [change.before, change.after]) {
+      if (!snapshot.exists) continue;
+      discovered.push(...await discoverCertificateLegacySignatureReferences({
+        defaults: snapshot.data() || {},
+        teamId,
+        team: teamSnap.data() || {}
+      }));
+    }
+    const uniqueReferences = [...new Map(discovered.map((reference) => [
+      `${reference.objectKey}\n${reference.legacyTeamId}\n${reference.legacySignerField}`,
+      reference
+    ])).values()];
+    await registerCertificateLegacySignatureInventoryReferences(uniqueReferences);
+    return null;
+  });
+
+exports.commitCertificateDefaults = functions.https.onCall(async (data, context = {}) => {
+  let teamId;
+  try {
+    teamId = normalizeCertificateTeamId(data?.teamId);
+  } catch {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid team is required.');
+  }
+  const requestedDefaults = data?.defaults;
+  if (!requestedDefaults || typeof requestedDefaults !== 'object' || Array.isArray(requestedDefaults)) {
+    throw new functions.https.HttpsError('invalid-argument', 'Certificate defaults are required.');
+  }
+  const serializedDefaults = JSON.stringify(requestedDefaults);
+  if (serializedDefaults.length > 500_000) {
+    throw new functions.https.HttpsError('invalid-argument', 'Certificate defaults are too large.');
+  }
+  const { team } = await requireCertificateTeamAdmin(teamId, context);
+
+  const {
+    id: _ignoredId,
+    updatedAt: _ignoredUpdatedAt,
+    updatedBy: _ignoredUpdatedBy,
+    retiredSignatureImageObjectKeys: _ignoredRetiredSignatureImageObjectKeys,
+    retiredSignatureImagePaths: _ignoredRetiredSignatureImagePaths,
+    ...clientDefaults
+  } = requestedDefaults;
+  const defaultsRef = firestore.doc(`teams/${teamId}/settings/certificateDefaults`);
+  const legacyImageBucketName = process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app';
+  const primaryImageBucket = admin.storage().bucket();
+  const previousDefaultsForAuthentication = await defaultsRef.get();
+  let authenticatedLegacyReferences = [];
+  let authenticatedPrimaryReferences = [];
+  try {
+    const discoveredLegacyReferences = await discoverCertificateLegacySignatureReferences({
+      defaults: previousDefaultsForAuthentication.exists ? previousDefaultsForAuthentication.data() || {} : {},
+      teamId,
+      team,
+      context
+    });
+    authenticatedLegacyReferences = await registerCertificateLegacySignatureInventoryReferences(
+      discoveredLegacyReferences
+    );
+  } catch (error) {
+    console.warn('Unable to authenticate a URL-only legacy certificate signature.', {
+      teamId,
+      error: error?.message || String(error)
+    });
+  }
+  try {
+    authenticatedPrimaryReferences = await authenticatePrimaryCertificateSignatureReferences({
+      defaults: previousDefaultsForAuthentication.exists ? previousDefaultsForAuthentication.data() || {} : {},
+      storageBucketName: primaryImageBucket.name,
+      getObjectMetadata: async (storagePath) => {
+        const [metadata] = await primaryImageBucket.file(storagePath).getMetadata();
+        return metadata;
+      }
+    });
+  } catch (error) {
+    console.warn('Unable to authenticate an existing primary certificate signature generation.', {
+      teamId,
+      error: error?.message || String(error)
+    });
+  }
+  await firestore.runTransaction(async (transaction) => {
+    const previousSnap = await transaction.get(defaultsRef);
+    let cleanupPlan;
+    try {
+      cleanupPlan = planCertificateSignatureCleanup({
+        teamId,
+        previousDefaults: previousSnap.exists ? previousSnap.data() || {} : {},
+        nextDefaults: clientDefaults,
+        requestedBy: context.auth.uid,
+        legacyBucketName: legacyImageBucketName,
+        authenticatedLegacyReferences,
+        authenticatedPrimaryReferences
+      });
+    } catch (error) {
+      throw new functions.https.HttpsError('invalid-argument', error?.message || 'Invalid certificate signature path.');
+    }
+
+    const priorRetiredSignatureImageObjectKeys = previousSnap.exists &&
+      Array.isArray(previousSnap.data()?.retiredSignatureImageObjectKeys)
+      ? previousSnap.data().retiredSignatureImageObjectKeys
+      : [];
+    const retiredSignatureImageObjectKeys = [...new Set([
+      ...priorRetiredSignatureImageObjectKeys,
+      ...cleanupPlan.retiredObjectKeys
+    ].map((value) => String(value || '').trim()).filter(Boolean))];
+    const priorRetiredSignatureImagePaths = previousSnap.exists &&
+      Array.isArray(previousSnap.data()?.retiredSignatureImagePaths)
+      ? previousSnap.data().retiredSignatureImagePaths
+      : [];
+    const retiredSignatureImagePaths = [...new Set([
+      ...priorRetiredSignatureImagePaths,
+      ...cleanupPlan.retiredPaths
+    ].map((value) => String(value || '').trim()).filter(Boolean))];
+    if (
+      retiredSignatureImageObjectKeys.length > 1000 ||
+      retiredSignatureImagePaths.length > 1000 ||
+      JSON.stringify({ retiredSignatureImageObjectKeys, retiredSignatureImagePaths }).length > 500_000
+    ) {
+      throw new functions.https.HttpsError(
+        'resource-exhausted',
+        'Certificate signature retirement history requires maintenance before another image can be removed.'
+      );
+    }
+
+    for (const target of cleanupPlan.nextTargets.values()) {
+      const storagePath = target.storagePath;
+      const cleanupId = getCertificateSignatureCleanupId(teamId, target);
+      const cleanupRef = firestore.doc(`teams/${teamId}/certificateSignatureCleanup/${cleanupId}`);
+      const cleanupSnap = await transaction.get(cleanupRef);
+      if (cleanupSnap.exists && !cleanupPlan.previousTargets.has(`${target.storageBucket || 'primary'}\n${storagePath}`)) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'A removed signature image cannot be restored. Upload it again before saving.'
+        );
+      }
+    }
+
+    cleanupPlan.cleanupTargets.forEach((target) => {
+      const storagePath = target.storagePath;
+      const cleanupId = getCertificateSignatureCleanupId(teamId, target);
+      const cleanupRef = firestore.doc(`teams/${teamId}/certificateSignatureCleanup/${cleanupId}`);
+      transaction.set(cleanupRef, {
+        teamId,
+        storagePath,
+        storageBucket: target.storageBucket || 'primary',
+        legacyBucketName: target.legacyBucketName || null,
+        legacyOwnerId: target.legacyOwnerId || null,
+        legacyProvenance: target.legacyProvenance || null,
+        legacySignerField: target.legacySignerField || null,
+        legacyTeamId: target.legacyTeamId || null,
+        objectGeneration: target.objectGeneration || null,
+        objectKey: target.objectKey || null,
+        sourceUrlHash: target.sourceUrlHash || null,
+        storageBucketName: target.storageBucketName || null,
+        requestedBy: context.auth.uid,
+        status: 'pending',
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+    transaction.set(defaultsRef, {
+      ...clientDefaults,
+      retiredSignatureImageObjectKeys,
+      retiredSignatureImagePaths,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedBy: context.auth.uid
+    }, { merge: true });
+  });
+
+  return { success: true, defaults: clientDefaults };
+});
+
+async function hydrateCertificateSignatureCleanupTarget(teamId, cleanup = {}) {
+  const legacyBucketName = process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app';
+  const primaryBucket = admin.storage().bucket();
+  const legacyBucket = admin.storage().bucket(legacyBucketName);
+  return upgradeCertificateSignatureCleanupTarget({
+    teamId,
+    target: cleanup,
+    primaryBucketName: primaryBucket.name,
+    legacyBucketName,
+    getObjectMetadata: async (storageBucket, storagePath) => {
+      const bucket = storageBucket === 'legacy-image' ? legacyBucket : primaryBucket;
+      const [metadata] = await bucket.file(storagePath).getMetadata();
+      return metadata;
+    },
+    lookupTeamObjectBinding: lookupCertificateLegacySignatureBinding
+  });
+}
+
+function getCanonicalCertificateSignatureCleanupFields(target = {}) {
+  return {
+    legacyProvenance: target.legacyProvenance || null,
+    legacySignerField: target.legacySignerField || null,
+    legacyTeamId: target.legacyTeamId || null,
+    objectGeneration: target.objectGeneration || null,
+    objectKey: target.objectKey || null,
+    storageBucketName: target.storageBucketName || null
+  };
+}
+
+exports.cleanupCertificateSignature = functions
+  .runWith({ failurePolicy: true })
+  .firestore
+  .document('teams/{teamId}/certificateSignatureCleanup/{cleanupId}')
+  .onWrite(async (change, triggerContext) => {
+    const cleanupSnap = change.after;
+    if (!cleanupSnap.exists) return null;
+    const teamId = String(triggerContext.params.teamId || '').trim();
+    const cleanup = cleanupSnap.data() || {};
+    if (cleanup.status !== 'pending') return null;
+    const hydrated = await hydrateCertificateSignatureCleanupTarget(teamId, cleanup);
+    const target = hydrated?.target || cleanup;
+    const storagePath = String(target.storagePath || '').trim();
+    if (hydrated?.missing === true) {
+      await cleanupSnap.ref.set({
+        ...getCanonicalCertificateSignatureCleanupFields(target),
+        status: 'completed-missing',
+        completedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      return null;
+    }
+    if (hydrated?.blockedReason === 'unverified-historical-generation') {
+      await cleanupSnap.ref.set({
+        ...getCanonicalCertificateSignatureCleanupFields(target),
+        status: 'blocked-unverified-generation',
+        completedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      return null;
+    }
+    if (
+      target.teamId !== teamId ||
+      (target.storageBucket === 'legacy-image' && target.legacyBucketName !== (process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app')) ||
+      !hydrated ||
+      !isAuthorizedCertificateSignatureCleanupTarget(teamId, target)
+    ) {
+      console.error('Discarding invalid certificate signature cleanup job.', {
+        teamId,
+        cleanupId: triggerContext.params.cleanupId
+      });
+      await cleanupSnap.ref.set({
+        ...getCanonicalCertificateSignatureCleanupFields(target),
+        status: 'rejected',
+        completedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      return null;
+    }
+
+    const defaultsRef = firestore.doc(`teams/${teamId}/settings/certificateDefaults`);
+    const certificatesQuery = firestore.collection(`teams/${teamId}/certificates`);
+    const certificateBatchesQuery = firestore.collection(`teams/${teamId}/certificateBatches`);
+    const shouldDelete = await firestore.runTransaction(async (transaction) => {
+      const currentCleanupSnap = await transaction.get(cleanupSnap.ref);
+      const defaultsSnap = await transaction.get(defaultsRef);
+      const certificatesSnap = await transaction.get(certificatesQuery);
+      const certificateBatchesSnap = await transaction.get(certificateBatchesQuery);
+      if (!currentCleanupSnap.exists || currentCleanupSnap.data()?.status !== 'pending') return false;
+      const referenceRecords = [
+        defaultsSnap.exists ? defaultsSnap.data() || {} : {},
+        ...certificatesSnap.docs.map((document) => document.data() || {}),
+        ...certificateBatchesSnap.docs.map((document) => document.data() || {})
+      ];
+      if (referenceRecords.some((record) => isCertificateSignatureTargetReferenced(record, target))) {
+        transaction.set(cleanupSnap.ref, {
+          ...getCanonicalCertificateSignatureCleanupFields(target),
+          status: 'blocked-referenced',
+          completedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        return false;
+      }
+      return true;
+    });
+    if (!shouldDelete) return null;
+
+    const cleanupBucket = target.storageBucket === 'legacy-image'
+      ? admin.storage().bucket(process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app')
+      : admin.storage().bucket();
+    try {
+      await cleanupBucket.file(storagePath, {
+        preconditionOpts: {
+          ifGenerationMatch: String(target.objectGeneration || '').trim()
+        }
+      }).delete({ ignoreNotFound: true });
+    } catch (error) {
+      if (Number(error?.code) === 412) {
+        await cleanupSnap.ref.set({
+          ...getCanonicalCertificateSignatureCleanupFields(target),
+          status: 'blocked-generation-changed',
+          completedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        return null;
+      }
+      throw error;
+    }
+    await cleanupSnap.ref.set({
+      ...getCanonicalCertificateSignatureCleanupFields(target),
+      status: 'completed',
+      completedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    return null;
+  });
+
 async function requireTeamEmailSender(teamId, context) {
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in to send team email.');
@@ -12581,6 +17570,46 @@ async function requireTeamEmailSender(teamId, context) {
     throw new functions.https.HttpsError('permission-denied', 'Only team coaches and admins can send team email.');
   }
   return { team, user, callerEmail };
+}
+
+const prepareTeamEmailSenderRateLimitReservation = createFirestoreFixedWindowRateLimitReservation({
+  firestore,
+  collectionName: 'teamEmailRateLimits',
+  windowMs: TEAM_EMAIL_RATE_LIMIT_WINDOW_MS,
+  maxRequests: TEAM_EMAIL_SENDER_SEND_LIMIT
+});
+const prepareTeamEmailTeamRateLimitReservation = createFirestoreFixedWindowRateLimitReservation({
+  firestore,
+  collectionName: 'teamEmailRateLimits',
+  windowMs: TEAM_EMAIL_RATE_LIMIT_WINDOW_MS,
+  maxRequests: TEAM_EMAIL_TEAM_SEND_LIMIT
+});
+
+async function reserveTeamEmailSendCapacity(teamId, senderUid) {
+  const now = Date.now();
+  const reservations = [
+    prepareTeamEmailSenderRateLimitReservation(`sender\n${teamId}\n${senderUid}`, now),
+    prepareTeamEmailTeamRateLimitReservation(`team\n${teamId}`, now)
+  ];
+  const decisions = await firestore.runTransaction(async (transaction) => {
+    const snapshots = [];
+    for (const reservation of reservations) {
+      snapshots.push(await transaction.get(reservation.ref));
+    }
+    const evaluated = reservations.map((reservation, index) => reservation.evaluate(snapshots[index]));
+    if (evaluated.every((decision) => decision.allowed)) {
+      reservations.forEach((reservation, index) => reservation.commit(transaction, evaluated[index]));
+    }
+    return evaluated;
+  });
+  const rejection = decisions.find((decision) => !decision.allowed);
+  if (rejection) {
+    const retryMinutes = Math.max(1, Math.ceil(rejection.retryAfterSeconds / 60));
+    throw new functions.https.HttpsError(
+      'resource-exhausted',
+      `Team email send limit reached. Keep this message and try again in about ${retryMinutes} minute${retryMinutes === 1 ? '' : 's'}.`
+    );
+  }
 }
 
 exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
@@ -12631,6 +17660,7 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
   if (recipientIds.length > 400) {
     throw new functions.https.HttpsError('invalid-argument', 'Team email is limited to 400 selected recipients.');
   }
+  const postToTeamChat = data?.postToTeamChat === true && targetType === 'full_team';
 
   let attachmentSummary;
   try {
@@ -12638,6 +17668,8 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
   } catch (error) {
     throw new functions.https.HttpsError('invalid-argument', error?.message || 'Invalid team email attachments.');
   }
+
+  await reserveTeamEmailSendCapacity(teamId, context.auth.uid);
 
   const [playersSnap, ownerSnap] = await Promise.all([
     firestore.collection(`teams/${teamId}/players`).get(),
@@ -12661,6 +17693,9 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
 
   const now = admin.firestore.FieldValue.serverTimestamp();
   const messageRef = firestore.collection(`teams/${teamId}/teamEmails`).doc();
+  const chatMessageRef = postToTeamChat
+    ? firestore.collection(`teams/${teamId}/chatMessages`).doc()
+    : null;
   const mailJobs = recipients.map((recipient) => ({
     ref: firestore.collection('mail').doc(),
     recipient,
@@ -12700,8 +17735,35 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
       status: 'queued',
       jobCount: mailJobs.length,
       jobIds: mailJobs.map((job) => job.ref.id)
-    }
+    },
+    ...(chatMessageRef ? { chatMessageId: chatMessageRef.id } : {})
   };
+  const chatMessagePayload = chatMessageRef ? {
+    clientMessageId: null,
+    text: `${subject}\n\n${body}`,
+    senderId: context.auth.uid,
+    senderName: user.fullName || context.auth.token?.name || null,
+    senderEmail: context.auth.token?.email || null,
+    senderPhotoUrl: user.photoUrl || null,
+    attachments: [],
+    imageUrl: null,
+    imagePath: null,
+    imageName: null,
+    imageType: null,
+    imageSize: null,
+    createdAt: now,
+    editedAt: null,
+    deleted: false,
+    ai: false,
+    aiName: null,
+    aiQuestion: null,
+    aiMeta: null,
+    targetType: 'full_team',
+    recipientIds: [],
+    targetRole: null,
+    conversationId: null,
+    teamEmailMessageId: messageRef.id
+  } : null;
 
   const chunks = [];
   for (let i = 0; i < mailJobs.length; i += 400) {
@@ -12709,6 +17771,9 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
   }
   const firstBatch = firestore.batch();
   firstBatch.set(messageRef, messagePayload);
+  if (chatMessageRef) {
+    firstBatch.set(chatMessageRef, chatMessagePayload);
+  }
   if (draftId) {
     firstBatch.set(firestore.doc(`teams/${teamId}/emailDrafts/${draftId}`), {
       status: 'sent',
@@ -12742,38 +17807,43 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('internal', 'Some email delivery jobs could not be queued. Check sent history for partial failure details.');
   }
 
-  const directRecipientUids = recipients.flatMap((recipient) => (
-    Array.isArray(recipient.userIds) ? recipient.userIds : []
-  ));
-  const emailRecipientUids = await getUserIdsByEmails(recipients.map((recipient) => recipient.email));
-  const inboxRecipientUids = Array.from(new Set([...directRecipientUids, ...emailRecipientUids]
-    .map((uid) => String(uid || '').trim())
-    .filter((uid) => uid && uid !== context.auth.uid)));
-  const inboxResult = await writeNotificationInboxRecords({
-    targets: inboxRecipientUids.map((uid) => ({ uid })),
-    category: 'team_email',
-    title: `Team email: ${subject}`,
-    body: truncateNotificationBody(body),
-    appRoute: buildNotificationAppRoute({
-      category: 'liveChat',
+  let inboxResult = { writeCount: 0, failureCount: 0 };
+  if (!chatMessageRef) {
+    const directRecipientUids = recipients.flatMap((recipient) => (
+      Array.isArray(recipient.userIds) ? recipient.userIds : []
+    ));
+    const emailRecipientUids = await getUserIdsByEmails(recipients.map((recipient) => recipient.email));
+    const inboxRecipientUids = Array.from(new Set([...directRecipientUids, ...emailRecipientUids]
+      .map((uid) => String(uid || '').trim())
+      .filter((uid) => uid && uid !== context.auth.uid)));
+    inboxResult = await writeNotificationInboxRecords({
+      targets: inboxRecipientUids.map((uid) => ({ uid })),
+      category: 'team_email',
+      title: `Team email: ${subject}`,
+      body: truncateNotificationBody(body),
+      appRoute: buildNotificationAppRoute({
+        category: 'liveChat',
+        teamId,
+        conversationId: 'team'
+      }),
       teamId,
       conversationId: 'team'
-    }),
-    teamId,
-    conversationId: 'team'
-  });
+    });
+  }
 
   return {
     messageId: messageRef.id,
     status: 'sent',
     recipientCount: recipients.length,
+    chatPostCreated: Boolean(chatMessageRef),
+    chatMessageId: chatMessageRef?.id || null,
     delivery: messagePayload.delivery,
     inboxWriteCount: inboxResult.writeCount,
     inboxFailureCount: inboxResult.failureCount
   };
 });
 
-exports.notifyGameUpdated = functions.firestore
+exports.notifyGameUpdated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}')
   .onUpdate(async (change, context) => {
     const before = change.before.data() || {};
@@ -12781,11 +17851,20 @@ exports.notifyGameUpdated = functions.firestore
     const category = detectGameNotificationCategory(before, after);
     if (!category) return null;
 
+    const isDiamondGame =
+      before.trackingEngine === 'diamond-v2' ||
+      after.trackingEngine === 'diamond-v2';
     const teamId = context.params.teamId;
     const gameId = context.params.gameId;
     const actorUid = after.updatedBy || null;
 
     if (category === 'liveScore') {
+      if (isDiamondGame) {
+        functions.logger.info('Notification routing: Diamond score updates use the revisioned effect outbox', {
+          category
+        });
+        return null;
+      }
       const liveScoreDedupKey = `score:${toNumericScore(before.homeScore)}:${toNumericScore(before.awayScore)}->${toNumericScore(after.homeScore)}:${toNumericScore(after.awayScore)}`;
       const liveScoreStateDedupKey = buildLiveScoreStateNotificationDedupKey(after);
       if (await hasRecentBigMomentLiveEventForScoreState(teamId, gameId, liveScoreStateDedupKey)) {
@@ -12798,20 +17877,6 @@ exports.notifyGameUpdated = functions.firestore
         });
         return null;
       }
-      const canSendLiveScore = await checkAndSetNotificationDedupKeys(teamId, category, gameId, [
-        liveScoreDedupKey,
-        liveScoreStateDedupKey
-      ]);
-      if (!canSendLiveScore) {
-        functions.logger.info('Notification dedup: skipping duplicate live score send', {
-          teamId,
-          category,
-          gameId,
-          dedupKey: liveScoreDedupKey
-        });
-        return null;
-      }
-
       return sendCategoryNotification({
         teamId,
         gameId,
@@ -12819,8 +17884,20 @@ exports.notifyGameUpdated = functions.firestore
         title: 'Live score update',
         body: `Score is now ${toNumericScore(after.homeScore)}-${toNumericScore(after.awayScore)}`,
         actorUid,
-        dedupKey: liveScoreDedupKey
+        dedupKey: liveScoreDedupKey,
+        dedupKeys: [liveScoreDedupKey, liveScoreStateDedupKey]
       });
+    }
+
+    if (isDiamondGame) {
+      const externallyMeaningfulScheduleChange = ['date', 'location', 'opponent', 'title']
+        .some((field) => valuesDiffer(before?.[field] ?? null, after?.[field] ?? null));
+      if (!externallyMeaningfulScheduleChange) {
+        functions.logger.info('Notification routing: Diamond lifecycle updates use the revisioned effect outbox', {
+          category
+        });
+        return null;
+      }
     }
 
     const payload = buildScheduleUpdateNotificationPayload(before, after);
@@ -12835,7 +17912,7 @@ exports.notifyGameUpdated = functions.firestore
     });
   });
 
-exports.notifyLiveEventCreated = functions.firestore
+exports.notifyLiveEventCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}/liveEvents/{eventId}')
   .onCreate(async (snapshot, context) => {
     const event = snapshot.data() || {};
@@ -12858,18 +17935,6 @@ exports.notifyLiveEventCreated = functions.firestore
     const dedupKey = buildLiveEventNotificationDedupKey(event, documentEventId);
     if (!dedupKey) return null;
     const scoreStateDedupKey = buildLiveScoreStateNotificationDedupKey(event);
-    const canSend = await checkAndSetNotificationDedupKeys(teamId, 'liveScore', gameId, [dedupKey, scoreStateDedupKey]);
-    if (!canSend) {
-      functions.logger.info('Notification dedup: skipping duplicate live event send', {
-        teamId,
-        gameId,
-        eventId: documentEventId,
-        dedupKey,
-        scoreStateDedupKey
-      });
-      return null;
-    }
-
     return sendCategoryNotification({
       teamId,
       gameId,
@@ -12878,11 +17943,12 @@ exports.notifyLiveEventCreated = functions.firestore
       title: payload.title,
       body: payload.body,
       actorUid: getLiveEventActorUid(event),
-      dedupKey
+      dedupKey,
+      dedupKeys: [dedupKey, scoreStateDedupKey]
     });
   });
 
-const notifyGameCreated = functions.firestore
+const notifyGameCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}')
   .onCreate(async (snapshot, context) => {
     const game = snapshot.data() || {};
@@ -12901,7 +17967,7 @@ const notifyGameCreated = functions.firestore
 
 exports.notifyGameCreated = notifyGameCreated;
 
-const notifyScheduleImportBatchCompleted = functions.firestore
+const notifyScheduleImportBatchCompleted = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/scheduleImportNotificationBatches/{batchId}')
   .onWrite(async (change, context) => {
     const after = change.after.exists ? (change.after.data() || {}) : null;
@@ -12918,7 +17984,7 @@ const notifyScheduleImportBatchCompleted = functions.firestore
 
 exports.notifyScheduleImportBatchCompleted = notifyScheduleImportBatchCompleted;
 
-const notifyRideOfferCreated = functions.firestore
+const notifyRideOfferCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}')
   .onCreate(async (snapshot, context) => {
     if (!NOTIFICATION_CATEGORIES.includes('rideshare')) return null;
@@ -12955,7 +18021,7 @@ const notifyRideOfferCreated = functions.firestore
 
 exports.notifyRideOfferCreated = notifyRideOfferCreated;
 
-const notifyRideClaimCreated = functions.firestore
+const notifyRideClaimCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}/requests/{requestId}')
   .onCreate(async (snapshot, context) => {
     return sendRideClaimNotification(snapshot.data() || {}, context);
@@ -12963,7 +18029,7 @@ const notifyRideClaimCreated = functions.firestore
 
 exports.notifyRideClaimCreated = notifyRideClaimCreated;
 
-const notifyRideClaimUpdated = functions.firestore
+const notifyRideClaimUpdated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}/requests/{requestId}')
   .onUpdate(async (change, context) => {
     const before = change.before.data() || {};
@@ -12974,7 +18040,7 @@ const notifyRideClaimUpdated = functions.firestore
 
 exports.notifyRideClaimUpdated = notifyRideClaimUpdated;
 
-const notifyRideOfferCancelled = functions.firestore
+const notifyRideOfferCancelled = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}')
   .onUpdate(async (change, context) => {
     if (!NOTIFICATION_CATEGORIES.includes('rideshare')) return null;
@@ -13086,7 +18152,7 @@ exports.syncApprovedParentMembershipRequestUserLink = functions.firestore
     return null;
   });
 
-exports.notifyParentMembershipRequestCreated = functions.firestore
+exports.notifyParentMembershipRequestCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/membershipRequests/{requestId}')
   .onCreate(async (snapshot, context) => {
     const data = snapshot.data() || {};
@@ -13115,7 +18181,7 @@ exports.notifyParentMembershipRequestCreated = functions.firestore
     return null;
   });
 
-exports.notifyParentMembershipRequestUpdated = functions.firestore
+exports.notifyParentMembershipRequestUpdated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/membershipRequests/{requestId}')
   .onUpdate(async (change, context) => {
     const beforeData = change.before.data() || {};
@@ -13153,7 +18219,7 @@ exports.notifyParentMembershipRequestUpdated = functions.firestore
     return null;
   });
 
-exports.notifyRegistrationSubmitted = functions.firestore
+exports.notifyRegistrationSubmitted = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/registrationForms/{formId}/registrations/{registrationId}')
   .onCreate(async (snapshot, context) => {
     const data = snapshot.data() || {};
@@ -13183,7 +18249,7 @@ exports.notifyRegistrationSubmitted = functions.firestore
     return null;
   });
 
-exports.notifyRegistrationStatusChanged = functions.firestore
+exports.notifyRegistrationStatusChanged = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/registrationForms/{formId}/registrations/{registrationId}')
   .onUpdate(async (change, context) => {
     const beforeData = change.before.data() || {};
@@ -13236,7 +18302,7 @@ exports.notifyRegistrationStatusChanged = functions.firestore
     return null;
   });
 
-exports.notifyInviteRedeemed = functions.firestore
+exports.notifyInviteRedeemed = retryableNotificationFunctions.firestore
   .document('accessCodes/{codeId}')
   .onUpdate(async (change, context) => {
     const beforeData = change.before.data() || {};
@@ -13284,7 +18350,7 @@ exports.notifyInviteRedeemed = functions.firestore
     return null;
   });
 
-exports.notifyFeeMarkedPaid = functions.firestore
+exports.notifyFeeMarkedPaid = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')
   .onWrite(async (change, context) => {
     const before = change.before.exists ? change.before.data() : null;
@@ -13369,7 +18435,7 @@ exports.notifyFeeMarkedPaid = functions.firestore
     return null;
   });
 
-exports.notifyPublishedCertificateAward = functions.firestore
+exports.notifyPublishedCertificateAward = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/certificates/{certificateId}')
   .onWrite(async (change, context) => {
     const beforeData = change.before.exists ? (change.before.data() || null) : null;
@@ -13431,7 +18497,7 @@ exports.notifyPublishedCertificateAward = functions.firestore
     return null;
   });
 
-exports.notifyFeeAssigned = functions.firestore
+exports.notifyFeeAssigned = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')
   .onCreate(async (snapshot, context) => {
     const data = snapshot.data();
@@ -13509,7 +18575,7 @@ exports.notifyFeeAssigned = functions.firestore
     }
   });
 
-exports.notifyPracticePacketCompleted = functions.firestore
+exports.notifyPracticePacketCompleted = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/practiceSessions/{sessionId}/packetCompletions/{completionId}')
   .onCreate(async (snapshot, context) => {
     const data = snapshot.data();
@@ -13572,9 +18638,12 @@ exports.notifyPracticePacketCompleted = functions.firestore
 
 const PUBLIC_RSVP_TOKEN_TTL_DAYS = 14;
 const PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT = 500;
-const PUBLIC_RSVP_RESPONSES = new Set(['going', 'maybe', 'not_going']);
+// Keep private-profile BatchGet requests bounded so large rosters do not create
+// one concurrent Firestore read pipeline per eligible player.
+const PUBLIC_RSVP_PRIVATE_PROFILE_BATCH_SIZE = 100;
+const PUBLIC_RSVP_MAX_BODY_BYTES = 4096;
 
-exports.notifyPracticePacketAssigned = functions.firestore
+exports.notifyPracticePacketAssigned = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/practiceSessions/{sessionId}')
   .onWrite(async (change, context) => {
     const beforeData = change.before.exists ? (change.before.data() || null) : null;
@@ -13583,9 +18652,12 @@ exports.notifyPracticePacketAssigned = functions.firestore
     return null;
   });
 
-function writePublicRsvpCors(req, res) {
+function writePublicRsvpCors(req, res, { allowNativeAdminOrigin = false } = {}) {
   const origin = req.headers.origin;
-  if (isAllowedPublicRsvpOrigin(origin)) {
+  const isAllowed = allowNativeAdminOrigin
+    ? isAllowedPublicRsvpAdminOrigin(origin)
+    : isAllowedPublicRsvpOrigin(origin);
+  if (isAllowed) {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Vary', 'Origin');
   }
@@ -13597,9 +18669,34 @@ function publicRsvpJsonError(res, status, error) {
   res.status(status).json({ ok: false, error });
 }
 
-function normalizePublicRsvpResponse(value) {
-  const normalized = String(value || '').trim().toLowerCase();
-  return PUBLIC_RSVP_RESPONSES.has(normalized) ? normalized : '';
+function getPublicRsvpBodyByteLength(req) {
+  if (Buffer.isBuffer(req.rawBody)) return req.rawBody.length;
+  return Buffer.byteLength(JSON.stringify(req.body || {}), 'utf8');
+}
+
+async function assertPublicRsvpRequestAllowed(req, res, operation, token) {
+  const boundaries = buildPublicRsvpRateLimitBoundaries({ operation, token, ip: getRequestIp(req) });
+  const tokenBoundary = boundaries.find((boundary) => boundary.scope === 'token');
+  const networkBoundary = boundaries.find((boundary) => boundary.scope === 'network');
+  const tokenChecker = operation === 'write' ? checkPublicRsvpTokenWriteRateLimit : checkPublicRsvpTokenReadRateLimit;
+  const networkChecker = operation === 'write' ? checkPublicRsvpNetworkWriteRateLimit : checkPublicRsvpNetworkReadRateLimit;
+  const tokenInMemory = tokenChecker({ ip: tokenBoundary.boundary });
+  const networkInMemory = networkChecker(req);
+  if (!tokenInMemory.allowed || !networkInMemory.allowed) {
+    res.set('Retry-After', String(Math.max(tokenInMemory.retryAfterSeconds, networkInMemory.retryAfterSeconds)));
+    publicRsvpJsonError(res, 429, 'Too many RSVP requests. Please wait and try again.');
+    return false;
+  }
+  const [tokenDurable, networkDurable] = await Promise.all([
+    getPublicRsvpDurableRateLimiter(operation, 'token')(tokenBoundary.boundary),
+    getPublicRsvpDurableRateLimiter(operation, 'network')(networkBoundary.boundary)
+  ]);
+  if (!tokenDurable.allowed || !networkDurable.allowed) {
+    res.set('Retry-After', String(Math.max(tokenDurable.retryAfterSeconds, networkDurable.retryAfterSeconds)));
+    publicRsvpJsonError(res, 429, 'Too many RSVP requests. Please wait and try again.');
+    return false;
+  }
+  return true;
 }
 
 function normalizePublicRsvpEmail(value) {
@@ -13686,13 +18783,49 @@ function getPublicRsvpParentContacts(player) {
   return contacts;
 }
 
+async function hydratePublicRsvpPrivateProfileParents({
+  teamId,
+  playerDocs,
+  respondedPlayerIds,
+  batchSize = PUBLIC_RSVP_PRIVATE_PROFILE_BATCH_SIZE
+}) {
+  const players = playerDocs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
+  const playersNeedingPrivateContacts = players.filter((player) => (
+    player.active !== false
+    && !respondedPlayerIds.has(player.id)
+    && getPublicRsvpParentContacts(player).length === 0
+  ));
+
+  const privateParentsByPlayerId = new Map();
+  for (let offset = 0; offset < playersNeedingPrivateContacts.length; offset += batchSize) {
+    const playerChunk = playersNeedingPrivateContacts.slice(offset, offset + batchSize);
+    const privateProfileRefs = playerChunk.map((player) => (
+      firestore.doc(`teams/${teamId}/players/${player.id}/private/profile`)
+    ));
+    const privateProfileSnaps = await firestore.getAll(...privateProfileRefs);
+    privateProfileSnaps.forEach((privateProfileSnap, index) => {
+      if (!privateProfileSnap.exists) return;
+      const privateProfile = privateProfileSnap.data() || {};
+      const privateParents = Array.isArray(privateProfile.parents) ? privateProfile.parents : [];
+      if (privateParents.length > 0) {
+        privateParentsByPlayerId.set(playerChunk[index].id, privateParents);
+      }
+    });
+  }
+
+  return players.map((player) => {
+    const privateProfileParents = privateParentsByPlayerId.get(player.id);
+    return privateProfileParents ? { ...player, privateProfileParents } : player;
+  });
+}
+
 function getPublicRsvpPlayerIds(rsvp) {
   const ids = Array.isArray(rsvp?.playerIds) ? rsvp.playerIds : [rsvp?.playerId, rsvp?.childId];
   return ids.map((value) => String(value || '').trim()).filter(Boolean);
 }
 
 function publicRsvpIsResponded(response) {
-  return PUBLIC_RSVP_RESPONSES.has(String(response || '').trim());
+  return Boolean(normalizePublicRsvpResponse(response));
 }
 
 function buildRsvpReminderPushPayload(event) {
@@ -13966,13 +19099,7 @@ async function getPublicRsvpTokenData(token) {
 }
 
 async function assertUsablePublicRsvpToken(tokenData) {
-  if (!tokenData || tokenData.revoked === true || tokenData.disabled === true) {
-    throw new Error('Invalid RSVP link.');
-  }
-  const expiresAt = coercePublicRsvpDate(tokenData.expiresAt);
-  if (expiresAt && expiresAt <= new Date()) {
-    throw new Error('This RSVP link has expired.');
-  }
+  assertPublicRsvpTokenMetadataUsable(tokenData);
   const [teamSnap, eventRecord, playerSnap] = await Promise.all([
     firestore.doc(`teams/${tokenData.teamId}`).get(),
     loadPublicRsvpEvent(tokenData.teamId, tokenData.gameId),
@@ -13986,6 +19113,21 @@ async function assertUsablePublicRsvpToken(tokenData) {
     throw new Error('Invalid RSVP link.');
   }
   return { team: teamSnap.data() || {}, event: eventRecord.data, player };
+}
+
+function assertPublicRsvpTokenMetadataUsable(tokenData) {
+  if (!tokenData || tokenData.revoked === true || tokenData.disabled === true) {
+    throw new Error('Invalid RSVP link.');
+  }
+  const expiresAt = coercePublicRsvpDate(tokenData.expiresAt);
+  if (expiresAt && expiresAt <= new Date()) {
+    throw new Error('This RSVP link has expired.');
+  }
+  if (!normalizePublicRsvpText(tokenData.teamId) ||
+      !normalizePublicRsvpText(tokenData.gameId) ||
+      !normalizePublicRsvpText(tokenData.playerId)) {
+    throw new Error('Invalid RSVP link.');
+  }
 }
 
 function buildPublicRsvpContext({ team, event, player }) {
@@ -14063,20 +19205,11 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
     batchWriteCount = 0;
   };
 
-  const players = await Promise.all(playersSnap.docs.map(async (docSnap) => {
-    const player = { id: docSnap.id, ...(docSnap.data() || {}) };
-    if (player.active === false || respondedPlayerIds.has(player.id)) return player;
-    const hasPublicContacts = (Array.isArray(player.parents) && player.parents.length > 0)
-      || normalizePublicRsvpEmail(player.parentEmail || player.guardianEmail)
-      || normalizePublicRsvpText(player.parentUserId || player.guardianUserId);
-    if (hasPublicContacts) return player;
-    const privateProfileSnap = await firestore.doc(`teams/${teamId}/players/${player.id}/private/profile`).get();
-    const privateProfile = privateProfileSnap.exists ? (privateProfileSnap.data() || {}) : {};
-    const privateParents = Array.isArray(privateProfile.parents) ? privateProfile.parents : [];
-    return privateParents.length > 0
-      ? { ...player, privateProfileParents: privateParents }
-      : player;
-  }));
+  const players = await hydratePublicRsvpPrivateProfileParents({
+    teamId,
+    playerDocs: playersSnap.docs,
+    respondedPlayerIds
+  });
 
   players.forEach((player) => {
     if (player.active === false || respondedPlayerIds.has(player.id)) return;
@@ -14143,7 +19276,7 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
 }
 
 exports.sendPublicRsvpEmails = functions.https.onRequest(async (req, res) => {
-  writePublicRsvpCors(req, res);
+  writePublicRsvpCors(req, res, { allowNativeAdminOrigin: true });
   if (req.method === 'OPTIONS') {
     res.status(204).send('');
     return;
@@ -14217,17 +19350,22 @@ exports.getPublicRsvp = functions.https.onRequest(async (req, res) => {
     res.status(204).send('');
     return;
   }
-  if (req.method !== 'GET') {
+  if (req.method !== 'GET' && req.method !== 'POST') {
     publicRsvpJsonError(res, 405, 'Method not allowed');
+    return;
+  }
+  if (req.method === 'POST' && getPublicRsvpBodyByteLength(req) > PUBLIC_RSVP_MAX_BODY_BYTES) {
+    publicRsvpJsonError(res, 413, 'RSVP request is too large.');
     return;
   }
 
   try {
-    const token = normalizePublicRsvpText(req.query?.token);
+    const token = normalizePublicRsvpText(req.body?.token || req.query?.token);
     if (!token) {
       publicRsvpJsonError(res, 400, 'Missing RSVP link token.');
       return;
     }
+    if (!await assertPublicRsvpRequestAllowed(req, res, 'read', token)) return;
     const { tokenData } = await getPublicRsvpTokenData(token);
     const records = await assertUsablePublicRsvpToken(tokenData);
     res.status(200).json({ ok: true, context: buildPublicRsvpContext(records) });
@@ -14246,6 +19384,10 @@ exports.submitPublicRsvp = functions.https.onRequest(async (req, res) => {
     publicRsvpJsonError(res, 405, 'Method not allowed');
     return;
   }
+  if (getPublicRsvpBodyByteLength(req) > PUBLIC_RSVP_MAX_BODY_BYTES) {
+    publicRsvpJsonError(res, 413, 'RSVP request is too large.');
+    return;
+  }
 
   try {
     const token = normalizePublicRsvpText(req.body?.token);
@@ -14254,48 +19396,67 @@ exports.submitPublicRsvp = functions.https.onRequest(async (req, res) => {
       publicRsvpJsonError(res, 400, 'Choose Going, Maybe, or Can\'t Go.');
       return;
     }
-    const { tokenHash, tokenData } = await getPublicRsvpTokenData(token);
+    if (!await assertPublicRsvpRequestAllowed(req, res, 'write', token)) return;
+    const { tokenHash, tokenRef, tokenData } = await getPublicRsvpTokenData(token);
     const records = await assertUsablePublicRsvpToken(tokenData);
     const docId = `public_${tokenHash.slice(0, 24)}`;
     const jobRef = firestore.collection('publicRsvpSummaryRefreshJobs').doc();
     const playerStateRef = getPublicRsvpSummaryPlayerStateRef(tokenData.teamId, tokenData.gameId, tokenData.playerId);
     const summaryStateRef = getPublicRsvpSummaryStateRef(tokenData.teamId, tokenData.gameId);
-    const batch = firestore.batch();
-    batch.set(firestore.doc(`teams/${tokenData.teamId}/games/${tokenData.gameId}/rsvps/${docId}`), {
-      userId: docId,
-      parentEmail: admin.firestore.FieldValue.delete(),
-      email: admin.firestore.FieldValue.delete(),
-      guardianEmail: admin.firestore.FieldValue.delete(),
-      displayName: normalizePublicRsvpDisplayName(tokenData.parentName),
-      playerIds: [tokenData.playerId],
-      response,
-      note: null,
-      publicRsvp: true,
-      respondedAt: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
-    batch.set(firestore.doc(`publicRsvpTokens/${tokenHash}`), {
-      lastSubmittedAt: admin.firestore.FieldValue.serverTimestamp(),
-      lastResponse: response
-    }, { merge: true });
-    batch.set(playerStateRef, {
-      latestJobId: jobRef.id,
-      latestResponse: response,
-      queuedAt: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
-    batch.set(summaryStateRef, {
-      latestQueuedJobId: jobRef.id,
-      latestQueuedPlayerId: tokenData.playerId,
-      queuedAt: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
-    batch.set(jobRef, {
-      teamId: tokenData.teamId,
-      gameId: tokenData.gameId,
-      playerId: tokenData.playerId,
-      response,
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    let deduplicated = false;
+    await firestore.runTransaction(async (transaction) => {
+      const latestTokenSnap = await transaction.get(tokenRef);
+      const latestTokenData = latestTokenSnap.exists ? latestTokenSnap.data() || {} : null;
+      assertPublicRsvpTokenMetadataUsable(latestTokenData);
+      if (latestTokenData.teamId !== tokenData.teamId ||
+          latestTokenData.gameId !== tokenData.gameId ||
+          latestTokenData.playerId !== tokenData.playerId) {
+        throw new Error('This RSVP link is no longer valid.');
+      }
+      if (isPublicRsvpReplay(latestTokenData.lastResponse, response)) {
+        deduplicated = true;
+        return;
+      }
+      transaction.set(firestore.doc(`teams/${tokenData.teamId}/games/${tokenData.gameId}/rsvps/${docId}`), {
+        userId: docId,
+        parentEmail: admin.firestore.FieldValue.delete(),
+        email: admin.firestore.FieldValue.delete(),
+        guardianEmail: admin.firestore.FieldValue.delete(),
+        displayName: normalizePublicRsvpDisplayName(tokenData.parentName),
+        playerIds: [tokenData.playerId],
+        response,
+        note: null,
+        publicRsvp: true,
+        respondedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      transaction.set(tokenRef, {
+        lastSubmittedAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastResponse: response
+      }, { merge: true });
+      transaction.set(playerStateRef, {
+        latestJobId: jobRef.id,
+        latestResponse: response,
+        queuedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      transaction.set(summaryStateRef, {
+        latestQueuedJobId: jobRef.id,
+        latestQueuedPlayerId: tokenData.playerId,
+        queuedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      transaction.set(jobRef, {
+        teamId: tokenData.teamId,
+        gameId: tokenData.gameId,
+        playerId: tokenData.playerId,
+        response,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
     });
-    await batch.commit();
-    res.status(200).json({ ok: true, context: buildPublicRsvpContext(records), summary: null });
+    res.status(200).json({
+      ok: true,
+      deduplicated,
+      context: buildPublicRsvpContext(records),
+      summary: null
+    });
   } catch (error) {
     publicRsvpJsonError(res, 403, error?.message || 'Unable to submit RSVP.');
   }
@@ -14487,9 +19648,15 @@ function requireOpportunityAuth(context, { verified = false } = {}) {
 async function getOpportunityCaller(context, options = {}) {
   const uid = requireOpportunityAuth(context, options);
   const userSnap = await firestore.doc(`users/${uid}`).get();
+  // Team email authorization must match Firestore's request.auth.token.email
+  // boundary. A users/{uid}.email value can outlive an Auth email change and
+  // must never restore access that the current token no longer carries.
+  const rawEmail = String(context.auth.token?.email || '').trim();
   return {
     uid,
-    email: String(context.auth.token?.email || userSnap.data()?.email || '').trim().toLowerCase(),
+    email: rawEmail.toLowerCase(),
+    rawEmail,
+    emailVerified: context.auth.token?.email_verified === true,
     user: userSnap.exists ? userSnap.data() || {} : {}
   };
 }
@@ -14498,12 +19665,209 @@ function isOpportunityPlatformAdmin(caller) {
   return caller?.user?.isAdmin === true;
 }
 
+function hasOpportunityTeamAdminAccess(caller, team) {
+  return hasTeamAdminAccess({
+    team,
+    // isAdmin is protected server-managed state. Email-based team access must
+    // come only from the current Auth token, never a stale users/{uid} email.
+    user: { isAdmin: isOpportunityPlatformAdmin(caller) },
+    uid: caller?.uid,
+    email: caller?.emailVerified === true ? caller?.email : ''
+  });
+}
+
+const delegatedTeamContextHandler = createDelegatedTeamContextHandler({
+  loadTeam: async (teamId) => {
+    const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+    return teamSnap.exists ? teamSnap.data() || {} : null;
+  },
+  loadUser: async (uid) => {
+    const userSnap = await firestore.doc(`users/${uid}`).get();
+    return userSnap.exists ? userSnap.data() || {} : {};
+  },
+  loadGame: async (teamId, gameId) => {
+    const gameSnap = await firestore.doc(`teams/${teamId}/games/${gameId}`).get();
+    return gameSnap.exists ? gameSnap.data() || {} : null;
+  },
+  loadRsvp: async (teamId, gameId, uid) => {
+    const rsvpSnap = await firestore.doc(`teams/${teamId}/games/${gameId}/rsvps/${uid}`).get();
+    return rsvpSnap.exists ? rsvpSnap.data() || {} : null;
+  },
+  makeError: (code, message) => new functions.https.HttpsError(code, message)
+});
+
+const redeemFriendInviteTransaction = createFriendInviteRedemptionTransaction({
+  firestore,
+  Timestamp: { now: () => admin.firestore.Timestamp.now() },
+  HttpsError: functions.https.HttpsError,
+  logger: functions.logger
+});
+const redeemFriendInviteHandler = createFriendInviteRedemptionCallableHandler({
+  redeemTransaction: redeemFriendInviteTransaction,
+  HttpsError: functions.https.HttpsError
+});
+exports.redeemFriendInvite = functions.https.onCall(redeemFriendInviteHandler);
+
 exports.checkAcceptedFriendMessageAccess = functions.https.onCall(
   createCheckAcceptedFriendMessageAccessHandler({
     firestore,
+    auth: admin.auth(),
     HttpsError: functions.https.HttpsError
   })
 );
+
+exports.createAuthorizedChatConversation = functions.https.onCall(async (data, context = {}) => {
+  await assertSensitiveEmailVerified(context, 'create-authorized-chat-conversation');
+  const callerUid = requireOpportunityAuth(context);
+  assertOpportunityRateLimit(checkPublicOpportunityMessageRateLimit, context, `chat-conversation:${callerUid}`);
+  const teamId = normalizeDirectChatId(data?.teamId, 'team');
+  let canonical;
+  try {
+    canonical = await resolveCanonicalConversationParticipants({
+      callerUid,
+      participantSelectors: data?.participantSelectors,
+      resolveUserByUid: (uid) => admin.auth().getUser(uid),
+      resolveUserByEmail: (email) => admin.auth().getUserByEmail(email)
+    });
+  } catch (_error) {
+    throwOpportunityError('invalid-argument', 'Every conversation recipient must resolve to an active account.');
+  }
+
+  const conversationId = buildCanonicalConversationId(canonical.type, canonical.participantIds);
+  if (!conversationId) {
+    throwOpportunityError('invalid-argument', 'Choose at least one current team member.');
+  }
+  const conversationRef = firestore.doc(`teams/${teamId}/chatConversations/${conversationId}`);
+  const teamRef = firestore.doc(`teams/${teamId}`);
+  const participantRefs = canonical.participantIds.map((uid) => firestore.doc(`users/${uid}`));
+  const friendshipId = canonical.type === 'direct' ? canonical.participantIds.join('__') : '';
+  const friendshipRef = friendshipId ? firestore.doc(`friendships/${friendshipId}`) : null;
+  const requestedName = cleanOpportunityText(data?.name, 200) || null;
+  const now = admin.firestore.Timestamp.now();
+
+  return firestore.runTransaction(async (transaction) => {
+    const [conversationSnap, teamSnap, ...remainingSnaps] = await Promise.all([
+      transaction.get(conversationRef),
+      transaction.get(teamRef),
+      ...participantRefs.map((ref) => transaction.get(ref)),
+      ...(friendshipRef ? [transaction.get(friendshipRef)] : [])
+    ]);
+    if (!teamSnap.exists) {
+      throwOpportunityError('permission-denied', 'Every participant must have current team access.');
+    }
+    const participantSnaps = remainingSnaps.slice(0, participantRefs.length);
+    const friendshipSnap = friendshipRef ? remainingSnaps[participantRefs.length] : null;
+    const team = teamSnap.data() || {};
+    const teamWithId = { ...team, id: teamId };
+    const participantsByUid = new Map(canonical.participants.map((participant) => [participant.uid, participant]));
+    const profilesByUid = new Map();
+    participantSnaps.forEach((participantSnap, index) => {
+      if (!participantSnap.exists) return;
+      profilesByUid.set(canonical.participantIds[index], participantSnap.data() || {});
+    });
+    const inaccessibleParticipant = canonical.participantIds.find((uid) => {
+      const authUser = participantsByUid.get(uid);
+      const profile = profilesByUid.get(uid);
+      return !profile || !hasCurrentTeamAccess({
+        team: teamWithId,
+        user: profile,
+        userId: uid,
+        email: authUser?.email || ''
+      });
+    });
+    if (inaccessibleParticipant) {
+      throwOpportunityError('permission-denied', 'Every participant must have current team access.');
+    }
+
+    const callerProfile = profilesByUid.get(callerUid) || {};
+    const callerAuth = participantsByUid.get(callerUid) || {};
+    const callerCanManage = hasTeamAdminAccess({
+      team,
+      user: callerProfile,
+      uid: callerUid,
+      email: callerAuth.email || ''
+    });
+    const existing = conversationSnap.exists ? conversationSnap.data() || {} : {};
+    let directMetadata = {};
+    if (canonical.type === 'direct') {
+      const existingInitiatorUid = normalizeDirectChatUserId(existing.initiatedBy);
+      const existingInitiatorProfile = profilesByUid.get(existingInitiatorUid) || {};
+      const existingInitiatorAuth = participantsByUid.get(existingInitiatorUid) || {};
+      const existingAdminDirectIsCurrent = existing.directAccess === 'team_admin' &&
+        canonical.participantIds.includes(existingInitiatorUid) &&
+        hasTeamAdminAccess({
+          team,
+          user: existingInitiatorProfile,
+          uid: existingInitiatorUid,
+          email: existingInitiatorAuth.email || ''
+        });
+      if (existingAdminDirectIsCurrent) {
+        directMetadata = {
+          directAccess: 'team_admin',
+          directUserIds: canonical.participantIds,
+          friendshipId: null,
+          initiatedBy: existingInitiatorUid
+        };
+      } else if (callerCanManage) {
+        directMetadata = {
+          directAccess: 'team_admin',
+          directUserIds: canonical.participantIds,
+          friendshipId: null,
+          initiatedBy: callerUid
+        };
+      } else {
+        const recipientId = canonical.participantIds.find((uid) => uid !== callerUid);
+        const friendship = friendshipSnap?.exists ? friendshipSnap.data() || {} : {};
+        if (!recipientId || !friendshipSnap?.exists || !canMessageAcceptedFriendForTeam({
+          friendship,
+          team,
+          sender: callerProfile,
+          recipient: profilesByUid.get(recipientId) || {},
+          senderId: callerUid,
+          recipientId,
+          teamId,
+          senderEmail: callerAuth.email || '',
+          recipientEmail: participantsByUid.get(recipientId)?.email || ''
+        })) {
+          throwOpportunityError('permission-denied', 'This direct conversation is not authorized.');
+        }
+        directMetadata = {
+          directAccess: 'accepted_friend',
+          directUserIds: canonical.participantIds,
+          friendshipId,
+          initiatedBy: null
+        };
+      }
+    }
+
+    const payload = {
+      type: canonical.type,
+      participantIds: canonical.participantIds,
+      participantRoles: [],
+      mutedBy: [],
+      ...(canonical.type === 'group' && requestedName ? { name: requestedName } : {}),
+      ...directMetadata,
+      updatedAt: now
+    };
+    if (conversationSnap.exists) {
+      const existingParticipantIds = Array.isArray(existing.participantIds)
+        ? [...new Set(existing.participantIds)].sort()
+        : [];
+      if (existing.type !== canonical.type ||
+          existingParticipantIds.join('|') !== canonical.participantIds.join('|')) {
+        throwOpportunityError('failed-precondition', 'The existing conversation does not match this audience.');
+      }
+      transaction.set(conversationRef, {
+        ...directMetadata,
+        updatedAt: now
+      }, { merge: true });
+      return { id: conversationId, ...existing, ...directMetadata, updatedAt: now };
+    }
+    const created = { ...payload, createdAt: now };
+    transaction.create(conversationRef, created);
+    return { id: conversationId, ...created };
+  });
+});
 
 function normalizeDirectChatId(value, label) {
   const normalized = String(value || '').trim();
@@ -14583,87 +19947,20 @@ function normalizeAuthorizedDirectAttachment(rawAttachment, { teamId, conversati
 
 exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, context = {}) => {
   await assertSensitiveEmailVerified(context, 'send-authorized-direct-message');
-  const caller = await getOpportunityCaller(context);
-  assertOpportunityRateLimit(checkPublicOpportunityMessageRateLimit, context, `direct-message:${caller.uid}`);
+  const callerUid = requireOpportunityAuth(context);
+  assertOpportunityRateLimit(checkPublicOpportunityMessageRateLimit, context, `direct-message:${callerUid}`);
   const teamId = normalizeDirectChatId(data?.teamId, 'team');
   const conversationId = normalizeDirectChatId(data?.conversationId, 'conversation');
   const conversationRef = firestore.doc(`teams/${teamId}/chatConversations/${conversationId}`);
-  const [teamSnap, conversationSnap] = await Promise.all([
-    firestore.doc(`teams/${teamId}`).get(),
-    conversationRef.get()
-  ]);
-  if (!teamSnap.exists || !conversationSnap.exists) {
+  const initialConversationSnap = await conversationRef.get();
+  if (!initialConversationSnap.exists) {
     throwOpportunityError('not-found', 'Direct conversation not found.');
   }
-  const team = teamSnap.data() || {};
-  const conversation = conversationSnap.data() || {};
-  const directUserIds = getDirectChatUserIds(conversation);
-  if (!directUserIds.includes(caller.uid)) {
+  const initialDirectUserIds = getDirectChatUserIds(initialConversationSnap.data() || {});
+  if (!initialDirectUserIds.includes(callerUid)) {
     throwOpportunityError('permission-denied', 'You are not a participant in this direct conversation.');
   }
-  const recipientId = directUserIds.find((userId) => userId !== caller.uid);
-  const recipientSnap = await firestore.doc(`users/${recipientId}`).get();
-  const recipient = recipientSnap.exists ? recipientSnap.data() || {} : {};
-  let recipientEmail = String(recipient.email || recipient.profileEmail || '').trim().toLowerCase();
-  if (!recipientEmail) {
-    try {
-      const recipientAuthRecord = await admin.auth().getUser(recipientId);
-      recipientEmail = String(recipientAuthRecord?.email || '').trim().toLowerCase();
-    } catch (error) {
-      console.warn('Unable to resolve direct-message recipient auth email', recipientId, error);
-    }
-  }
-  const teamWithId = { ...team, id: teamId };
-  const callerHasAccess = hasCurrentTeamAccess({
-    team: teamWithId,
-    user: caller.user,
-    userId: caller.uid,
-    email: caller.email
-  });
-  const recipientHasAccess = hasCurrentTeamAccess({
-    team: teamWithId,
-    user: recipient,
-    userId: recipientId,
-    email: recipientEmail
-  });
-  if (!callerHasAccess || !recipientHasAccess) {
-    throwOpportunityError('permission-denied', 'Both participants must still have access to this team.');
-  }
-  if (conversation.directAccess === 'accepted_friend') {
-    const friendshipId = directUserIds.join('__');
-    if (conversation.friendshipId !== friendshipId) {
-      throwOpportunityError('permission-denied', 'This friend conversation is no longer authorized.');
-    }
-    const friendshipSnap = await firestore.doc(`friendships/${friendshipId}`).get();
-    if (!friendshipSnap.exists || !canMessageAcceptedFriendForTeam({
-      friendship: friendshipSnap.data() || {},
-      team,
-      sender: caller.user,
-      recipient,
-      senderId: caller.uid,
-      recipientId,
-      teamId,
-      senderEmail: caller.email
-    })) {
-      throwOpportunityError('permission-denied', 'This friend connection is no longer authorized for direct messages.');
-    }
-  } else if (conversation.directAccess === 'team_admin') {
-    const initiatorId = String(conversation.initiatedBy || '');
-    const initiator = initiatorId === caller.uid ? caller.user : initiatorId === recipientId ? recipient : null;
-    const initiatorEmail = initiatorId === caller.uid
-      ? caller.email
-      : recipientEmail;
-    if (!initiator || !hasTeamAdminAccess({
-      team,
-      user: initiator,
-      uid: initiatorId,
-      email: initiatorEmail
-    })) {
-      throwOpportunityError('permission-denied', 'The team administrator who started this conversation no longer has access.');
-    }
-  } else {
-    throwOpportunityError('permission-denied', 'This direct conversation is not authorized.');
-  }
+  const recipientId = initialDirectUserIds.find((userId) => userId !== callerUid);
 
   const rawText = String(data?.text || '');
   if (rawText.length > 10000) {
@@ -14678,7 +19975,7 @@ exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, contex
   const attachments = rawAttachments.map((attachment) => normalizeAuthorizedDirectAttachment(attachment, {
     teamId,
     conversationId,
-    uid: caller.uid,
+    uid: callerUid,
     now
   }));
   const requestedClientMessageId = String(data?.clientMessageId || '').trim();
@@ -14691,56 +19988,156 @@ exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, contex
   const messageRef = clientMessageId
     // Namespace idempotency keys by sender so one participant cannot replace
     // the other participant's message by guessing a client request ID.
-    ? conversationRef.collection('chatMessages').doc(`${caller.uid}__${clientMessageId}`)
+    ? conversationRef.collection('chatMessages').doc(`${callerUid}__${clientMessageId}`)
     : conversationRef.collection('chatMessages').doc();
-  const senderName = cleanOpportunityText(
-    caller.user?.fullName || caller.user?.displayName || context.auth?.token?.name,
-    160
-  ) || null;
-  const recipientParticipantIds = conversation.participantIds.filter(
-    (participantId) => normalizeDirectChatUserId(participantId) !== caller.uid
-  );
-  const message = {
-    clientMessageId: clientMessageId || null,
-    text,
-    senderId: caller.uid,
-    senderName,
-    senderEmail: caller.email || null,
-    senderPhotoUrl: cleanOpportunityText(caller.user?.photoUrl, 1000) || null,
-    attachments,
-    imageUrl: null,
-    imagePath: null,
-    imageName: null,
-    imageType: null,
-    imageSize: null,
-    createdAt: now,
-    editedAt: null,
-    deleted: false,
-    ai: false,
-    aiName: null,
-    aiQuestion: null,
-    aiMeta: null,
-    targetType: 'individuals',
-    recipientIds: recipientParticipantIds,
-    targetRole: null,
-    conversationId
-  };
-  const batch = firestore.batch();
-  // A caller-provided request ID is an idempotency key, not an edit handle.
-  // `create` keeps retries from overwriting or undeleting the original message
-  // through this Admin SDK path, while the batch preserves the conversation
-  // metadata update atomically for the first successful send.
-  batch.create(messageRef, message);
-  batch.update(conversationRef, { lastMessageAt: now, updatedAt: now });
+
+  let callerAuthRecord;
+  let recipientAuthRecord;
   try {
-    await batch.commit();
+    [callerAuthRecord, recipientAuthRecord] = await Promise.all([
+      admin.auth().getUser(callerUid),
+      admin.auth().getUser(recipientId)
+    ]);
+  } catch (error) {
+    console.warn('Unable to resolve current direct-message participant Auth records', {
+      callerUid,
+      recipientId,
+      error
+    });
+  }
+  if (
+    callerAuthRecord?.uid !== callerUid
+    || callerAuthRecord?.disabled === true
+    || recipientAuthRecord?.uid !== recipientId
+    || recipientAuthRecord?.disabled === true
+  ) {
+    throwOpportunityError('permission-denied', 'Both participants must have active accounts to send direct messages.');
+  }
+  const callerEmail = String(callerAuthRecord.email || '').trim().toLowerCase();
+  const recipientEmail = String(recipientAuthRecord.email || '').trim().toLowerCase();
+  const teamRef = firestore.doc(`teams/${teamId}`);
+  const callerRef = firestore.doc(`users/${callerUid}`);
+  const recipientRef = firestore.doc(`users/${recipientId}`);
+
+  try {
+    await firestore.runTransaction(async (transaction) => {
+      const finalConversationSnap = await transaction.get(conversationRef);
+      if (!finalConversationSnap.exists) {
+        throwOpportunityError('not-found', 'Direct conversation not found.');
+      }
+      const conversation = finalConversationSnap.data() || {};
+      const directUserIds = getDirectChatUserIds(conversation);
+      const finalRecipientId = directUserIds.find((userId) => userId !== callerUid);
+      if (!directUserIds.includes(callerUid) || finalRecipientId !== recipientId) {
+        throwOpportunityError('permission-denied', 'You are not a participant in this direct conversation.');
+      }
+
+      const [teamSnap, callerSnap, recipientSnap] = await Promise.all([
+        transaction.get(teamRef),
+        transaction.get(callerRef),
+        transaction.get(recipientRef)
+      ]);
+      if (!teamSnap.exists || !callerSnap.exists || !recipientSnap.exists) {
+        throwOpportunityError('permission-denied', 'Both participants must still have access to this team.');
+      }
+      const team = teamSnap.data() || {};
+      const caller = callerSnap.data() || {};
+      const recipient = recipientSnap.data() || {};
+      const teamWithId = { ...team, id: teamId };
+      const callerHasAccess = hasCurrentTeamAccess({
+        team: teamWithId,
+        user: caller,
+        userId: callerUid,
+        email: callerEmail
+      });
+      const recipientHasAccess = hasCurrentTeamAccess({
+        team: teamWithId,
+        user: recipient,
+        userId: recipientId,
+        email: recipientEmail
+      });
+      if (!callerHasAccess || !recipientHasAccess) {
+        throwOpportunityError('permission-denied', 'Both participants must still have access to this team.');
+      }
+
+      if (conversation.directAccess === 'accepted_friend') {
+        const friendshipId = directUserIds.join('__');
+        if (conversation.friendshipId !== friendshipId) {
+          throwOpportunityError('permission-denied', 'This friend conversation is no longer authorized.');
+        }
+        const friendshipSnap = await transaction.get(firestore.doc(`friendships/${friendshipId}`));
+        if (!friendshipSnap.exists || !canMessageAcceptedFriendForTeam({
+          friendship: friendshipSnap.data() || {},
+          team,
+          sender: caller,
+          recipient,
+          senderId: callerUid,
+          recipientId,
+          teamId,
+          senderEmail: callerEmail,
+          recipientEmail
+        })) {
+          throwOpportunityError('permission-denied', 'This friend connection is no longer authorized for direct messages.');
+        }
+      } else if (conversation.directAccess === 'team_admin') {
+        const initiatorId = String(conversation.initiatedBy || '');
+        const initiator = initiatorId === callerUid ? caller : initiatorId === recipientId ? recipient : null;
+        const initiatorEmail = initiatorId === callerUid ? callerEmail : recipientEmail;
+        if (!initiator || !hasTeamAdminAccess({
+          team,
+          user: initiator,
+          uid: initiatorId,
+          email: initiatorEmail
+        })) {
+          throwOpportunityError('permission-denied', 'The team administrator who started this conversation no longer has access.');
+        }
+      } else {
+        throwOpportunityError('permission-denied', 'This direct conversation is not authorized.');
+      }
+
+      const message = {
+        clientMessageId: clientMessageId || null,
+        text,
+        senderId: callerUid,
+        senderName: cleanOpportunityText(
+          caller.fullName || caller.displayName || context.auth?.token?.name,
+          160
+        ) || null,
+        senderEmail: callerEmail || null,
+        senderPhotoUrl: cleanOpportunityText(caller.photoUrl, 1000) || null,
+        attachments,
+        imageUrl: null,
+        imagePath: null,
+        imageName: null,
+        imageType: null,
+        imageSize: null,
+        createdAt: now,
+        editedAt: null,
+        deleted: false,
+        ai: false,
+        aiName: null,
+        aiQuestion: null,
+        aiMeta: null,
+        targetType: 'individuals',
+        recipientIds: conversation.participantIds.filter(
+          (participantId) => normalizeDirectChatUserId(participantId) !== callerUid
+        ),
+        targetRole: null,
+        conversationId
+      };
+      // A caller-provided request ID is an idempotency key, not an edit handle.
+      // Keep the final access checks and both writes in one transaction so a
+      // concurrent revoke retries the transaction against the new grant state.
+      transaction.create(messageRef, message);
+      transaction.update(conversationRef, { lastMessageAt: now, updatedAt: now });
+    });
   } catch (error) {
     if (!clientMessageId || !isAlreadyExistsError(error)) throw error;
     const existingSnap = await messageRef.get();
     const existingMessage = existingSnap.exists ? existingSnap.data() || {} : {};
     if (
       !existingSnap.exists ||
-      existingMessage.senderId !== caller.uid ||
+      existingMessage.senderId !== callerUid ||
       existingMessage.clientMessageId !== clientMessageId ||
       existingMessage.conversationId !== conversationId
     ) {
@@ -14857,12 +20254,7 @@ async function canManageOpportunity(caller, listing) {
   if (isOpportunityPlatformAdmin(caller) || listing.authorId === caller.uid) return true;
   if (!listing.teamId) return false;
   const teamSnap = await firestore.doc(`teams/${normalizeOpportunityTeamId(listing.teamId)}`).get();
-  return teamSnap.exists && hasTeamAdminAccess({
-    team: teamSnap.data() || {},
-    user: caller.user,
-    uid: caller.uid,
-    email: caller.email
-  });
+  return teamSnap.exists && hasOpportunityTeamAdminAccess(caller, teamSnap.data() || {});
 }
 
 async function resolveOpportunityTeam(input, caller) {
@@ -14873,20 +20265,275 @@ async function resolveOpportunityTeam(input, caller) {
   if (!isOpportunityTeamDiscoverable(team)) {
     throwOpportunityError('failed-precondition', 'Only active public teams can publish public opportunities.');
   }
-  if (!hasTeamAdminAccess({ team, user: caller.user, uid: caller.uid, email: caller.email })) {
+  if (!hasOpportunityTeamAdminAccess(caller, team)) {
     throwOpportunityError('permission-denied', 'Only a team owner or admin can publish for this team.');
   }
   return { id: teamSnap.id, ...team };
 }
 
-async function listOpportunityManagedTeamDocuments(caller) {
+async function listOpportunityManagedTeamDocuments(caller, { allowPartial = false } = {}) {
   const queries = [firestore.collection('teams').where('ownerId', '==', caller.uid).get()];
-  if (caller.email) queries.push(firestore.collection('teams').where('adminEmails', 'array-contains', caller.email).get());
-  const snapshots = await Promise.all(queries);
+  if (caller.emailVerified === true && caller.email) {
+    queries.push(
+      firestore.collection('teams').where('adminEmails', 'array-contains', caller.email).get(),
+      firestore.collection('teams').where('ownerEmailLower', '==', caller.email).get()
+    );
+    const ownerEmailCandidates = Array.from(new Set([caller.rawEmail, caller.email].filter(Boolean)));
+    ownerEmailCandidates.forEach((ownerEmail) => {
+      queries.push(firestore.collection('teams').where('ownerEmail', '==', ownerEmail).get());
+    });
+  }
+  const settledSnapshots = await Promise.allSettled(queries);
   const teams = new Map();
-  snapshots.forEach((snapshot) => snapshot.docs.forEach((docSnap) => teams.set(docSnap.id, docSnap)));
+  settledSnapshots.forEach((result) => {
+    if (result.status !== 'fulfilled') return;
+    result.value.docs.forEach((docSnap) => {
+      const team = docSnap.data() || {};
+      if (hasOpportunityTeamAdminAccess(caller, team)) {
+        teams.set(docSnap.id, docSnap);
+      }
+    });
+  });
+  teams.discoveryQueryCount = settledSnapshots.length;
+  teams.successfulDiscoveryQueryCount = settledSnapshots.filter((result) => result.status === 'fulfilled').length;
+  teams.discoveryErrors = settledSnapshots
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason);
+  teams.isPartial = settledSnapshots.some((result) => result.status === 'rejected');
+  if (teams.isPartial && !allowPartial) {
+    throw settledSnapshots.find((result) => result.status === 'rejected').reason;
+  }
   return teams;
 }
+
+function normalizeStablePrincipalUid(value) {
+  if (typeof value !== 'string' || value !== value.trim()) return '';
+  return value.length > 0 && value.length <= 128 && !value.includes('/') ? value : '';
+}
+
+async function listStaffTeamDocuments(caller) {
+  const legacyCoachInviteEvidenceLimit = 200;
+  const legacyCoachInviteTeamChunkSize = 30;
+  const legacyCoachTeamLimit = 180;
+  const teams = await listOpportunityManagedTeamDocuments(caller, { allowPartial: true });
+  const allCoachTeamIds = Array.from(new Set(
+    (Array.isArray(caller.user?.coachOf) ? caller.user.coachOf : [])
+      .map((teamId) => String(teamId || '').trim())
+      .filter((teamId) => /^[A-Za-z0-9_-]{1,128}$/.test(teamId))
+  ));
+  const coachTeamIdsAreIncomplete = allCoachTeamIds.length > legacyCoachTeamLimit;
+  const coachTeamIds = allCoachTeamIds.slice(0, legacyCoachTeamLimit);
+  const settledCoachTeamSnaps = await Promise.allSettled(
+    coachTeamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get())
+  );
+  // coachOf is a server-managed legacy staff grant. Before accepting its
+  // limited projection, reject one-sided admin-invite writes whose canonical
+  // team grant is absent (revoked invites and interrupted redemption alike).
+  const loadedCoachTeamSnaps = settledCoachTeamSnaps
+    .filter((result) => result.status === 'fulfilled')
+    .map((result) => result.value)
+    .filter((teamSnap) => teamSnap.exists);
+  loadedCoachTeamSnaps.forEach((teamSnap) => {
+    if (!teams.has(teamSnap.id) && hasOpportunityTeamAdminAccess(caller, teamSnap.data() || {})) {
+      // Recover canonical grants whose stored email uses legacy casing and was
+      // therefore missed by Firestore's case-sensitive discovery query.
+      teams.set(teamSnap.id, teamSnap);
+    }
+  });
+  const legacyCoachCandidates = loadedCoachTeamSnaps
+    .filter((teamSnap) => !teams.has(teamSnap.id));
+  let settledCoachGrantEvidence = [];
+  let coachGrantEvidenceIsIncomplete = coachTeamIdsAreIncomplete;
+  const teamsWithCallerBoundInviteEvidence = new Set();
+  const teamsWithUnresolvedInviteEvidence = new Set();
+  if (legacyCoachCandidates.length > 0) {
+    const candidateTeamIds = legacyCoachCandidates.map((teamSnap) => teamSnap.id);
+    const candidateTeamInviteQueries = [];
+    for (let index = 0; index < candidateTeamIds.length; index += legacyCoachInviteTeamChunkSize) {
+      const teamIds = candidateTeamIds.slice(index, index + legacyCoachInviteTeamChunkSize);
+      candidateTeamInviteQueries.push({
+        teamIds,
+        query: firestore.collection('accessCodes')
+          .where('type', '==', 'admin_invite')
+          .where('teamId', 'in', teamIds)
+          .limit(legacyCoachInviteEvidenceLimit + 1)
+      });
+    }
+    // Candidate-team lifecycle evidence is stable across Auth email changes
+    // and bounds reads to the resources that could invalidate this response.
+    // Caller-wide email/usedBy history is neither necessary nor relevant: a
+    // long-tenured coach can have hundreds of unrelated historical invites.
+    settledCoachGrantEvidence = await Promise.allSettled(
+      candidateTeamInviteQueries.map(({ query }) => query.get())
+    );
+    settledCoachGrantEvidence.forEach((result, index) => {
+      const chunkTeamIds = candidateTeamInviteQueries[index].teamIds;
+      if (result.status === 'rejected' || result.value.size > legacyCoachInviteEvidenceLimit) {
+        coachGrantEvidenceIsIncomplete = true;
+        chunkTeamIds.forEach((teamId) => teamsWithUnresolvedInviteEvidence.add(teamId));
+        return;
+      }
+      result.value.docs.forEach((inviteDoc) => {
+        const invite = inviteDoc.data() || {};
+        const teamId = String(invite.teamId || '').trim();
+        const usedBy = normalizeStablePrincipalUid(invite.usedBy);
+        if (!teamId) return;
+        // A caller-bound usedBy proves a revoked/stale accepted grant even when
+        // that same caller originally generated the invite.
+        if (usedBy === caller.uid) {
+          teamsWithCallerBoundInviteEvidence.add(teamId);
+          return;
+        }
+        // A valid stable usedBy belonging to another principal cannot be the
+        // source of this caller's coachOf grant. generatedBy is intentionally
+        // not evidence about the recipient: historical clients allowed a team
+        // admin to issue an invite to themselves.
+        if (usedBy) return;
+        // An unbound or malformed row is deliberately fail-closed: historical
+        // pre-transaction clients could write coachOf before marking the invite,
+        // and after an Auth email change that orphan is indistinguishable from
+        // another pending invite.
+        teamsWithCallerBoundInviteEvidence.add(teamId);
+      });
+    });
+  }
+  legacyCoachCandidates.forEach((teamSnap) => {
+    if (!teamsWithCallerBoundInviteEvidence.has(teamSnap.id)
+      && !teamsWithUnresolvedInviteEvidence.has(teamSnap.id)) {
+      teams.set(teamSnap.id, teamSnap);
+    }
+  });
+  teams.discoveryQueryCount += settledCoachTeamSnaps.length;
+  teams.successfulDiscoveryQueryCount += settledCoachTeamSnaps
+    .filter((result) => result.status === 'fulfilled').length;
+  teams.discoveryErrors.push(...settledCoachTeamSnaps
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason));
+  teams.discoveryQueryCount += settledCoachGrantEvidence.length;
+  teams.successfulDiscoveryQueryCount += settledCoachGrantEvidence
+    .filter((result) => result.status === 'fulfilled').length;
+  teams.discoveryErrors.push(...settledCoachGrantEvidence
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason));
+  teams.isPartial = teams.isPartial === true
+    || settledCoachTeamSnaps.some((result) => result.status === 'rejected')
+    || coachGrantEvidenceIsIncomplete;
+  if (teams.discoveryQueryCount > 0 && teams.successfulDiscoveryQueryCount === 0) {
+    throw teams.discoveryErrors[0] || new Error('Managed team discovery failed.');
+  }
+  return teams;
+}
+
+exports.revokeTeamAdminAccess = functions.https.onCall(async (data, context = {}) => {
+  const caller = await getOpportunityCaller(context);
+  const teamId = normalizeOpportunityTeamId(data?.teamId);
+  const targetEmail = normalizeParentInviteEmail(data?.email);
+  if (!targetEmail) {
+    throwOpportunityError('invalid-argument', 'Admin email is required.');
+  }
+
+  const teamRef = firestore.doc(`teams/${teamId}`);
+  const callerRef = firestore.doc(`users/${caller.uid}`);
+  const teamInviteQuery = firestore.collection('accessCodes').where('teamId', '==', teamId);
+  let targetAuthUid = '';
+  try {
+    const targetAuthUser = await admin.auth().getUserByEmail(targetEmail);
+    const resolvedUid = String(targetAuthUser?.uid || '').trim();
+    if (!resolvedUid || resolvedUid.includes('/') || resolvedUid.length > 128) {
+      throw new Error('Resolved team admin Auth user ID is invalid.');
+    }
+    targetAuthUid = resolvedUid;
+  } catch (error) {
+    if (!['auth/user-not-found', 'user-not-found', 'auth/invalid-email'].includes(String(error?.code || ''))) {
+      throw error;
+    }
+  }
+  let removedUserCount = 0;
+
+  await firestore.runTransaction(async (transaction) => {
+    const [teamSnap, callerSnap, inviteSnap] = await Promise.all([
+      transaction.get(teamRef),
+      transaction.get(callerRef),
+      transaction.get(teamInviteQuery)
+    ]);
+    if (!teamSnap.exists) throwOpportunityError('not-found', 'Team not found.');
+
+    const team = teamSnap.data() || {};
+    const currentCaller = {
+      ...caller,
+      user: callerSnap.exists ? callerSnap.data() || {} : {}
+    };
+    if (!hasOpportunityTeamAdminAccess(currentCaller, team)) {
+      throwOpportunityError('permission-denied', 'Only a team owner or admin can remove team staff.');
+    }
+
+    const ownerEmails = [...new Set([team.ownerEmail, team.ownerEmailLower]
+      .map((email) => String(email || '').trim().toLowerCase())
+      .filter(Boolean))];
+    if (!String(team.ownerId || '').trim() && ownerEmails.length === 1 && ownerEmails[0] === targetEmail) {
+      throwOpportunityError('failed-precondition', 'The team owner cannot be removed from staff access.');
+    }
+    const callerOwnsTeam = String(team.ownerId || '').trim() === caller.uid;
+    if (caller.email === targetEmail && !callerOwnsTeam && !isOpportunityPlatformAdmin(currentCaller)) {
+      throwOpportunityError('failed-precondition', 'Team admins cannot remove their own staff access.');
+    }
+    if (targetAuthUid && String(team.ownerId || '').trim() === targetAuthUid) {
+      throwOpportunityError('failed-precondition', 'The team owner cannot be removed from staff access.');
+    }
+
+    const matchingInviteSnaps = inviteSnap.docs.filter((docSnap) => {
+      const invite = docSnap.data() || {};
+      return invite.type === 'admin_invite'
+        && normalizeParentInviteEmail(invite.email) === targetEmail;
+    });
+    const targetUserRefs = new Map();
+    // Current Auth identity and invite-bound usedBy identify principals. Mutable
+    // profile email aliases must never authorize destructive reciprocal cleanup.
+    if (targetAuthUid) {
+      const targetAuthUserRef = firestore.doc(`users/${targetAuthUid}`);
+      targetUserRefs.set(targetAuthUserRef.path, targetAuthUserRef);
+    }
+    matchingInviteSnaps.forEach((docSnap) => {
+      const usedBy = normalizeStablePrincipalUid(docSnap.data()?.usedBy);
+      if (usedBy) {
+        const userRef = firestore.doc(`users/${usedBy}`);
+        targetUserRefs.set(userRef.path, userRef);
+      }
+    });
+    const targetUserSnaps = await Promise.all(
+      [...targetUserRefs.values()].map((userRef) => transaction.get(userRef))
+    );
+    const now = admin.firestore.Timestamp.now();
+    const nextAdminEmails = Array.from(new Set(
+      (Array.isArray(team.adminEmails) ? team.adminEmails : [])
+        .map((email) => String(email || '').trim().toLowerCase())
+        .filter((email) => email && email !== targetEmail)
+    ));
+    transaction.update(teamRef, { adminEmails: nextAdminEmails, updatedAt: now });
+
+    removedUserCount = 0;
+    targetUserSnaps.forEach((userSnap) => {
+      if (!userSnap.exists) return;
+      const user = userSnap.data() || {};
+      const coachOf = Array.isArray(user.coachOf) ? user.coachOf.map(String) : [];
+      if (!coachOf.includes(teamId)) return;
+      transaction.update(userSnap.ref, {
+        coachOf: coachOf.filter((value) => value !== teamId),
+        updatedAt: now
+      });
+      removedUserCount += 1;
+    });
+    matchingInviteSnaps.forEach((inviteDocSnap) => transaction.update(inviteDocSnap.ref, {
+      revoked: true,
+      status: 'revoked',
+      revokedAt: now,
+      revokedBy: caller.uid,
+      updatedAt: now
+    }));
+  });
+
+  return { success: true, removedUserCount };
+});
 
 exports.listPublicOpportunities = functions.https.onCall(async (data, context = {}) => {
   assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'list');
@@ -15087,6 +20734,627 @@ exports.listManagedPublicOpportunityTeams = functions.https.onCall(async (_data,
   return { items: Array.from(teams.values()).sort((a, b) => a.name.localeCompare(b.name)) };
 });
 
+function getCallableParentTeamScope(user = {}) {
+  // parentTeamIds is the normalized, revocable source of truth once present.
+  // Fall back to parentOf only for legacy profiles that have not received the
+  // canonical field yet; unioning both can restore a revoked legacy link.
+  const hasCanonicalTeamIds = Object.prototype.hasOwnProperty.call(user, 'parentTeamIds');
+  const canonicalTeamIdsAreValid = Array.isArray(user.parentTeamIds);
+  const legacyParentLinksAreValid = Array.isArray(user.parentOf);
+  const rawTeamIds = hasCanonicalTeamIds
+    ? (canonicalTeamIdsAreValid ? user.parentTeamIds : [])
+    : (legacyParentLinksAreValid ? user.parentOf.map((link) => link?.teamId) : []);
+  const normalizedTeamIds = rawTeamIds.map(normalizeStablePrincipalUid);
+  return {
+    teamIds: Array.from(new Set(normalizedTeamIds.filter(Boolean))),
+    isPartial: (hasCanonicalTeamIds && !canonicalTeamIdsAreValid)
+      || (!hasCanonicalTeamIds && user.parentOf !== undefined && !legacyParentLinksAreValid)
+      || normalizedTeamIds.some((teamId) => !teamId)
+  };
+}
+
+function hasCallableChatTeamAccess(caller, teamId, team = {}) {
+  if (hasOpportunityTeamAdminAccess(caller, team)) return true;
+  return getCallableParentTeamScope(caller.user).teamIds.includes(teamId);
+}
+
+function getVerifiedEmailAuthorizationCaller(caller, context = {}) {
+  return context.auth?.token?.email_verified === true
+    ? caller
+    : { ...caller, email: '', rawEmail: '' };
+}
+
+async function requireCallableSocialPostAccess(transaction, postRef, caller) {
+  const postSnap = await transaction.get(postRef);
+  if (!postSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'This post is no longer available.');
+  }
+  const post = postSnap.data() || {};
+  let canAccessTeam = false;
+  if (!canReadSocialPostForCaller({
+    post,
+    callerUid: caller.uid,
+    isGlobalAdmin: isOpportunityPlatformAdmin(caller),
+    canAccessTeam: false
+  })) {
+    const teamId = normalizeSocialPostId(post.teamId);
+    if (teamId) {
+      const teamSnap = await transaction.get(firestore.doc(`teams/${teamId}`));
+      canAccessTeam = teamSnap.exists && hasCallableChatTeamAccess(caller, teamId, teamSnap.data() || {});
+    }
+  }
+  if (!canReadSocialPostForCaller({
+    post,
+    callerUid: caller.uid,
+    isGlobalAdmin: isOpportunityPlatformAdmin(caller),
+    canAccessTeam
+  })) {
+    throw new functions.https.HttpsError('permission-denied', 'You do not have access to this post.');
+  }
+  return post;
+}
+
+const MAX_MANAGED_CHAT_METADATA_QUERIES = 30;
+const MAX_MANAGED_CHAT_METADATA_DOCUMENTS = 1000;
+const MAX_CALLABLE_DISCOVERY_CONCURRENCY = 6;
+const MAX_DASHBOARD_PARENT_TEAMS = 180;
+const DASHBOARD_TEAM_LOAD_VERSION = 1;
+const DASHBOARD_TEAM_FIELD_PATHS = Object.freeze([
+  'name',
+  'teamName',
+  'sport',
+  'photoUrl',
+  'teamPhotoUrl',
+  'logoUrl',
+  'teamLogoUrl',
+  'imageUrl',
+  'active',
+  'archived',
+  'status',
+  'ownerId'
+]);
+
+function chunkCallableValues(values, size = 30) {
+  const chunks = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function allocateBoundedQueryReadLimits(jobCount, totalDocumentLimit, perQueryLimit) {
+  const limits = [];
+  let remainingDocuments = Math.max(0, Number(totalDocumentLimit) || 0);
+  for (let index = 0; index < jobCount; index += 1) {
+    const remainingJobs = jobCount - index;
+    const fairShare = Math.floor(remainingDocuments / remainingJobs);
+    const queryLimit = Math.max(1, Math.min(perQueryLimit, fairShare));
+    limits.push(queryLimit);
+    remainingDocuments -= queryLimit;
+  }
+  return limits;
+}
+
+async function runSettledWithConcurrencyLimit(items, limit, worker) {
+  return runWithConcurrencyLimit(items, limit, async (item, index) => {
+    try {
+      return { status: 'fulfilled', value: await worker(item, index) };
+    } catch (reason) {
+      return { status: 'rejected', reason };
+    }
+  });
+}
+
+async function listPlatformAdminTeamDocuments(caller) {
+  if (!isOpportunityPlatformAdmin(caller)) {
+    throw new functions.https.HttpsError('permission-denied', 'Platform admin access is required to load every team.');
+  }
+  const snapshot = await firestore.collection('teams')
+    .select(...DASHBOARD_TEAM_FIELD_PATHS)
+    .get();
+  const teams = new Map(snapshot.docs.map((teamSnap) => [teamSnap.id, teamSnap]));
+  teams.discoveryQueryCount = 1;
+  teams.successfulDiscoveryQueryCount = 1;
+  teams.discoveryErrors = [];
+  teams.isPartial = false;
+  return teams;
+}
+
+async function listCallableParentTeamDocuments(caller) {
+  const parentScope = getCallableParentTeamScope(caller.user);
+  const parentTeamIdsAreIncomplete = parentScope.teamIds.length > MAX_DASHBOARD_PARENT_TEAMS;
+  const parentTeamIds = parentScope.teamIds.slice(0, MAX_DASHBOARD_PARENT_TEAMS);
+  const results = await runSettledWithConcurrencyLimit(
+    parentTeamIds,
+    MAX_CALLABLE_DISCOVERY_CONCURRENCY,
+    (teamId) => firestore.doc(`teams/${teamId}`).get()
+  );
+  return {
+    teamSnaps: results
+      .filter((result) => result.status === 'fulfilled')
+      .map((result) => result.value)
+      .filter((teamSnap) => teamSnap.exists && hasCallableChatTeamAccess(caller, teamSnap.id, teamSnap.data() || {})),
+    isPartial: parentScope.isPartial
+      || parentTeamIdsAreIncomplete
+      || results.some((result) => result.status === 'rejected')
+  };
+}
+
+function serializeDashboardManagedTeamProfile(teamId, team = {}) {
+  const summary = serializeStaffTeamProfile(teamId, team);
+  if (!summary) return null;
+  return {
+    ...summary,
+    ownerId: normalizeStablePrincipalUid(team.ownerId) || null
+  };
+}
+
+exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => {
+  const caller = getVerifiedEmailAuthorizationCaller(await getOpportunityCaller(context), context);
+  const includeAllTeams = data?.includeAllTeams === true;
+  const includeParentTeams = data?.includeParentTeams === true;
+  if (includeAllTeams && !isOpportunityPlatformAdmin(caller)) {
+    throw new functions.https.HttpsError('permission-denied', 'Platform admin access is required to load every team.');
+  }
+  const includeChatMetadata = data?.includeChatMetadata === true;
+  const [staffTeams, parentTeamResult] = await Promise.all([
+    includeAllTeams ? listPlatformAdminTeamDocuments(caller) : listStaffTeamDocuments(caller),
+    !includeAllTeams && (includeParentTeams || includeChatMetadata)
+      ? listCallableParentTeamDocuments(caller)
+      : Promise.resolve({ teamSnaps: [], isPartial: false })
+  ]);
+  const conversationLimit = 100;
+  const chatTeamDiscoveryPartial = includeChatMetadata && parentTeamResult.isPartial;
+  const teamSnapsById = new Map();
+  if (includeChatMetadata) {
+    staffTeams.forEach((teamSnap) => {
+      if (hasCallableChatTeamAccess(caller, teamSnap.id, teamSnap.data() || {})) {
+        teamSnapsById.set(teamSnap.id, teamSnap);
+      }
+    });
+    parentTeamResult.teamSnaps.forEach((teamSnap) => {
+      teamSnapsById.set(teamSnap.id, teamSnap);
+    });
+  } else {
+    staffTeams.forEach((teamSnap) => teamSnapsById.set(teamSnap.id, teamSnap));
+  }
+  const parentItems = includeParentTeams
+    ? parentTeamResult.teamSnaps
+      .filter((teamSnap) => !staffTeams.has(teamSnap.id))
+      .map((teamSnap) => serializeStaffTeamProfile(teamSnap.id, teamSnap.data() || {}))
+      .filter(Boolean)
+      .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')))
+    : [];
+  const teamSnaps = Array.from(teamSnapsById.values());
+  const conversationTeamSnaps = includeChatMetadata
+    ? teamSnaps.slice(0, MAX_MANAGED_CHAT_METADATA_QUERIES)
+    : [];
+  const conversationReadLimits = allocateBoundedQueryReadLimits(
+    conversationTeamSnaps.length,
+    MAX_MANAGED_CHAT_METADATA_DOCUMENTS,
+    conversationLimit + 1
+  );
+  const conversationResults = includeChatMetadata
+    ? await runSettledWithConcurrencyLimit(
+        conversationTeamSnaps,
+        MAX_CALLABLE_DISCOVERY_CONCURRENCY,
+        (teamSnap, index) => firestore.collection(`teams/${teamSnap.id}/chatConversations`)
+          .limit(conversationReadLimits[index])
+          .get()
+      )
+    : [];
+  let chatMetadataPartial = false;
+  if (includeChatMetadata && conversationTeamSnaps.length < teamSnaps.length) chatMetadataPartial = true;
+  const items = teamSnaps
+    .map((teamSnap, index) => {
+      const team = teamSnap.data() || {};
+      const canManage = hasOpportunityTeamAdminAccess(caller, team);
+      const item = includeAllTeams || includeParentTeams
+        ? (canManage
+            ? serializeDashboardManagedTeamProfile(teamSnap.id, team)
+            : serializeStaffTeamProfile(teamSnap.id, team))
+        : (canManage
+            ? serializeManagedTeamDocument(teamSnap.id, team)
+            : serializeStaffTeamProfile(teamSnap.id, team));
+      if (!item) return null;
+      const conversationResult = conversationResults[index];
+      if (includeChatMetadata && conversationResult?.status !== 'fulfilled') chatMetadataPartial = true;
+      const conversationDocs = conversationResult?.status === 'fulfilled' ? conversationResult.value.docs : [];
+      const conversationReadLimit = conversationReadLimits[index] || 0;
+      if (
+        includeChatMetadata &&
+        conversationResult?.status === 'fulfilled' &&
+        conversationDocs.length >= conversationReadLimit &&
+        conversationReadLimit <= conversationLimit
+      ) chatMetadataPartial = true;
+      if (conversationDocs.length > conversationLimit) chatMetadataPartial = true;
+      const chatConversations = conversationDocs.slice(0, conversationLimit).map((conversationSnap) => {
+        const conversation = conversationSnap.data() || {};
+        const conversationId = String(conversationSnap.id || '').trim();
+        if (!conversationId || conversationId.includes('/') || conversationId.length > 1500) return null;
+        if (!canProjectChatConversation({
+          callerUid: caller.uid,
+          callerEmail: caller.email,
+          canManageTeam: canManage,
+          hasTeamChatAccess: hasCallableChatTeamAccess(caller, teamSnap.id, team),
+          conversationId,
+          conversation
+        })) return null;
+        return {
+          id: conversationId,
+          type: cleanOpportunityText(conversation.type, 32) || null,
+          updatedAt: conversation.updatedAt || null,
+          lastMessageAt: conversation.lastMessageAt || conversation.latestMessageAt || null
+        };
+      }).filter(Boolean);
+      return {
+        ...item,
+        name: cleanOpportunityText(item.name || item.teamName, 160) || 'Team',
+        ...(includeChatMetadata ? { chatAccessVerified: true } : {}),
+        ...(chatConversations.length > 0 ? { chatConversations } : {})
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')));
+  return {
+    items,
+    ...(includeParentTeams ? { parentItems } : {}),
+    dashboardTeamLoadVersion: DASHBOARD_TEAM_LOAD_VERSION,
+    includesAllTeams: includeAllTeams,
+    isPartial: staffTeams.isPartial === true
+      || (includeParentTeams && parentTeamResult.isPartial)
+      || chatTeamDiscoveryPartial
+      || chatMetadataPartial
+  };
+});
+
+exports.listAuthorizedChatConversations = functions.https.onCall(async (data, context = {}) => {
+  const caller = getVerifiedEmailAuthorizationCaller(await getOpportunityCaller(context), context);
+  const teamId = normalizeStablePrincipalUid(data?.teamId);
+  if (!teamId) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid team is required.');
+  }
+  const requestedConversationId = String(data?.activeConversationId || '').trim();
+  if (requestedConversationId && (requestedConversationId.includes('/') || requestedConversationId.length > 1500)) {
+    throw new functions.https.HttpsError('invalid-argument', 'The requested conversation is invalid.');
+  }
+
+  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  const team = teamSnap.data() || {};
+  const canManage = hasOpportunityTeamAdminAccess(caller, team);
+  const hasTeamChatAccess = hasCallableChatTeamAccess(caller, teamId, team);
+  if (!hasTeamChatAccess) {
+    throw new functions.https.HttpsError('permission-denied', 'You do not have access to this team chat.');
+  }
+
+  const conversationLimit = 100;
+  const conversationSnap = await firestore.collection(`teams/${teamId}/chatConversations`)
+    .limit(conversationLimit + 1)
+    .get();
+  if (conversationSnap.docs.length > conversationLimit) {
+    throw new functions.https.HttpsError(
+      'resource-exhausted',
+      'This team has too many conversations to verify completely. Contact support.'
+    );
+  }
+  const items = conversationSnap.docs.map((conversationDoc) => {
+    const conversation = conversationDoc.data() || {};
+    if (!canProjectChatConversation({
+      callerUid: caller.uid,
+      callerEmail: caller.email,
+      canManageTeam: canManage,
+      hasTeamChatAccess,
+      conversationId: conversationDoc.id,
+      conversation
+    })) return null;
+    return serializeChatConversationProjection(conversationDoc.id, conversation);
+  }).filter(Boolean);
+
+  if (
+    requestedConversationId &&
+    requestedConversationId !== 'team' &&
+    !items.some((conversation) => conversation.id === requestedConversationId)
+  ) {
+    throw new functions.https.HttpsError(
+      'permission-denied',
+      'The requested conversation is no longer available to this account.'
+    );
+  }
+  return { items, isPartial: false };
+});
+
+exports.toggleSocialPostReaction = functions.https.onCall(async (data, context = {}) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to react to this post.');
+  }
+  const postId = normalizeSocialPostId(data?.postId);
+  if (!postId || data?.reactionKey !== 'like') {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid post and like reaction are required.');
+  }
+  const caller = getVerifiedEmailAuthorizationCaller(await getOpportunityCaller(context), context);
+  const postRef = firestore.doc(`socialPosts/${postId}`);
+  const reactionRef = firestore.doc(`socialPosts/${postId}/reactions/${caller.uid}`);
+  return firestore.runTransaction(async (transaction) => {
+    const postSnap = await transaction.get(postRef);
+    if (!postSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'This post is no longer available.');
+    }
+    const post = postSnap.data() || {};
+    let canAccessTeam = false;
+    if (!canReadSocialPostForCaller({
+      post,
+      callerUid: caller.uid,
+      isGlobalAdmin: isOpportunityPlatformAdmin(caller),
+      canAccessTeam: false
+    })) {
+      const teamId = normalizeSocialPostId(post.teamId);
+      if (teamId) {
+        const teamSnap = await transaction.get(firestore.doc(`teams/${teamId}`));
+        canAccessTeam = teamSnap.exists && hasCallableChatTeamAccess(caller, teamId, teamSnap.data() || {});
+      }
+    }
+    if (!canReadSocialPostForCaller({
+      post,
+      callerUid: caller.uid,
+      isGlobalAdmin: isOpportunityPlatformAdmin(caller),
+      canAccessTeam
+    })) {
+      throw new functions.https.HttpsError('permission-denied', 'You do not have access to this post.');
+    }
+    const reactionSnap = await transaction.get(reactionRef);
+    let nextState;
+    try {
+      nextState = getNextSocialPostLikeState({
+        reactionExists: reactionSnap.exists,
+        currentCount: post.reactionCounts?.like
+      });
+    } catch (error) {
+      throw new functions.https.HttpsError('failed-precondition', error.message);
+    }
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    if (nextState.liked) {
+      transaction.set(reactionRef, {
+        userId: caller.uid,
+        reactionKey: 'like',
+        createdAt: now,
+        updatedAt: now
+      });
+    } else {
+      transaction.delete(reactionRef);
+    }
+    transaction.update(postRef, {
+      'reactionCounts.like': nextState.count,
+      updatedAt: now
+    });
+    return nextState;
+  });
+});
+
+exports.hideSocialPostForCaller = functions.https.onCall(async (data, context = {}) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to hide this post.');
+  }
+  const postId = normalizeSocialPostId(data?.postId);
+  if (!postId) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid post is required.');
+  }
+  await firestore.doc(`users/${context.auth.uid}/hiddenSocialPosts/${postId}`).set({
+    postId,
+    hiddenAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+  return { hidden: true };
+});
+
+exports.commentOnSocialPostForCaller = functions.https.onCall(async (data, context = {}) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to comment on this post.');
+  }
+  const postId = normalizeSocialPostId(data?.postId);
+  const text = cleanOpportunityText(typeof data?.text === 'string' ? data.text : '', 1500);
+  if (!postId || !text) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid post and comment are required.');
+  }
+  const caller = getVerifiedEmailAuthorizationCaller(await getOpportunityCaller(context), context);
+  const postRef = firestore.doc(`socialPosts/${postId}`);
+  const commentRef = firestore.collection(`socialPosts/${postId}/comments`).doc();
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  await firestore.runTransaction(async (transaction) => {
+    await requireCallableSocialPostAccess(transaction, postRef, caller);
+    transaction.create(commentRef, {
+      text,
+      authorId: caller.uid,
+      authorName: cleanOpportunityText(
+        context.auth.token?.name || caller.user?.displayName || caller.user?.fullName || caller.rawEmail,
+        100
+      ) || 'ALL PLAYS member',
+      authorPhotoUrl: cleanOpportunityText(
+        context.auth.token?.picture || caller.user?.photoUrl || caller.user?.profilePhotoUrl,
+        1000
+      ) || null,
+      hidden: false,
+      createdAt: now,
+      updatedAt: now
+    });
+    transaction.update(postRef, {
+      commentCount: admin.firestore.FieldValue.increment(1),
+      updatedAt: now
+    });
+  });
+  return { commented: true, commentId: commentRef.id };
+});
+
+exports.reportSocialPostForCaller = functions.https.onCall(async (data, context = {}) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to report this post.');
+  }
+  const postId = normalizeSocialPostId(data?.postId);
+  const reason = cleanOpportunityText(
+    data?.reason == null ? 'Reported from app' : (typeof data.reason === 'string' ? data.reason : ''),
+    500
+  );
+  if (!postId || !reason) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid post and report reason are required.');
+  }
+  const caller = getVerifiedEmailAuthorizationCaller(await getOpportunityCaller(context), context);
+  const postRef = firestore.doc(`socialPosts/${postId}`);
+  const reportRef = firestore.collection('socialReports').doc();
+  await firestore.runTransaction(async (transaction) => {
+    await requireCallableSocialPostAccess(transaction, postRef, caller);
+    transaction.create(reportRef, {
+      postId,
+      reporterId: caller.uid,
+      reason,
+      status: 'open',
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  });
+  return { reported: true, reportId: reportRef.id };
+});
+
+function normalizeParentFeePlayerLinks(user = {}) {
+  const links = new Map();
+  const addLink = (teamValue, playerValue) => {
+    const teamId = normalizeStablePrincipalUid(teamValue);
+    const playerId = normalizeStablePrincipalUid(playerValue);
+    if (!teamId || !playerId) return;
+    links.set(`${teamId}::${playerId}`, { teamId, playerId, playerKey: `${teamId}::${playerId}` });
+  };
+  (Array.isArray(user.parentOf) ? user.parentOf : []).forEach((link) => addLink(link?.teamId, link?.playerId || link?.childId));
+  (Array.isArray(user.parentPlayerKeys) ? user.parentPlayerKeys : []).forEach((value) => {
+    const key = String(value || '');
+    const separatorIndex = key.indexOf('::');
+    if (separatorIndex <= 0 || key.indexOf('::', separatorIndex + 2) !== -1) return;
+    addLink(key.slice(0, separatorIndex), key.slice(separatorIndex + 2));
+  });
+  return Array.from(links.values());
+}
+
+function getParentFeeRecipientTeamId(recipient = {}, documentPath = '') {
+  const storedTeamId = normalizeStablePrincipalUid(recipient.teamId);
+  if (storedTeamId) return storedTeamId;
+  const pathParts = String(documentPath || '').split('/');
+  const teamIndex = pathParts.indexOf('teams');
+  return teamIndex >= 0 ? normalizeStablePrincipalUid(pathParts[teamIndex + 1]) : '';
+}
+
+function getParentFeeRecipientPlayerKey(recipient = {}, teamId = '') {
+  const normalizedTeamId = normalizeStablePrincipalUid(teamId);
+  const storedPlayerKey = String(recipient.playerKey || '').trim();
+  const separatorIndex = storedPlayerKey.indexOf('::');
+  if (separatorIndex > 0 && storedPlayerKey.indexOf('::', separatorIndex + 2) === -1) {
+    const storedTeamId = normalizeStablePrincipalUid(storedPlayerKey.slice(0, separatorIndex));
+    const storedPlayerId = normalizeStablePrincipalUid(storedPlayerKey.slice(separatorIndex + 2));
+    if (storedTeamId && storedPlayerId && storedTeamId === normalizedTeamId) {
+      return `${storedTeamId}::${storedPlayerId}`;
+    }
+  }
+  const playerId = normalizeStablePrincipalUid(recipient.playerId || recipient.childId);
+  return normalizedTeamId && playerId ? `${normalizedTeamId}::${playerId}` : '';
+}
+
+exports.listParentTeamFeeRecipients = functions.https.onCall(async (_data, context = {}) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to view team fees.');
+  }
+  const uid = normalizeStablePrincipalUid(context.auth.uid);
+  if (!uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'The signed-in account is invalid.');
+  }
+  const userSnap = await firestore.doc(`users/${uid}`).get();
+  const user = userSnap.exists ? (userSnap.data() || {}) : {};
+  const playerLinks = normalizeParentFeePlayerLinks(user);
+  const teamIds = new Set([
+    ...playerLinks.map((link) => link.teamId),
+    ...(Array.isArray(user.parentTeamIds) ? user.parentTeamIds : [])
+      .map(normalizeStablePrincipalUid)
+      .filter(Boolean)
+  ]);
+  if (playerLinks.length > 60 || teamIds.size > 60) {
+    throw new functions.https.HttpsError('resource-exhausted', 'Too many linked players to load fees safely.');
+  }
+  const recipientQueryLimit = 100;
+  const maxRecipientQueries = 40;
+  const maxRecipientDocuments = 1000;
+  const playerKeys = new Set(playerLinks.map((link) => link.playerKey));
+  const playerKeyChunks = chunkCallableValues(Array.from(playerKeys), 30);
+  const playerIdsByTeam = new Map();
+  playerLinks.forEach(({ teamId, playerId }) => {
+    if (!playerIdsByTeam.has(teamId)) playerIdsByTeam.set(teamId, []);
+    playerIdsByTeam.get(teamId).push(playerId);
+  });
+  const legacyPlayerChunks = Array.from(playerIdsByTeam.entries()).flatMap(([teamId, playerIds]) => (
+    chunkCallableValues([...new Set(playerIds)], 30).map((playerIdChunk) => ({ teamId, playerIds: playerIdChunk }))
+  ));
+  const queryJobs = [
+    ...['parentUserId', 'accountUserId', 'userId'].map((field) => (queryLimit) => (
+      firestore.collectionGroup('feeRecipients').where(field, '==', uid).limit(queryLimit).get()
+    )),
+    ...playerKeyChunks.map((playerKeyChunk) => (queryLimit) => {
+      const operator = playerKeyChunk.length === 1 ? '==' : 'in';
+      const value = playerKeyChunk.length === 1 ? playerKeyChunk[0] : playerKeyChunk;
+      return firestore.collectionGroup('feeRecipients').where('playerKey', operator, value).limit(queryLimit).get();
+    }),
+    ...legacyPlayerChunks.map(({ teamId, playerIds }) => (queryLimit) => {
+      const operator = playerIds.length === 1 ? '==' : 'in';
+      const value = playerIds.length === 1 ? playerIds[0] : playerIds;
+      return firestore.collectionGroup('feeRecipients')
+        .where('teamId', '==', teamId)
+        .where('playerId', operator, value)
+        .limit(queryLimit)
+        .get();
+    })
+  ];
+  if (queryJobs.length > maxRecipientQueries) {
+    throw new functions.https.HttpsError('resource-exhausted', 'Linked fee history requires too many queries to verify safely.');
+  }
+  const queryReadLimits = allocateBoundedQueryReadLimits(
+    queryJobs.length,
+    maxRecipientDocuments,
+    recipientQueryLimit + 1
+  );
+  const querySnapshots = await runWithConcurrencyLimit(
+    queryJobs,
+    MAX_CALLABLE_DISCOVERY_CONCURRENCY,
+    (queryJob, index) => queryJob(queryReadLimits[index])
+  );
+  if (querySnapshots.some((querySnap, index) => (
+    querySnap.docs.length > recipientQueryLimit ||
+    (queryReadLimits[index] <= recipientQueryLimit && querySnap.docs.length >= queryReadLimits[index])
+  ))) {
+    throw new functions.https.HttpsError('resource-exhausted', 'Too many fee recipients to load safely.');
+  }
+  const recipients = new Map();
+  querySnapshots.forEach((querySnap) => querySnap.docs.forEach((docSnap) => {
+    const recipient = docSnap.data() || {};
+    const teamId = getParentFeeRecipientTeamId(recipient, docSnap.ref?.path);
+    if (!teamId) return;
+    const hasDirectAssignment = [recipient.parentUserId, recipient.accountUserId, recipient.userId]
+      .some((value) => normalizeStablePrincipalUid(value) === uid);
+    const hasPlayerAssignment = teamIds.has(teamId) && playerKeys.has(getParentFeeRecipientPlayerKey(recipient, teamId));
+    if (!hasDirectAssignment && !hasPlayerAssignment) return;
+    const pathParts = String(docSnap.ref?.path || '').split('/');
+    const batchIndex = pathParts.indexOf('feeBatches');
+    recipients.set(docSnap.ref.path, sanitizeParentTeamFeeRecipient({
+      id: docSnap.id,
+      ...recipient,
+      teamId,
+      batchId: recipient.batchId || (batchIndex >= 0 ? pathParts[batchIndex + 1] : ''),
+      recipientId: recipient.recipientId || docSnap.id,
+      playerKey: getParentFeeRecipientPlayerKey(recipient, teamId)
+    }));
+  }));
+  return { items: Array.from(recipients.values()) };
+});
+
+exports.listOfficialLinkedTeamIds = functions.https.onCall(listOfficialLinkedTeamIdsHandler);
+exports.deleteStatConfig = functions.https.onCall(statConfigManagementHandlers.deleteStatConfig);
+exports.resetTeamStatConfigs = functions.https.onCall(statConfigManagementHandlers.resetTeamStatConfigs);
+
+exports.getDelegatedTeamContext = functions.https.onCall(delegatedTeamContextHandler);
+
 exports.getPublicTeamProfile = functions.https.onCall(async (data, context = {}) => {
   assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-profile');
   let teamId;
@@ -15097,22 +21365,503 @@ exports.getPublicTeamProfile = functions.https.onCall(async (data, context = {})
   }
   const teamSnap = await firestore.doc(`teams/${teamId}`).get();
   const team = teamSnap.data() || {};
-  if (!teamSnap.exists || !isOpportunityTeamDiscoverable(team)) {
+  if (!teamSnap.exists) {
     throwOpportunityError('not-found', 'Public team not found.');
   }
-  return {
-    item: {
-      id: teamSnap.id,
-      name: cleanOpportunityText(team.name, 100),
-      sport: cleanOpportunityText(team.sport, 60) || null,
-      description: cleanOpportunityText(team.description, 1000) || null,
-      photoUrl: cleanOpportunityText(team.photoUrl, 1000) || null,
-      city: cleanOpportunityText(team.city, 80) || null,
-      state: cleanOpportunityText(team.state, 40) || null,
-      zip: cleanOpportunityText(team.zip, 10) || null
+  let item = null;
+  if (context.auth?.uid) {
+    const caller = await getOpportunityCaller(context);
+    if (hasOpportunityTeamAdminAccess(caller, team)) {
+      item = serializeManagedTeamDocument(teamSnap.id, team);
     }
+  }
+  if (!item && isOpportunityTeamDiscoverable(team)) {
+    item = serializePublicTeamProfile(teamSnap.id, team);
+  }
+  if (!item) {
+    throwOpportunityError('not-found', 'Public team not found.');
+  }
+  return { item };
+});
+
+exports.listPublicTeams = functions.https.onCall(async (data, context = {}) => {
+  assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-discovery');
+  const searchText = normalizePublicTeamSearch(data?.searchText);
+  const pageSize = normalizePageSize(data?.pageSize);
+  const loadBrowsePage = async ({ afterId, limit: queryLimit }) => {
+    let query = firestore.collection('teams')
+      .where('isPublic', '==', true)
+      .orderBy(admin.firestore.FieldPath.documentId());
+    if (afterId) query = query.startAfter(afterId);
+    const teamsSnap = await query.limit(queryLimit).get();
+    return {
+      records: teamsSnap.docs.map((teamSnap) => ({
+        id: teamSnap.id,
+        item: serializePublicTeamDiscovery(teamSnap.id, teamSnap.data() || {})
+      })),
+      hasMore: teamsSnap.size === queryLimit
+    };
+  };
+  const loadSearchPage = async ({ strategy, cursor, limit: queryLimit }) => {
+    let query = firestore.collection('teams')
+      .where('isPublic', '==', true);
+    if (strategy.state && strategy.stateField) {
+      query = query.where(strategy.stateField, '==', strategy.state);
+    }
+    query = query
+      .where(strategy.field, '>=', strategy.start)
+      .where(strategy.field, '<=', strategy.end)
+      .orderBy(strategy.field)
+      .orderBy(admin.firestore.FieldPath.documentId());
+    if (cursor?.value && cursor?.id) query = query.startAfter(cursor.value, cursor.id);
+    const teamsSnap = await query.limit(queryLimit).get();
+    return {
+      records: teamsSnap.docs.map((teamSnap) => {
+        const team = teamSnap.data() || {};
+        return {
+          id: teamSnap.id,
+          value: String(team[strategy.field] || ''),
+          data: team,
+          item: serializePublicTeamDiscovery(teamSnap.id, team)
+        };
+      })
+    };
+  };
+  const page = await (searchText
+    ? searchDatastorePublicTeamPage(loadSearchPage, {
+        searchText,
+        pageSize,
+        cursor: typeof data?.cursor === 'string' ? data.cursor : null
+      })
+    : scanDatastorePublicTeamPage(loadBrowsePage, {
+    searchText,
+    pageSize,
+    cursor: typeof data?.cursor === 'string' ? data.cursor : null
+      }));
+  return {
+    items: page.items,
+    nextCursor: page.nextCursor
   };
 });
+
+exports.getPublicTeamGamesProjection = functions.https.onCall(async (data, context = {}) => {
+  assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-games');
+  const teamId = normalizeTeamId(data?.teamId);
+  if (!teamId) throwOpportunityError('invalid-argument', 'A valid teamId is required.');
+  const range = parsePublicGamesQuery({
+    from: data?.from,
+    to: data?.to,
+    limit: data?.limit
+  });
+  if (range.error) throwOpportunityError('invalid-argument', range.error);
+  const cursor = parsePublicProjectionCursor(data?.cursor);
+  if (cursor?.error) throwOpportunityError('invalid-argument', cursor.error);
+  const team = await getStrictPublicTeam(teamId);
+  if (!team) throwOpportunityError('not-found', 'Public team not found.');
+  const games = await getPublicTeamGames(teamId, range, cursor);
+  const opponentStatKeysByGameId = await getPublicOpponentStatKeysByGameId(teamId, games);
+  return buildPublicGamesResponse({
+    teamId,
+    team,
+    games,
+    from: range.from,
+    to: range.to,
+    limit: range.limit,
+    cursor,
+    opponentStatKeysByGameId,
+    recordedReplayMarkerOnly: true
+  });
+});
+
+async function getPublicTeamCalendarTrackingEvents(teamId) {
+  return (await scanBoundedPublicCalendarTrackingEvents(async ({ after, limit }) => {
+    let query = firestore.collection(`teams/${teamId}/games`)
+      .where('calendarEventUid', '!=', '')
+      .orderBy('calendarEventUid')
+      .orderBy(admin.firestore.FieldPath.documentId())
+      .select('calendarEventUid', 'date', 'type', 'location', 'opponent', 'title', 'visibility', 'isPrivate', 'private', 'deleted', 'status', 'liveStatus');
+    if (after) query = query.startAfter(after);
+    const snapshot = await query.limit(limit).get();
+    return {
+      documents: snapshot.docs.map((gameSnap) => ({
+        calendarEventUid: normalizeFamilyShareText(gameSnap.data()?.calendarEventUid),
+        date: gameSnap.data()?.date || null,
+        type: normalizeFamilyShareText(gameSnap.data()?.type),
+        location: normalizeFamilyShareText(gameSnap.data()?.location),
+        opponent: normalizeFamilyShareText(gameSnap.data()?.opponent),
+        title: normalizeFamilyShareText(gameSnap.data()?.title),
+        visibility: normalizeFamilyShareText(gameSnap.data()?.visibility),
+        isPrivate: gameSnap.data()?.isPrivate === true,
+        private: gameSnap.data()?.private === true,
+        deleted: gameSnap.data()?.deleted === true,
+        status: normalizeFamilyShareText(gameSnap.data()?.status),
+        liveStatus: normalizeFamilyShareText(gameSnap.data()?.liveStatus)
+      })),
+      nextCursor: snapshot.docs[snapshot.docs.length - 1] || null
+    };
+  }, { maxDocuments: PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS }))
+    .filter(canTrackedCalendarEventSuppressPublicProjection);
+}
+
+exports.getPublicTeamCalendarProjection = functions
+  .runWith({ timeoutSeconds: 30, memory: '256MB' })
+  .https.onCall(async (data, context = {}) => {
+    assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-calendar');
+    const teamId = normalizeTeamId(data?.teamId);
+    if (!teamId) throwOpportunityError('invalid-argument', 'A valid teamId is required.');
+    const range = parsePublicGamesQuery({
+      from: data?.from,
+      to: data?.to,
+      limit: data?.limit
+    });
+    if (range.error) throwOpportunityError('invalid-argument', range.error);
+    const cursor = parsePublicProjectionCursor(data?.cursor);
+    if (cursor?.error) throwOpportunityError('invalid-argument', cursor.error);
+    const team = await getStrictPublicTeam(teamId);
+    if (!team) throwOpportunityError('not-found', 'Public team not found.');
+
+    const calendarUrls = [];
+    const seenUrls = new Set();
+    (Array.isArray(team.calendarUrls) ? team.calendarUrls : []).forEach((url) => {
+      const normalizedUrl = normalizeFamilyShareText(url);
+      if (
+        !normalizedUrl ||
+        seenUrls.has(normalizedUrl) ||
+        calendarUrls.length >= MAX_FAMILY_SHARE_CALENDAR_URLS
+      ) return;
+      seenUrls.add(normalizedUrl);
+      calendarUrls.push(normalizedUrl);
+    });
+    if (calendarUrls.length === 0) {
+      return {
+        events: [],
+        warnings: [],
+        range: {
+          from: range.from,
+          to: range.to,
+          truncated: false
+        },
+        nextCursor: null
+      };
+    }
+
+    const trackedCalendarEvents = await getPublicTeamCalendarTrackingEvents(teamId);
+
+    const settled = await Promise.allSettled(calendarUrls.map((url, index) => (
+      fetchFamilyShareCalendarEvents({
+        url,
+        index,
+        children: [],
+        teamId,
+        teamName: team.name
+      })
+    )));
+    const warnings = [];
+    const projectedEvents = [];
+    settled.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        projectedEvents.push(...result.value);
+        return;
+      }
+      functions.logger.warn('Public team calendar projection failed', {
+        teamId,
+        sourceIndex: index,
+        errorCode: result.reason?.statusCode || result.reason?.code || result.reason?.name || 'calendar-fetch-failed'
+      });
+      warnings.push(`Calendar source ${index + 1} could not be loaded.`);
+    });
+    const events = projectedEvents
+      .filter((event) => !isFamilyShareCalendarEventTracked(event, trackedCalendarEvents))
+      .map(serializePublicCalendarEvent)
+      .filter(Boolean)
+      .filter((event) => {
+        const startsAt = new Date(event.startsAt);
+        return startsAt >= range.fromDate && startsAt <= range.toDate;
+      })
+      .sort((left, right) => left.startsAt.localeCompare(right.startsAt) || left.id.localeCompare(right.id));
+
+    const page = paginatePublicProjectionItems(events, range.limit, cursor);
+    return {
+      events: page.items,
+      warnings,
+      range: {
+        from: range.from,
+        to: range.to,
+        truncated: page.truncated
+      },
+      nextCursor: page.nextCursor
+    };
+  });
+
+exports.getPublicGameProjection = functions.https.onCall(async (data, context = {}) => {
+  assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-game');
+  const teamId = normalizeTeamId(data?.teamId);
+  const gameId = typeof data?.gameId === 'string' ? data.gameId.trim() : '';
+  if (!teamId || !gameId || gameId.length > 1000) {
+    throwOpportunityError('invalid-argument', 'Valid teamId and gameId values are required.');
+  }
+  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) throwOpportunityError('not-found', 'Public game not found.');
+  const team = { id: teamId, ...(teamSnap.data() || {}) };
+  const game = await getPublicGameProjection(teamId, gameId, team);
+  if (!game) throwOpportunityError('not-found', 'Public game not found.');
+  return { item: game };
+});
+
+const PUBLIC_SHARE_PREVIEW_ORIGIN = 'https://share.allplays.ai';
+
+function setPublicSharePreviewCorsHeaders(res) {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.set('Access-Control-Max-Age', '86400');
+}
+
+exports.liveGameSharePreview = functions
+  .runWith({ timeoutSeconds: 15, memory: '256MB' })
+  .https
+  .onRequest(async (req, res) => {
+    setPublicSharePreviewCorsHeaders(res);
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.set('Allow', 'GET, HEAD');
+      res.status(405).send('Method not allowed.');
+      return;
+    }
+
+    const rateLimit = checkPublicOpportunityBrowseRateLimit({
+      ip: `live-game-share|${getRequestIp(req)}`
+    });
+    if (!rateLimit.allowed) {
+      res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+      res.status(429).send('Too many requests.');
+      return;
+    }
+
+    const teamId = typeof req.query?.teamId === 'string'
+      ? normalizeTeamId(req.query.teamId)
+      : '';
+    const gameId = typeof req.query?.gameId === 'string'
+      ? req.query.gameId.trim()
+      : '';
+    if (!teamId || !gameId || gameId.length > 1000) {
+      res.status(400).send('Valid teamId and gameId values are required.');
+      return;
+    }
+
+    try {
+      const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+      if (!teamSnap.exists) {
+        res.status(404).send('Live game not found.');
+        return;
+      }
+      const team = { id: teamId, ...(teamSnap.data() || {}) };
+      const game = await getPublicGameProjection(teamId, gameId, team);
+      if (!game) {
+        res.status(404).send('Live game not found.');
+        return;
+      }
+
+      const shareParams = buildLiveGameShareParams({
+        teamId,
+        gameId,
+        replay: req.query?.replay,
+        clipStart: req.query?.clipStart,
+        clipEnd: req.query?.clipEnd,
+        overlay: req.query?.overlay
+      });
+      const query = shareParams.toString();
+      const useDiamondViewer = game.trackingEngine === 'diamond-v2';
+      const viewerPath = useDiamondViewer ? 'live-game-diamond-v2.html' : 'live-game.html';
+      const redirectUrl = `https://allplays.ai/${viewerPath}?${query}`;
+      const shareUrl = `${PUBLIC_SHARE_PREVIEW_ORIGIN}/watch?${query}`;
+      const hasHighlightRange = shareParams.has('clipStart') && shareParams.has('clipEnd');
+      const metadata = buildLiveGameShareMetadata({
+        teamName: game.teamName || team.name,
+        opponent: game.opponent,
+        startsAt: game.startsAt,
+        timeZone: team.timeZone || team.timezone,
+        mode: hasHighlightRange ? 'highlight' : shareParams.has('replay') ? 'replay' : 'live'
+      });
+      const html = buildLiveGameShareHtml({ metadata, redirectUrl, shareUrl });
+      res.set('Cache-Control', 'public, max-age=300, s-maxage=300');
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      res.set('X-Robots-Tag', 'noindex, nofollow');
+      if (req.method === 'HEAD') {
+        res.status(200).end();
+        return;
+      }
+      res.status(200).send(html);
+    } catch (error) {
+      functions.logger.warn('Live game share preview failed.', {
+        teamId,
+        errorCode: error?.code || error?.name || 'preview-failed'
+      });
+      res.set('Retry-After', '60');
+      res.status(503).send('Live game preview is temporarily unavailable.');
+    }
+  });
+
+exports.gameReportSharePreview = functions
+  .runWith({ timeoutSeconds: 15, memory: '256MB' })
+  .https
+  .onRequest(async (req, res) => {
+    setPublicSharePreviewCorsHeaders(res);
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.set('Allow', 'GET, HEAD');
+      res.status(405).send('Method not allowed.');
+      return;
+    }
+
+    const rateLimit = checkPublicOpportunityBrowseRateLimit({
+      ip: `game-report-share|${getRequestIp(req)}`
+    });
+    if (!rateLimit.allowed) {
+      res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+      res.status(429).send('Too many requests.');
+      return;
+    }
+
+    const teamId = typeof req.query?.teamId === 'string'
+      ? normalizeTeamId(req.query.teamId)
+      : '';
+    const gameId = typeof req.query?.gameId === 'string'
+      ? req.query.gameId.trim()
+      : '';
+    if (!teamId || !gameId || gameId.length > 1000) {
+      res.status(400).send('Valid teamId and gameId values are required.');
+      return;
+    }
+
+    try {
+      const params = new URLSearchParams({ teamId, gameId });
+      const query = params.toString();
+      const redirectUrl = `https://allplays.ai/game.html#${query}`;
+      const shareUrl = `${PUBLIC_SHARE_PREVIEW_ORIGIN}/report?${query}`;
+      const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+      const team = teamSnap.exists ? { id: teamId, ...(teamSnap.data() || {}) } : null;
+      const game = team ? await getPublicGameProjection(teamId, gameId, team) : null;
+      const metadata = game
+        ? buildGameReportShareMetadata({
+          teamName: game.teamName || team.name,
+          opponent: game.opponent,
+          startsAt: game.startsAt,
+          timeZone: team.timeZone || team.timezone
+        })
+        : buildGameReportShareMetadata();
+      const html = buildGameReportShareHtml({ metadata, redirectUrl, shareUrl });
+      res.set(
+        'Cache-Control',
+        game ? 'public, max-age=300, s-maxage=300' : 'private, no-store, max-age=0'
+      );
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      res.set('X-Robots-Tag', 'noindex, nofollow');
+      if (req.method === 'HEAD') {
+        res.status(200).end();
+        return;
+      }
+      res.status(200).send(html);
+    } catch (error) {
+      functions.logger.warn('Game report share preview failed.', {
+        teamId,
+        errorCode: error?.code || error?.name || 'preview-failed'
+      });
+      res.set('Retry-After', '60');
+      res.status(503).send('Game report preview is temporarily unavailable.');
+    }
+  });
+
+exports.playerSharePreview = functions
+  .runWith({ timeoutSeconds: 15, memory: '256MB' })
+  .https
+  .onRequest(async (req, res) => {
+    setPublicSharePreviewCorsHeaders(res);
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.set('Allow', 'GET, HEAD');
+      res.status(405).send('Method not allowed.');
+      return;
+    }
+
+    res.set('Cache-Control', 'private, no-store, max-age=0');
+    res.set('X-Robots-Tag', 'noindex, nofollow');
+    const rateLimit = checkPublicOpportunityBrowseRateLimit({
+      ip: `player-share|${getRequestIp(req)}`
+    });
+    if (!rateLimit.allowed) {
+      res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+      res.status(429).send('Too many requests.');
+      return;
+    }
+
+    const teamId = typeof req.query?.teamId === 'string'
+      ? normalizeTeamId(req.query.teamId)
+      : '';
+    const playerId = typeof req.query?.playerId === 'string'
+      ? normalizePlayerId(req.query.playerId)
+      : '';
+    const gameId = typeof req.query?.gameId === 'string'
+      ? req.query.gameId.trim()
+      : '';
+    if (!teamId || !playerId || gameId.length > 1000 || gameId.includes('/')) {
+      res.status(400).send('Valid teamId and playerId values are required.');
+      return;
+    }
+
+    try {
+      const [teamSnap, playerSnap] = await Promise.all([
+        firestore.doc(`teams/${teamId}`).get(),
+        firestore.doc(`teams/${teamId}/players/${playerId}`).get()
+      ]);
+      if (!teamSnap.exists || !playerSnap.exists) {
+        res.status(404).send('Player profile not found.');
+        return;
+      }
+
+      const projection = buildPublicPlayerShareProjection({
+        teamId,
+        team: { id: teamId, ...(teamSnap.data() || {}) },
+        player: { id: playerId, ...(playerSnap.data() || {}) }
+      });
+      if (!projection) {
+        res.status(404).send('Player profile not found.');
+        return;
+      }
+
+      const playerPageParams = new URLSearchParams({ teamId });
+      if (gameId) playerPageParams.set('gameId', gameId);
+      playerPageParams.set('playerId', playerId);
+      const shareParams = new URLSearchParams({ teamId, playerId });
+      if (gameId) shareParams.set('gameId', gameId);
+      const redirectUrl = `https://allplays.ai/player.html#${playerPageParams.toString()}`;
+      const shareUrl = `${PUBLIC_SHARE_PREVIEW_ORIGIN}/player-card?${shareParams.toString()}`;
+      const metadata = buildPlayerShareMetadata(projection);
+      const html = buildPlayerShareHtml({ metadata, redirectUrl, shareUrl });
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      if (req.method === 'HEAD') {
+        res.status(200).end();
+        return;
+      }
+      res.status(200).send(html);
+    } catch (error) {
+      functions.logger.warn('Player share preview failed.', {
+        teamId,
+        errorCode: error?.code || error?.name || 'preview-failed'
+      });
+      res.set('Retry-After', '60');
+      res.status(503).send('Player preview is temporarily unavailable.');
+    }
+  });
 
 exports.reportPublicOpportunity = functions.https.onCall(async (data, context = {}) => {
   const uid = requireOpportunityAuth(context);
@@ -15201,12 +21950,7 @@ async function canAccessOpportunityInquiry(caller, inquiry) {
     return Array.isArray(inquiry.participantIds) && inquiry.participantIds.includes(caller.uid);
   }
   const teamSnap = await firestore.doc(`teams/${normalizeOpportunityTeamId(inquiry.teamId)}`).get();
-  return teamSnap.exists && hasTeamAdminAccess({
-    team: teamSnap.data() || {},
-    user: caller.user,
-    uid: caller.uid,
-    email: caller.email
-  });
+  return teamSnap.exists && hasOpportunityTeamAdminAccess(caller, teamSnap.data() || {});
 }
 
 async function requireOpportunityInquiry(inquiryId, caller) {
@@ -15403,18 +22147,10 @@ exports.requestAccountDeletion = functions.https.onCall(createAccountDeletionReq
 }));
 
 async function deleteAccountQuery(query) {
-  while (true) {
-    const snapshot = await query.limit(250).get();
-    if (snapshot.empty) return;
-    for (let index = 0; index < snapshot.docs.length; index += 10) {
-      await Promise.all(snapshot.docs
-        .slice(index, index + 10)
-        .map((docSnapshot) => firestore.recursiveDelete(docSnapshot.ref)));
-    }
-  }
+  return deleteAccountQueryPages({ firestore, query });
 }
 
-async function deleteAccountStorage(uid, mediaDocuments, profilePhotoUrls = []) {
+async function deleteAccountStorage(uid, mediaQueries, profilePhotoUrls = []) {
   const primaryBucket = admin.storage().bucket();
   const imageBucket = admin.storage().bucket(
     process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app'
@@ -15422,23 +22158,19 @@ async function deleteAccountStorage(uid, mediaDocuments, profilePhotoUrls = []) 
   const athletePrefix = `athlete-profile-media/${uid}/`;
   await Promise.all([
     primaryBucket.deleteFiles({ prefix: athletePrefix, force: true }),
+    primaryBucket.deleteFiles({ prefix: `profile-photos/users/${uid}/`, force: true }),
+    primaryBucket.deleteFiles({ prefix: `profile-photos/team-drafts/${uid}/`, force: true }),
     imageBucket.deleteFiles({ prefix: athletePrefix, force: true }),
     imageBucket.deleteFiles({ prefix: `user-photos/${uid}/`, force: true })
   ]);
-
-  const { primaryPaths, imagePaths } = classifyAccountStoragePaths(
+  await deleteAccountMediaStoragePages({
     uid,
-    collectAccountMediaStoragePaths(mediaDocuments.map((document) => document.data() || {})),
-    profilePhotoUrls
-  );
-  await Promise.all([
-    ...primaryPaths.map((storagePath) => (
-      primaryBucket.file(storagePath).delete({ ignoreNotFound: true })
-    )),
-    ...imagePaths.map((storagePath) => (
-      imageBucket.file(storagePath).delete({ ignoreNotFound: true })
-    ))
-  ]);
+    queries: mediaQueries,
+    profilePhotoUrls,
+    primaryBucket,
+    imageBucket,
+    documentIdField: admin.firestore.FieldPath.documentId()
+  });
 }
 
 async function loadAccountRosterPlayerDocuments(uid, userData = {}) {
@@ -15656,7 +22388,9 @@ exports.processAccountDeletionRequest = functions
           throw error;
         })
       ]);
-      const ownerEmail = authUser?.email || userDoc.data()?.email || snapshot.data()?.email || '';
+      // A disabled or deleted Auth identity cannot claim an ownerId-less team
+      // through stale profile/request email snapshots.
+      const ownerEmail = getCurrentEnabledAuthEmail(authUser);
       const ownedTeams = await loadOwnedTeams({ firestore, uid, email: ownerEmail });
       if (ownedTeams.length) {
         throw new Error('Account still owns one or more teams.');
@@ -15673,17 +22407,18 @@ exports.processAccountDeletionRequest = functions
         throw migrationError;
       }
 
-      const [legacyTeamMedia, teamMediaItems, chatMessages, socialPosts] = await Promise.all([
-        firestore.collectionGroup('media').where('uploadedBy', '==', uid).get(),
-        firestore.collectionGroup('mediaItems').where('uploadedBy', '==', uid).get(),
-        firestore.collectionGroup('chatMessages').where('senderId', '==', uid).get(),
-        firestore.collection('socialPosts').where('authorId', '==', uid).get()
-      ]);
+      await cleanupAccountDiamondPrivateNotes({
+        firestore,
+        uid,
+        documentIdField: admin.firestore.FieldPath.documentId(),
+        redactedAt: admin.firestore.Timestamp.now().toDate().toISOString()
+      });
+
       await deleteAccountStorage(uid, [
-        ...(legacyTeamMedia.docs || []),
-        ...(teamMediaItems.docs || []),
-        ...(chatMessages.docs || []),
-        ...(socialPosts.docs || [])
+        firestore.collectionGroup('media').where('uploadedBy', '==', uid),
+        firestore.collectionGroup('mediaItems').where('uploadedBy', '==', uid),
+        firestore.collectionGroup('chatMessages').where('senderId', '==', uid),
+        firestore.collection('socialPosts').where('authorId', '==', uid)
       ], [
         userDoc.data()?.photoUrl,
         authUser?.photoURL
@@ -15692,6 +22427,17 @@ exports.processAccountDeletionRequest = functions
       await scrubAccountChatConversationMembership(uid, ownerEmail);
       await scrubAccountRegistrationLinks(uid, ownerEmail);
       await scrubAccountRosterParentLinks(uid, userDoc.data() || {}, authUser);
+      await cleanupAccountCalendarCredentials({
+        firestore,
+        uid,
+        documentIdField: admin.firestore.FieldPath.documentId()
+      });
+      await anonymizeAccountReplayArchiveAttribution({
+        firestore,
+        uid,
+        documentIdField: admin.firestore.FieldPath.documentId(),
+        deleteFieldValue: () => admin.firestore.FieldValue.delete()
+      });
 
       const directDocuments = [
         `publicUserProfiles/${uid}`,
@@ -15728,10 +22474,87 @@ exports.processAccountDeletionRequest = functions
       await requestRef.set({
         status: 'failed',
         updatedAt: admin.firestore.Timestamp.now(),
-        failureCode: error?.code === 'legacy-profile-photo-migration-required'
+        failureCode: [
+          'legacy-profile-photo-migration-required',
+          'diamond-private-note-migration-required',
+          'diamond-private-note-integrity-failed'
+        ].includes(error?.code)
           ? error.code
           : 'processing-failed'
       }, { merge: true });
       throw error;
     }
   });
+
+
+// Diamond Scorebook v2 remains dark unless the server policy and team opt-in
+// both permit a newly scheduled, untracked game. All canonical writes cross
+// these callables; Firestore rules deny direct client access to the ledger.
+const diamondCallableFunctions = functions.runWith({ timeoutSeconds: 120, memory: '512MB' });
+exports.configureDiamondTeam = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.configureDiamondTeam
+);
+exports.getDiamondAccess = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.getDiamondAccess
+);
+exports.getDiamondManagerStats = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.getDiamondManagerStats
+);
+exports.activateDiamondGame = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.activateDiamondGame
+);
+exports.acquireDiamondScorerLease = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.acquireDiamondScorerLease
+);
+exports.listDiamondScorerCandidates = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.listDiamondScorerCandidates
+);
+exports.submitDiamondCommand = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.submitDiamondCommand
+);
+exports.getDiamondState = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.getDiamondState
+);
+exports.listDiamondEvents = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.listDiamondEvents
+);
+exports.getPublicDiamondGame = diamondCallableFunctions.https.onCall(async (data, context = {}) => {
+  assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'diamond-game');
+  return diamondScorebookHandlers.getPublicDiamondGame(data, context);
+});
+exports.postDiamondLiveChat = diamondCallableFunctions.https.onCall(
+  diamondLiveEngagementHandlers.postDiamondLiveChat
+);
+exports.postDiamondLiveReaction = diamondCallableFunctions.https.onCall(
+  diamondLiveEngagementHandlers.postDiamondLiveReaction
+);
+exports.moderateDiamondLiveChat = diamondCallableFunctions.https.onCall(
+  diamondLiveEngagementHandlers.moderateDiamondLiveChat
+);
+exports.parseDiamondVoice = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.parseDiamondVoice
+);
+exports.regenerateDiamondProjection = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.regenerateDiamondProjection
+);
+exports.getDiamondRecapSource = diamondCallableFunctions.https.onCall(
+  diamondScorebookAiHandlers.getDiamondRecapSource
+);
+exports.publishDiamondAiDraft = diamondCallableFunctions.https.onCall(
+  diamondScorebookAiHandlers.publishDiamondAiDraft
+);
+exports.cleanupDeletedDiamondGame = functions
+  .runWith({ timeoutSeconds: 540, memory: '1GB', failurePolicy: true })
+  .firestore
+  .document('teams/{teamId}/games/{gameId}')
+  .onDelete(diamondScorebookHandlers.cleanupDeletedDiamondGame);
+exports.projectDiamondScorebook = functions
+  .runWith({ timeoutSeconds: 540, memory: '1GB', failurePolicy: true })
+  .firestore
+  .document('teams/{teamId}/games/{gameId}/diamondScorebooks/v2')
+  .onWrite(diamondScorebookProjectorHandlers.onDiamondScorebookWrite);
+exports.processDiamondScorebookEffect = functions
+  .runWith({ timeoutSeconds: 120, memory: '512MB', failurePolicy: true })
+  .firestore
+  .document('teams/{teamId}/games/{gameId}/diamondScorebooks/v2/effects/{effectId}')
+  .onWrite(diamondScorebookEffectHandlers.onDiamondEffectWrite);

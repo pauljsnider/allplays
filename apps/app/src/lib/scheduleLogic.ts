@@ -1,4 +1,5 @@
 import { formatLongDate, formatShortDate, formatTimeOfDay } from './datetime';
+import type { ReplayArchiveState, YouTubeReplayVideo } from './youtubeReplay';
 
 export type ParentScheduleFilter = 'upcoming-all' | 'upcoming-games' | 'upcoming-practices' | 'availability' | 'recent-results' | 'past-all';
 export type ScheduleViewMode = 'list' | 'compact' | 'calendar' | 'packets';
@@ -152,7 +153,11 @@ export type ParentScheduleEvent = {
   opponentTeamId?: string | null;
   opponentTeamName?: string | null;
   opponentTeamPhoto?: string | null;
+  sharedScheduleId?: string | null;
+  sharedScheduleSourceTeamId?: string | null;
   sharedScheduleOpponentTeamId?: string | null;
+  sharedScheduleOpponentGameId?: string | null;
+  hasReplayShareMarker?: boolean;
   counterpartTitle?: string | null;
   title?: string | null;
   childId: string;
@@ -170,6 +175,14 @@ export type ParentScheduleEvent = {
   awayScore?: number | null;
   postGameNotes?: string | null;
   summary?: string | null;
+  videoUrl?: string | null;
+  replayVideo?: YouTubeReplayVideo | null;
+  rawReplayState?: ReplayArchiveState;
+  rawReplayLifecycle?: {
+    type?: unknown;
+    status?: unknown;
+    liveStatus?: unknown;
+  };
   practiceFeedItems?: Array<{
     weakness: string;
     evidence: string;
@@ -186,7 +199,17 @@ export type ParentScheduleEvent = {
   competitionType?: string | null;
   countsTowardSeasonRecord?: boolean | null;
   tournament?: Record<string, any> | null;
+  trackingEngine?: string | null;
+  diamondScorebookInstanceId?: string | null;
+  diamondRevision?: number | null;
+  diamondProjectionStatus?: string | null;
+  diamondProjectionComplete?: boolean;
+  diamondProjectionRevision?: number | null;
+  diamondProjectionCheckpointHash?: string | null;
   statTrackerConfigId?: string | null;
+  diamondStatConfigSnapshotHash?: string | null;
+  diamondProjectionHash?: string | null;
+  isPublicProjection?: boolean;
   sourceType?: ScheduleSourceType | string | null;
   sourceLabel?: string | null;
   isImported?: boolean;
@@ -212,6 +235,9 @@ export type ParentScheduleEvent = {
   practicePacketCompletions?: PracticePacketCompletion[];
   isTeamAdmin?: boolean;
   isTeamStaff?: boolean;
+  canManageReplayVideo?: boolean;
+  canManageReplayVideoAsFullManager?: boolean;
+  isSharedGame?: boolean;
   isTeamRsvpReminderManager?: boolean;
   calendarUrls?: string[];
   gamePlan?: {
@@ -453,8 +479,23 @@ export function normalizeRsvpResponse(response: unknown): RsvpResponse {
   return 'not_responded';
 }
 
-export function canSubmitScheduleEventRsvp(event: Pick<ParentScheduleEvent, 'isDbGame' | 'isCancelled' | 'availabilityLocked'>) {
-  return Boolean(event.isDbGame && !event.isCancelled && !event.availabilityLocked);
+export type ScheduleEventRsvpCapability = 'editable' | 'calendar_only' | 'locked' | 'cancelled' | 'untracked';
+
+export function getScheduleEventRsvpCapability(event: Pick<ParentScheduleEvent, 'isDbGame' | 'isCancelled' | 'availabilityLocked' | 'isImported' | 'sourceType'>): ScheduleEventRsvpCapability {
+  if (event.isCancelled) return 'cancelled';
+  if (!event.isDbGame) {
+    return event.isImported && event.sourceType === 'calendar' ? 'calendar_only' : 'untracked';
+  }
+  if (event.availabilityLocked) return 'locked';
+  return 'editable';
+}
+
+export function canSubmitScheduleEventRsvp(event: Pick<ParentScheduleEvent, 'isDbGame' | 'isCancelled' | 'availabilityLocked' | 'isImported' | 'sourceType'>) {
+  return getScheduleEventRsvpCapability(event) === 'editable';
+}
+
+export function isScheduleEventAvailabilityNeeded(event: Pick<ParentScheduleEvent, 'isDbGame' | 'isCancelled' | 'availabilityLocked' | 'isImported' | 'sourceType' | 'myRsvp'>) {
+  return canSubmitScheduleEventRsvp(event) && normalizeRsvpResponse(event.myRsvp) === 'not_responded';
 }
 
 function compactString(value: unknown) {

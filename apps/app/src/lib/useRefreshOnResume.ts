@@ -4,7 +4,7 @@ import { Capacitor } from '@capacitor/core';
 import { createLogger } from './logger';
 import { startWarmResumeTimer } from './uxTiming';
 
-export type RefreshOnResumeFn = () => void | Promise<void>;
+export type RefreshOnResumeFn = () => void | Promise<unknown>;
 
 export type UseRefreshOnResumeOptions = {
   /** Only refresh when the last refresh is at least this old. Defaults to 5 minutes. */

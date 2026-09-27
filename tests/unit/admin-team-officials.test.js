@@ -82,7 +82,7 @@ describe('admin team officials summary', () => {
         const scheduleHtml = readSource('edit-schedule.html');
 
         expect(adminHtml).toContain('Officials</th>');
-        expect(adminJs).toContain("import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=1';");
+        expect(adminJs).toContain("import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=2';");
         expect(adminJs).toContain('Manage Officials');
         expect(adminJs).toContain("edit-schedule.html?teamId=${encodeURIComponent(team.id)}#officials");
         expect(helperJs).toContain('No officials');

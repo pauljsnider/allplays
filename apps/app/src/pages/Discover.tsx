@@ -93,7 +93,7 @@ export function Discover({ auth, initialTab }: { auth: AuthState; initialTab?: '
         </div> : null}
       </section>
 
-      {tab === 'teams' ? <section id={initialTab ? undefined : 'discover-teams-panel'} role={initialTab ? undefined : 'tabpanel'} aria-labelledby={initialTab ? undefined : 'discover-teams-tab'}><PublicTeamSearch autoBrowseOnMount /></section> : (
+      {tab === 'teams' ? <section id={initialTab ? undefined : 'discover-teams-panel'} role={initialTab ? undefined : 'tabpanel'} aria-labelledby={initialTab ? undefined : 'discover-teams-tab'}><PublicTeamSearch pageSize={12} showRosterCounts={false} /></section> : (
         <section id={initialTab ? undefined : 'discover-opportunities-panel'} role={initialTab ? undefined : 'tabpanel'} aria-labelledby={initialTab ? undefined : 'discover-opportunities-tab'} className="space-y-4">
           <form className="app-card grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-6" onSubmit={submitFilters}>
             <FilterSelect label="Category" value={filters.kind || ''} onChange={(value) => setFilters((current) => ({ ...current, kind: value as OpportunityKind | '' }))} options={[{ id: '', label: 'All categories' }, ...opportunityKinds]} />

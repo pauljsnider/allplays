@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import React, { act } from 'react';
+import { waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -24,7 +25,7 @@ const teamDetailMocks = vi.hoisted(() => ({
     revokeVideographerAccessForApp: vi.fn(),
     inviteTeamAdminForApp: vi.fn(),
     saveTeamScheduleNotificationsForApp: vi.fn(),
-    buildPublicTeamGamesIcsUrl: vi.fn((teamId) => `https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs?teamId=${encodeURIComponent(teamId)}`),
+    buildPublicTeamGamesIcsUrl: vi.fn((teamId) => `https://us-central1-game-flow-c6311.cloudfunctions.net/publicTeamGamesIcs?teamId=${encodeURIComponent(teamId)}`),
     canExposePublicFanFeed: vi.fn((team, events = []) => (events || []).some((event) => event?.type === 'game' && event?.visibility !== 'private' && event?.isPrivate !== true && event?.status !== 'deleted' && event?.liveStatus !== 'deleted' && ((team?.isPublic !== false && team?.active !== false) || event?.isPublic === true || event?.shareable === true || event?.publicCalendar === true)))
 }));
 const publicActionMocks = vi.hoisted(() => ({
@@ -33,7 +34,7 @@ const publicActionMocks = vi.hoisted(() => ({
     sharePublicUrl: vi.fn()
 }));
 const parentToolsMocks = vi.hoisted(() => ({
-    buildPrivateTeamCalendarFeedUrl: vi.fn(),
+    getPrivateTeamCalendarFeedUrl: vi.fn(),
     getAppleCalendarFeedUrl: vi.fn((url) => String(url).replace(/^https?:\/\//i, 'webcal://')),
     getGoogleCalendarFeedUrl: vi.fn((url) => `https://calendar.google.com/calendar/render?cid=${encodeURIComponent(url)}`)
 }));
@@ -74,8 +75,12 @@ vi.mock('../../apps/app/src/lib/scheduleService.ts', () => ({
     loadParentSchedule: scheduleServiceMocks.loadParentSchedule,
     sendStaffRsvpReminder: scheduleServiceMocks.sendStaffRsvpReminder
 }));
+vi.mock('../../apps/app/src/lib/usePremiumFeatureAccess.ts', () => ({
+    usePremiumFeatureAccess: () => ({ state: 'unlocked', reason: 'global-open' })
+}));
 
-import { buildScoreboardWidgetEmbedCode, buildScoreboardWidgetUrl, TeamDetail } from '../../apps/app/src/pages/TeamDetail.tsx';
+import { TeamDetail } from '../../apps/app/src/pages/TeamDetail.tsx';
+import { buildScoreboardWidgetEmbedCode, buildScoreboardWidgetUrl } from '../../apps/app/src/pages/team-detail/MoreTab.tsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -168,8 +173,41 @@ function model() {
             assignedUpcomingGames: [{ gameId: 'game-1', title: 'vs. Falcons', date: nextDate }]
         }],
         canManageTeam: false,
+        canUsePrivateCalendarSync: true,
         staffPermissions: null,
         counts: { games: 8, practices: 3, completedGames: 7 }
+    };
+}
+
+function scheduleResultForModel(teamModel) {
+    return {
+        children: [],
+        staffTeams: [{ teamId: teamModel.team.id, teamName: teamModel.team.name }],
+        events: [...teamModel.upcomingEvents, ...teamModel.recentResults].map((event) => ({
+            eventKey: `${teamModel.team.id}:${event.id}`,
+            id: event.id,
+            teamId: teamModel.team.id,
+            teamName: teamModel.team.name,
+            title: event.title,
+            type: event.type,
+            date: event.date,
+            location: event.location,
+            locationDetail: event.locationDetail || null,
+            opponent: event.opponent || null,
+            childId: '',
+            childName: '',
+            isDbGame: event.isDbGame === true,
+            status: event.status || 'scheduled',
+            liveStatus: event.liveStatus || '',
+            visibility: event.visibility || '',
+            homeScore: event.homeScore,
+            awayScore: event.awayScore,
+            isCancelled: event.isCancelled === true,
+            statTrackerConfigId: event.statTrackerConfigId || '',
+            assignments: [],
+            openAssignmentCount: 0
+        })),
+        isPartial: false
     };
 }
 
@@ -278,6 +316,10 @@ function hrefs(container) {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    teamDetailMocks.loadParentTeamDetail.mockReset();
+    teamDetailMocks.loadParentTeamDetailBootstrap.mockReset();
+    teamDetailMocks.loadTeamDetailInsights.mockReset();
+    teamDetailMocks.loadTeamDetailSponsors.mockReset();
     window.scrollTo = vi.fn();
     window.requestAnimationFrame = (callback) => {
         callback(0);
@@ -285,12 +327,8 @@ beforeEach(() => {
     };
     publicActionMocks.copyPublicText.mockResolvedValue('copied');
     publicActionMocks.sharePublicUrl.mockResolvedValue('copied');
-    parentToolsMocks.buildPrivateTeamCalendarFeedUrl.mockReturnValue('https://feed.example.test/private-team.ics?teamId=team-1&token=abc123');
-    scheduleServiceMocks.loadParentSchedule.mockResolvedValue({
-        children: [],
-        events: [],
-        staffTeams: []
-    });
+    parentToolsMocks.getPrivateTeamCalendarFeedUrl.mockResolvedValue('https://feed.example.test/private-team.ics?teamId=team-1&token=abc123');
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValue(scheduleResultForModel(coreModel()));
     scheduleServiceMocks.loadPreview.mockResolvedValue({
         missingPlayerCount: 0,
         eligibleEmailCount: 0,
@@ -345,17 +383,19 @@ describe('React app TeamDetail page', () => {
     it('loads parent-facing team.html features with team and player photos', async () => {
         const { container } = await renderTeamDetail();
 
-        expect(teamDetailMocks.loadParentTeamDetailBootstrap).not.toHaveBeenCalled();
-        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledWith('team-1', auth.user, { includeDeferredData: false });
+        expect(teamDetailMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledTimes(1);
+        expect(teamDetailMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledWith('team-1', auth.user);
+        expect(teamDetailMocks.loadParentTeamDetail).not.toHaveBeenCalled();
+        expect(teamDetailMocks.loadTeamDetailInsights).not.toHaveBeenCalled();
         expect(container.textContent).toContain('Bears');
         expect(container.querySelector('img[src="https://img.example.test/team.png"]')).toBeTruthy();
         expect(container.textContent).toContain('Season record (2100)');
         expect(container.textContent).toContain('Parent actions');
-        expect(container.textContent).toContain('Team Pass');
+        expect(container.textContent).not.toContain('Team Pass');
         expect(Array.from(container.querySelectorAll('a')).map((link) => link.getAttribute('href'))).toContain('/schedule?teamId=team-1&filter=availability');
 
         await clickButton(container, 'Roster');
-        expect(container.textContent).toContain('Pat Star');
+        await waitFor(() => expect(container.textContent).toContain('Pat Star'));
         expect(container.textContent).toContain('Yours');
         expect(container.querySelector('img[src="https://img.example.test/player.png"]')).toBeTruthy();
         expect(Array.from(container.querySelectorAll('a')).map((link) => link.getAttribute('href'))).toContain('/players/team-1/player-1');
@@ -363,11 +403,13 @@ describe('React app TeamDetail page', () => {
         await clickButton(container, 'Insights');
         expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
         expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledWith('team-1', auth.user);
-        expect(container.textContent).toContain('Bring ball');
+        await waitFor(() => expect(container.textContent).toContain('Bring ball'));
         expect(container.textContent).toContain('Points');
         expect(container.textContent).toContain('88');
 
         await clickButton(container, 'More');
+        await waitFor(() => expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1));
+        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledWith('team-1', auth.user, { includeDeferredData: false });
         expect(teamDetailMocks.loadTeamDetailSponsors).toHaveBeenCalledTimes(1);
         expect(teamDetailMocks.loadTeamDetailSponsors).toHaveBeenCalledWith('team-1');
         expect(container.textContent).toContain('Website team page');
@@ -389,7 +431,7 @@ describe('React app TeamDetail page', () => {
         fanModel.team.name = 'Bears & Wolves';
         teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(fanModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(fanModel);
-        parentToolsMocks.buildPrivateTeamCalendarFeedUrl.mockReturnValue('https://feed.example.test/private-team.ics?teamId=team%201%2Fblue&token=abc123');
+        parentToolsMocks.getPrivateTeamCalendarFeedUrl.mockResolvedValue('https://feed.example.test/private-team.ics?teamId=team%201%2Fblue&token=abc123');
 
         const { container } = await renderTeamDetail();
 
@@ -399,7 +441,7 @@ describe('React app TeamDetail page', () => {
         expect(container.textContent).toContain('Open team schedule for one-time .ics export');
 
         await clickButtonInCard(container, 'Private calendar sync', 'Copy Link');
-        expect(parentToolsMocks.buildPrivateTeamCalendarFeedUrl).toHaveBeenCalledWith('team 1/blue', expect.objectContaining({ id: 'team 1/blue' }));
+        expect(parentToolsMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledWith('team 1/blue');
         expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('https://feed.example.test/private-team.ics?teamId=team%201%2Fblue&token=abc123');
         expect(container.textContent).toContain('Private calendar link copied.');
 
@@ -429,8 +471,8 @@ describe('React app TeamDetail page', () => {
         expect(publicActionMocks.sharePublicUrl).toHaveBeenCalledWith({
             title: 'Bears & Wolves fan feed',
             text: 'Bears & Wolves public games calendar feed',
-            url: 'https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs?teamId=team%201%2Fblue',
-            clipboardText: 'https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs?teamId=team%201%2Fblue'
+            url: 'https://us-central1-game-flow-c6311.cloudfunctions.net/publicTeamGamesIcs?teamId=team%201%2Fblue',
+            clipboardText: 'https://us-central1-game-flow-c6311.cloudfunctions.net/publicTeamGamesIcs?teamId=team%201%2Fblue'
         });
         expect(container.textContent).toContain('Fan feed link copied.');
 
@@ -449,8 +491,8 @@ describe('React app TeamDetail page', () => {
         expect(hidden.container.textContent).not.toContain('Fan Feed');
     });
 
-    it('shows a private calendar sync error and hides sync actions without a signed-in user', async () => {
-        parentToolsMocks.buildPrivateTeamCalendarFeedUrl.mockImplementationOnce(() => { throw new Error('Unable to create private calendar feed. Sign in again and retry.'); });
+    it('shows private calendar errors only to eligible users and hides sync for denied or signed-out users', async () => {
+        parentToolsMocks.getPrivateTeamCalendarFeedUrl.mockRejectedValueOnce(new Error('Unable to create private calendar feed. Sign in again and retry.'));
         const { container } = await renderTeamDetail();
 
         await clickButton(container, 'More');
@@ -465,6 +507,15 @@ describe('React app TeamDetail page', () => {
         });
         await clickButton(signedOut.container, 'More');
         expect(signedOut.container.textContent).not.toContain('Private calendar sync');
+
+        const deniedModel = model();
+        deniedModel.canUsePrivateCalendarSync = false;
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(deniedModel);
+        teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(deniedModel);
+        const denied = await renderTeamDetail();
+        await clickButton(denied.container, 'More');
+        expect(denied.container.textContent).not.toContain('Private calendar sync');
+        expect(parentToolsMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledTimes(1);
     });
 
     it('renders scoreboard widget copy tools only for managers', async () => {
@@ -643,24 +694,25 @@ describe('React app TeamDetail page', () => {
     it('loads deferred insights and sponsors once, then reuses them across tab switches', async () => {
         const { container } = await renderTeamDetail();
 
-        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
-        expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
+        expect(teamDetailMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledTimes(1);
+        expect(teamDetailMocks.loadParentTeamDetail).not.toHaveBeenCalled();
+        expect(teamDetailMocks.loadTeamDetailInsights).not.toHaveBeenCalled();
         expect(teamDetailMocks.loadTeamDetailSponsors).not.toHaveBeenCalled();
 
         await clickButton(container, 'Insights');
-        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
-        expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
-        expect(container.textContent).toContain('Bring ball');
+        expect(teamDetailMocks.loadParentTeamDetail).not.toHaveBeenCalled();
+        await waitFor(() => expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(container.textContent).toContain('Bring ball'));
 
         await clickButton(container, 'Overview');
         await clickButton(container, 'Insights');
-        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
+        expect(teamDetailMocks.loadParentTeamDetail).not.toHaveBeenCalled();
         expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
 
         await clickButton(container, 'More');
-        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
-        expect(teamDetailMocks.loadTeamDetailSponsors).toHaveBeenCalledTimes(1);
-        expect(container.textContent).toContain('Pizza Place');
+        await waitFor(() => expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(teamDetailMocks.loadTeamDetailSponsors).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(container.textContent).toContain('Pizza Place'));
 
         await clickButton(container, 'Schedule');
         await clickButton(container, 'More');
@@ -681,7 +733,7 @@ describe('React app TeamDetail page', () => {
         const { container } = await renderTeamDetail();
 
         await clickButton(container, 'Insights');
-        expect(container.textContent).toContain('Loading player tracking…');
+        expect(container.textContent).toMatch(/Loading (?:insights|player tracking)…/);
 
         await act(async () => {
             resolveInsights(deferredInsightsModel());
@@ -703,17 +755,22 @@ describe('React app TeamDetail page', () => {
         expect(container.textContent).not.toContain('Loading local attractions and sponsors…');
     });
 
-    it('retries a failed background insights prefetch when the user opens Insights', async () => {
+    it('retries a failed insights load when the user reopens Insights', async () => {
         teamDetailMocks.loadTeamDetailInsights
             .mockRejectedValueOnce(new Error('Prefetch offline'))
             .mockResolvedValueOnce(deferredInsightsModel());
 
         const { container } = await renderTeamDetail();
 
-        expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
+        expect(teamDetailMocks.loadTeamDetailInsights).not.toHaveBeenCalled();
         await clickButton(container, 'Insights');
-        expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(2);
-        expect(container.textContent).toContain('Bring ball');
+        await waitFor(() => expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(container.textContent).toContain('Prefetch offline'));
+
+        await clickButton(container, 'Overview');
+        await clickButton(container, 'Insights');
+        await waitFor(() => expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(container.textContent).toContain('Bring ball'));
         expect(container.textContent).not.toContain('Prefetch offline');
     });
 
@@ -726,16 +783,16 @@ describe('React app TeamDetail page', () => {
         expect(container.textContent).toContain('Season record (2100)');
 
         await clickButton(container, 'Insights');
+        await waitFor(() => expect(container.textContent).toContain('Insights offline'));
         expect(container.textContent).toContain('Player checklist unavailable');
-        expect(container.textContent).toContain('Insights offline');
         expect(container.textContent).toContain('Leaderboards unavailable');
 
         await clickButton(container, 'Overview');
         expect(container.textContent).toContain('Season record (2100)');
 
         await clickButton(container, 'More');
+        await waitFor(() => expect(container.textContent).toContain('Sponsors offline'));
         expect(container.textContent).toContain('Sponsors unavailable');
-        expect(container.textContent).toContain('Sponsors offline');
         expect(container.textContent).toContain('Website team page');
     });
 
@@ -773,6 +830,7 @@ describe('React app TeamDetail page', () => {
         managerModel.nextEvent = managerModel.upcomingEvents[0];
         teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(managerModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValue(scheduleResultForModel(managerModel));
         scheduleServiceMocks.loadPreview.mockResolvedValueOnce({
             missingPlayerCount: 3,
             eligibleEmailCount: 4,
@@ -842,6 +900,7 @@ describe('React app TeamDetail page', () => {
         }];
         teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(managerModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValue(scheduleResultForModel(managerModel));
 
         const { container } = await renderTeamDetail(managerAuth);
         await clickButton(container, 'Schedule');
@@ -850,14 +909,15 @@ describe('React app TeamDetail page', () => {
         expect(container.textContent).toContain('Missing config (cfg-deleted)');
 
         await clickButton(container, 'View config');
+        await waitFor(() => expect(container.textContent).toContain('Missing config assignments'));
         expect(container.textContent).toContain('Stat tracker configs');
         expect(container.textContent).toContain('Basketball tracker routing');
         expect(container.textContent).toContain('4 columns · PTS, REB, AST +1');
         expect(container.textContent).toContain('vs. Falcons · Tue, Jun 1');
-        expect(container.textContent).toContain('Missing config assignments');
 
         teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(model());
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(model());
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValue(scheduleResultForModel(model()));
         const hidden = await renderTeamDetail();
         await clickButton(hidden.container, 'Schedule');
         expect(hidden.container.textContent).not.toContain('Varsity Basketball');
@@ -901,6 +961,7 @@ describe('React app TeamDetail page', () => {
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(emptyModel);
         teamDetailMocks.loadTeamDetailInsights.mockResolvedValueOnce({ leaderboards: [], trackingSummaries: [] });
         teamDetailMocks.loadTeamDetailSponsors.mockResolvedValueOnce({ sponsors: [] });
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValue(scheduleResultForModel(emptyModel));
 
         const { container } = await renderTeamDetail();
         expect(container.textContent).toContain('No completed games yet');
@@ -909,22 +970,22 @@ describe('React app TeamDetail page', () => {
         await clickButton(container, 'Schedule');
         expect(container.textContent).toContain('No team events found.');
         await clickButton(container, 'Roster');
-        expect(container.textContent).toContain('No players have been added yet.');
+        await waitFor(() => expect(container.textContent).toContain('No players have been added yet.'));
         await clickButton(container, 'Insights');
-        expect(container.textContent).toContain('No parent-visible tracking items for your players yet.');
+        await waitFor(() => expect(container.textContent).toContain('No parent-visible tracking items for your players yet.'));
         expect(container.textContent).toContain('Leaderboards appear after public stat configs and completed tracked games exist.');
         await clickButton(container, 'More');
-        expect(container.textContent).toContain('Team links');
+        await waitFor(() => expect(container.textContent).toContain('Team links'));
         expect(container.textContent).not.toContain('Registration provider');
         expect(container.textContent).not.toContain('Local attractions and sponsors');
         expect(container.textContent).not.toContain('Loading team');
     });
 
     it('shows the team unavailable state with a route back to teams', async () => {
-        teamDetailMocks.loadParentTeamDetail.mockRejectedValueOnce(new Error('No team access'));
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockRejectedValueOnce(new Error('No team access'));
         const { container } = await renderTeamDetail();
 
-        expect(container.textContent).toContain('Team unavailable');
+        await waitFor(() => expect(container.textContent).toContain('Team unavailable'));
         expect(container.textContent).toContain('No team access');
         expect(hrefs(container)).toContain('/teams');
         expect(container.textContent).not.toContain('Loading team');

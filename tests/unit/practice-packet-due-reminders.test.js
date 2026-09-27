@@ -17,7 +17,7 @@ function extractReminderSource() {
     return [
         extractChunk('function buildPracticePacketNotificationDestination(', 'function buildNotificationLink'),
         extractChunk('function getTomorrowDateRange(', 'function getFeeReminderPlayerKey')
-    ].join('\n');
+    ].join('\n').replaceAll('retryableNotificationFunctions.', 'functions.');
 }
 
 function makeDocSnapshot(ref, data, exists = true) {
@@ -226,7 +226,8 @@ function buildHarness({
         'getTeamFeeRecipientTargetUserIds',
         'sendDirectTargetsNotification',
         'crypto',
-        `${extractReminderSource().replace(
+        `function isNotificationAuthResolutionFailure(error) { return error?.notificationAuthResolutionFailed === true; }
+        ${extractReminderSource().replace(
             'const PRACTICE_PACKET_REMINDER_PAGE_SIZE = 100;',
             `const PRACTICE_PACKET_REMINDER_PAGE_SIZE = ${pageSize};`
         )}\nreturn { trigger: exports.sendPracticePacketDueTomorrowReminders, sendPracticePacketDueTomorrowReminders };`

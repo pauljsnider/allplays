@@ -15,7 +15,11 @@ vi.mock('../../apps/app/src/lib/uxTiming', () => ({
     startWarmResumeTimer: uxTimingMocks.startWarmResumeTimer
 }));
 
-import { useRefreshOnResume, type RefreshOnResumeDeps } from '../../apps/app/src/lib/useRefreshOnResume';
+import {
+    useRefreshOnResume,
+    type RefreshOnResumeDeps,
+    type RefreshOnResumeFn
+} from '../../apps/app/src/lib/useRefreshOnResume';
 
 type FakeDoc = {
     visibilityState: DocumentVisibilityState;
@@ -60,7 +64,7 @@ const mountedRoots: Root[] = [];
 const mountedContainers: HTMLDivElement[] = [];
 
 function mountUseRefreshOnResume(
-    refresh: () => void,
+    refresh: RefreshOnResumeFn,
     options: Parameters<typeof useRefreshOnResume>[1],
     deps: RefreshOnResumeDeps
 ) {
@@ -145,6 +149,32 @@ describe('useRefreshOnResume', () => {
         clock = 10_000;
         doc.fire('visibilitychange');
         expect(refresh).not.toHaveBeenCalled();
+    });
+
+    it('keeps the warm-resume timer open until an asynchronous refresh settles', async () => {
+        const doc = makeFakeDoc('visible');
+        let clock = 0;
+        let resolveRefresh: (() => void) | null = null;
+        const refresh = vi.fn(() => new Promise<void>((resolve) => {
+            resolveRefresh = resolve;
+        }));
+        mountUseRefreshOnResume(refresh, { staleAfterMs: 1_000 }, {
+            doc: doc as unknown as Document,
+            isNativePlatform: () => false,
+            now: () => clock
+        });
+
+        clock = 2_000;
+        doc.fire('visibilitychange');
+        await Promise.resolve();
+
+        expect(refresh).toHaveBeenCalledTimes(1);
+        expect(uxTimingMocks.resumeEnd).not.toHaveBeenCalled();
+
+        resolveRefresh?.();
+        await vi.waitFor(() => {
+            expect(uxTimingMocks.resumeEnd).toHaveBeenCalledWith({ source: 'visibilitychange' });
+        });
     });
 
     it('refreshes only when native app state returns to active after backgrounding', async () => {

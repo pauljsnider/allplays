@@ -18,23 +18,34 @@ describe('verified-email sensitive action coverage', () => {
       'create-team-pass-checkout',
       'create-team-fee-checkout',
       'refund-team-fee-payment',
+      'private-team-calendar-feed',
       'post-shared-game-cancellation',
       'send-team-email',
       'send-authorized-direct-message'
     ].forEach((operation) => {
-      expect(functionsSource).toContain(`await assertSensitiveEmailVerified(context, '${operation}');`);
+      if (operation === 'private-team-calendar-feed') {
+        expect(functionsSource).toMatch(
+          /assertFreshAuthUser:\s*async \(\{ authUser \}\) => \{[\s\S]{0,700}'private-team-calendar-feed'[\s\S]{0,300}!verification\.verified && !verification\.exempt/
+        );
+      } else {
+        expect(functionsSource).toContain(`await assertSensitiveEmailVerified(context, '${operation}');`);
+      }
     });
     expect(functionsSource).toMatch(
       /await assertSensitiveEmailVerified\(\{[\s\S]{0,500}\}, 'sync-public-user-profile-projection'\);/
     );
   });
 
-  it('keeps verification delivery and invite redemption outside the enforcement gate', () => {
+  it('keeps verification delivery outside the staged gate and requires verified family invite identity', () => {
     const queueVerificationStart = functionsSource.indexOf('exports.queueEmailVerification');
     const queueInviteStart = functionsSource.indexOf('exports.queueInviteSignInEmail');
     const redeemInviteStart = functionsSource.indexOf('exports.redeemParentInvite');
     const redeemHouseholdStart = functionsSource.indexOf('exports.redeemHouseholdInvite');
+    const redeemCoParentStart = functionsSource.indexOf('exports.redeemCoParentInvite');
+    const redeemAdminStart = functionsSource.indexOf('exports.redeemAdminInvite');
     expect(functionsSource.slice(queueVerificationStart, queueInviteStart)).not.toContain('assertSensitiveEmailVerified');
-    expect(functionsSource.slice(redeemInviteStart, redeemHouseholdStart)).not.toContain('assertSensitiveEmailVerified');
+    expect(functionsSource.slice(redeemInviteStart, redeemHouseholdStart)).toContain('resolveAuthenticatedFamilyInviteEmail({');
+    expect(functionsSource.slice(redeemHouseholdStart, redeemCoParentStart)).toContain('resolveAuthenticatedFamilyInviteEmail({');
+    expect(functionsSource.slice(redeemCoParentStart, redeemAdminStart)).toContain('resolveAuthenticatedFamilyInviteEmail({');
   });
 });

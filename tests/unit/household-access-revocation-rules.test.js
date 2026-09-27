@@ -5,7 +5,7 @@ import {
     assertSucceeds,
     initializeTestEnvironment
 } from '@firebase/rules-unit-testing';
-import { doc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 
@@ -38,7 +38,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('household access revocati
 
     it('blocks organizer shell-only revocation while preserving setup and invited-user acceptance writes', async () => {
         const organizerDb = testEnv.authenticatedContext('organizer-1', { email: 'organizer@example.com' }).firestore();
-        const invitedDb = testEnv.authenticatedContext('contact-1', { email: 'contact@example.com' }).firestore();
+        const invitedDb = testEnv.authenticatedContext('contact-1', {
+            email: 'contact@example.com',
+            email_verified: true
+        }).firestore();
         const membershipPath = 'users/organizer-1/familyMemberships/member-1';
 
         await assertSucceeds(updateDoc(doc(organizerDb, membershipPath), {
@@ -54,6 +57,33 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('household access revocati
             updatedAt: 'now'
         }));
         await assertSucceeds(updateDoc(doc(invitedDb, membershipPath), {
+            status: 'active',
+            userId: 'contact-1',
+            acceptedAt: 'now',
+            updatedAt: 'now'
+        }));
+    });
+
+    it('denies matching unverified recipient reads and acceptance while verified ownership succeeds', async () => {
+        const membershipPath = 'users/organizer-1/familyMemberships/member-1';
+        const unverifiedDb = testEnv.authenticatedContext('contact-1', {
+            email: 'contact@example.com',
+            email_verified: false
+        }).firestore();
+        const verifiedDb = testEnv.authenticatedContext('contact-1', {
+            email: 'contact@example.com',
+            email_verified: true
+        }).firestore();
+
+        await assertFails(getDoc(doc(unverifiedDb, membershipPath)));
+        await assertFails(updateDoc(doc(unverifiedDb, membershipPath), {
+            status: 'active',
+            userId: 'contact-1',
+            acceptedAt: 'now',
+            updatedAt: 'now'
+        }));
+        await assertSucceeds(getDoc(doc(verifiedDb, membershipPath)));
+        await assertSucceeds(updateDoc(doc(verifiedDb, membershipPath), {
             status: 'active',
             userId: 'contact-1',
             acceptedAt: 'now',

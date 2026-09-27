@@ -12,7 +12,11 @@ describe('production role-smoke gate', () => {
         expect(deployWorkflow).toContain('SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}');
         expect(deployWorkflow).toContain('SMOKE_PARENT_EMAIL: ${{ secrets.SMOKE_PARENT_EMAIL }}');
         expect(deployWorkflow).toContain('Missing protected configuration names: $missing_csv');
-        expect(deployWorkflow).toContain('needs: [unit-tests, regression-guards, validate-production-smoke-config]');
+        expect(deployWorkflow).toContain('needs: [validation-source, production-validation-gate]');
+        expect(deployWorkflow).toContain(
+            'needs: [validation-source, production-validation-gate, validate-production-smoke-config]'
+        );
+        expect(deployWorkflow).toContain("needs.validation-source.outputs.change_impact != 'spec-only'");
         expect(deployWorkflow.indexOf('validate-production-smoke-config:')).toBeLessThan(
             deployWorkflow.indexOf('  prepare-deploy:')
         );
@@ -25,5 +29,16 @@ describe('production role-smoke gate', () => {
             'if [[ "$CORE_CONFIGURED" != "true" || "$CORE_OUTCOME" != "success" ]]; then'
         );
         expect(postDeployWorkflow).not.toContain('not-configured ($CORE_MISSING)');
+    });
+
+    it('retries the canonical production baseline once for transient deploy propagation failures', () => {
+        const baselineStart = postDeployWorkflow.indexOf('Run production smoke baseline');
+        const coreStart = postDeployWorkflow.indexOf('Run fixture-backed core production smoke');
+        const baselineBlock = postDeployWorkflow.slice(baselineStart, coreStart);
+
+        expect(baselineStart).toBeGreaterThan(-1);
+        expect(coreStart).toBeGreaterThan(baselineStart);
+        expect(baselineBlock).toContain('--retries=1');
+        expect(baselineBlock).toContain('--fail-on-flaky-tests');
     });
 });

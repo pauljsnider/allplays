@@ -33,6 +33,53 @@ function createDependencies(overrides = {}) {
 
 describe('executeEmailPasswordSignup', () => {
 
+    it.each([
+        ['parent_invite', 'redeemParentInvite', 'parent'],
+        ['household_invite', 'redeemHouseholdInvite', 'household'],
+        ['coparent_invite', 'redeemCoParentInvite', 'coparent']
+    ])('preserves an email-targeted %s invite until verification', async (type, redeemMethod, pendingType) => {
+        const verificationError = Object.assign(new Error('Verify your email before accepting this family invite.'), {
+            code: 'functions/permission-denied',
+            details: { reason: 'email-verification-required' }
+        });
+        const deleteAuthUser = vi.fn().mockResolvedValue(undefined);
+        const dependencies = createDependencies({
+            validateAccessCode: vi.fn().mockResolvedValue({
+                valid: true,
+                type,
+                data: { code: 'FAMILY01' }
+            }),
+            createUserWithEmailAndPassword: vi.fn().mockResolvedValue({
+                user: {
+                    uid: 'user-123',
+                    delete: deleteAuthUser
+                }
+            }),
+            [redeemMethod]: vi.fn().mockRejectedValue(verificationError)
+        });
+        const auth = {
+            currentUser: {
+                email: 'family@example.com',
+                reload: vi.fn().mockResolvedValue(undefined)
+            }
+        };
+
+        const result = await executeEmailPasswordSignup({
+            email: 'family@example.com',
+            password: 'password123',
+            activationCode: 'FAMILY01',
+            auth,
+            dependencies
+        });
+
+        expect(result.pendingFamilyInvite).toEqual({ code: 'FAMILY01', type: pendingType });
+        expect(deleteAuthUser).not.toHaveBeenCalled();
+        expect(dependencies.rollbackParentInviteRedemption).not.toHaveBeenCalled();
+        expect(dependencies.signOut).not.toHaveBeenCalled();
+        expect(dependencies.updateUserProfile).toHaveBeenCalledTimes(1);
+        expect(dependencies.sendVerificationEmail).toHaveBeenCalledTimes(1);
+    });
+
 
     it('redeems household invites during email signup instead of generically consuming the code', async () => {
         const dependencies = createDependencies({
@@ -123,7 +170,7 @@ describe('executeEmailPasswordSignup', () => {
         expect(dependencies.sendVerificationEmail).not.toHaveBeenCalled();
     });
 
-    it('rolls back signup when admin invite redemption rejects a mismatched email', async () => {
+    it('rejects and cleans up an admin invite signup when the email does not match', async () => {
         const mismatchError = new Error('This invite was sent to admin@example.com. Sign in with that email to accept it.');
         const deleteAuthUser = vi.fn().mockResolvedValue(undefined);
         const dependencies = createDependencies({
@@ -143,7 +190,12 @@ describe('executeEmailPasswordSignup', () => {
             }),
             redeemAdminInviteAcceptance: vi.fn().mockRejectedValue(mismatchError)
         });
-        const auth = { currentUser: null };
+        const auth = {
+            currentUser: {
+                email: 'other@example.com',
+                reload: vi.fn().mockResolvedValue(undefined)
+            }
+        };
 
         await expect(executeEmailPasswordSignup({
             email: 'other@example.com',
@@ -154,7 +206,11 @@ describe('executeEmailPasswordSignup', () => {
         })).rejects.toThrow('This invite was sent to admin@example.com. Sign in with that email to accept it.');
 
         expect(dependencies.createUserWithEmailAndPassword).toHaveBeenCalledTimes(1);
-        expect(dependencies.redeemAdminInviteAcceptance).toHaveBeenCalledTimes(1);
+        expect(dependencies.redeemAdminInviteAcceptance).toHaveBeenCalledWith(expect.objectContaining({
+            userId: 'user-123',
+            userEmail: 'other@example.com',
+            codeId: 'code-admin-3'
+        }));
         expect(deleteAuthUser).toHaveBeenCalledTimes(1);
         expect(dependencies.signOut).toHaveBeenCalledWith(auth);
         expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
@@ -376,7 +432,7 @@ describe('executeEmailPasswordSignup', () => {
         expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
     });
 
-    it('routes admin invite signup through admin persistence and not generic code consumption', async () => {
+    it('routes admin invite signup through atomic redemption without generic code consumption', async () => {
         const dependencies = createDependencies({
             validateAccessCode: vi.fn().mockResolvedValue({
                 valid: true,
@@ -393,7 +449,7 @@ describe('executeEmailPasswordSignup', () => {
             }
         };
 
-        await executeEmailPasswordSignup({
+        const result = await executeEmailPasswordSignup({
             email: 'newadmin@example.com',
             password: 'password123',
             activationCode: 'ADMIN001',
@@ -406,9 +462,7 @@ describe('executeEmailPasswordSignup', () => {
             userEmail: 'newadmin@example.com',
             codeId: 'code-admin-1'
         }));
-        expect(dependencies.redeemAdminInviteAcceptance.mock.calls[0][0]).not.toHaveProperty('markAccessCodeAsUsed');
-        expect(dependencies.redeemAdminInviteAcceptance.mock.calls[0][0]).not.toHaveProperty('addTeamAdminEmail');
-        expect(dependencies.redeemAdminInviteAcceptance.mock.calls[0][0]).not.toHaveProperty('updateUserProfile');
+        expect(result.pendingFamilyInvite).toBeUndefined();
         expect(dependencies.updateUserProfile).toHaveBeenCalledWith('user-123', expect.objectContaining({
             email: 'newadmin@example.com',
             emailVerificationRequired: true
@@ -492,8 +546,11 @@ describe('executeEmailPasswordSignup', () => {
         expect(dependencies.sendVerificationEmail).not.toHaveBeenCalled();
     });
 
-    it('rolls back auth account and rethrows when admin invite redemption fails', async () => {
-        const expectedError = new Error('admin redemption failed');
+    it('preserves a matching admin invite only when redemption requires email verification', async () => {
+        const verificationError = Object.assign(new Error('Verify your email before accepting an admin invite.'), {
+            code: 'functions/permission-denied',
+            details: { reason: 'email-verification-required' }
+        });
         const deleteAuthUser = vi.fn().mockResolvedValue(undefined);
         const dependencies = createDependencies({
             validateAccessCode: vi.fn().mockResolvedValue({
@@ -508,7 +565,7 @@ describe('executeEmailPasswordSignup', () => {
                     delete: deleteAuthUser
                 }
             }),
-            redeemAdminInviteAcceptance: vi.fn().mockRejectedValue(expectedError)
+            redeemAdminInviteAcceptance: vi.fn().mockRejectedValue(verificationError)
         });
         const auth = {
             currentUser: {
@@ -517,18 +574,20 @@ describe('executeEmailPasswordSignup', () => {
             }
         };
 
-        await expect(executeEmailPasswordSignup({
+        const result = await executeEmailPasswordSignup({
             email: 'newadmin@example.com',
             password: 'password123',
             activationCode: 'ADMIN002',
             auth,
             dependencies
-        })).rejects.toThrow('admin redemption failed');
+        });
 
-        expect(deleteAuthUser).toHaveBeenCalledTimes(1);
-        expect(dependencies.signOut).toHaveBeenCalledTimes(1);
-        expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
-        expect(dependencies.sendVerificationEmail).not.toHaveBeenCalled();
+        expect(result.pendingFamilyInvite).toEqual({ code: 'ADMIN002', type: 'admin' });
+        expect(dependencies.redeemAdminInviteAcceptance).toHaveBeenCalledTimes(1);
+        expect(deleteAuthUser).not.toHaveBeenCalled();
+        expect(dependencies.signOut).not.toHaveBeenCalled();
+        expect(dependencies.updateUserProfile).toHaveBeenCalledTimes(1);
+        expect(dependencies.sendVerificationEmail).toHaveBeenCalledTimes(1);
     });
 
     it('fails closed and cleans up when standard access code claim fails', async () => {

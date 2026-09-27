@@ -19,7 +19,13 @@ const firebaseMocks = vi.hoisted(() => {
 })
 
 const dbMocks = vi.hoisted(() => ({
-  uploadStatSheetPhoto: vi.fn(async () => 'https://img.test/statsheet.png'),
+  deleteUploadedMediaObjects: vi.fn(async () => undefined),
+  validateStatSheetPhotoUpload: vi.fn(),
+  uploadStatSheetPhoto: vi.fn(async () => ({
+    url: 'https://img.test/statsheet.png',
+    path: 'stat-sheets/team-games/team-1/game-1/user-1/statsheet.png',
+    storage: 'primary'
+  })),
   getConfigs: vi.fn(),
   getGame: vi.fn(),
   getPlayers: vi.fn(),
@@ -60,6 +66,14 @@ import { analyzeTrackStatsheetPhoto, applyTrackStatsheetImportForApp, buildTrack
 
 beforeEach(() => {
   vi.clearAllMocks()
+  dbMocks.validateStatSheetPhotoUpload.mockImplementation((teamId: string, gameId: string, file: File) => {
+    if (!teamId.trim()) throw new Error('Team-scoped stat sheet upload requires a team.')
+    if (!gameId.trim()) throw new Error('Game-scoped stat sheet upload requires a game.')
+    if (!file) throw new Error('Stat sheet upload requires a file.')
+    if (!/^image\/.+/i.test(file.type)) throw new Error('Stat sheet upload requires an image file.')
+    if (!Number.isFinite(file.size) || file.size <= 0) throw new Error('Stat sheet upload requires a non-empty file.')
+    if (file.size > 20 * 1024 * 1024) throw new Error('Stat sheet upload cannot exceed 20 MB.')
+  })
   firebaseMocks.batch.commit.mockResolvedValue(undefined)
 })
 
@@ -295,15 +309,109 @@ describe('applyTrackStatsheetImportForApp', () => {
       replaceExisting: true
     })
 
-    expect(dbMocks.uploadStatSheetPhoto).toHaveBeenCalledWith('team-1', file)
+    expect(dbMocks.uploadStatSheetPhoto).toHaveBeenCalledWith('team-1', 'game-1', file, { returnUpload: true })
     expect(firebaseMocks.writeBatch).toHaveBeenCalled()
     expect(firebaseMocks.batch.update).toHaveBeenCalledWith(
       { path: 'teams/team-1/games/game-1' },
-      expect.objectContaining({ homeScore: 50, awayScore: 42, statSheetPhotoUrl: 'https://img.test/statsheet.png' })
+      expect.objectContaining({
+        homeScore: 50,
+        awayScore: 42,
+        statSheetPhotoUrl: 'https://img.test/statsheet.png',
+        statSheetPhotoPath: 'stat-sheets/team-games/team-1/game-1/user-1/statsheet.png'
+      })
     )
     expect(firebaseMocks.batch.delete).toHaveBeenCalledTimes(3)
     expect(firebaseMocks.batch.delete).toHaveBeenCalledWith({ path: 'teams/team-1/games/game-1/privatePlayerStats/p2' })
     expect(firebaseMocks.batch.commit).toHaveBeenCalledTimes(1)
-    expect(result).toMatchObject({ requiresReplaceConfirmation: false, uploadedPhotoUrl: 'https://img.test/statsheet.png' })
+    expect(result).toMatchObject({
+      requiresReplaceConfirmation: false,
+      uploadedPhotoUrl: 'https://img.test/statsheet.png',
+      uploadedPhotoPath: 'stat-sheets/team-games/team-1/game-1/user-1/statsheet.png'
+    })
+  })
+
+  it.each([
+    ['a non-image MIME type', new File(['sheet'], 'statsheet.txt', { type: 'text/plain' })],
+    ['a zero-byte image', new File([], 'statsheet.png', { type: 'image/png' })],
+    ['an oversized image', new File([new Uint8Array((20 * 1024 * 1024) + 1)], 'statsheet.png', { type: 'image/png' })]
+  ])('rejects %s before invoking the Storage adapter', async (_label, file) => {
+    await expect(applyTrackStatsheetImportForApp({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      roster: [{ id: 'p1', name: 'Avery Smith', number: '12' }],
+      columns: ['PTS'],
+      homeRows: [{ number: '12', name: 'Avery Smith', fouls: 2, totalPoints: 10, include: true, mappedPlayerId: 'p1' }],
+      visitorRows: [],
+      homeScore: 50,
+      awayScore: 42,
+      file
+    })).rejects.toThrow()
+
+    expect(dbMocks.validateStatSheetPhotoUpload).toHaveBeenCalledWith('team-1', 'game-1', file)
+    expect(dbMocks.uploadStatSheetPhoto).not.toHaveBeenCalled()
+    expect(firebaseMocks.getDocs).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['image', 'team-photos/new-statsheet.png'],
+    ['primary', 'stat-sheets/team-games/team-1/game-1/user-1/new-statsheet.png']
+  ] as const)('deletes a newly uploaded %s-storage statsheet when the atomic game save fails', async (storage, path) => {
+    firebaseMocks.getDocs.mockResolvedValue({ size: 0, docs: [] })
+    dbMocks.uploadStatSheetPhoto.mockResolvedValueOnce({
+      url: 'https://img.test/new-statsheet.png',
+      path,
+      storage
+    } as any)
+    firebaseMocks.batch.commit.mockRejectedValueOnce(new Error('game save denied'))
+    const file = new File(['sheet'], 'statsheet.png', { type: 'image/png' })
+
+    await expect(applyTrackStatsheetImportForApp({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      roster: [{ id: 'p1', name: 'Avery Smith', number: '12' }],
+      columns: ['PTS'],
+      homeRows: [{ number: '12', name: 'Avery Smith', fouls: 2, totalPoints: 10, include: true, mappedPlayerId: 'p1' }],
+      visitorRows: [],
+      homeScore: 50,
+      awayScore: 42,
+      file
+    })).rejects.toThrow('game save denied')
+
+    expect(dbMocks.deleteUploadedMediaObjects).toHaveBeenCalledWith([{
+      path,
+      storage
+    }])
+  })
+
+  it('preflights an oversized initial import before creating a Firestore batch', async () => {
+    firebaseMocks.getDocs.mockResolvedValue({ size: 0, docs: [] })
+    const roster = Array.from({ length: 250 }, (_, index) => ({
+      id: `player-${index}`,
+      name: `Player ${index}`,
+      number: String(index + 1)
+    }))
+    const homeRows = roster.map((player) => ({
+      number: player.number,
+      name: player.name,
+      fouls: 0,
+      totalPoints: 0,
+      include: true,
+      mappedPlayerId: player.id
+    }))
+
+    await expect(applyTrackStatsheetImportForApp({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      roster,
+      columns: ['PTS'],
+      homeRows,
+      visitorRows: [],
+      homeScore: 0,
+      awayScore: 0,
+      file: null
+    })).rejects.toThrow('This statsheet import is too large to apply safely in one save.')
+
+    expect(firebaseMocks.writeBatch).not.toHaveBeenCalled()
+    expect(firebaseMocks.batch.commit).not.toHaveBeenCalled()
   })
 })

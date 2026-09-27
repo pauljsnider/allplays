@@ -26,8 +26,8 @@ const teamFeesServiceMocks = vi.hoisted(() => ({
 
     return { totalAmountCents, installmentCount: count, intervalDays: interval, installments };
   }),
+  buildTeamFeeFamilyPaymentUrl: vi.fn(({ teamId, batchId, recipientId }: any) => `https://allplays.ai/app/#/auth?next=${encodeURIComponent(`/parent-tools/fees?teamId=${teamId}&batchId=${batchId}&recipientId=${recipientId}`)}`),
   createTeamFeeBatchForApp: vi.fn(),
-  initiateStaffTeamFeeCheckout: vi.fn(),
   loadTeamFeeManagementModel: vi.fn(),
   recordOfflineTeamFeePayment: vi.fn(),
   recordTeamFeeBalanceAdjustment: vi.fn(),
@@ -102,6 +102,17 @@ function buildRecipient(index: number, overrides: Record<string, any> = {}) {
   };
 }
 
+function buildManagementModel(recipient: Record<string, any>) {
+  return {
+    team: { id: 'team-1', name: 'Bears' },
+    batches: [{ id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' }],
+    selectedBatch: { id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' },
+    canManageFees: true,
+    rosterPlayers: [],
+    recipients: [recipient]
+  };
+}
+
 describe('TeamFees recipient queue', () => {
   afterEach(() => {
     delete window.__ALLPLAYS_CONFIG__;
@@ -115,13 +126,13 @@ describe('TeamFees recipient queue', () => {
     teamFeesServiceMocks.recordTeamFeeBalanceAdjustment.mockReset();
     teamFeesServiceMocks.recordOfflineTeamFeeRefund.mockReset();
     teamFeesServiceMocks.createTeamFeeBatchForApp.mockReset();
-    teamFeesServiceMocks.initiateStaffTeamFeeCheckout.mockReset();
+    teamFeesServiceMocks.buildTeamFeeFamilyPaymentUrl.mockReset();
     teamFeesServiceMocks.loadTeamFeeManagementModel.mockReset();
     teamFeesServiceMocks.recordOfflineTeamFeePayment.mockResolvedValue(undefined);
     teamFeesServiceMocks.recordTeamFeeBalanceAdjustment.mockResolvedValue(undefined);
     teamFeesServiceMocks.recordOfflineTeamFeeRefund.mockResolvedValue(undefined);
     teamFeesServiceMocks.createTeamFeeBatchForApp.mockResolvedValue({ id: 'batch-2' });
-    teamFeesServiceMocks.initiateStaffTeamFeeCheckout.mockResolvedValue({ success: true, checkoutUrl: 'https://checkout.stripe.test/generated' });
+    teamFeesServiceMocks.buildTeamFeeFamilyPaymentUrl.mockImplementation(({ teamId, batchId, recipientId }: any) => `https://allplays.ai/app/#/auth?next=${encodeURIComponent(`/parent-tools/fees?teamId=${teamId}&batchId=${batchId}&recipientId=${recipientId}`)}`);
     publicActionMocks.copyPublicText.mockResolvedValue('copied');
     publicActionMocks.sharePublicUrl.mockResolvedValue('shared');
     teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue({
@@ -199,28 +210,43 @@ describe('TeamFees recipient queue', () => {
     const unpaidCard = openRecipientDetails('Unpaid Player');
     expect(within(unpaidCard).getByRole('button', { name: 'Record payment' })).toBeTruthy();
     expect(within(unpaidCard).getByRole('button', { name: 'Save adjustment' })).toBeTruthy();
-    expect(within(unpaidCard).getByRole('button', { name: 'Generate & share link' })).toBeTruthy();
+    expect(within(unpaidCard).getByRole('button', { name: 'Share family payment link' })).toBeTruthy();
     expect(screen.getAllByRole('button', { name: 'Record payment' })).toHaveLength(1);
   });
 
-  it('renders a large batch as summary rows without mounting every editor', async () => {
+  it('renders 100 recipients with correct totals and actions without admin billing data', async () => {
     teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue({
       team: { id: 'team-1', name: 'Bears' },
       batches: [{ id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' }],
       selectedBatch: { id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' },
       canManageFees: true,
       rosterPlayers: [],
-      recipients: Array.from({ length: 50 }, (_, index) => buildRecipient(index + 1))
+      recipients: Array.from({ length: 100 }, (_, index) => buildRecipient(index + 1, {
+        status: 'partial',
+        amountPaidCents: 2500,
+        remainingBalanceCents: 7500,
+        paymentLedger: [{ type: 'offline_payment', amountCents: 2500 }]
+      }))
     });
 
     renderTeamFees();
 
     expect(await screen.findByText('Player 1')).toBeTruthy();
-    expect(screen.getByText('Player 50')).toBeTruthy();
-    expect(screen.getAllByRole('button', { name: 'Open details' })).toHaveLength(50);
+    expect(screen.getByText('Player 100')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Open details' })).toHaveLength(100);
+    expect(screen.getByText('$10,000.00')).toBeTruthy();
+    expect(screen.getByText('$2,500.00')).toBeTruthy();
+    expect(screen.getByText('$7,500.00')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Record payment' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Save adjustment' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Generate & share link' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Share family payment link' })).toBeNull();
+
+    const recipientCard = openRecipientDetails('Player 1');
+    expect(within(recipientCard).getByRole('button', { name: 'Record payment' })).toBeTruthy();
+    expect(within(recipientCard).getByRole('button', { name: 'Save adjustment' })).toBeTruthy();
+    expect(within(recipientCard).getByRole('button', { name: 'Record refund' })).toBeTruthy();
+    expect(within(recipientCard).getByRole('button', { name: 'Share family payment link' })).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Record payment' })).toHaveLength(1);
   });
 
   it('unmounts inactive recipient editors while preserving typed drafts', async () => {
@@ -241,70 +267,72 @@ describe('TeamFees recipient queue', () => {
     expect(within(unpaidCard).getByDisplayValue('5.00')).toBeTruthy();
   });
 
-  it('generates and shares a staff checkout link with the public URL only', async () => {
-    teamFeesServiceMocks.loadTeamFeeManagementModel
-      .mockResolvedValueOnce({
-        team: { id: 'team-1', name: 'Bears' },
-        batches: [{ id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' }],
-        selectedBatch: { id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' },
-        canManageFees: true,
-        rosterPlayers: [],
-        recipients: [{
-          id: 'recipient-1',
-          playerName: 'Pat Star',
-          parentName: 'Pat Parent',
-          parentEmail: 'pat@example.com',
-          status: 'unpaid',
-          collectionMode: 'online_stripe',
-          checkoutUrl: '',
-          checkoutStatus: '',
-          amountDueCents: 10000,
-          amountPaidCents: 0,
-          remainingBalanceCents: 10000,
-          paymentLedger: []
-        }]
-      })
-      .mockResolvedValueOnce({
-        team: { id: 'team-1', name: 'Bears' },
-        batches: [{ id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' }],
-        selectedBatch: { id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' },
-        canManageFees: true,
-        rosterPlayers: [],
-        recipients: [{
-          id: 'recipient-1',
-          playerName: 'Pat Star',
-          parentName: 'Pat Parent',
-          parentEmail: 'pat@example.com',
-          status: 'unpaid',
-          collectionMode: 'online_stripe',
-          checkoutUrl: 'https://checkout.stripe.test/generated',
-          checkoutStatus: 'open',
-          amountDueCents: 10000,
-          amountPaidCents: 0,
-          remainingBalanceCents: 10000,
-          paymentLedger: []
-        }]
-      });
+  it('shares a family sign-in link without creating or exposing a staff-owned provider checkout', async () => {
+    const poisonedProviderUrl = 'https://checkout.stripe.com/c/pay/staff-owned';
+    const familyPaymentUrl = 'https://allplays.ai/app/#/auth?next=%2Fparent-tools%2Ffees%3FteamId%3Dteam-1%26batchId%3Dbatch-1%26recipientId%3Drecipient-1';
+    teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue(buildManagementModel(buildRecipient(1, {
+      playerName: 'Pat Star',
+      checkoutUrl: poisonedProviderUrl,
+      checkoutStatus: 'open'
+    })));
+    teamFeesServiceMocks.buildTeamFeeFamilyPaymentUrl.mockReturnValue(familyPaymentUrl);
 
     renderTeamFees();
 
     await screen.findByText('Pat Star');
     const recipientCard = openRecipientDetails('Pat Star');
-    fireEvent.click(within(recipientCard).getByRole('button', { name: 'Generate & share link' }));
+    fireEvent.click(within(recipientCard).getByRole('button', { name: 'Share family payment link' }));
 
-    expect(await screen.findByText('Shared checkout link for Pat Star.')).toBeTruthy();
-    expect(teamFeesServiceMocks.initiateStaffTeamFeeCheckout).toHaveBeenCalledWith({
+    expect(await screen.findByText('Shared payment sign-in link for Pat Star.')).toBeTruthy();
+    expect(teamFeesServiceMocks.buildTeamFeeFamilyPaymentUrl).toHaveBeenCalledWith({
       teamId: 'team-1',
       batchId: 'batch-1',
-      recipientId: 'recipient-1',
-      user: auth.user
+      recipientId: 'recipient-1'
     });
     expect(publicActionMocks.sharePublicUrl).toHaveBeenCalledWith({
-      title: 'Pat Star fee checkout',
-      text: '',
-      url: 'https://checkout.stripe.test/generated',
-      clipboardText: 'https://checkout.stripe.test/generated'
+      title: 'Pat Star fee payment',
+      text: 'Sign in to ALL PLAYS to review and pay this team fee.',
+      url: familyPaymentUrl,
+      clipboardText: familyPaymentUrl
     });
+    expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalledWith(expect.objectContaining({ url: poisonedProviderUrl }));
+  });
+
+  it('copies only the family sign-in link', async () => {
+    const familyPaymentUrl = 'https://allplays.ai/app/#/auth?next=%2Fparent-tools%2Ffees%3FteamId%3Dteam-1%26batchId%3Dbatch-1%26recipientId%3Drecipient-1';
+    teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue(buildManagementModel(buildRecipient(1, {
+      playerName: 'Pat Star'
+    })));
+    teamFeesServiceMocks.buildTeamFeeFamilyPaymentUrl.mockReturnValue(familyPaymentUrl);
+
+    renderTeamFees();
+
+    await screen.findByText('Pat Star');
+    const recipientCard = openRecipientDetails('Pat Star');
+    fireEvent.click(within(recipientCard).getByRole('button', { name: 'Copy family payment link' }));
+
+    expect(await screen.findByText('Copied payment sign-in link for Pat Star.')).toBeTruthy();
+    expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith(familyPaymentUrl);
+  });
+
+  it('keeps payment-link generation failures recoverable without invoking public actions', async () => {
+    teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue(buildManagementModel(buildRecipient(1, {
+      playerName: 'Pat Star'
+    })));
+    teamFeesServiceMocks.buildTeamFeeFamilyPaymentUrl.mockImplementation(() => {
+      throw new Error('Missing required fields for the family payment link.');
+    });
+
+    renderTeamFees();
+
+    await screen.findByText('Pat Star');
+    const recipientCard = openRecipientDetails('Pat Star');
+    fireEvent.click(within(recipientCard).getByRole('button', { name: 'Share family payment link' }));
+
+    expect(await within(recipientCard).findByText('Missing required fields for the family payment link.')).toBeTruthy();
+    expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
+    expect(publicActionMocks.copyPublicText).not.toHaveBeenCalled();
+    expect(within(recipientCard).getByRole('button', { name: 'Share family payment link' })).not.toBeDisabled();
   });
 
   it('creates a fee batch from the native form using selected roster recipients', async () => {
@@ -381,6 +409,40 @@ describe('TeamFees recipient queue', () => {
       },
       applyToWholeRoster: true
     }));
+  });
+
+  it('shows an actionable whole-roster limit error without success navigation and remains retryable', async () => {
+    teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue({
+      team: { id: 'team-1', name: 'Bears' },
+      batches: [],
+      selectedBatch: null,
+      canManageFees: true,
+      rosterPlayers: Array.from({ length: 500 }, (_, index) => ({
+        id: `player-${index + 1}`,
+        name: `Player ${index + 1}`,
+        number: ''
+      })),
+      recipients: []
+    });
+    teamFeesServiceMocks.createTeamFeeBatchForApp.mockRejectedValueOnce(
+      new Error('A fee batch can include at most 499 recipients. Split the roster into smaller fee batches and try again.')
+    );
+
+    renderTeamFees('/teams/team-1/fees');
+
+    const titleInput = await screen.findByPlaceholderText('Tournament dues');
+    fireEvent.change(titleInput, { target: { value: 'Large roster fee' } });
+    fireEvent.change(screen.getByPlaceholderText('25.00'), { target: { value: '10.00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create fee batch' }));
+
+    expect(await screen.findByText('A fee batch can include at most 499 recipients. Split the roster into smaller fee batches and try again.')).toBeTruthy();
+    expect(screen.queryByText(/Created fee batch/)).toBeNull();
+    expect(screen.getByPlaceholderText('Tournament dues')).toHaveValue('Large roster fee');
+    expect(screen.getByRole('button', { name: 'Create fee batch' })).not.toBeDisabled();
+
+    teamFeesServiceMocks.createTeamFeeBatchForApp.mockResolvedValueOnce({ id: 'batch-retry' });
+    fireEvent.click(screen.getByRole('button', { name: 'Create fee batch' }));
+    expect(await screen.findByText('Created fee batch Large roster fee.')).toBeTruthy();
   });
 
   it('keeps paid recipient controls unmounted until the paid section and recipient are opened', async () => {

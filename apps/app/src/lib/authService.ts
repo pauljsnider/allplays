@@ -11,6 +11,7 @@ import {
   isSignInWithEmailLink,
   onAuthStateChanged,
   signInWithEmailAndPassword,
+  signInWithCustomToken,
   signInWithEmailLink,
   signInWithPopup,
   signInWithRedirect,
@@ -28,20 +29,29 @@ import {
 } from './adapters/legacyAuth';
 import { createLogger } from './logger';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
+import { loadAuthProfileViaRest } from './adapters/legacyAuthProfileRest';
+import { raceFirstSuccessfulRead } from './adapters/legacyHedgedRead';
 import { clearAppDataCache } from './appDataCache';
 import { buildFirebaseSdkActionHref } from './appLinks';
+import { getSafeAuthNextRoute } from './authNextRoute';
 import { mergeOwnedTeamIds } from './teamAccess';
-import type { AuthUser, UserRole } from './types';
+import { callNativeFirebaseFunctionWithAuth } from './nativeCallable';
+import type { AuthUser, ProfileHydrationStatus, UserRole } from './types';
 
 export const firebaseAuth = auth;
-export const passwordResetConfirmationMessage = "If an account exists for that email, a reset email has been queued.";
+export const passwordResetConfirmationMessage = 'If an account exists for that email, a reset email has been queued.';
 
 const pendingActivationCodeKey = 'pendingActivationCode';
 const pendingInviteCodeKey = 'allplays-app-pending-invite-code';
 const pendingInviteTypeKey = 'allplays-app-pending-invite-type';
 const authTimeoutMs = 15000;
-const nativeAuthObserverTimeoutMs = 4000;
+const nativeWebAuthBridgeTimeoutMs = 15000;
+const nativeWebAuthBridgeMaxAttempts = 2;
+const nativeWebAuthBridgeRetryBaseMs = 2000;
+const nativeWebAuthBridgeRetryMaxMs = 30000;
 const profileHydrationTimeoutMs = 8000;
+const profileRestHedgeDelayMs = 750;
+const accessEnrichmentTimeoutMs = 1500;
 const signOutCleanupTimeoutMs = 2500;
 const firebaseAuthStorageDb = 'firebaseLocalStorageDb';
 const firebaseAuthStorageStore = 'firebaseLocalStorage';
@@ -75,42 +85,152 @@ type UserCredential = {
 type HydratedUser = {
   user: AuthUser;
   profile: Record<string, unknown>;
+  profileHydration: ProfileHydrationStatus;
+};
+
+type HydrateFirebaseUserOptions = {
+  onAccessEnriched?: (hydrated: HydratedUser) => void;
+  onAccessEnrichment?: (hydrated: HydratedUser) => void;
 };
 
 type NativeAuthSession = {
   uid: string;
   email: string;
-  idToken: string;
-  refreshToken?: string;
-  expirationTime: number;
-  apiKey: string;
   displayName?: string | null;
   photoUrl?: string | null;
   emailVerified?: boolean;
   provider?: 'rest' | 'native-plugin';
 };
 
-type NativeProviderInfo = {
-  providerId?: string;
-  rawId?: string;
-  federatedId?: string;
-  email?: string;
-  displayName?: string;
-  phoneNumber?: string;
-  photoUrl?: string;
-};
-
-type NativeRestSignInPayload = {
-  localId: string;
-  email?: string;
-  displayName?: string;
-  profilePicture?: string;
-  photoUrl?: string;
+type VolatileNativeRestSession = NativeAuthSession & {
   idToken: string;
   refreshToken: string;
-  expiresIn?: string;
-  isNewUser?: boolean;
+  expirationTime: number;
+  apiKey: string;
 };
+
+let volatileNativeRestSession: VolatileNativeRestSession | null = null;
+
+const nativePluginTokenReuseMs = 30 * 1000;
+type NativePluginTokenCache = {
+  uid: string;
+  token: string;
+  expiresAt: number;
+};
+type NativePluginTokenRequest = {
+  uid: string;
+  forceRefresh: boolean;
+  generation: number;
+  sequence: number;
+  promise: Promise<string>;
+};
+type NativePluginUserVerificationRequest = {
+  uid: string;
+  generation: number;
+  promise: Promise<void>;
+};
+let nativePluginTokenCache: NativePluginTokenCache | null = null;
+let nativePluginTokenRequest: NativePluginTokenRequest | null = null;
+let nativePluginUserVerificationRequest: NativePluginUserVerificationRequest | null = null;
+let nativePluginAuthStateListenerRegistration: Promise<void> | null = null;
+let nativePluginTokenGeneration = 0;
+let nativePluginTokenSequence = 0;
+type NativeWebAuthBridgeRequest = {
+  uid: string;
+  generation: number;
+  promise: Promise<FirebaseUser>;
+};
+let nativeWebAuthBridgeGeneration = 0;
+let nativeWebAuthBridgeRequest: NativeWebAuthBridgeRequest | null = null;
+
+function resetNativeWebAuthBridge() {
+  nativeWebAuthBridgeGeneration += 1;
+  nativeWebAuthBridgeRequest = null;
+}
+
+function resetNativePluginTokenBroker() {
+  nativePluginTokenGeneration += 1;
+  nativePluginTokenCache = null;
+  nativePluginTokenRequest = null;
+  nativePluginUserVerificationRequest = null;
+  resetNativeWebAuthBridge();
+}
+
+async function ensureNativePluginAuthStateListener() {
+  if (nativePluginAuthStateListenerRegistration) {
+    return nativePluginAuthStateListenerRegistration;
+  }
+  if (typeof FirebaseAuthentication.addListener !== 'function') {
+    return;
+  }
+
+  const registration = Promise.resolve(
+    FirebaseAuthentication.addListener('authStateChange', (event) => {
+      resetNativePluginTokenBroker();
+      const nativeUid = normalizeNativeAuthUid(event?.user?.uid);
+      const storedUid = normalizeNativeAuthUid(readNativeAuthSession()?.uid);
+      if (!nativeUid || (storedUid && storedUid !== nativeUid)) {
+        clearNativeAuthSession();
+        clearCachedUserData();
+        void firebaseSignOut(auth).catch((error) => {
+          logger.warn('Unable to clear WebView authentication after a native auth change.', { error });
+        });
+        return;
+      }
+      if (auth.currentUser?.uid && auth.currentUser.uid !== nativeUid) {
+        void firebaseSignOut(auth).catch((error) => {
+          logger.warn('Unable to clear mismatched WebView authentication.', { error });
+        });
+      }
+    })
+  )
+    .then(() => undefined)
+    .catch((error) => {
+      if (nativePluginAuthStateListenerRegistration === registration) {
+        nativePluginAuthStateListenerRegistration = null;
+      }
+      logger.warn('Unable to observe native Firebase auth state.', { error });
+    });
+  nativePluginAuthStateListenerRegistration = registration;
+  return registration;
+}
+
+async function verifyNativePluginUser(expectedUid: string) {
+  const generation = nativePluginTokenGeneration;
+  const pendingVerification = nativePluginUserVerificationRequest;
+  if (pendingVerification?.uid === expectedUid && pendingVerification.generation === generation) {
+    return pendingVerification.promise;
+  }
+
+  const promise = FirebaseAuthentication.getCurrentUser()
+    .then((result) => {
+      if (generation !== nativePluginTokenGeneration) {
+        throw new Error('Native Firebase auth session changed while verifying the current user.');
+      }
+      const currentUid = normalizeNativeAuthUid(result?.user?.uid);
+      if (!currentUid) {
+        resetNativePluginTokenBroker();
+        throw new Error('Native Firebase auth has no signed-in user.');
+      }
+      if (currentUid !== expectedUid) {
+        resetNativePluginTokenBroker();
+        throw new Error('Native Firebase auth session does not match the saved app session.');
+      }
+    })
+    .catch((error) => {
+      if (generation === nativePluginTokenGeneration) {
+        resetNativePluginTokenBroker();
+      }
+      throw error;
+    })
+    .finally(() => {
+      if (nativePluginUserVerificationRequest?.promise === promise) {
+        nativePluginUserVerificationRequest = null;
+      }
+    });
+  nativePluginUserVerificationRequest = { uid: expectedUid, generation, promise };
+  return promise;
+}
 
 type NativeRestLookupUser = {
   email?: string;
@@ -118,7 +238,6 @@ type NativeRestLookupUser = {
   displayName?: string;
   photoUrl?: string;
   phoneNumber?: string;
-  providerUserInfo?: NativeProviderInfo[];
   createdAt?: string;
   lastLoginAt?: string;
 };
@@ -150,7 +269,9 @@ type NativePluginSignInResult = {
 };
 
 export function normalizeAuthEmail(email: string | null | undefined) {
-  return String(email || '').trim().toLowerCase();
+  return String(email || '')
+    .trim()
+    .toLowerCase();
 }
 
 export function isValidAuthEmail(email: string | null | undefined) {
@@ -161,12 +282,7 @@ export function isValidAuthEmail(email: string | null | undefined) {
   }
 
   const [localPart, domain] = parts;
-  return Boolean(
-    localPart &&
-    domain &&
-    domain.includes('.') &&
-    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
-  );
+  return Boolean(localPart && domain && domain.includes('.') && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail));
 }
 
 function requireValidAuthEmail(email: string | null | undefined) {
@@ -178,7 +294,9 @@ function requireValidAuthEmail(email: string | null | undefined) {
 }
 
 function normalizeCode(code: string | null | undefined) {
-  return String(code || '').trim().toUpperCase();
+  return String(code || '')
+    .trim()
+    .toUpperCase();
 }
 
 function withTimeout<T>(promise: Promise<T>, message: string, timeoutMs = authTimeoutMs): Promise<T> {
@@ -200,11 +318,7 @@ function withTimeout<T>(promise: Promise<T>, message: string, timeoutMs = authTi
 
 async function runBestEffortAuthCleanup(label: string, cleanup: () => Promise<unknown>) {
   try {
-    await withTimeout(
-      Promise.resolve().then(cleanup),
-      `${label} timed out.`,
-      signOutCleanupTimeoutMs
-    );
+    await withTimeout(Promise.resolve().then(cleanup), `${label} timed out.`, signOutCleanupTimeoutMs);
   } catch (error) {
     logger.warn('Operation failed during sign-out.', { label, error });
   }
@@ -260,24 +374,17 @@ export function describeAuthError(error: any) {
   return error?.message || 'Authentication failed.';
 }
 
-export function classifyAuthConnectivity(
-  error: any,
-  online = typeof navigator === 'undefined' ? undefined : navigator.onLine
-) {
+export function classifyAuthConnectivity(error: any, online = typeof navigator === 'undefined' ? undefined : navigator.onLine) {
   if (online === false) return 'offline';
 
   const diagnosticText = `${error?.code || ''} ${error?.message || ''} ${error?.name || ''}`.toLowerCase();
-  if (
-    diagnosticText.includes('timed out')
-    || diagnosticText.includes('timeout')
-    || diagnosticText.includes('aborterror')
-  ) {
+  if (diagnosticText.includes('timed out') || diagnosticText.includes('timeout') || diagnosticText.includes('aborterror')) {
     return 'timeout';
   }
   if (
-    diagnosticText.includes('auth/network-request-failed')
-    || diagnosticText.includes('networkerror')
-    || diagnosticText.includes('failed to fetch')
+    diagnosticText.includes('auth/network-request-failed') ||
+    diagnosticText.includes('networkerror') ||
+    diagnosticText.includes('failed to fetch')
   ) {
     return 'service-unreachable';
   }
@@ -293,23 +400,44 @@ function getFirebaseAuthStorageKey() {
 function readNativeAuthSession(): NativeAuthSession | null {
   try {
     const rawSession = window.localStorage?.getItem(nativeAuthSessionStorageKey);
-    return rawSession ? JSON.parse(rawSession) as NativeAuthSession : null;
+    if (!rawSession) return null;
+    const parsed = JSON.parse(rawSession) as Partial<VolatileNativeRestSession>;
+    if (!parsed?.uid) return null;
+    if (parsed.idToken && parsed.refreshToken) {
+      volatileNativeRestSession = parsed as VolatileNativeRestSession;
+      window.localStorage?.setItem(nativeAuthSessionStorageKey, JSON.stringify(sanitizeNativeAuthSession(parsed)));
+      void clearFirebaseAuthStorageSession();
+    }
+    return sanitizeNativeAuthSession(parsed);
   } catch (error) {
     logger.warn('Unable to read native auth fallback session.', { error });
     return null;
   }
 }
 
-function writeNativeAuthSession(session: NativeAuthSession) {
+function sanitizeNativeAuthSession(session: Partial<VolatileNativeRestSession>): NativeAuthSession {
+  return {
+    uid: normalizeNativeAuthUid(session.uid),
+    email: String(session.email || ''),
+    displayName: session.displayName || null,
+    photoUrl: session.photoUrl || null,
+    emailVerified: session.emailVerified === true,
+    provider: session.provider === 'rest' ? 'rest' : 'native-plugin'
+  };
+}
+
+function writeNativeAuthSession(session: NativeAuthSession | VolatileNativeRestSession) {
   try {
-    window.localStorage?.setItem(nativeAuthSessionStorageKey, JSON.stringify(session));
+    window.localStorage?.setItem(nativeAuthSessionStorageKey, JSON.stringify(sanitizeNativeAuthSession(session)));
   } catch (error) {
     logger.warn('Unable to update native auth fallback session.', { error });
   }
 }
 
 function clearNativeAuthSession() {
+  resetNativePluginTokenBroker();
   try {
+    volatileNativeRestSession = null;
     window.localStorage?.removeItem(nativeAuthSessionStorageKey);
   } catch (error) {
     logger.warn('Unable to clear native auth fallback session.', { error });
@@ -355,31 +483,6 @@ async function clearFirebaseAuthStorageSession() {
   }
 }
 
-function normalizeProviderData(providerUserInfo: NativeProviderInfo[] = [], email = '') {
-  const providers = Array.isArray(providerUserInfo) ? providerUserInfo : [];
-  const mappedProviders = providers.map((provider) => ({
-    providerId: provider.providerId || 'password',
-    uid: provider.rawId || provider.federatedId || provider.email || email,
-    displayName: provider.displayName || null,
-    email: provider.email || email || null,
-    phoneNumber: provider.phoneNumber || null,
-    photoURL: provider.photoUrl || null
-  }));
-
-  if (!mappedProviders.some((provider) => provider.providerId === 'password')) {
-    mappedProviders.push({
-      providerId: 'password',
-      uid: email,
-      displayName: null,
-      email,
-      phoneNumber: null,
-      photoURL: null
-    });
-  }
-
-  return mappedProviders;
-}
-
 function openFirebaseAuthStorage(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     if (!window.indexedDB) {
@@ -399,50 +502,100 @@ function openFirebaseAuthStorage(): Promise<IDBDatabase> {
   });
 }
 
-async function refreshNativeAuthSession(session: NativeAuthSession) {
+async function refreshNativeAuthSession(session: VolatileNativeRestSession) {
   const apiKey = session.apiKey || auth.app?.options?.apiKey || '';
   if (!apiKey || !session.refreshToken) {
     throw new Error('Native auth refresh is unavailable.');
   }
 
   const requestUrl = `https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(apiKey)}`;
-  const response = await withTimeout(fetch(requestUrl, {
-    method: 'POST',
-    headers: await getPrimaryAppCheckHeaders({
-      'Content-Type': 'application/x-www-form-urlencoded'
-    }, requestUrl),
-    body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: session.refreshToken
-    })
-  }), 'Firebase Auth refresh timed out.');
+  const response = await withTimeout(
+    fetch(requestUrl, {
+      method: 'POST',
+      headers: await getPrimaryAppCheckHeaders(
+        {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        requestUrl
+      ),
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: session.refreshToken
+      })
+    }),
+    'Firebase Auth refresh timed out.'
+  );
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(payload?.error?.message || 'Unable to refresh native auth session.');
   }
 
   const expiresInSeconds = Number.parseInt(payload.expires_in || '3600', 10);
-  const nextSession: NativeAuthSession = {
+  const nextSession: VolatileNativeRestSession = {
     ...session,
     uid: payload.user_id || session.uid,
     idToken: payload.id_token || session.idToken,
     refreshToken: payload.refresh_token || session.refreshToken,
     expirationTime: Date.now() + Math.max(expiresInSeconds - 30, 60) * 1000
   };
+  volatileNativeRestSession = nextSession;
   writeNativeAuthSession(nextSession);
   return nextSession;
 }
 
-async function getNativePluginToken(forceRefresh = false) {
+async function getNativePluginToken(forceRefresh = false, expectedUid = '') {
   if (!(Capacitor as any).isPluginAvailable?.('FirebaseAuthentication')) {
     throw new Error('Native Firebase auth is unavailable.');
   }
 
-  const result = await FirebaseAuthentication.getIdToken({ forceRefresh });
-  if (!result?.token) {
-    throw new Error('Native Firebase auth did not return an ID token.');
+  const uid = expectedUid || readNativeAuthSession()?.uid || auth.currentUser?.uid || '';
+  if (!uid) {
+    throw new Error('Native Firebase auth has no signed-in user.');
   }
-  return result.token;
+  await ensureNativePluginAuthStateListener();
+  await verifyNativePluginUser(uid);
+  const now = Date.now();
+  const cachedToken = nativePluginTokenCache;
+  if (!forceRefresh && cachedToken && cachedToken.uid === uid && cachedToken.expiresAt > now) {
+    return cachedToken.token;
+  }
+  const pendingTokenRequest = nativePluginTokenRequest;
+  if (pendingTokenRequest && pendingTokenRequest.uid === uid && (!forceRefresh || pendingTokenRequest.forceRefresh)) {
+    return pendingTokenRequest.promise;
+  }
+
+  const generation = nativePluginTokenGeneration;
+  const sequence = ++nativePluginTokenSequence;
+  const promise = FirebaseAuthentication.getIdToken({ forceRefresh })
+    .then(async (result) => {
+      if (generation !== nativePluginTokenGeneration) {
+        throw new Error('Native Firebase auth session changed while loading a token.');
+      }
+      if (!result?.token) {
+        throw new Error('Native Firebase auth did not return an ID token.');
+      }
+      // The plugin returns the current native user's token without a UID claim in
+      // its response. Re-check the native principal before labeling or caching it.
+      await verifyNativePluginUser(uid);
+      if (generation !== nativePluginTokenGeneration) {
+        throw new Error('Native Firebase auth session changed while loading a token.');
+      }
+      if (sequence === nativePluginTokenSequence) {
+        nativePluginTokenCache = {
+          uid,
+          token: result.token,
+          expiresAt: Date.now() + nativePluginTokenReuseMs
+        };
+      }
+      return result.token;
+    })
+    .finally(() => {
+      if (nativePluginTokenRequest?.promise === promise) {
+        nativePluginTokenRequest = null;
+      }
+    });
+  nativePluginTokenRequest = { uid, forceRefresh, generation, sequence, promise };
+  return promise;
 }
 
 async function refreshNativePluginAuthSession(session: NativeAuthSession) {
@@ -455,13 +608,10 @@ async function refreshNativePluginAuthSession(session: NativeAuthSession) {
     throw new Error('Native Firebase auth session does not match the saved app session.');
   }
 
-  const idToken = await getNativePluginToken(true);
   const nextSession: NativeAuthSession = {
     ...session,
     uid: currentUser.uid,
     email: currentUser.email || session.email || '',
-    idToken,
-    expirationTime: Date.now() + 55 * 60 * 1000,
     displayName: currentUser.displayName || session.displayName || null,
     photoUrl: currentUser.photoUrl || session.photoUrl || null,
     emailVerified: currentUser.emailVerified === true || session.emailVerified === true,
@@ -473,7 +623,7 @@ async function refreshNativePluginAuthSession(session: NativeAuthSession) {
 
 function getNativeAuthFallbackUser(): FirebaseUser | null {
   const session = readNativeAuthSession();
-  if (!session?.uid || !session?.idToken || (!session.refreshToken && session.provider !== 'native-plugin')) {
+  if (!session?.uid || (session.provider !== 'native-plugin' && volatileNativeRestSession?.uid !== session.uid)) {
     return null;
   }
 
@@ -485,11 +635,14 @@ function getNativeAuthFallbackUser(): FirebaseUser | null {
     photoURL: session.photoUrl || null,
     isNativeRestSession: true,
     async getIdToken(forceRefresh = false) {
-      let currentSession = readNativeAuthSession() || session;
+      if (session.provider === 'native-plugin') {
+        if (forceRefresh) await refreshNativePluginAuthSession(session);
+        return getNativePluginToken(forceRefresh, session.uid);
+      }
+      let currentSession = volatileNativeRestSession;
+      if (!currentSession) throw new Error('Legacy native auth session must be signed in again.');
       if (forceRefresh || Number(currentSession.expirationTime || 0) < Date.now() + 60000) {
-        currentSession = currentSession.provider === 'native-plugin'
-          ? await refreshNativePluginAuthSession(currentSession)
-          : await refreshNativeAuthSession(currentSession);
+        currentSession = await refreshNativeAuthSession(currentSession);
       }
       return currentSession.idToken;
     },
@@ -514,7 +667,85 @@ export async function getNativeAuthIdToken(forceRefresh = false): Promise<string
 }
 
 export function getNativeAuthUserId(): string | null {
-  return auth.currentUser?.uid || getNativeAuthFallbackUser()?.uid || null;
+  if (isNativeRuntime()) {
+    return getNativeAuthFallbackUser()?.uid || auth.currentUser?.uid || null;
+  }
+  return auth.currentUser?.uid || null;
+}
+
+function normalizeNativeAuthUid(value: unknown) {
+  if (typeof value !== 'string') return '';
+  if (!value || value.length > 128) return '';
+  return value;
+}
+
+export async function ensureNativeWebViewAuthSession(expectedUid = getNativeAuthUserId()): Promise<FirebaseUser | null> {
+  if (!isNativeRuntime()) return auth.currentUser || null;
+
+  const uid = normalizeNativeAuthUid(expectedUid);
+  if (!uid) return null;
+  if (auth.currentUser?.uid === uid) return auth.currentUser;
+
+  const generation = nativeWebAuthBridgeGeneration;
+  const pendingRequest = nativeWebAuthBridgeRequest;
+  if (pendingRequest?.uid === uid && pendingRequest.generation === generation) {
+    return pendingRequest.promise;
+  }
+
+  const promise = (async () => {
+    const idToken = await getNativeAuthIdToken(true);
+    if (!idToken || generation !== nativeWebAuthBridgeGeneration || getNativeAuthUserId() !== uid) {
+      throw new Error('Native authentication changed while preparing the WebView session.');
+    }
+
+    let result: { customToken?: unknown } | undefined;
+    for (let attempt = 1; attempt <= nativeWebAuthBridgeMaxAttempts; attempt += 1) {
+      try {
+        result = await callNativeFirebaseFunctionWithAuth<{ customToken?: unknown }>(
+          'createNativeWebAuthToken',
+          {},
+          {
+            projectId: String(auth.app?.options?.projectId || ''),
+            idToken
+          },
+          {
+            timeoutMs: nativeWebAuthBridgeTimeoutMs,
+            errorLabel: 'Native WebView authentication'
+          }
+        );
+        break;
+      } catch (error) {
+        if (attempt === nativeWebAuthBridgeMaxAttempts || classifyAuthConnectivity(error) !== 'timeout') {
+          throw error;
+        }
+      }
+    }
+    const customToken = typeof result?.customToken === 'string' ? result.customToken.trim() : '';
+    if (!customToken) {
+      throw new Error('Native WebView authentication response is invalid.');
+    }
+    if (generation !== nativeWebAuthBridgeGeneration || getNativeAuthUserId() !== uid) {
+      throw new Error('Native authentication changed before the WebView session was applied.');
+    }
+
+    if (auth.currentUser && auth.currentUser.uid !== uid) {
+      await firebaseSignOut(auth);
+    }
+    const credential = (await signInWithCustomToken(auth, customToken)) as UserCredential;
+    const bridgedUser = credential?.user;
+    if (!bridgedUser?.uid || bridgedUser.uid !== uid || generation !== nativeWebAuthBridgeGeneration || getNativeAuthUserId() !== uid) {
+      await firebaseSignOut(auth).catch(() => undefined);
+      throw new Error('Native WebView authentication did not match the current account.');
+    }
+    return bridgedUser;
+  })().finally(() => {
+    if (nativeWebAuthBridgeRequest?.promise === promise) {
+      nativeWebAuthBridgeRequest = null;
+    }
+  });
+
+  nativeWebAuthBridgeRequest = { uid, generation, promise };
+  return promise;
 }
 
 async function getNativeAccessCodeValidationOptions(result: UserCredential) {
@@ -529,103 +760,47 @@ async function getNativeAccessCodeValidationOptions(result: UserCredential) {
   return nativeAuthToken ? { nativeAuthToken } : undefined;
 }
 
-async function persistNativeRestAuthSession(signInPayload: NativeRestSignInPayload, lookupUser: NativeRestLookupUser = {}): Promise<FirebaseUser> {
-  const email = signInPayload.email || lookupUser.email || '';
-  const previousUid = auth.currentUser?.uid || readNativeAuthSession()?.uid || null;
-  if (previousUid && previousUid !== signInPayload.localId) {
-    clearCachedUserData();
-  }
-  const expiresInSeconds = Number.parseInt(signInPayload.expiresIn || '3600', 10);
-  const expirationTime = Date.now() + Math.max(expiresInSeconds - 30, 60) * 1000;
-  const now = `${Date.now()}`;
-  const photoUrl = signInPayload.profilePicture || signInPayload.photoUrl || lookupUser.photoUrl || null;
-  const authUser = {
-    uid: signInPayload.localId,
-    email,
-    emailVerified: lookupUser.emailVerified === true,
-    displayName: signInPayload.displayName || lookupUser.displayName || null,
-    isAnonymous: false,
-    photoURL: photoUrl,
-    phoneNumber: lookupUser.phoneNumber || null,
-    tenantId: null,
-    providerData: normalizeProviderData(lookupUser.providerUserInfo, email),
-    stsTokenManager: {
-      refreshToken: signInPayload.refreshToken,
-      accessToken: signInPayload.idToken,
-      expirationTime
-    },
-    metadata: {
-      creationTime: signInPayload.isNewUser ? now : lookupUser.createdAt,
-      lastSignInTime: lookupUser.lastLoginAt || now
-    },
-    isNewUser: signInPayload.isNewUser === true,
-    _redirectEventId: undefined,
-    createdAt: lookupUser.createdAt || undefined,
-    lastLoginAt: lookupUser.lastLoginAt || `${Date.now()}`,
-    apiKey: auth.app?.options?.apiKey || '',
-    appName: auth.app?.name || '[DEFAULT]'
-  };
+type FriendInviteRedeemer = {
+  redeemFriendInvite: (userId: string, code: string, email?: string | null) => Promise<unknown>;
+};
 
-  writeNativeAuthSession({
-    uid: authUser.uid,
-    email: authUser.email,
-    idToken: signInPayload.idToken,
-    refreshToken: signInPayload.refreshToken,
-    expirationTime,
-    apiKey: auth.app?.options?.apiKey || '',
-    displayName: authUser.displayName,
-    photoUrl: authUser.photoURL,
-    emailVerified: authUser.emailVerified,
-    provider: 'rest'
+async function postNativeFriendInviteRedemption(userId: string, code: string) {
+  if (getNativeAuthUserId() !== userId) {
+    throw new Error('Unable to redeem friend invite.');
+  }
+
+  const idToken = await getNativeAuthIdToken(true).catch(() => null);
+  const projectId = String(auth.app?.options?.projectId || '').trim();
+  if (!idToken || !projectId) {
+    throw new Error('Unable to redeem friend invite.');
+  }
+
+  const requestUrl = `https://us-central1-${projectId}.cloudfunctions.net/redeemFriendInvite`;
+  const response = await fetch(requestUrl, {
+    method: 'POST',
+    headers: await getPrimaryAppCheckHeaders(
+      {
+        Authorization: `Bearer ${idToken}`,
+        'Content-Type': 'application/json'
+      },
+      requestUrl
+    ),
+    body: JSON.stringify({ data: { code } })
   });
-
-  const database = await openFirebaseAuthStorage();
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const transaction = database.transaction(firebaseAuthStorageStore, 'readwrite');
-      transaction.objectStore(firebaseAuthStorageStore).put({
-        fbase_key: getFirebaseAuthStorageKey(),
-        value: authUser
-      });
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error || new Error('Unable to persist auth session.'));
-      transaction.onabort = () => reject(transaction.error || new Error('Auth session persistence was aborted.'));
-    });
-  } finally {
-    database.close();
+  const payload = await response.json().catch(() => ({}));
+  const result = payload?.result ?? payload?.data;
+  if (!response.ok || payload?.error || result?.success !== true) {
+    throw new Error('Unable to redeem friend invite.');
   }
+  return result;
+}
 
-  return {
-    uid: authUser.uid,
-    email: authUser.email,
-    emailVerified: authUser.emailVerified,
-    displayName: authUser.displayName,
-    photoURL: authUser.photoURL,
-    metadata: authUser.metadata,
-    isNativeRestSession: true,
-    isNewUser: authUser.isNewUser,
-    async getIdToken(forceRefresh = false) {
-      let currentSession = readNativeAuthSession();
-      if (!currentSession) {
-        currentSession = {
-          uid: authUser.uid,
-          email: authUser.email,
-          idToken: signInPayload.idToken,
-          refreshToken: signInPayload.refreshToken,
-          expirationTime,
-          apiKey: auth.app?.options?.apiKey || '',
-          provider: 'rest'
-        };
-      }
-      if (forceRefresh || Number(currentSession.expirationTime || 0) < Date.now() + 60000) {
-        currentSession = await refreshNativeAuthSession(currentSession);
-      }
-      return currentSession.idToken;
-    },
-    async delete() {
-      await deleteNativeAuthUser();
-    }
-  };
+async function redeemFriendInviteForCurrentSession(dbModule: FriendInviteRedeemer, userId: string, code: string, email?: string | null) {
+  const normalizedCode = normalizeCode(code);
+  if (!isNativeRuntime()) {
+    return dbModule.redeemFriendInvite(userId, normalizedCode, email);
+  }
+  return postNativeFriendInviteRedemption(userId, normalizedCode);
 }
 
 function nativeMetadataToAuthMetadata(metadata: NativePluginUser['metadata'] = {}) {
@@ -641,36 +816,46 @@ async function persistNativePluginAuthSession(nativeResult: NativePluginSignInRe
   const currentUserResult = await FirebaseAuthentication.getCurrentUser().catch(() => ({ user: null }));
   const pluginUser = nativeResult.user || (currentUserResult?.user as NativePluginUser | null);
   if (!pluginUser?.uid) {
-    throw new Error('Native Google sign-in did not return a Firebase user.');
+    throw new Error('Native Firebase sign-in did not return a user.');
+  }
+  const previousUid = auth.currentUser?.uid || readNativeAuthSession()?.uid || null;
+  if (previousUid && previousUid !== pluginUser.uid) {
+    resetNativePluginTokenBroker();
+    clearCachedUserData();
   }
 
-  const idToken = await getNativePluginToken(true);
-  const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
+  const idToken = await getNativePluginToken(true, pluginUser.uid);
+  const lookupPayload = (await callFirebaseAuthRest('accounts:lookup', {
     idToken
   }).catch((error) => {
     logger.warn('Unable to load native Firebase auth profile.', { error });
     return {};
-  }) as { users?: NativeRestLookupUser[] };
+  })) as { users?: NativeRestLookupUser[] };
   const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
   const email = pluginUser.email || lookupUser.email || '';
   const displayName = pluginUser.displayName || lookupUser.displayName || null;
   const photoUrl = pluginUser.photoUrl || lookupUser.photoUrl || null;
   const metadata = nativeMetadataToAuthMetadata(pluginUser.metadata);
-  const expirationTime = Date.now() + 55 * 60 * 1000;
   const isNewUser = nativeResult.additionalUserInfo?.isNewUser === true;
 
   writeNativeAuthSession({
     uid: pluginUser.uid,
     email,
-    idToken,
-    expirationTime,
-    apiKey: auth.app?.options?.apiKey || '',
     displayName,
     photoUrl,
     emailVerified: pluginUser.emailVerified === true || lookupUser.emailVerified === true,
     provider: 'native-plugin'
   });
   await clearFirebaseAuthStorageSession();
+  try {
+    await ensureNativeWebViewAuthSession(pluginUser.uid);
+  } catch (error) {
+    clearNativeAuthSession();
+    clearCachedUserData();
+    await Promise.allSettled([FirebaseAuthentication.signOut(), firebaseSignOut(auth)]);
+    logger.warn('Unable to finish native WebView authentication.', { error });
+    throw new Error('Unable to finish signing in. Check the connection and try again.');
+  }
 
   return {
     uid: pluginUser.uid,
@@ -685,24 +870,16 @@ async function persistNativePluginAuthSession(nativeResult: NativePluginSignInRe
     isNativeRestSession: true,
     isNewUser,
     async getIdToken(forceRefresh = false) {
-      let currentSession = readNativeAuthSession();
-      if (!currentSession) {
-        currentSession = {
-          uid: pluginUser.uid || '',
-          email,
-          idToken,
-          expirationTime,
-          apiKey: auth.app?.options?.apiKey || '',
-          displayName,
-          photoUrl,
-          emailVerified: pluginUser.emailVerified === true || lookupUser.emailVerified === true,
-          provider: 'native-plugin'
-        };
+      if (forceRefresh) {
+        await refreshNativePluginAuthSession(
+          readNativeAuthSession() || {
+            uid: pluginUser.uid || '',
+            email,
+            provider: 'native-plugin'
+          }
+        );
       }
-      if (forceRefresh || Number(currentSession.expirationTime || 0) < Date.now() + 60000) {
-        currentSession = await refreshNativePluginAuthSession(currentSession);
-      }
-      return currentSession.idToken;
+      return getNativePluginToken(forceRefresh, pluginUser.uid || '');
     },
     async delete() {
       await deleteNativeAuthUser();
@@ -714,11 +891,7 @@ function createRestAuthError(payload: any, fallbackMessage = 'Authentication fai
   const restCode = payload?.error?.message || '';
   const error = new Error(fallbackMessage || restCode || 'Authentication failed.') as Error & { code?: string; restCode?: string };
   error.restCode = restCode;
-  if (
-    restCode === 'EMAIL_NOT_FOUND' ||
-    restCode === 'INVALID_PASSWORD' ||
-    restCode === 'INVALID_LOGIN_CREDENTIALS'
-  ) {
+  if (restCode === 'EMAIL_NOT_FOUND' || restCode === 'INVALID_PASSWORD' || restCode === 'INVALID_LOGIN_CREDENTIALS') {
     error.code = 'auth/invalid-credential';
   } else if (restCode === 'TOO_MANY_ATTEMPTS_TRY_LATER') {
     error.code = 'auth/too-many-requests';
@@ -737,13 +910,19 @@ async function callFirebaseAuthRest(endpoint: string, payload: Record<string, un
   }
 
   const requestUrl = `https://identitytoolkit.googleapis.com/v1/${endpoint}?key=${encodeURIComponent(apiKey)}`;
-  const response = await withTimeout(fetch(requestUrl, {
-    method: 'POST',
-    headers: await getPrimaryAppCheckHeaders({
-      'Content-Type': 'application/json'
-    }, requestUrl),
-    body: JSON.stringify(payload)
-  }), 'Firebase Auth request timed out.');
+  const response = await withTimeout(
+    fetch(requestUrl, {
+      method: 'POST',
+      headers: await getPrimaryAppCheckHeaders(
+        {
+          'Content-Type': 'application/json'
+        },
+        requestUrl
+      ),
+      body: JSON.stringify(payload)
+    }),
+    'Firebase Auth request timed out.'
+  );
   const responsePayload = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw createRestAuthError(responsePayload);
@@ -753,7 +932,7 @@ async function callFirebaseAuthRest(endpoint: string, payload: Record<string, un
 
 async function deleteNativeAuthUser() {
   const session = readNativeAuthSession();
-  if (!session?.idToken) {
+  if (!session?.uid) {
     clearNativeAuthSession();
     await clearFirebaseAuthStorageSession();
     return;
@@ -762,10 +941,12 @@ async function deleteNativeAuthUser() {
   try {
     if (session.provider === 'native-plugin' && (Capacitor as any).isPluginAvailable?.('FirebaseAuthentication')) {
       await FirebaseAuthentication.deleteUser();
-    } else {
+    } else if (volatileNativeRestSession?.idToken) {
       await callFirebaseAuthRest('accounts:delete', {
-        idToken: session.idToken
+        idToken: volatileNativeRestSession.idToken
       });
+    } else {
+      throw new Error('Legacy native auth session must be signed in again.');
     }
   } finally {
     clearNativeAuthSession();
@@ -773,33 +954,12 @@ async function deleteNativeAuthUser() {
   }
 }
 
-async function signInWithNativeRestSession(email: string, password: string) {
-  const signInPayload = await callFirebaseAuthRest('accounts:signInWithPassword', {
-    email,
-    password,
-    returnSecureToken: true
-  }) as NativeRestSignInPayload;
-  const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
-    idToken: signInPayload.idToken
-  }).catch((error) => {
-    logger.warn('Unable to load native REST auth profile.', { error });
-    return {};
-  }) as { users?: NativeRestLookupUser[] };
-  const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
-  return persistNativeRestAuthSession(signInPayload, lookupUser);
-}
-
-function getNativeOAuthRequestUri() {
-  const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  return origin.startsWith('http://') || origin.startsWith('https://') ? origin : 'https://allplays.ai';
-}
-
 function getNativeGoogleSignInOptions() {
   const options: {
     skipNativeAuth: boolean;
     useCredentialManager?: boolean;
   } = {
-    skipNativeAuth: true
+    skipNativeAuth: false
   };
 
   if (Capacitor.getPlatform?.() === 'android') {
@@ -807,59 +967,6 @@ function getNativeGoogleSignInOptions() {
   }
 
   return options;
-}
-
-async function signInWithNativeGoogleRestSession(googleIdToken: string, googleAccessToken?: string | null) {
-  const postBody = new URLSearchParams({
-    providerId: 'google.com'
-  });
-
-  if (googleIdToken) {
-    postBody.set('id_token', googleIdToken);
-  }
-  if (googleAccessToken) {
-    postBody.set('access_token', googleAccessToken);
-  }
-
-  const signInPayload = await callFirebaseAuthRest('accounts:signInWithIdp', {
-    postBody: postBody.toString(),
-    requestUri: getNativeOAuthRequestUri(),
-    returnIdpCredential: true,
-    returnSecureToken: true
-  }) as NativeRestSignInPayload;
-  const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
-    idToken: signInPayload.idToken
-  }).catch((error) => {
-    logger.warn('Unable to load native Google REST auth profile.', { error });
-    return {};
-  }) as { users?: NativeRestLookupUser[] };
-  const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
-  return persistNativeRestAuthSession(signInPayload, lookupUser);
-}
-
-async function signInWithNativeAppleRestSession(appleIdToken: string, rawNonce?: string | null) {
-  const postBody = new URLSearchParams({
-    providerId: 'apple.com',
-    id_token: appleIdToken
-  });
-  if (rawNonce) {
-    postBody.set('nonce', rawNonce);
-  }
-
-  const signInPayload = await callFirebaseAuthRest('accounts:signInWithIdp', {
-    postBody: postBody.toString(),
-    requestUri: getNativeOAuthRequestUri(),
-    returnIdpCredential: true,
-    returnSecureToken: true
-  }) as NativeRestSignInPayload;
-  const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
-    idToken: signInPayload.idToken
-  }).catch((error) => {
-    logger.warn('Unable to load native Apple REST auth profile.', { error });
-    return {};
-  }) as { users?: NativeRestLookupUser[] };
-  const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
-  return persistNativeRestAuthSession(signInPayload, lookupUser);
 }
 
 function isNewFirebaseUser(user: FirebaseUser) {
@@ -907,7 +1014,9 @@ function rolesFromProfile(profile: Record<string, unknown> = {}): UserRole[] {
 }
 
 function toAuthUser(user: FirebaseUser, profile: Record<string, unknown>): AuthUser {
-  const email = String(user.email || profile.email || '');
+  // AuthUser.email is an authorization input throughout the app. Never fill
+  // it from a mutable profile document when Firebase Auth has no email.
+  const email = String(user.email || '');
   const displayName = String(user.displayName || profile.fullName || profile.displayName || email || 'ALL PLAYS User');
   const coachOf = Array.isArray(profile.coachOf) ? profile.coachOf.filter((teamId): teamId is string => typeof teamId === 'string') : [];
 
@@ -918,7 +1027,7 @@ function toAuthUser(user: FirebaseUser, profile: Record<string, unknown>): AuthU
     photoUrl: typeof user.photoURL === 'string' ? user.photoURL : typeof profile.photoUrl === 'string' ? profile.photoUrl : undefined,
     emailVerified: user.emailVerified === true,
     roles: rolesFromProfile(profile),
-    parentOf: Array.isArray(profile.parentOf) ? profile.parentOf as Array<Record<string, unknown>> : [],
+    parentOf: Array.isArray(profile.parentOf) ? (profile.parentOf as Array<Record<string, unknown>>) : [],
     parentTeamIds: Array.isArray(profile.parentTeamIds)
       ? profile.parentTeamIds.filter((teamId): teamId is string => typeof teamId === 'string')
       : [],
@@ -964,103 +1073,302 @@ async function cleanupFailedNewUser(user: FirebaseUser | null, context: string, 
   }
 }
 
-export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedUser> {
+export async function hydrateFirebaseUser(user: FirebaseUser, options: HydrateFirebaseUserOptions = {}): Promise<HydratedUser> {
   let profile: Record<string, unknown> = {};
-  const dbModule = await loadLegacyAuthDb();
+  let profileHydration: ProfileHydrationStatus = 'success';
+  const dbModulePromise = loadLegacyAuthDb();
+  let membershipRequestsResult: PromiseSettledResult<unknown[]> | undefined;
+  let ownedTeamsResult: PromiseSettledResult<Array<Record<string, unknown>>> | undefined;
+  const membershipRequestsTask = dbModulePromise
+    .then((dbModule) => dbModule.listMyParentMembershipRequests(user.uid))
+    .then(
+      (value): PromiseSettledResult<unknown[]> => ({ status: 'fulfilled', value }),
+      (reason): PromiseSettledResult<unknown[]> => ({ status: 'rejected', reason })
+    )
+    .then((result) => {
+      membershipRequestsResult = result;
+      return result;
+    });
+  const ownedTeamsTask = dbModulePromise
+    .then((dbModule) => dbModule.getUserTeams(user.uid))
+    .then(
+      (value): PromiseSettledResult<Array<Record<string, unknown>>> => ({ status: 'fulfilled', value }),
+      (reason): PromiseSettledResult<Array<Record<string, unknown>>> => ({ status: 'rejected', reason })
+    )
+    .then((result) => {
+      ownedTeamsResult = result;
+      return result;
+    });
+  let accessEnrichmentTimer: number | undefined;
+  const accessEnrichmentDeadline = Promise.race([
+    Promise.all([membershipRequestsTask, ownedTeamsTask]),
+    new Promise<void>((resolve) => {
+      accessEnrichmentTimer = window.setTimeout(resolve, accessEnrichmentTimeoutMs);
+    })
+  ]).finally(() => {
+    if (accessEnrichmentTimer !== undefined) window.clearTimeout(accessEnrichmentTimer);
+  });
+
   try {
-    profile = await withTimeout(
-      Promise.resolve(dbModule.getUserProfile(user.uid)),
-      'Profile load timed out.',
-      profileHydrationTimeoutMs
-    ) || {};
+    const profileResult = await raceFirstSuccessfulRead({
+      primary: () => dbModulePromise.then((dbModule) => dbModule.getUserProfile(user.uid)),
+      fallback: () => loadAuthProfileViaRest({ auth, user, timeoutMs: profileHydrationTimeoutMs }),
+      label: 'Profile load',
+      fallbackDelayMs: profileRestHedgeDelayMs,
+      primaryTimeoutMs: profileHydrationTimeoutMs
+    });
+    profile = profileResult.value || {};
+    if (profileResult.source === 'fallback') {
+      logger.warn('Loaded profile through authenticated REST after the SDK read was slow.', {
+        error: profileResult.primaryError || new Error('Profile SDK read exceeded the REST hedge delay.')
+      });
+    }
   } catch (error) {
     logger.warn('Failed to load profile; continuing with auth identity.', { error });
+    profileHydration = 'fallback';
     profile = {
       email: user.email || ''
     };
   }
 
-  try {
-    const { mergeApprovedParentMembershipRequests } = await loadLegacyParentMembershipUtils();
-    const approvedRequests = await withTimeout(
-      Promise.resolve(dbModule.listMyParentMembershipRequests(user.uid)),
-      'Parent membership sync timed out.',
-      profileHydrationTimeoutMs
-    );
-    const parentRequestSync = mergeApprovedParentMembershipRequests(profile, approvedRequests);
-    if (parentRequestSync.changed) {
-      await dbModule.updateUserProfile(user.uid, parentRequestSync.userUpdate);
-      profile = {
-        ...profile,
-        ...parentRequestSync.userUpdate
-      };
-    }
-  } catch (error) {
-    logger.warn('Failed to sync approved parent membership requests.', { error });
-  }
+  // Membership repair and ownerId discovery are authoritative access reads.
+  // Give them a bounded opportunity to enrich this hydration result so
+  // one-shot route consumers receive delayed successes without an unbounded
+  // signed-in shell wait.
+  await accessEnrichmentDeadline;
 
-  try {
-    const teams = await withTimeout(
-      Promise.resolve(dbModule.getUserTeams(user.uid)),
-      'Team access load timed out.',
-      profileHydrationTimeoutMs
-    );
-    const coachOf = mergeOwnedTeamIds(profile.coachOf, teams);
-    if (coachOf.length > 0) {
-      profile = {
-        ...profile,
-        coachOf
-      };
+  const syncApprovedMemberships = async (result: PromiseSettledResult<unknown[]>): Promise<boolean> => {
+    try {
+      if (result.status === 'rejected') throw result.reason;
+      const { mergeApprovedParentMembershipRequests } = await loadLegacyParentMembershipUtils();
+      const parentRequestSync = mergeApprovedParentMembershipRequests(profile, result.value);
+      if (!parentRequestSync.changed) return false;
+      Object.assign(profile, parentRequestSync.userUpdate);
+      const persistence = dbModulePromise
+        .then((dbModule) => dbModule.updateUserProfile(user.uid, parentRequestSync.userUpdate))
+        .catch((error) => logger.warn('Failed to persist approved parent membership sync.', { error }));
+      void persistence;
+      return true;
+    } catch (error) {
+      logger.warn('Failed to sync approved parent membership requests.', { error });
+      return false;
     }
-  } catch (error) {
-    logger.warn('Failed to load owned teams.', { error });
-  }
-
-  return {
-    user: toAuthUser(user, profile),
-    profile
   };
+
+  const mergeOwnedTeams = (result: PromiseSettledResult<Array<Record<string, unknown>>>): boolean => {
+    try {
+      if (result.status === 'rejected') throw result.reason;
+      const previousCoachOf = Array.isArray(profile.coachOf)
+        ? profile.coachOf.filter((teamId): teamId is string => typeof teamId === 'string')
+        : [];
+      const coachOf = mergeOwnedTeamIds(previousCoachOf, result.value);
+      if (coachOf.length === previousCoachOf.length && coachOf.every((teamId, index) => teamId === previousCoachOf[index])) {
+        return false;
+      }
+      profile.coachOf = coachOf;
+      return true;
+    } catch (error) {
+      logger.warn('Failed to load owned teams.', { error });
+      return false;
+    }
+  };
+
+  if (membershipRequestsResult) {
+    await syncApprovedMemberships(membershipRequestsResult);
+  }
+
+  if (ownedTeamsResult) {
+    mergeOwnedTeams(ownedTeamsResult);
+  }
+
+  const hydrated = {
+    user: toAuthUser(user, profile),
+    profile,
+    profileHydration
+  };
+
+  const publishAccessEnrichment = () => {
+    const enrichedUser = toAuthUser(user, profile);
+    const callback = options.onAccessEnriched ?? options.onAccessEnrichment;
+    if (!callback) return;
+    try {
+      callback({
+        user: enrichedUser,
+        profile: { ...profile },
+        profileHydration
+      });
+    } catch (error) {
+      logger.warn('Failed to publish late auth access enrichment.', { error });
+    }
+  };
+
+  if (!membershipRequestsResult) {
+    void membershipRequestsTask.then(async (result) => {
+      if (await syncApprovedMemberships(result)) publishAccessEnrichment();
+    });
+  }
+  if (!ownedTeamsResult) {
+    void ownedTeamsTask.then((result) => {
+      if (mergeOwnedTeams(result)) publishAccessEnrichment();
+    });
+  }
+
+  return hydrated;
 }
 
 export function observeFirebaseUser(callback: (user: FirebaseUser | null) => void) {
-  let timeoutId: number | undefined;
+  const nativeRuntime = isNativeRuntime();
   let lastObservedUid: string | null | undefined;
+  let lastEmissionSource: 'native-fallback' | 'web-sdk' | undefined;
+  let disposed = false;
+  let webAuthUserObserved = false;
+  let fallbackEmitted = false;
+  let bridgedUidEmittedBeforeObserver: string | null = null;
+  let bootstrapRequest: Promise<void> | null = null;
+  let bridgeRetryTimeoutId: number | undefined;
+  let bridgeRetryAttempt = 0;
 
-  const emit = (user: FirebaseUser | null) => {
+  const emit = (user: FirebaseUser | null, source: 'native-fallback' | 'web-sdk' = 'web-sdk') => {
+    if (disposed) return;
     const nextUid = user?.uid ?? null;
+    const isFallbackToWebSdkTransition = Boolean(
+      user && lastObservedUid === nextUid && lastEmissionSource === 'native-fallback' && source === 'web-sdk'
+    );
+    if (lastObservedUid === nextUid && !isFallbackToWebSdkTransition) return;
     // When the signed-in account changes (including sign-out), purge any cached
     // app data so the incoming user can never read the previous user's data.
     if (lastObservedUid !== undefined && lastObservedUid !== nextUid) {
       clearCachedUserData();
     }
     lastObservedUid = nextUid;
+    lastEmissionSource = source;
     callback(user);
   };
 
-  if (isNativeRuntime()) {
-    timeoutId = window.setTimeout(() => {
-      const fallbackUser = getNativeAuthFallbackUser();
-      if (fallbackUser) {
-        emit(fallbackUser);
-      }
-    }, nativeAuthObserverTimeoutMs);
+  const emitNativeFallback = (fallbackUser = getNativeAuthFallbackUser()) => {
+    if (webAuthUserObserved || fallbackEmitted) return;
+    fallbackEmitted = true;
+    emit(fallbackUser, 'native-fallback');
+  };
+
+  const clearBridgeRetry = () => {
+    if (bridgeRetryTimeoutId !== undefined) {
+      window.clearTimeout(bridgeRetryTimeoutId);
+      bridgeRetryTimeoutId = undefined;
+    }
+  };
+
+  function scheduleBridgeRetry() {
+    if (
+      disposed ||
+      webAuthUserObserved ||
+      bootstrapRequest ||
+      bridgeRetryTimeoutId !== undefined ||
+      !getNativeAuthFallbackUser()?.uid ||
+      (typeof navigator !== 'undefined' && navigator.onLine === false)
+    ) {
+      return;
+    }
+
+    const delayMs = Math.min(nativeWebAuthBridgeRetryBaseMs * 2 ** bridgeRetryAttempt, nativeWebAuthBridgeRetryMaxMs);
+    bridgeRetryAttempt += 1;
+    bridgeRetryTimeoutId = window.setTimeout(() => {
+      bridgeRetryTimeoutId = undefined;
+      bootstrapNativeWebAuth();
+    }, delayMs);
+  }
+
+  function bootstrapNativeWebAuth() {
+    const fallbackUser = getNativeAuthFallbackUser();
+    if (!fallbackUser?.uid) {
+      emitNativeFallback(null);
+      return;
+    }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      emitNativeFallback(fallbackUser);
+      return;
+    }
+    if (bootstrapRequest) return;
+
+    let shouldRetryBridge = false;
+    bootstrapRequest = ensureNativeWebViewAuthSession(fallbackUser.uid)
+      .then((bridgedUser) => {
+        clearBridgeRetry();
+        bridgeRetryAttempt = 0;
+        // signInWithCustomToken normally reaches the SDK observer first. This
+        // keeps bootstrap deterministic in tests and unusual WebView runtimes.
+        if (!webAuthUserObserved) {
+          const bootstrapUser = bridgedUser || fallbackUser;
+          bridgedUidEmittedBeforeObserver = bootstrapUser.uid;
+          emit(bootstrapUser, 'web-sdk');
+        }
+      })
+      .catch((error) => {
+        logger.warn('Unable to authenticate the WebView Firebase session.', { error });
+        emitNativeFallback(fallbackUser);
+        shouldRetryBridge = true;
+      })
+      .finally(() => {
+        bootstrapRequest = null;
+        if (shouldRetryBridge && !webAuthUserObserved) {
+          scheduleBridgeRetry();
+        }
+      });
+  }
+
+  const handleOnline = () => {
+    if (disposed || webAuthUserObserved || !getNativeAuthFallbackUser()?.uid) return;
+    clearBridgeRetry();
+    bridgeRetryAttempt = 0;
+    bootstrapNativeWebAuth();
+  };
+
+  if (nativeRuntime) {
+    window.addEventListener('online', handleOnline);
   }
 
   const unsubscribe = onAuthStateChanged(auth, (user: FirebaseUser | null) => {
-    if (timeoutId) {
-      window.clearTimeout(timeoutId);
-      timeoutId = undefined;
-    }
-    if (user) {
+    if (!nativeRuntime) {
       emit(user);
       return;
     }
-    emit(isNativeRuntime() ? getNativeAuthFallbackUser() : null);
+
+    const fallbackUser = getNativeAuthFallbackUser();
+    if (user) {
+      if (!fallbackUser?.uid || user.uid !== fallbackUser.uid) {
+        webAuthUserObserved = false;
+        fallbackEmitted = false;
+        bridgedUidEmittedBeforeObserver = null;
+        void firebaseSignOut(auth).finally(bootstrapNativeWebAuth);
+        return;
+      }
+      webAuthUserObserved = true;
+      fallbackEmitted = false;
+      clearBridgeRetry();
+      bridgeRetryAttempt = 0;
+      // signInWithCustomToken may resolve just before Firebase dispatches its
+      // observer. The bootstrap path already exposed this exact principal, so
+      // suppress the one redundant callback that would otherwise hydrate and
+      // load Home twice on native startup.
+      if (bridgedUidEmittedBeforeObserver === user.uid) {
+        bridgedUidEmittedBeforeObserver = null;
+        return;
+      }
+      emit(user);
+      return;
+    }
+
+    webAuthUserObserved = false;
+    fallbackEmitted = false;
+    bridgedUidEmittedBeforeObserver = null;
+    bootstrapNativeWebAuth();
   });
 
   return () => {
-    if (timeoutId) {
-      window.clearTimeout(timeoutId);
+    disposed = true;
+    clearBridgeRetry();
+    if (nativeRuntime) {
+      window.removeEventListener('online', handleOnline);
     }
     unsubscribe();
   };
@@ -1075,7 +1383,17 @@ export async function signInWithEmail(email: string, password: string) {
   const { updateUserProfile } = await loadLegacyAuthDb();
 
   if (isNativeRuntime()) {
-    const user = await signInWithNativeRestSession(normalizedEmail, password);
+    if (!(Capacitor as any).isPluginAvailable?.('FirebaseAuthentication')) {
+      throw new Error('Native Firebase auth is unavailable.');
+    }
+    const nativeResult = await withTimeout(
+      FirebaseAuthentication.signInWithEmailAndPassword({
+        email: normalizedEmail,
+        password
+      }) as Promise<NativePluginSignInResult>,
+      'Firebase sign-in timed out.'
+    );
+    const user = await persistNativePluginAuthSession(nativeResult);
     updateUserProfile(user.uid, {
       email: normalizedEmail,
       lastLogin: new Date()
@@ -1099,30 +1417,54 @@ export async function signInWithEmail(email: string, password: string) {
   return credential as UserCredential;
 }
 
-export async function signUpWithEmail(email: string, password: string, activationCode: string) {
+export async function signUpWithEmail(email: string, password: string, activationCode: string, requestedVerificationNextRoute = '') {
   const normalizedEmail = requireValidAuthEmail(email);
-  const [
-    dbModule,
-    { redeemAdminInviteAcceptance },
-    { executeEmailPasswordSignup },
-    { queueCurrentUserVerificationEmail }
-  ] = await Promise.all([
-    loadLegacyAuthDb(),
-    loadLegacyAdminInvite(),
-    loadLegacySignupFlow(),
-    loadLegacyAuthEmail()
-  ]);
+  const verificationNextRoute = getSafeAuthNextRoute(requestedVerificationNextRoute);
+  const [dbModule, { redeemAdminInviteAcceptance }, { executeEmailPasswordSignup }, { queueCurrentUserVerificationEmail }] =
+    await Promise.all([loadLegacyAuthDb(), loadLegacyAdminInvite(), loadLegacySignupFlow(), loadLegacyAuthEmail()]);
 
+  const nativeSignup = isNativeRuntime();
+  const signupAuth = nativeSignup
+    ? {
+        get currentUser() {
+          const user = getNativeAuthFallbackUser();
+          return user
+            ? {
+                ...user,
+                reload: () => FirebaseAuthentication.reload()
+              }
+            : null;
+        }
+      }
+    : auth;
   return executeEmailPasswordSignup({
     email: normalizedEmail,
     password,
     activationCode: normalizeCode(activationCode),
-    auth,
+    auth: signupAuth,
     dependencies: {
-      validateAccessCode: dbModule.validateAccessCode,
-      createUserWithEmailAndPassword,
+      validateAccessCode: async (code: string) => {
+        const nativeAuthToken = nativeSignup ? await getNativeAuthIdToken().catch(() => null) : null;
+        return dbModule.validateAccessCode(code, nativeAuthToken ? { nativeAuthToken } : undefined);
+      },
+      createUserWithEmailAndPassword: nativeSignup
+        ? async (_auth: unknown, signupEmail: string, signupPassword: string) => {
+            if (!(Capacitor as any).isPluginAvailable?.('FirebaseAuthentication')) {
+              throw new Error('Native Firebase auth is unavailable.');
+            }
+            const nativeResult = (await FirebaseAuthentication.createUserWithEmailAndPassword({
+              email: signupEmail,
+              password: signupPassword
+            })) as NativePluginSignInResult;
+            return {
+              user: await persistNativePluginAuthSession(nativeResult),
+              nativeRest: true
+            };
+          }
+        : createUserWithEmailAndPassword,
       redeemParentInvite: dbModule.redeemParentInvite,
-      redeemFriendInvite: dbModule.redeemFriendInvite,
+      redeemFriendInvite: (userId: string, code: string, email?: string | null) =>
+        redeemFriendInviteForCurrentSession(dbModule, userId, code, email),
       redeemHouseholdInvite: dbModule.redeemHouseholdInvite,
       redeemCoParentInvite: dbModule.redeemCoParentInvite,
       rollbackParentInviteRedemption: dbModule.rollbackParentInviteRedemption,
@@ -1131,8 +1473,27 @@ export async function signUpWithEmail(email: string, password: string, activatio
       markAccessCodeAsUsed: dbModule.markAccessCodeAsUsed,
       getTeam: dbModule.getTeam,
       getUserProfile: dbModule.getUserProfile,
-      sendVerificationEmail: queueCurrentUserVerificationEmail,
-      signOut: firebaseSignOut
+      sendVerificationEmail: nativeSignup
+        ? async () => {
+            const idToken = await getNativeAuthIdToken();
+            if (!idToken) {
+              throw new Error('Native Firebase auth did not return an ID token.');
+            }
+            if (verificationNextRoute) {
+              await queueCurrentUserVerificationEmail(idToken, verificationNextRoute);
+            } else {
+              await queueCurrentUserVerificationEmail(idToken);
+            }
+          }
+        : async () =>
+            verificationNextRoute ? queueCurrentUserVerificationEmail('', verificationNextRoute) : queueCurrentUserVerificationEmail(),
+      signOut: nativeSignup
+        ? async () => {
+            clearNativeAuthSession();
+            await clearFirebaseAuthStorageSession();
+            await FirebaseAuthentication.signOut();
+          }
+        : firebaseSignOut
     }
   }) as Promise<UserCredential>;
 }
@@ -1148,14 +1509,7 @@ async function signInWithNativeGoogleCredential() {
     'Native Google sign-in timed out.',
     authTimeoutMs
   );
-  const idToken = result?.credential?.idToken;
-  const accessToken = result?.credential?.accessToken;
-  if (!idToken) {
-    throw new Error('Google sign-in did not return an ID token.');
-  }
-
-  logger.info('Native Google: exchanging token with Firebase Auth REST.');
-  const user = await signInWithNativeGoogleRestSession(idToken, accessToken);
+  const user = await persistNativePluginAuthSession(result);
   return {
     user,
     nativeRest: true
@@ -1168,16 +1522,11 @@ async function signInWithNativeAppleCredential() {
   }
 
   const result = await withTimeout(
-    FirebaseAuthentication.signInWithApple({ skipNativeAuth: true } as any) as Promise<NativePluginSignInResult>,
+    FirebaseAuthentication.signInWithApple({ skipNativeAuth: false } as any) as Promise<NativePluginSignInResult>,
     'Sign in with Apple timed out.',
     authTimeoutMs
   );
-  const idToken = result?.credential?.idToken;
-  if (!idToken) {
-    throw new Error('Sign in with Apple did not return an ID token.');
-  }
-
-  const user = await signInWithNativeAppleRestSession(idToken, result?.credential?.nonce);
+  const user = await persistNativePluginAuthSession(result);
   return {
     user,
     nativeRest: true
@@ -1190,20 +1539,15 @@ export async function revokeCurrentAppleAuthorizationForDeletion() {
   }
 
   const result = await withTimeout(
-    FirebaseAuthentication.signInWithApple({ skipNativeAuth: true } as any) as Promise<NativePluginSignInResult>,
+    FirebaseAuthentication.signInWithApple({ skipNativeAuth: false } as any) as Promise<NativePluginSignInResult>,
     'Sign in with Apple timed out.',
     authTimeoutMs
   );
   const authorizationCode = String(result?.credential?.authorizationCode || '').trim();
-  const idToken = String(result?.credential?.idToken || '').trim();
   if (!authorizationCode) {
     throw new Error('Sign in with Apple did not return an authorization code for account deletion.');
   }
-  if (!idToken) {
-    throw new Error('Sign in with Apple did not return an ID token for account deletion.');
-  }
-
-  await signInWithNativeAppleRestSession(idToken, result?.credential?.nonce);
+  await persistNativePluginAuthSession(result);
   await withTimeout(
     FirebaseAuthentication.revokeAccessToken({ token: authorizationCode }),
     'Apple authorization revocation timed out.',
@@ -1251,10 +1595,7 @@ async function processGoogleResult(
     throw new Error('Activation code is required for new Google accounts.');
   }
 
-  const validation = await dbModule.validateAccessCode(
-    code,
-    await getNativeAccessCodeValidationOptions(result)
-  );
+  const validation = await dbModule.validateAccessCode(code, await getNativeAccessCodeValidationOptions(result));
   if (!validation.valid) {
     window.sessionStorage.removeItem(pendingActivationCodeKey);
     await cleanupFailedNewUser(result.user, 'invalid activation code');
@@ -1269,7 +1610,7 @@ async function processGoogleResult(
     } else if (validation.type === 'coparent_invite') {
       await dbModule.redeemCoParentInvite(result.user.uid, validation.data?.code || code, result.user.email);
     } else if (validation.type === 'friend_invite') {
-      await dbModule.redeemFriendInvite(result.user.uid, validation.data?.code || code, result.user.email);
+      await redeemFriendInviteForCurrentSession(dbModule, result.user.uid, validation.data?.code || code, result.user.email);
     } else if (validation.type === 'admin_invite') {
       const { redeemAdminInviteAcceptance } = await loadLegacyAdminInvite();
       await redeemAdminInviteAcceptance({
@@ -1396,13 +1737,18 @@ export async function sendResetEmail(email: string) {
   await queuePasswordResetEmail(requireValidAuthEmail(email));
 }
 
-export async function resendVerificationEmail() {
+export async function resendVerificationEmail(requestedVerificationNextRoute = '') {
   const { queueCurrentUserVerificationEmail } = await loadLegacyAuthEmail();
+  const verificationNextRoute = getSafeAuthNextRoute(requestedVerificationNextRoute);
   const user = getCurrentFirebaseUser();
   if (!user) {
     const idToken = await getNativeAuthIdToken();
     if (idToken) {
-      await queueCurrentUserVerificationEmail(idToken);
+      if (verificationNextRoute) {
+        await queueCurrentUserVerificationEmail(idToken, verificationNextRoute);
+      } else {
+        await queueCurrentUserVerificationEmail(idToken);
+      }
       return;
     }
     throw new Error('No user is currently signed in.');
@@ -1411,7 +1757,11 @@ export async function resendVerificationEmail() {
   if (typeof user.reload === 'function') {
     await user.reload();
   }
-  await queueCurrentUserVerificationEmail();
+  if (verificationNextRoute) {
+    await queueCurrentUserVerificationEmail('', verificationNextRoute);
+  } else {
+    await queueCurrentUserVerificationEmail();
+  }
 }
 
 async function refreshNativeFallbackVerification() {
@@ -1422,16 +1772,15 @@ async function refreshNativeFallbackVerification() {
   }
 
   const idToken = await fallbackUser.getIdToken(true);
-  const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
+  const lookupPayload = (await callFirebaseAuthRest('accounts:lookup', {
     idToken
-  }) as { users?: NativeRestLookupUser[] };
+  })) as { users?: NativeRestLookupUser[] };
   const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
   const verified = lookupUser.emailVerified === true;
   const refreshedSession = readNativeAuthSession() || session;
 
   writeNativeAuthSession({
     ...refreshedSession,
-    idToken,
     email: lookupUser.email || refreshedSession.email,
     displayName: lookupUser.displayName || refreshedSession.displayName || null,
     photoUrl: lookupUser.photoUrl || refreshedSession.photoUrl || null,
@@ -1469,6 +1818,9 @@ export async function confirmReset(oobCode: string, newPassword: string) {
 }
 
 export async function applyEmailActionCode(oobCode: string) {
+  if (isNativeRuntime() && (Capacitor as any).isPluginAvailable?.('FirebaseAuthentication')) {
+    return FirebaseAuthentication.applyActionCode({ oobCode });
+  }
   return applyActionCode(auth, oobCode);
 }
 
@@ -1478,11 +1830,19 @@ export function isEmailLink(url: string) {
 
 export async function completeEmailLink(email: string, url: string) {
   const normalizedEmail = requireValidAuthEmail(email);
-  const result = await signInWithEmailLink(
-    auth,
-    normalizedEmail,
-    buildFirebaseSdkActionHref(url)
-  ) as UserCredential;
+  const emailLink = buildFirebaseSdkActionHref(url);
+  const result =
+    isNativeRuntime() && (Capacitor as any).isPluginAvailable?.('FirebaseAuthentication')
+      ? ({
+          user: await persistNativePluginAuthSession(
+            (await FirebaseAuthentication.signInWithEmailLink({
+              email: normalizedEmail,
+              emailLink
+            })) as NativePluginSignInResult
+          ),
+          nativeRest: true
+        } as UserCredential)
+      : ((await signInWithEmailLink(auth, normalizedEmail, emailLink)) as UserCredential);
   const { updateUserProfile } = await loadLegacyAuthDb();
   await updateUserProfile(result.user.uid, {
     email: normalizedEmail,
@@ -1505,21 +1865,13 @@ export async function setCurrentUserPassword(newPassword: string) {
   }
 
   const fallbackUser = getNativeAuthFallbackUser();
-  const idToken = await getNativeAuthIdToken();
-  if (!fallbackUser || !idToken) {
+  if (!fallbackUser) {
     throw new Error('No user is currently signed in.');
   }
-
-  const payload = await callFirebaseAuthRest('accounts:update', {
-    idToken,
-    password: newPassword,
-    returnSecureToken: true
-  }) as NativeRestSignInPayload;
-  await persistNativeRestAuthSession({
-    ...payload,
-    localId: payload.localId || fallbackUser.uid,
-    email: payload.email || fallbackUser.email || ''
-  });
+  if (!(Capacitor as any).isPluginAvailable?.('FirebaseAuthentication')) {
+    throw new Error('Native Firebase auth is unavailable.');
+  }
+  await FirebaseAuthentication.updatePassword({ newPassword });
   await updateUserProfile(fallbackUser.uid, {
     hasPassword: true,
     passwordSetAt: new Date()
@@ -1532,19 +1884,24 @@ export async function redeemInviteForUser(userId: string, code: string, authEmai
     throw new Error('Please enter a valid 8-character invite code.');
   }
 
-  const [
-    dbModule,
-    { redeemAdminInviteAtomically },
-    { createInviteProcessor }
-  ] = await Promise.all([
+  const [dbModule, { redeemAdminInviteAtomically }, { createInviteProcessor }] = await Promise.all([
     loadLegacyAuthDb(),
     loadLegacyAdminInvite(),
     loadLegacyInviteFlow()
   ]);
   const processInvite = createInviteProcessor({
-    validateAccessCode: dbModule.validateAccessCode,
+    validateAccessCode: async (inviteCode: string) => {
+      const nativeAuthToken = isNativeRuntime()
+        ? await getNativeAuthIdToken().catch((error: unknown) => {
+            logger.warn('Unable to attach native auth token for access code validation.', { error });
+            return null;
+          })
+        : null;
+      return dbModule.validateAccessCode(inviteCode, nativeAuthToken ? { nativeAuthToken } : undefined);
+    },
     redeemParentInvite: dbModule.redeemParentInvite,
-    redeemFriendInvite: dbModule.redeemFriendInvite,
+    redeemFriendInvite: (inviteUserId: string, inviteCode: string, email?: string | null) =>
+      redeemFriendInviteForCurrentSession(dbModule, inviteUserId, inviteCode, email),
     redeemHouseholdInvite: dbModule.redeemHouseholdInvite,
     redeemCoParentInvite: dbModule.redeemCoParentInvite,
     redeemAdminInviteAtomically,

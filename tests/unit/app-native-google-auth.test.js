@@ -21,13 +21,18 @@ const nativeAuthMocks = vi.hoisted(() => ({
     deleteUser: vi.fn()
 }));
 
+const nativeCallableMocks = vi.hoisted(() => ({
+    callNativeFirebaseFunctionWithAuth: vi.fn()
+}));
+
 const firebaseMocks = vi.hoisted(() => ({
     auth: {
         currentUser: null,
         app: {
             name: '[DEFAULT]',
             options: {
-                apiKey: 'test-api-key'
+                apiKey: 'test-api-key',
+                projectId: 'allplays-test'
             }
         }
     },
@@ -42,6 +47,7 @@ const firebaseMocks = vi.hoisted(() => ({
     sendPasswordResetEmail: vi.fn(),
     signInWithCredential: vi.fn(),
     signInWithEmailAndPassword: vi.fn(),
+    signInWithCustomToken: vi.fn(),
     signInWithEmailLink: vi.fn(),
     signInWithPopup: vi.fn(),
     signInWithRedirect: vi.fn(),
@@ -58,6 +64,7 @@ const dbMocks = vi.hoisted(() => ({
     markAccessCodeAsUsed: vi.fn(),
     redeemAdminInviteAtomically: vi.fn(),
     redeemCoParentInvite: vi.fn(),
+    redeemFriendInvite: vi.fn(),
     redeemHouseholdInvite: vi.fn(),
     redeemParentInvite: vi.fn(),
     rollbackParentInviteRedemption: vi.fn(),
@@ -82,7 +89,10 @@ vi.mock('../../apps/app/node_modules/@capacitor-firebase/authentication/dist/plu
     FirebaseAuthentication: nativeAuthMocks
 }));
 
-vi.mock('../../js/firebase.js?v=22', () => firebaseMocks);
+vi.mock('../../apps/app/src/lib/firebaseAuthRuntime.ts', () => firebaseMocks);
+vi.mock('../../apps/app/src/lib/nativeCallable.ts', () => nativeCallableMocks);
+
+vi.mock('../../js/firebase.js?v=33', () => firebaseMocks);
 vi.mock('../../js/db.js', () => dbMocks);
 vi.mock('../../js/admin-invite.js', () => ({
     redeemAdminInviteAcceptance: vi.fn()
@@ -213,11 +223,52 @@ function mockFirebaseAuthRest({ isNewUser = false } = {}) {
             };
         }
 
+        if (endpoint.endsWith('.cloudfunctions.net/redeemFriendInvite')) {
+            return {
+                ok: true,
+                json: async () => ({
+                    result: {
+                        success: true,
+                        friendshipId: 'invite-sender__native-google-user',
+                        inviterName: 'Invite Sender'
+                    }
+                })
+            };
+        }
+
         throw new Error(`Unexpected Firebase Auth REST request: ${endpoint}`);
     });
 
     vi.stubGlobal('fetch', fetchMock);
     return fetchMock;
+}
+
+function mockNativeGoogle({ isNewUser = false } = {}) {
+    const user = {
+        uid: 'native-google-user',
+        email: 'parent@example.com',
+        emailVerified: true,
+        displayName: 'Parent User',
+        photoUrl: 'https://example.com/photo.png',
+        providerId: 'firebase',
+        providerData: [{
+            providerId: 'google.com',
+            uid: 'google-user',
+            email: 'parent@example.com',
+            displayName: 'Parent User',
+            photoUrl: 'https://example.com/photo.png'
+        }],
+        metadata: {
+            creationTime: isNewUser ? Date.now() : Date.now() - 86_400_000,
+            lastSignInTime: Date.now()
+        }
+    };
+    nativeAuthMocks.signInWithGoogle.mockResolvedValue({
+        user,
+        additionalUserInfo: { isNewUser }
+    });
+    nativeAuthMocks.getCurrentUser.mockResolvedValue({ user });
+    nativeAuthMocks.getIdToken.mockResolvedValue({ token: 'firebase-id-token' });
 }
 
 async function loadAuthService() {
@@ -231,13 +282,24 @@ beforeEach(() => {
     capacitorState.platform = 'android';
     capacitorState.plugins = new Set(['FirebaseAuthentication']);
     firebaseMocks.auth.currentUser = null;
-    dbMocks.updateUserProfile.mockResolvedValue(undefined);
-    nativeAuthMocks.signInWithGoogle.mockResolvedValue({
-        credential: {
-            idToken: 'google-id-token',
-            accessToken: 'google-access-token'
-        }
+    firebaseMocks.signInWithCustomToken.mockImplementation(async () => {
+        const user = {
+            uid: 'native-google-user',
+            email: 'parent@example.com',
+            displayName: 'Parent User',
+            emailVerified: true
+        };
+        firebaseMocks.auth.currentUser = user;
+        return { user };
     });
+    firebaseMocks.signOut.mockImplementation(async () => {
+        firebaseMocks.auth.currentUser = null;
+    });
+    nativeCallableMocks.callNativeFirebaseFunctionWithAuth.mockResolvedValue({
+        customToken: 'native-web-custom-token'
+    });
+    dbMocks.updateUserProfile.mockResolvedValue(undefined);
+    mockNativeGoogle();
     Object.defineProperty(window, 'localStorage', {
         configurable: true,
         value: createMemoryStorage()
@@ -257,16 +319,26 @@ afterEach(() => {
 });
 
 describe('React app native Google auth', () => {
-    it('uses the previous Google account picker path on Android and stores a REST-backed app session', async () => {
+    it('uses the previous Google account picker path on Android and stores metadata only', async () => {
         const { signInWithGoogleAccount } = await loadAuthService();
 
         const result = await signInWithGoogleAccount();
 
         expect(nativeAuthMocks.signInWithGoogle).toHaveBeenCalledWith({
-            skipNativeAuth: true,
+            skipNativeAuth: false,
             useCredentialManager: false
         });
         expect(firebaseMocks.signInWithCredential).not.toHaveBeenCalled();
+        expect(nativeCallableMocks.callNativeFirebaseFunctionWithAuth).toHaveBeenCalledWith(
+            'createNativeWebAuthToken',
+            {},
+            expect.objectContaining({ idToken: 'firebase-id-token' }),
+            expect.any(Object)
+        );
+        expect(firebaseMocks.signInWithCustomToken).toHaveBeenCalledWith(
+            firebaseMocks.auth,
+            'native-web-custom-token'
+        );
         expect(result?.nativeRest).toBe(true);
         expect(result?.user).toMatchObject({
             uid: 'native-google-user',
@@ -284,10 +356,10 @@ describe('React app native Google auth', () => {
         expect(savedSession).toMatchObject({
             uid: 'native-google-user',
             email: 'parent@example.com',
-            idToken: 'firebase-id-token',
-            refreshToken: 'firebase-refresh-token',
-            provider: 'rest'
+            provider: 'native-plugin'
         });
+        expect(savedSession).not.toHaveProperty('idToken');
+        expect(savedSession).not.toHaveProperty('refreshToken');
     });
 
     it('keeps iOS on native Google sign-in without forcing Android Credential Manager options', async () => {
@@ -297,13 +369,13 @@ describe('React app native Google auth', () => {
         await signInWithGoogleAccount();
 
         expect(nativeAuthMocks.signInWithGoogle).toHaveBeenCalledWith({
-            skipNativeAuth: true
+            skipNativeAuth: false
         });
         expect(firebaseMocks.signInWithCredential).not.toHaveBeenCalled();
     });
 
-    it('passes the native REST ID token when validating a new Google account activation code', async () => {
-        mockFirebaseAuthRest({ isNewUser: true });
+    it('bridges the native account before validating a new Google account activation code', async () => {
+        mockNativeGoogle({ isNewUser: true });
         dbMocks.validateAccessCode.mockResolvedValue({
             valid: true,
             codeId: 'native-code',
@@ -316,14 +388,14 @@ describe('React app native Google auth', () => {
 
         await signInWithGoogleAccount('native123');
 
-        expect(dbMocks.validateAccessCode).toHaveBeenCalledWith('NATIVE123', {
-            nativeAuthToken: 'firebase-id-token'
-        });
+        expect(dbMocks.validateAccessCode).toHaveBeenCalledWith('NATIVE123', undefined);
+        expect(nativeCallableMocks.callNativeFirebaseFunctionWithAuth.mock.invocationCallOrder[0])
+            .toBeLessThan(dbMocks.validateAccessCode.mock.invocationCallOrder[0]);
         expect(dbMocks.markAccessCodeAsUsed).toHaveBeenCalledWith('native-code', 'native-google-user');
     });
 
     it('redeems co-parent invites during React app Google signup instead of generic code consumption', async () => {
-        mockFirebaseAuthRest({ isNewUser: true });
+        mockNativeGoogle({ isNewUser: true });
         dbMocks.validateAccessCode.mockResolvedValue({
             valid: true,
             codeId: 'coparent-code',
@@ -341,6 +413,36 @@ describe('React app native Google auth', () => {
             'COPO1234',
             'parent@example.com'
         );
+        expect(dbMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
+    });
+
+    it('redeems friend invites through the bearer-authenticated callable for native sessions', async () => {
+        mockNativeGoogle({ isNewUser: true });
+        dbMocks.validateAccessCode.mockResolvedValue({
+            valid: true,
+            codeId: 'friend-code',
+            type: 'friend_invite',
+            data: { code: 'FRIEND12' }
+        });
+        dbMocks.updateUserProfile.mockResolvedValue(undefined);
+        const { signInWithGoogleAccount } = await loadAuthService();
+
+        await signInWithGoogleAccount('friend12');
+
+        const fetchMock = vi.mocked(fetch);
+        const callableRequest = fetchMock.mock.calls.find(([url]) =>
+            String(url).endsWith('.cloudfunctions.net/redeemFriendInvite')
+        );
+        expect(callableRequest).toBeTruthy();
+        expect(callableRequest?.[1]).toMatchObject({
+            method: 'POST',
+            headers: expect.objectContaining({
+                Authorization: 'Bearer firebase-id-token',
+                'Content-Type': 'application/json'
+            }),
+            body: JSON.stringify({ data: { code: 'FRIEND12' } })
+        });
+        expect(dbMocks.redeemFriendInvite).not.toHaveBeenCalled();
         expect(dbMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
     });
 });

@@ -14,7 +14,7 @@ describe('legacy account action pages', () => {
         const html = readRepoFile('reset-password.html');
 
         expect(html).toContain('<meta name="robots" content="noindex,nofollow">');
-        expect(html).toContain("import { auth } from './js/firebase.js?v=22';");
+        expect(html).toContain("import { auth } from './js/firebase.js?v=33';");
         expect(html).toContain('verifyPasswordResetCode');
         expect(html).toContain('confirmPasswordReset');
         expect(html).toContain('applyActionCode');
@@ -32,8 +32,10 @@ describe('legacy account action pages', () => {
         const html = readRepoFile('verify-pending.html');
 
         expect(html).toContain('<meta name="robots" content="noindex,nofollow">');
-        expect(html).toContain("checkAuth((user) => {");
+        expect(html).toContain("checkAuth(async (user) => {");
         expect(html).toContain('skipEmailVerificationCheck: true');
+        expect(html).toContain('await refreshVerifiedUserToken(user);');
+        expect(html).toContain('continueBtn.href = fallbackRedirectUrl;');
         expect(html).toContain('id="continue-btn"');
         expect(html).toContain('aria-disabled="true"');
         expect(html).toContain('id="auto-redirect-msg"');

@@ -107,6 +107,201 @@ describe('firebase runtime config', () => {
         expect(globalThis.fetch).toHaveBeenCalledTimes(2);
     });
 
+    it('allows production Firebase only when Firebase Hosting supplies it on localhost:8000', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'http://localhost:8000',
+            protocol: 'http:',
+            hostname: 'localhost',
+            port: '8000',
+            pathname: '/live-game-overlay.html'
+        };
+        globalThis.fetch = vi.fn(async (url) => {
+            expect(url).toBe('http://localhost:8000/__/firebase/init.json');
+            return {
+                ok: true,
+                headers: { get: () => 'game-flow-c6311' },
+                json: async () => ({
+                    apiKey: 'production-key',
+                    authDomain: 'game-flow-c6311.firebaseapp.com',
+                    projectId: 'game-flow-c6311',
+                    messagingSenderId: '982493478258',
+                    appId: 'production-app'
+                })
+            };
+        });
+
+        const config = await resolvePrimaryFirebaseConfig();
+
+        expect(config.projectId).toBe('game-flow-c6311');
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
+    });
+
+    it('allows the production Hosting emulator on the equivalent 127.0.0.1:8000 loopback origin', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'http://127.0.0.1:8000',
+            protocol: 'http:',
+            hostname: '127.0.0.1',
+            port: '8000',
+            pathname: '/live-game-overlay.html'
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            headers: { get: vi.fn(() => 'game-flow-c6311') },
+            json: async () => ({
+                apiKey: 'production-key',
+                authDomain: 'game-flow-c6311.firebaseapp.com',
+                projectId: 'game-flow-c6311',
+                messagingSenderId: '982493478258',
+                appId: 'production-app'
+            })
+        });
+
+        const config = await resolvePrimaryFirebaseConfig();
+
+        expect(config.projectId).toBe('game-flow-c6311');
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+            'http://127.0.0.1:8000/__/firebase/init.json',
+            { cache: 'no-store' }
+        );
+    });
+
+    it('keeps the safe demo Firebase project when Hosting supplies it on localhost:8000', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'http://localhost:8000',
+            protocol: 'http:',
+            hostname: 'localhost',
+            port: '8000',
+            pathname: '/live-game-overlay.html'
+        };
+        globalThis.fetch = vi.fn(async (url) => {
+            expect(url).toBe('http://localhost:8000/__/firebase/init.json');
+            return {
+                ok: true,
+                headers: { get: () => 'demo-allplays' },
+                json: async () => ({
+                    apiKey: 'demo-key',
+                    authDomain: 'demo-allplays.firebaseapp.com',
+                    projectId: 'demo-allplays',
+                    messagingSenderId: '123456789',
+                    appId: 'demo-app'
+                })
+            };
+        });
+
+        const config = await resolvePrimaryFirebaseConfig();
+
+        expect(config.projectId).toBe('demo-allplays');
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
+    });
+
+    it('fails closed when the local production Hosting emulator returns an empty init response', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'http://localhost:8000',
+            protocol: 'http:',
+            hostname: 'localhost',
+            port: '8000',
+            pathname: '/live-game-overlay.html'
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            headers: {
+                get: vi.fn((name) => name === 'X-AllPlays-Local-Firebase-Project' ? 'game-flow-c6311' : null)
+            },
+            json: vi.fn().mockRejectedValue(new SyntaxError('Unexpected end of JSON input'))
+        });
+
+        await expect(resolvePrimaryFirebaseConfig()).rejects.toThrow(
+            'Firebase Hosting config is unavailable on localhost:8000.'
+        );
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
+    });
+
+    it('fails closed when local Hosting does not declare its expected project', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'http://localhost:8000',
+            protocol: 'http:',
+            hostname: 'localhost',
+            port: '8000',
+            pathname: '/live-game-overlay.html'
+        };
+        const json = vi.fn().mockResolvedValue({
+            apiKey: 'production-key',
+            authDomain: 'game-flow-c6311.firebaseapp.com',
+            projectId: 'game-flow-c6311',
+            messagingSenderId: '982493478258',
+            appId: 'production-app'
+        });
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            headers: { get: vi.fn(() => null) },
+            json
+        });
+
+        await expect(resolvePrimaryFirebaseConfig()).rejects.toThrow(
+            'Firebase Hosting config is unavailable on localhost:8000.'
+        );
+        expect(json).not.toHaveBeenCalled();
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
+    });
+
+    it('fails closed when local Hosting declares a different project than init.json', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'http://localhost:8000',
+            protocol: 'http:',
+            hostname: 'localhost',
+            port: '8000',
+            pathname: '/live-game-overlay.html'
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            headers: { get: vi.fn(() => 'demo-allplays') },
+            json: async () => ({
+                apiKey: 'production-key',
+                authDomain: 'game-flow-c6311.firebaseapp.com',
+                projectId: 'game-flow-c6311',
+                messagingSenderId: '982493478258',
+                appId: 'production-app'
+            })
+        });
+
+        await expect(resolvePrimaryFirebaseConfig()).rejects.toThrow(
+            'Firebase Hosting config is unavailable on localhost:8000.'
+        );
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
+    });
+
+    it('does not fall back to checked-in production config when Firebase Hosting is missing on localhost:8000', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'http://localhost:8000',
+            protocol: 'http:',
+            hostname: 'localhost',
+            port: '8000',
+            pathname: '/live-game-overlay.html'
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 404 });
+
+        await expect(resolvePrimaryFirebaseConfig()).rejects.toThrow(
+            'Firebase Hosting config is unavailable on localhost:8000.'
+        );
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+            'http://localhost:8000/__/firebase/init.json',
+            { cache: 'no-store' }
+        );
+    });
+
     it('uses an explicit non-production runtime fallback for isolated local preview smoke', async () => {
         resetGlobals();
         globalThis.window.location = {
@@ -724,7 +919,7 @@ describe('firebase runtime config', () => {
     it('keeps every legacy browser importer on the explicit runtime-config cache contract', () => {
         for (const importer of ['firebase.js', 'firebase-images.js', 'firebase-app-check.js']) {
             const source = readFileSync(new URL(`../../js/${importer}`, import.meta.url), 'utf8');
-            expect(source).toContain('firebase-runtime-config.js?v=16');
+            expect(source).toContain('firebase-runtime-config.js?v=23');
         }
     });
 

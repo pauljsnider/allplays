@@ -36,6 +36,7 @@ const dbMocks = vi.hoisted(() => ({
 
 vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => false } }));
 vi.mock('../../js/db.js', () => dbMocks);
+vi.mock('../../js/firebase.js', () => ({ functions: {}, httpsCallable: vi.fn() }));
 vi.mock('../../js/vendor/firebase-app.js', () => ({ getApp: vi.fn() }));
 vi.mock('../../js/vendor/firebase-ai.js', () => ({ getAI: vi.fn(), getGenerativeModel: vi.fn(), GoogleAIBackend: {} }));
 vi.mock('../../js/firebase-runtime-config.js', () => ({ resolveImageFirebaseConfig: vi.fn() }));
@@ -54,7 +55,8 @@ describe('team email template helpers', () => {
     });
 
     it('loads normalized template records from the legacy store helpers', async () => {
-        dbMocks.getTeamEmailTemplates.mockResolvedValue([
+        dbMocks.getTeamEmailTemplates.mockResolvedValue({
+          items: [
             {
                 id: 'template-1',
                 name: ' Weekly update ',
@@ -63,9 +65,12 @@ describe('team email template helpers', () => {
                 authorName: 'Coach',
                 updatedAt: { seconds: 1 }
             }
-        ]);
+          ],
+          nextCursor: null
+        });
 
-        await expect(loadTeamEmailTemplates('team-1')).resolves.toEqual([
+        await expect(loadTeamEmailTemplates('team-1')).resolves.toEqual({
+          items: [
             {
                 id: 'template-1',
                 name: 'Weekly update',
@@ -77,8 +82,10 @@ describe('team email template helpers', () => {
                 createdAt: undefined,
                 updatedAt: { seconds: 1 }
             }
-        ]);
-        expect(dbMocks.getTeamEmailTemplates).toHaveBeenCalledWith('team-1');
+          ],
+          nextCursor: null
+        });
+        expect(dbMocks.getTeamEmailTemplates).toHaveBeenCalledWith('team-1', { pageSize: 25, cursor: null });
     });
 
     it('validates and saves trimmed template fields through the legacy helper', async () => {

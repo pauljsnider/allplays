@@ -65,7 +65,8 @@ describe('admin telemetry event store dashboard', () => {
         expect(functionsJs).toContain('getOrCreateTelemetryCounter(routes, event.appRoute || event.pagePath)');
         expect(functionsJs).toContain('lastRoute: lastEvent.appRoute || lastEvent.pagePath');
         expect(rules).toContain('match /telemetryRoutesDaily/{routeId}');
-        expect(rules).toContain('allow read: if isGlobalAdmin();');
+        expect(rules).toContain('allow get: if isGlobalAdmin();');
+        expect(rules).toContain('allow list: if isBoundedGlobalAdminListQuery(16000);');
     });
 
     it('recombines sharded aggregate metrics before rendering the dashboard', () => {

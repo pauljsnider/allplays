@@ -12,6 +12,24 @@ let server;
 let serverOrigin;
 
 const moduleSources = {
+    '/js/calendar-game-materialization.js': `
+const state = () => window.__editScheduleTestState || {};
+
+export async function materializeCalendarGame({ teamId, calendarEventId, startsAt, gameData }) {
+    const testState = state();
+    testState.materializeCalendarGameCalls = testState.materializeCalendarGameCalls || [];
+    testState.materializeCalendarGameCalls.push({ teamId, calendarEventId, startsAt, gameData });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const key = teamId + ':' + calendarEventId + ':' + new Date(startsAt).toISOString();
+    testState.materializedCalendarGames = testState.materializedCalendarGames || {};
+    testState.createdCalendarGameIds = testState.createdCalendarGameIds || [];
+    if (!testState.materializedCalendarGames[key]) {
+        testState.materializedCalendarGames[key] = 'calendar-created';
+        testState.createdCalendarGameIds.push('calendar-created');
+    }
+    return testState.materializedCalendarGames[key];
+}
+`,
     '/js/db.js': `
 const state = () => window.__editScheduleTestState || {};
 
@@ -53,7 +71,7 @@ export async function addPractice(teamId, practiceData) {
 }
 export async function updateEvent() {}
 export async function deleteEvent() {}
-export async function getConfigs() { return []; }
+export async function getConfigs() { return state().configs || []; }
 export async function addCalendarToTeam() {}
 export async function removeCalendarFromTeam() {}
 export async function getTrackedCalendarEventUids() { return state().trackedUids || []; }
@@ -521,6 +539,46 @@ test.describe('edit schedule imported calendar rows', () => {
         expect(params.get('eventTitle')).toBe('Evening Practice');
     });
 
+    test('coalesces double taps and reuses the materialized game after cancelling the chooser', async ({ page }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => pageErrors.push(error.message));
+        await page.addInitScript((state) => {
+            window.__editScheduleTestState = state;
+            window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
+        }, buildState({
+            calendarEventsByUrl: {
+                'https://calendar.test/team.ics': [
+                    {
+                        uid: 'calendar-game-uid-1',
+                        dtstart: '2030-04-05T18:00:00.000Z',
+                        dtend: '2030-04-05T20:00:00.000Z',
+                        summary: 'Wildcats vs Tigers',
+                        location: 'Field 1'
+                    }
+                ]
+            }
+        }));
+
+        await page.goto(`${serverOrigin}/edit-schedule.html#teamId=team-1`, { waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(() => typeof window.trackCalendarEvent === 'function');
+        expect(pageErrors).toEqual([]);
+
+        const trackButton = page.locator('#schedule-list').getByRole('button', { name: 'Track' });
+        await trackButton.evaluate((button) => {
+            button.click();
+            button.click();
+        });
+        await expect(page.locator('#basketball-tracker-modal')).toBeVisible();
+        await page.waitForFunction(() => window.__editScheduleTestState?.materializeCalendarGameCalls?.length === 1);
+        expect(await page.evaluate(() => window.__editScheduleTestState.createdCalendarGameIds)).toEqual(['calendar-created']);
+
+        await page.locator('#basketball-tracker-cancel').click();
+        await trackButton.click();
+        await page.waitForFunction(() => window.__editScheduleTestState?.materializeCalendarGameCalls?.length === 2);
+        await expect(page.locator('#basketball-tracker-modal')).toBeVisible();
+        expect(await page.evaluate(() => window.__editScheduleTestState.createdCalendarGameIds)).toEqual(['calendar-created']);
+    });
+
     test('suppresses tracked, conflicting, and cancelled imports from upcoming schedule filters', async ({ page }) => {
         await page.addInitScript((state) => {
             window.__editScheduleTestState = state;
@@ -734,5 +792,100 @@ test.describe('edit schedule season record fields', () => {
         expect(addCall.gameData.seasonLabel).toBe('2030');
         expect(addCall.gameData.competitionType).toBe('league');
         expect(addCall.gameData.countsTowardSeasonRecord).toBe(true);
+    });
+});
+
+test.describe('edit schedule Diamond pinned fields', () => {
+    test.beforeEach(async ({ page }) => {
+        await registerRoutes(page);
+    });
+
+    test('locks Diamond fields after auth and reload while omitting them from unrelated updates', async ({ page }) => {
+        await page.addInitScript((state) => {
+            window.__editScheduleTestState = state;
+            window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
+        }, buildState({
+            configs: [
+                { id: 'cfg-diamond', name: 'Diamond Baseball' },
+                { id: 'cfg-other', name: 'Other config' }
+            ],
+            dbEvents: [{
+                id: 'game-diamond-1',
+                type: 'game',
+                date: '2030-04-08T18:00:00.000Z',
+                opponent: 'Tigers',
+                location: 'Original Field',
+                status: 'scheduled',
+                trackingEngine: 'diamond-v2',
+                isHome: true,
+                statTrackerConfigId: 'cfg-diamond'
+            }]
+        }));
+
+        await page.goto(`${serverOrigin}/edit-schedule.html#teamId=team-1`, { waitUntil: 'domcontentloaded' });
+        await page.getByRole('button', { name: 'Edit' }).click();
+
+        await expect(page.locator('#homeAwayHome')).toBeDisabled();
+        await expect(page.locator('#homeAwayAway')).toBeDisabled();
+        await expect(page.locator('#homeAwayClear')).toBeDisabled();
+        await expect(page.locator('#statConfig')).toBeDisabled();
+        await expect(page.locator('#diamond-pinned-game-fields-note')).toBeVisible();
+
+        await page.locator('#location').fill('Diamond Field');
+        await page.evaluate(() => {
+            document.getElementById('isHome').value = 'away';
+            document.getElementById('statConfig').value = 'cfg-other';
+        });
+        await page.locator('#game-notify-team').uncheck();
+        await page.locator('#submit-game-btn').click();
+
+        const updateCall = await page.waitForFunction(() => window.__editScheduleTestState?.updateGameCalls?.[0])
+            .then((handle) => handle.jsonValue());
+        expect(updateCall.gameData.location).toBe('Diamond Field');
+        expect(updateCall.gameData).not.toHaveProperty('isHome');
+        expect(updateCall.gameData).not.toHaveProperty('statTrackerConfigId');
+        expect(updateCall.gameData).not.toHaveProperty('opponentTeamId');
+
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await page.getByRole('button', { name: 'Edit' }).click();
+        await expect(page.locator('#homeAwayHome')).toBeDisabled();
+        await expect(page.locator('#statConfig')).toBeDisabled();
+    });
+
+    test('keeps classic Home/Away and tracker controls editable and persists their values', async ({ page }) => {
+        await page.addInitScript((state) => {
+            window.__editScheduleTestState = state;
+            window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
+        }, buildState({
+            configs: [
+                { id: 'cfg-classic', name: 'Classic config' },
+                { id: 'cfg-other', name: 'Other config' }
+            ],
+            dbEvents: [{
+                id: 'game-classic-1',
+                type: 'game',
+                date: '2030-04-08T18:00:00.000Z',
+                opponent: 'Tigers',
+                location: 'Original Field',
+                status: 'scheduled',
+                isHome: true,
+                statTrackerConfigId: 'cfg-classic'
+            }]
+        }));
+
+        await page.goto(`${serverOrigin}/edit-schedule.html#teamId=team-1`, { waitUntil: 'domcontentloaded' });
+        await page.getByRole('button', { name: 'Edit' }).click();
+
+        await expect(page.locator('#homeAwayAway')).toBeEnabled();
+        await expect(page.locator('#statConfig')).toBeEnabled();
+        await page.locator('#homeAwayAway').click();
+        await page.locator('#statConfig').selectOption('cfg-other');
+        await page.locator('#game-notify-team').uncheck();
+        await page.locator('#submit-game-btn').click();
+
+        const updateCall = await page.waitForFunction(() => window.__editScheduleTestState?.updateGameCalls?.[0])
+            .then((handle) => handle.jsonValue());
+        expect(updateCall.gameData.isHome).toBe(false);
+        expect(updateCall.gameData.statTrackerConfigId).toBe('cfg-other');
     });
 });

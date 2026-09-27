@@ -52,7 +52,9 @@ function hasCurrentTeamAccess({ team, user, userId, email }) {
   const adminEmails = new Set((Array.isArray(team?.adminEmails) ? team.adminEmails : [])
     .map(normalizeEmail)
     .filter(Boolean));
-  const normalizedUserEmail = normalizeEmail(email || user?.email || user?.profileEmail);
+  // Email-based authority must come from a current Auth token/server Auth
+  // record. Never restore it from mutable users/{uid} profile fields.
+  const normalizedUserEmail = normalizeEmail(email);
   return user?.isAdmin === true ||
     team?.ownerId === userId ||
     parentTeamIds.has(String(team?.id || '').trim()) ||
@@ -67,7 +69,8 @@ function canMessageAcceptedFriendForTeam({
   senderId,
   recipientId,
   teamId,
-  senderEmail
+  senderEmail,
+  recipientEmail
 }) {
   if (!friendship || !team || !senderId || !recipientId || !teamId) return false;
   if (!isAcceptedFriendshipForTeam(friendship, senderId, recipientId, teamId)) return false;
@@ -80,11 +83,12 @@ function canMessageAcceptedFriendForTeam({
   }) && hasCurrentTeamAccess({
     team: teamWithId,
     user: recipient,
-    userId: recipientId
+    userId: recipientId,
+    email: recipientEmail
   });
 }
 
-function createCheckAcceptedFriendMessageAccessHandler({ firestore, HttpsError }) {
+function createCheckAcceptedFriendMessageAccessHandler({ firestore, auth, HttpsError }) {
   return async (data, context = {}) => {
     const senderId = normalizeUserId(context.auth?.uid);
     if (!senderId) {
@@ -108,6 +112,18 @@ function createCheckAcceptedFriendMessageAccessHandler({ firestore, HttpsError }
     ]);
     if (!teamSnap.exists) return { allowed: false };
 
+    let recipientEmail = '';
+    try {
+      const recipientAuth = auth ? await auth.getUser(recipientId) : null;
+      if (recipientAuth?.disabled !== true) {
+        recipientEmail = normalizeEmail(recipientAuth?.email);
+      }
+    } catch {
+      // Missing, disabled, or temporarily unavailable Auth identity must not
+      // regain email-listed access from a stale profile document.
+      recipientEmail = '';
+    }
+
     return {
       allowed: canMessageAcceptedFriendForTeam({
         friendship,
@@ -117,7 +133,8 @@ function createCheckAcceptedFriendMessageAccessHandler({ firestore, HttpsError }
         senderId,
         recipientId,
         teamId,
-        senderEmail: context.auth?.token?.email
+        senderEmail: context.auth?.token?.email,
+        recipientEmail
       })
     };
   };

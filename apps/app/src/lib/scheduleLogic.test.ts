@@ -1,13 +1,35 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canSubmitScheduleEventRsvp,
   countOpenScheduleAssignments,
   getCalendarScheduleEntries,
   getManageableScheduleTeamOptions,
+  getScheduleEventRsvpCapability,
   getWindowedCalendarScheduleEntries,
   getWindowedPracticePacketRows,
+  isScheduleEventAvailabilityNeeded,
   type ParentScheduleEvent,
   type ParentScheduleTeamOption
 } from './scheduleLogic';
+
+describe('schedule RSVP capability', () => {
+  it.each([
+    ['tracked game', buildParentScheduleEvent(), 'editable', true],
+    ['tracked practice', buildParentScheduleEvent({ type: 'practice' }), 'editable', true],
+    ['calendar-only import', buildParentScheduleEvent({ isDbGame: false, isImported: true, sourceType: 'calendar' }), 'calendar_only', false],
+    ['non-calendar import', buildParentScheduleEvent({ isDbGame: false, isImported: true, sourceType: 'registration' }), 'untracked', false],
+    ['locked event', buildParentScheduleEvent({ availabilityLocked: true }), 'locked', false],
+    ['cancelled event', buildParentScheduleEvent({ isCancelled: true }), 'cancelled', false]
+  ])('derives %s consistently', (_label, event, capability, canSubmit) => {
+    expect(getScheduleEventRsvpCapability(event)).toBe(capability);
+    expect(canSubmitScheduleEventRsvp(event)).toBe(canSubmit);
+    expect(isScheduleEventAvailabilityNeeded(event)).toBe(canSubmit);
+  });
+
+  it('does not mark a saved tracked response as needed', () => {
+    expect(isScheduleEventAvailabilityNeeded(buildParentScheduleEvent({ myRsvp: 'going' }))).toBe(false);
+  });
+});
 
 function buildParentScheduleEvent(overrides: Partial<ParentScheduleEvent> = {}): ParentScheduleEvent {
   const assignments = Array.isArray(overrides.assignments) ? overrides.assignments : [];

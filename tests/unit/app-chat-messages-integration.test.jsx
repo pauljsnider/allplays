@@ -62,7 +62,7 @@ const uxTimingMocks = vi.hoisted(() => ({
         uxTimingMocks.interactionEnds.push(end);
         return { end };
     }),
-    startScreenMountTimer: vi.fn(() => ({ end: vi.fn() })),
+    startScreenMountTimer: vi.fn(() => ({ end: vi.fn(), cancel: vi.fn() })),
     startUxTimer: vi.fn(() => ({ end: vi.fn() }))
 }));
 
@@ -224,6 +224,12 @@ async function renderMessages(initialEntry, authState = auth) {
             ));
         });
 
+        await flush();
+        await flush();
+        await waitForMatch(
+            () => !container.querySelector('[role="status"][aria-label^="Loading team chat"]'),
+            'Messages content to finish loading'
+        );
         await flush();
         await flush();
     };
@@ -518,7 +524,7 @@ beforeEach(() => {
     });
     chatMocks.sendTeamChatMessage.mockResolvedValue({ conversationId: 'team', createdConversation: null, wantsAi: false });
     chatMocks.sendTeamEmailMessage.mockResolvedValue({ recipientCount: 12, status: 'queued' });
-    chatMocks.loadTeamEmailDrafts.mockResolvedValue([]);
+    chatMocks.loadTeamEmailDrafts.mockResolvedValue({ items: [], nextCursor: null });
     chatMocks.loadSentTeamEmails.mockResolvedValue([
         {
             id: 'email-1',
@@ -529,7 +535,7 @@ beforeEach(() => {
             status: 'queued'
         }
     ]);
-    chatMocks.loadTeamEmailTemplates.mockResolvedValue([]);
+    chatMocks.loadTeamEmailTemplates.mockResolvedValue({ items: [], nextCursor: null });
     chatMocks.saveTeamEmailDraft.mockResolvedValue(undefined);
     chatMocks.saveTeamEmailTemplate.mockResolvedValue(undefined);
     chatMocks.sendAllPlaysChatAnswer.mockResolvedValue(undefined);
@@ -587,6 +593,7 @@ describe('React app messages integration', () => {
             inboxLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
         });
         await flush();
+        await waitForText(container, 'Staff only');
 
         expect(container.textContent).toContain('Staff only');
         expect(chatMocks.subscribeToTeamChatMessages).toHaveBeenLastCalledWith(
@@ -1469,15 +1476,11 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Bring both jerseys.');
         expect(container.textContent).toContain('We can bring snacks.');
 
-        const reactionButtons = Array.from(container.querySelectorAll('button[aria-label="Add reaction"]'));
-        await act(async () => {
-            reactionButtons[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
-        });
-        await flush();
+        await click(container, 'Open message actions for Coach Jamie');
         await click(container, 'Like');
         expect(chatMocks.toggleTeamChatReaction).toHaveBeenCalledWith('team-1', 'msg-1', 'thumbs_up', 'user-1', 'team');
 
-        await click(container, 'Open actions for You');
+        await click(container, 'Open message actions for You');
         await click(container, 'Edit');
         const dialog = container.querySelector('[role="dialog"][aria-label="Edit message"]');
         const editTextarea = dialog.querySelector('textarea');
@@ -1485,7 +1488,7 @@ describe('React app messages integration', () => {
         await click(container, 'Save');
         expect(chatMocks.editTeamChatMessage).toHaveBeenCalledWith('team-1', 'msg-2', 'We can bring snacks and waters.', 'team');
 
-        await click(container, 'Open actions for You');
+        await click(container, 'Open message actions for You');
         await click(container, 'Delete');
         expect(chatMocks.deleteTeamChatMessage).toHaveBeenCalledWith('team-1', 'msg-2', 'team');
     });
@@ -2077,7 +2080,7 @@ describe('React app messages integration', () => {
         const emailDialog = await waitForTeamEmailDialog(container);
 
         expect(chatMocks.loadSentTeamEmails).toHaveBeenCalledWith('team-1', { limit: 25 });
-        expect(container.textContent).toContain('Sends one backend roster email job');
+        expect(container.textContent).toContain('Queues backend roster email delivery');
         expect(container.textContent).toContain('Audience: Coach Jamie (Staff)');
         expect(container.textContent).toContain('Practice plan');
         expect(container.textContent).not.toContain('coach@example.com');
@@ -2093,7 +2096,8 @@ describe('React app messages integration', () => {
             subject: 'Tournament update',
             body: 'Arrive at 8:30.',
             targetType: 'individuals',
-            recipientIds: ['user:coach-1']
+            recipientIds: ['user:coach-1'],
+            postToTeamChat: false
         });
         expect(subjectInput.value).toBe('');
         expect(bodyInput.value).toBe('');
@@ -2315,14 +2319,17 @@ describe('React app messages integration', () => {
             onMessages(liveMessages, { id: 'oldest-live-doc' });
             return { unsubscribe: vi.fn() };
         });
-        chatMocks.loadOlderTeamChatMessages.mockResolvedValue([
-            chatMessage({
-                id: 'older-1',
-                text: 'Older update',
-                createdAt: new Date('2026-05-20T12:00:00Z'),
-                _doc: { id: 'older-doc' }
-            })
-        ]);
+        chatMocks.loadOlderTeamChatMessages.mockResolvedValue({
+            messages: [
+                chatMessage({
+                    id: 'older-1',
+                    text: 'Older update',
+                    createdAt: new Date('2026-05-20T12:00:00Z'),
+                    _doc: { id: 'older-doc' }
+                })
+            ],
+            cursor: null
+        });
         const { container } = await renderMessages('/messages/team-1');
 
         await click(container, 'Load older messages');
@@ -3241,7 +3248,7 @@ describe('React app messages integration', () => {
         // Open email sheet for team-1 — first load.
         await click(container, 'Team Email');
         expect(chatMocks.loadTeamEmailDrafts).toHaveBeenCalledTimes(1);
-        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenCalledWith('team-1');
+        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenCalledWith('team-1', { cursor: null });
         await click(container, 'Close Team Email');
 
         // Switch to team-2 via the inbox pane.
@@ -3254,6 +3261,6 @@ describe('React app messages integration', () => {
         // Open email sheet for team-2 — cache was invalidated on team switch, so a fresh load fires.
         await click(container, 'Team Email');
         expect(chatMocks.loadTeamEmailDrafts).toHaveBeenCalledTimes(2);
-        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenLastCalledWith('team-2');
+        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenLastCalledWith('team-2', { cursor: null });
     });
 });

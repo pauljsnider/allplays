@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 
 function readProjectFile(path) {
     return readFileSync(path, 'utf8');
@@ -11,6 +12,96 @@ function readPlistStringValue(plist, key) {
 }
 
 describe('Capacitor native config', () => {
+    it('keeps Capacitor runtime and camera versions aligned across JavaScript manifests and lockfiles', () => {
+        const rootPackage = JSON.parse(readProjectFile('package.json'));
+        const rootPackageLock = JSON.parse(readProjectFile('package-lock.json'));
+        const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
+        const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
+        const appPnpmLockSource = readProjectFile('apps/app/pnpm-lock.yaml');
+        const appPnpmLock = parseYaml(appPnpmLockSource);
+
+        const rootRuntimePackages = ['@capacitor/cli', '@capacitor/android', '@capacitor/core', '@capacitor/ios'];
+        rootRuntimePackages.forEach((dependency) => {
+            const dependencyGroup = dependency === '@capacitor/cli' ? 'devDependencies' : 'dependencies';
+            expect(rootPackage[dependencyGroup][dependency]).toBe('^8.5.0');
+            expect(rootPackageLock.packages[''][dependencyGroup][dependency]).toBe('^8.5.0');
+            expect(rootPackageLock.packages[`node_modules/${dependency}`].version).toBe('8.5.0');
+        });
+
+        expect(rootPackage.dependencies['@capacitor/camera']).toBe('^8.2.2');
+        expect(rootPackageLock.packages[''].dependencies['@capacitor/camera']).toBe('^8.2.2');
+        expect(rootPackageLock.packages['node_modules/@capacitor/camera'].version).toBe('8.2.2');
+
+        expect(appPackage.dependencies['@capacitor/core']).toBe('^8.5.0');
+        expect(appPackage.dependencies['@capacitor/camera']).toBe('^8.2.2');
+        expect(appPackageLock.packages[''].dependencies['@capacitor/core']).toBe('^8.5.0');
+        expect(appPackageLock.packages[''].dependencies['@capacitor/camera']).toBe('^8.2.2');
+        expect(appPackageLock.packages['node_modules/@capacitor/core'].version).toBe('8.5.0');
+        expect(appPackageLock.packages['node_modules/@capacitor/camera'].version).toBe('8.2.2');
+
+        expect(appPnpmLock.importers['.'].dependencies['@capacitor/core'].specifier).toBe('^8.5.0');
+        expect(appPnpmLock.importers['.'].dependencies['@capacitor/camera'].specifier).toBe('^8.2.2');
+        expect(appPnpmLock.packages['@capacitor/core@8.5.0']).toBeDefined();
+        expect(appPnpmLock.packages['@capacitor/camera@8.2.2']).toBeDefined();
+        expect(appPnpmLockSource).not.toMatch(/@capacitor\/core(?:@|': )8\.4\.2/);
+    });
+
+    it('keeps the synchronized iOS SwiftPM runtime aligned with the JavaScript lockfile', () => {
+        const rootPackageLock = JSON.parse(readProjectFile('package-lock.json'));
+        const iosPackage = readProjectFile('ios/App/CapApp-SPM/Package.swift');
+        const iosPackageResolvedSource = readProjectFile(
+            'ios/App/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
+        );
+        const iosPackageResolved = JSON.parse(iosPackageResolvedSource);
+        const expectedRuntimeVersion = rootPackageLock.packages['node_modules/@capacitor/ios'].version;
+        const capacitorPins = iosPackageResolved.pins.filter(
+            (pin) => pin.identity === 'capacitor-swift-pm'
+        );
+        const ionCameraPins = iosPackageResolved.pins.filter(
+            (pin) => pin.identity === 'ion-ios-camera'
+        );
+
+        expect(iosPackage).toContain(
+            `.package(url: "https://github.com/ionic-team/capacitor-swift-pm.git", exact: "${expectedRuntimeVersion}")`
+        );
+        expect(capacitorPins).toHaveLength(1);
+        expect(capacitorPins[0]).toMatchObject({
+            location: 'https://github.com/ionic-team/capacitor-swift-pm.git',
+            state: { version: expectedRuntimeVersion }
+        });
+        expect(ionCameraPins).toHaveLength(1);
+        expect(ionCameraPins[0]).toMatchObject({
+            location: 'https://github.com/ionic-team/ion-ios-camera.git',
+            state: { version: '1.0.5' }
+        });
+        expect(iosPackage).not.toContain('exact: "8.4.2"');
+        expect(iosPackageResolvedSource).not.toMatch(
+            /"identity"\s*:\s*"capacitor-swift-pm"[\s\S]*?"version"\s*:\s*"8\.4\.2"/
+        );
+    });
+
+    it('keeps the synchronized Android runtime and camera plugin aligned with the JavaScript lockfile', () => {
+        const rootPackageLock = JSON.parse(readProjectFile('package-lock.json'));
+        const androidSettings = readProjectFile('android/capacitor.settings.gradle');
+        const androidAppBuild = readProjectFile('android/app/build.gradle');
+        const androidBuild = readProjectFile('android/app/capacitor.build.gradle');
+        const androidProject = [
+            readProjectFile('android/settings.gradle'),
+            readProjectFile('android/build.gradle'),
+            androidAppBuild,
+            androidSettings,
+            androidBuild
+        ].join('\n');
+
+        expect(rootPackageLock.packages['node_modules/@capacitor/android'].version).toBe('8.5.0');
+        expect(rootPackageLock.packages['node_modules/@capacitor/core'].version).toBe('8.5.0');
+        expect(androidSettings).toContain("project(':capacitor-android').projectDir = new File('../node_modules/@capacitor/android/capacitor')");
+        expect(androidSettings).toContain("project(':capacitor-camera').projectDir = new File('../node_modules/@capacitor/camera/android')");
+        expect(androidAppBuild).toContain("implementation project(':capacitor-android')");
+        expect(androidBuild).toContain("implementation project(':capacitor-camera')");
+        expect(androidProject).not.toContain('8.4.2');
+    });
+
     it('declares splash screen and status bar plugins in app and native manifests', () => {
         const config = JSON.parse(readProjectFile('capacitor.config.json'));
         const rootPackage = JSON.parse(readProjectFile('package.json'));
@@ -44,6 +135,9 @@ describe('Capacitor native config', () => {
             backgroundColor: '#ffffff',
             overlaysWebView: false
         });
+        expect(config.plugins.SystemBars).toMatchObject({
+            insetsHandling: 'disable'
+        });
         expect(config.plugins.Keyboard).toMatchObject({
             resize: 'native',
             resizeOnFullScreen: true
@@ -65,13 +159,48 @@ describe('Capacitor native config', () => {
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
         const appPnpmLock = readProjectFile('apps/app/pnpm-lock.yaml');
 
-        expect(appPackage.devDependencies.vite).toBe('^8.1.5');
-        expect(appPackageLock.packages[''].devDependencies.vite).toBe('^8.1.5');
-        expect(appPackageLock.packages['node_modules/vite'].version).toBe('8.1.5');
-        expect(appPnpmLock).toContain('vite@8.1.5:');
+        expect(appPackage.devDependencies.vite).toBe('^8.2.1');
+        expect(appPackageLock.packages[''].devDependencies.vite).toBe('^8.2.1');
+        expect(appPackageLock.packages['node_modules/vite'].version).toBe('8.2.1');
+        expect(appPnpmLock).toContain('vite@8.2.1:');
         const pluginReactVersion = appPackage.devDependencies['@vitejs/plugin-react'].replace(/^\^/, '');
         expect(appPackageLock.packages['node_modules/@vitejs/plugin-react'].version).toBe(pluginReactVersion);
-        expect(appPnpmLock).toContain(`'@vitejs/plugin-react@${pluginReactVersion}(vite@8.1.5`);
+        expect(appPnpmLock).toContain(`'@vitejs/plugin-react@${pluginReactVersion}(vite@8.2.1`);
+    });
+
+    it('keeps app dependency maintenance updates aligned across the manifest and lockfiles', () => {
+        const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
+        const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
+        const appPnpmLock = parseYaml(readProjectFile('apps/app/pnpm-lock.yaml'));
+        const expectedDependencies = {
+            'lucide-react': { group: 'dependencies', specifier: '^1.32.0', version: '1.32.0' },
+            'react-router-dom': { group: 'dependencies', specifier: '7.18.2', version: '7.18.2' },
+            'web-vitals': { group: 'dependencies', specifier: '^6.1.1', version: '6.1.1' },
+            globals: { group: 'devDependencies', specifier: '^17.11.0', version: '17.11.0' },
+            postcss: { group: 'devDependencies', specifier: '^8.5.26', version: '8.5.26' }
+        };
+
+        Object.entries(expectedDependencies).forEach(([dependency, expected]) => {
+            const pnpmDependency = appPnpmLock.importers['.'][expected.group][dependency];
+
+            expect(appPackage[expected.group][dependency]).toBe(expected.specifier);
+            expect(appPackageLock.packages[''][expected.group][dependency]).toBe(expected.specifier);
+            expect(appPackageLock.packages[`node_modules/${dependency}`].version).toBe(expected.version);
+            expect(pnpmDependency.specifier).toBe(expected.specifier);
+            expect(pnpmDependency.version).toMatch(new RegExp(`^${expected.version.replaceAll('.', '\\.')}(?:$|\\()`));
+            expect(appPnpmLock.packages[`${dependency}@${expected.version}`]).toBeDefined();
+        });
+    });
+
+    it('keeps the pnpm jsdom dependency graph aligned with the app update', () => {
+        const appPnpmLock = parseYaml(readProjectFile('apps/app/pnpm-lock.yaml'));
+        const jsdomDependency = appPnpmLock.importers['.'].devDependencies.jsdom;
+
+        expect(jsdomDependency).toEqual({ specifier: '^30.0.1', version: '30.0.1' });
+        expect(appPnpmLock.packages['jsdom@30.0.1']).toBeDefined();
+        expect(appPnpmLock.packages['jsdom@29.1.1']).toBeUndefined();
+        expect(appPnpmLock.packages['undici@8.10.0'].engines.node).toBe('>=22.19.0');
+        expect(appPnpmLock.packages['undici@7.28.0']).toBeUndefined();
     });
 
     it('forces patched glob dependency versions throughout the app npm lockfile', () => {
@@ -97,15 +226,29 @@ describe('Capacitor native config', () => {
     it('wires App Check into both native shells without a SwiftPM identity collision', () => {
         const config = JSON.parse(readProjectFile('capacitor.config.json'));
         const rootPackage = JSON.parse(readProjectFile('package.json'));
+        const rootPackageLock = JSON.parse(readProjectFile('package-lock.json'));
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
+        const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
+        const appPnpmLock = parseYaml(readProjectFile('apps/app/pnpm-lock.yaml'));
         const androidSettings = readProjectFile('android/capacitor.settings.gradle');
         const androidBuild = readProjectFile('android/app/capacitor.build.gradle');
         const iosPackage = readProjectFile('ios/App/CapApp-SPM/Package.swift');
         const iosEntitlements = readProjectFile('ios/App/App/App.entitlements');
         const iosAppDelegate = readProjectFile('ios/App/App/AppDelegate.swift');
 
-        expect(rootPackage.dependencies['@capacitor-firebase/app-check']).toBe('8.3.0');
-        expect(appPackage.dependencies['@capacitor-firebase/app-check']).toBe('8.3.0');
+        const appCheckPackage = '@capacitor-firebase/app-check';
+        const appCheckVersion = '8.4.0';
+
+        expect(rootPackage.dependencies[appCheckPackage]).toBe(appCheckVersion);
+        expect(appPackage.dependencies[appCheckPackage]).toBe(appCheckVersion);
+        expect(rootPackageLock.packages[''].dependencies[appCheckPackage]).toBe(appCheckVersion);
+        expect(appPackageLock.packages[''].dependencies[appCheckPackage]).toBe(appCheckVersion);
+        expect(rootPackageLock.packages[`node_modules/${appCheckPackage}`].version).toBe(appCheckVersion);
+        expect(appPackageLock.packages[`node_modules/${appCheckPackage}`].version).toBe(appCheckVersion);
+        expect(appPnpmLock.importers['.'].dependencies[appCheckPackage].specifier).toBe(appCheckVersion);
+        expect(appPnpmLock.importers['.'].dependencies[appCheckPackage].version).toMatch(/^8\.4\.0(?:$|\()/);
+        expect(appPnpmLock.packages[`${appCheckPackage}@${appCheckVersion}`]).toBeDefined();
+        expect(Object.keys(appPnpmLock.snapshots)).toContainEqual(expect.stringMatching(/^@capacitor-firebase\/app-check@8\.4\.0\(/));
         expect(androidSettings).toContain("include ':capacitor-firebase-app-check'");
         expect(androidBuild).toContain("implementation project(':capacitor-firebase-app-check')");
         expect(config.experimental.ios.spm.packageOptions['@capacitor-firebase/app-check']).toEqual({
@@ -147,8 +290,14 @@ describe('Capacitor native config', () => {
         expect(rootPackage.scripts['mobile:run:android']).toContain('mobile:sync:native-debug');
         expect(rootPackage.scripts['mobile:run:android']).not.toContain('app:build');
 
+        expect(appPackage.scripts['build:native']).toContain('ALLPLAYS_CAPACITOR_BUILD=1');
+        expect(appPackage.scripts['build:native']).not.toContain('ALLPLAYS_APP_CHECK_NATIVE_DEBUG');
         expect(rootPackage.scripts['app:build']).not.toContain('native-debug');
-        expect(rootPackage.scripts['mobile:sync']).toBe('npm run app:build && npx cap sync');
+        expect(rootPackage.scripts['app:build']).not.toContain('app:build:native');
+        expect(rootPackage.scripts['app:build:native']).toContain('build:native');
+        expect(rootPackage.scripts['mobile:sync']).toBe(
+            'npm run prepare:ios-auth-spm && npm run app:build:native && npx cap sync'
+        );
         expect(rootPackage.scripts['mobile:sync']).not.toContain('native-debug');
     });
 
@@ -167,15 +316,16 @@ describe('Capacitor native config', () => {
         expect(appPnpmLock).not.toContain(`'@vitest/coverage-v8@${vitestVersion}(vitest@4.1.9)'`);
     });
 
-    it('keeps shared Camera and Firebase maintenance versions aligned across manifests and lockfiles', () => {
+    it('keeps shared dependency maintenance versions aligned across manifests and lockfiles', () => {
         const rootPackage = JSON.parse(readProjectFile('package.json'));
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const rootPackageLock = JSON.parse(readProjectFile('package-lock.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
         const appPnpmLock = readProjectFile('apps/app/pnpm-lock.yaml');
         const expectedDependencies = {
-            '@capacitor/camera': { specifier: '^8.2.1', version: '8.2.1' },
-            firebase: { specifier: '12.16.0', version: '12.16.0' }
+            '@capacitor/camera': { specifier: '^8.2.2', version: '8.2.2' },
+            firebase: { specifier: '12.17.1', version: '12.17.1' },
+            'web-vitals': { specifier: '^6.1.1', version: '6.1.1' }
         };
 
         Object.entries(expectedDependencies).forEach(([dependency, expected]) => {
@@ -187,9 +337,20 @@ describe('Capacitor native config', () => {
             expect(appPackageLock.packages[`node_modules/${dependency}`].version).toBe(expected.version);
         });
 
-        expect(appPnpmLock).toContain("'@capacitor/camera@8.2.1':");
-        expect(appPnpmLock).toContain('firebase@12.16.0:');
-        expect(appPnpmLock).not.toContain('firebase@12.15.0:');
+        expect(appPnpmLock).toContain("'@capacitor/camera@8.2.2':");
+        expect(appPnpmLock).toContain('firebase@12.17.1:');
+        expect(appPnpmLock).not.toContain('firebase@12.17.0:');
+        expect(appPnpmLock).toContain('web-vitals@6.1.1:');
+        const expectedPluginVersions = {
+            '@capacitor-firebase/app-check': '8.4.0',
+            '@capacitor-firebase/authentication': '8.4.0',
+            '@capacitor-firebase/messaging': '8.4.0',
+            '@capacitor-firebase/performance': '8.4.0'
+        };
+        Object.entries(expectedPluginVersions).forEach(([plugin, version]) => {
+            expect(appPnpmLock).toContain(`${plugin}@${version}(@capacitor/core@8.5.0)(firebase@12.17.1)`);
+            expect(appPnpmLock).not.toContain(`${plugin}@${version}(@capacitor/core@8.5.0)(firebase@12.17.0)`);
+        });
     });
 
     it('wires first paint splash hiding and status bar setup into the app bootstrap', () => {
@@ -217,7 +378,10 @@ describe('Capacitor native config', () => {
         expect(appCss).toContain('--app-search-keyboard-inset');
         expect(androidManifest).toContain('android:autoVerify="true"');
         expect(androidManifest).toContain('android:host="allplays.ai"');
-        expect(androidManifest).toContain('android:pathPrefix="/app"');
+        expect(androidManifest).toContain('android:path="/app"');
+        expect(androidManifest).toContain('android:pathPrefix="/app/"');
+        expect(androidManifest).not.toContain('android:pathPrefix="/app" />');
+        expect(androidManifest).not.toContain('android:path="/app.html"');
         expect(androidManifest).toContain('android:scheme="allplays"');
         expect(androidManifest).toContain('android:windowSoftInputMode="adjustResize"');
         expect(iosInfo).toContain('<string>allplays</string>');

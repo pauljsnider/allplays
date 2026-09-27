@@ -43,6 +43,10 @@ const friendMessageMocks = vi.hoisted(() => ({
     sendAuthorizedDirectMessage: vi.fn()
 }));
 
+const profileServiceMocks = vi.hoisted(() => ({
+    loadManagedTeamsFromNativeCallable: vi.fn()
+}));
+
 vi.mock('@capacitor/core', () => ({
     Capacitor: {
         isNativePlatform: () => false
@@ -50,7 +54,16 @@ vi.mock('@capacitor/core', () => ({
 }));
 
 vi.mock('../../js/db.js', () => dbMocks);
+vi.mock('../../apps/app/src/lib/adapters/legacyChatService.ts', async (importOriginal) => ({
+    ...await importOriginal(),
+    sendTeamEmail: dbMocks.sendTeamEmail
+}));
 vi.mock('../../apps/app/src/lib/friendMessageService.ts', () => friendMessageMocks);
+vi.mock('../../apps/app/src/lib/profileService.ts', () => profileServiceMocks);
+vi.mock('../../js/firebase.js', () => ({
+    functions: {},
+    httpsCallable: vi.fn()
+}));
 vi.mock('../../js/vendor/firebase-app.js', () => ({
     getApp: vi.fn(() => ({}))
 }));
@@ -74,6 +87,7 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     getNativeAuthUserId: vi.fn(() => 'current-1')
 }));
 vi.mock('../../apps/app/src/lib/performanceInstrumentation.ts', () => ({
+    getPerformancePlatform: vi.fn(() => 'web'),
     now: vi.fn(() => 1000),
     startPerformanceSpan: vi.fn(() => ({
         end: vi.fn()
@@ -918,6 +932,7 @@ describe('React app chat recipient service', () => {
         ]);
         expect(dbMocks.getUnreadChatCounts).toHaveBeenCalledWith('user-1', ['team-a', 'team-b'], expect.objectContaining({
             defaultConversationOnly: true,
+            deadlineAt: expect.any(Number),
             conversationIdsByTeam: {
                 'team-a': ['team'],
                 'team-b': ['team', 'staff-conversation']
@@ -929,6 +944,36 @@ describe('React app chat recipient service', () => {
             }
         }));
         expect(dbMocks.getChatConversations).not.toHaveBeenCalled();
+        expect(dbMocks.getChatMessages).not.toHaveBeenCalled();
+    });
+
+    it('passes one shared deadline and keeps many-team fast inbox rows stable', async () => {
+        const teams = Array.from({ length: 12 }, (_, index) => ({
+            id: `team-${String(index + 1).padStart(2, '0')}`,
+            name: `Team ${String(index + 1).padStart(2, '0')}`,
+            sport: 'Soccer'
+        }));
+        const unreadCounts = Object.fromEntries(teams.map((team, index) => [team.id, index % 3]));
+        dbMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
+        dbMocks.getUserTeamsWithAccess.mockResolvedValue(teams);
+        dbMocks.getParentTeams.mockResolvedValue([]);
+        dbMocks.getUnreadChatCounts.mockResolvedValue(unreadCounts);
+
+        const startedAt = Date.now();
+        const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
+        const inbox = await loadChatInbox({
+            uid: 'user-1',
+            email: 'coach@example.com',
+            displayName: 'Coach',
+            roles: ['coach']
+        }, { includeLastMessages: false });
+
+        const unreadOptions = dbMocks.getUnreadChatCounts.mock.calls[0][2];
+        expect(unreadOptions.deadlineAt).toBeGreaterThanOrEqual(startedAt + 3000);
+        expect(unreadOptions.deadlineAt).toBeLessThanOrEqual(Date.now() + 3000);
+        expect(inbox.teams.map((team) => ({ id: team.id, unreadCount: team.unreadCount }))).toEqual(
+            teams.map((team, index) => ({ id: team.id, unreadCount: index % 3 }))
+        );
         expect(dbMocks.getChatMessages).not.toHaveBeenCalled();
     });
 
@@ -1053,17 +1098,20 @@ describe('React app chat recipient service', () => {
                 updatedAt: new Date('2026-06-19T19:00:00.000Z')
             })
         ]);
-        expect(messages).toEqual([
-            expect.objectContaining({
-                id: 'message-1',
-                text: 'Bring water',
-                reactions: {
-                    heart: ['user-2']
-                },
-                mentionedUids: ['user-3'],
-                createdAt: new Date('2026-06-19T19:02:00.000Z')
-            })
-        ]);
+        expect(messages).toEqual({
+            messages: [
+                expect.objectContaining({
+                    id: 'message-1',
+                    text: 'Bring water',
+                    reactions: {
+                        heart: ['user-2']
+                    },
+                    mentionedUids: ['user-3'],
+                    createdAt: new Date('2026-06-19T19:02:00.000Z')
+                })
+            ],
+            cursor: null
+        });
     });
 
     it('requests and returns an active deep-linked conversation when the recent page omits it', async () => {
@@ -1232,11 +1280,9 @@ describe('React app chat recipient service', () => {
         expect(progress).toEqual(['uploading', 'uploading', 'posting']);
         expect(dbMocks.uploadChatImage).toHaveBeenNthCalledWith(1, 'team-1', photo, { conversationId: 'group-player-coach' });
         expect(dbMocks.uploadChatImage).toHaveBeenNthCalledWith(2, 'team-1', video, { conversationId: 'group-player-coach' });
-        expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
-            type: 'group',
-            participantIds: expect.arrayContaining(['user-1', 'user:coach-1', 'user:parent-2', 'email:guardian@example.com']),
-            participantRoles: []
-        }));
+        expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', {
+            participantIds: expect.arrayContaining(['user-1', 'user:coach-1', 'user:parent-2', 'email:guardian@example.com'])
+        });
         expect(dbMocks.upsertChatConversation.mock.calls[0][1].participantIds).toHaveLength(4);
         expect(dbMocks.postChatMessage).toHaveBeenCalledWith('team-1', expect.objectContaining({
             text: '@ALL PLAYS summarize this thread',
@@ -1286,10 +1332,9 @@ describe('React app chat recipient service', () => {
         });
 
         expect(dbMocks.getUsersByParentPlayerKey).toHaveBeenCalledWith('team-1::player-1');
-        expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
-            type: 'group',
+        expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', {
             participantIds: ['coach-1', 'user:parent-1', 'email:guardian@example.com']
-        }));
+        });
         expect(dbMocks.postChatMessage).toHaveBeenCalledWith('team-1', expect.objectContaining({
             conversationId: 'group-linked-parent'
         }));
@@ -1460,14 +1505,16 @@ describe('React app chat recipient service', () => {
             subject: ' Practice update ',
             body: ' Bring jerseys ',
             targetType: 'individuals',
-            recipientIds: ['user:coach-1']
+            recipientIds: ['user:coach-1'],
+            postToTeamChat: true
         })).resolves.toEqual({ recipientCount: 8, status: 'queued' });
 
         expect(dbMocks.sendTeamEmail).toHaveBeenCalledWith('team-1', {
             subject: 'Practice update',
             body: 'Bring jerseys',
             targetType: 'individuals',
-            recipientIds: ['user:coach-1']
+            recipientIds: ['user:coach-1'],
+            postToTeamChat: false
         });
 
         await loadSentTeamEmails('team-1', { limit: 10 });

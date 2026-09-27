@@ -2,7 +2,8 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { MessageAvatar, StatusBanner, TeamAvatar } from '../../apps/app/src/pages/Messages.tsx';
+import { MessageAvatar, StatusBanner } from '../../apps/app/src/pages/messages/components/ChatWindow.tsx';
+import { TeamAvatar } from '../../apps/app/src/pages/messages/components/TeamAvatar.tsx';
 
 vi.mock('lucide-react', () => {
     const Icon = () => null;

@@ -177,7 +177,7 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
             deployStepCount += 1;
             const maxTimeoutMinutes = label === 'Production deploy' &&
                 step.name === 'Deploy Firebase production'
-                ? 20
+                ? 30
                 : 4;
             if (!Number.isInteger(step['timeout-minutes']) ||
                 step['timeout-minutes'] < 1 ||
@@ -265,6 +265,10 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
 }
 
 export function validateProductionDeployCommand(deployProd) {
+    const deployProdWithoutReplayCleanupTargets = deployProd.replace(
+        'retry_enabled_function_targets="functions:cleanupPrivateReplayArchiveOnGameDelete,functions:cleanupPrivateReplayArchiveOnSharedGameDelete,',
+        'retry_enabled_function_targets="'
+    );
     assertMatches(
         deployProd,
         /on:\s*\n\s+push:\s*\n\s+branches:\s*\n\s+- master\s*\n\s+workflow_dispatch:\s*(?:\n|$)/,
@@ -289,24 +293,55 @@ export function validateProductionDeployCommand(deployProd) {
     const deployArgs = deployProd.slice(deployArgsStart, deployArgsEnd);
     assertIncludes(deployArgs, '--only "$deploy_targets"', 'Production Firebase deploy target arguments');
     assertIncludes(deployArgs, '--project game-flow-c6311', 'Production Firebase deploy project');
-    assertIncludes(deployArgs, '--config "$firebase_config"', 'Production Firebase generated config');
+    assertIncludes(deployProd, 'deploy_config="$firebase_config"', 'Production Firebase generated config default');
+    assertIncludes(deployArgs, '--config "$deploy_config"', 'Production Firebase selected generated config');
 
     assertIncludes(deployProd, 'retry_firebase_deploy "hosting,functions" "application"', 'Production application deploy targets');
     assertIncludes(
         deployProd,
-        'retry_enabled_function_targets="functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"',
+        'retry_enabled_inventory_producer_target="functions:indexCertificateLegacySignaturesOnDefaultsWrite"',
+        'Production retry-enabled inventory producer allowlist'
+    );
+    assertIncludes(
+        deployProd,
+        'retry_enabled_cleanup_compatibility_target="functions:cleanupCertificateSignature"',
+        'Production retry-enabled cleanup compatibility allowlist'
+    );
+    assertIncludes(
+        deployProdWithoutReplayCleanupTargets,
+        'retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:cleanupAccountDiamondPrivateNotesOnAuthDelete,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:reconcileLegacyTeamOwnership,functions:syncLegacyTeamOwnershipOnAuthCreate,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate,functions:notifyConversationChatMessageCreated,functions:notifyFeeAssigned,functions:notifyFeeMarkedPaid,functions:notifyGameCreated,functions:notifyGameUpdated,functions:notifyInviteRedeemed,functions:notifyLiveEventCreated,functions:notifyOfficiatingNotificationCreated,functions:notifyOpenOfficiatingSlots,functions:notifyParentMembershipRequestCreated,functions:notifyParentMembershipRequestUpdated,functions:notifyPracticePacketAssigned,functions:notifyPracticePacketCompleted,functions:notifyPublishedCertificateAward,functions:notifyRegistrationStatusChanged,functions:notifyRegistrationSubmitted,functions:notifyRideClaimCreated,functions:notifyRideClaimUpdated,functions:notifyRideOfferCancelled,functions:notifyRideOfferCreated,functions:notifyScheduleImportBatchCompleted,functions:notifyTeamChatMessageCreated,functions:syncTeamNotificationTargetsOnDeviceWrite,functions:syncTeamNotificationTargetsOnPreferenceWrite,functions:processPasswordResetEmailRequest,functions:sweepIneligiblePublicUserProfiles,functions:dispatchDueTeamMediaNotificationBatches,functions:dispatchDuePreEventReminders,functions:queueDueRegistrationFailedPaymentReminders,functions:sendPracticePacketDueTomorrowReminders,functions:sendFeeUnpaidDueReminders,functions:cleanupDeletedDiamondGame,functions:projectDiamondScorebook,functions:processDiamondScorebookEffect"',
         'Production retry-enabled function allowlist'
     );
     assertIncludes(
         deployProd,
-        'if [[ "$deploy_targets" != "$retry_enabled_function_targets" ]]; then',
-        'Production force-deploy exact allowlist guard'
+        'if [[ "$deploy_targets" != "$retry_enabled_function_targets"',
+        'Production force-deploy scoped function-group allowlist guard'
+    );
+    assertIncludes(
+        deployProd,
+        '&& "$deploy_targets" != "$retry_enabled_inventory_producer_target"',
+        'Production force-deploy scoped inventory-producer allowlist guard'
+    );
+    assertIncludes(
+        deployProd,
+        '&& "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" ]]; then',
+        'Production force-deploy scoped cleanup allowlist guard'
     );
     assertIncludes(deployProd, 'deploy_args+=(--force)', 'Production targeted failure-policy acknowledgement');
     assertMatches(
         deployProd,
         /retry_firebase_deploy\s+\\?\s*"\$retry_enabled_function_targets"\s+\\?\s*"retry-enabled-functions"\s+\\?\s*3\s+\\?\s*15\s+\\?\s*true/,
         'Production retry-enabled function failure-policy acknowledgement call'
+    );
+    assertMatches(
+        deployProd,
+        /retry_firebase_deploy\s+\\?\s*"\$retry_enabled_inventory_producer_target"\s+\\?\s*"certificate-signature-inventory-producer"\s+\\?\s*3\s+\\?\s*15\s+\\?\s*true/,
+        'Production retry-enabled inventory producer failure-policy acknowledgement call'
+    );
+    assertMatches(
+        deployProd,
+        /retry_firebase_deploy\s+\\?\s*"\$retry_enabled_cleanup_compatibility_target"\s+\\?\s*"certificate-signature-cleanup-compatibility"\s+\\?\s*3\s+\\?\s*15\s+\\?\s*true/,
+        'Production retry-enabled cleanup compatibility failure-policy acknowledgement call'
     );
     assertIncludes(
         deployProd,
@@ -342,6 +377,26 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
+        'firestore_indexes_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-indexes.generated.json"',
+        'Production Firestore indexes config beside staged indexes'
+    );
+    assertIncludes(
+        deployProd,
+        "jq 'del(.firestore.rules)' \"$firebase_config\" > \"$firestore_indexes_config\"",
+        'Production Firestore indexes config removes the rules target'
+    );
+    assertIncludes(
+        deployProd,
+        'and (.firestore | has("rules") | not)',
+        'Production Firestore indexes config rejects a retained rules target'
+    );
+    assertMatches(
+        deployProd,
+        /if \[\[ "\$deploy_targets" == "firestore:indexes" \]\]; then[\s\S]{0,1000}deploy_config="\$firestore_indexes_config"[\s\S]{0,1000}--config "\$deploy_config"/,
+        'Production Firestore indexes deploy uses the rules-free config'
+    );
+    assertIncludes(
+        deployProd,
         'create_firestore_ruleset_with_retry()',
         'Production Firestore immutable ruleset creator'
     );
@@ -357,8 +412,8 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
-        '[[ -n "$candidate_rules_b64" && "$candidate_rules_b64" == "$local_rules_b64" ]]',
-        'Production Firestore recent-ruleset exact-source comparison'
+        'firestore_ruleset_source_matches "$ruleset_file" "$ruleset_name" "$expected_rules_source"',
+        'Production Firestore recent-ruleset verified-source comparison'
     );
     assertMatches(
         deployProd,
@@ -366,6 +421,12 @@ export function validateProductionDeployCommand(deployProd) {
         'Production Firestore newest-ruleset-first lookup'
     );
     assertIncludes(deployProd, '--rawfile rules_source', 'Production Firestore ruleset source payload');
+    assertIncludes(deployProd, '--arg rules_fingerprint', 'Production Firestore ruleset source fingerprint payload');
+    assertIncludes(
+        deployProd,
+        'fingerprint:$rules_fingerprint',
+        'Production Firestore ruleset source fingerprint field'
+    );
     assertIncludes(
         deployProd,
         '"https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets"',
@@ -373,14 +434,117 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertMatches(
         deployProd,
-        /create_firestore_ruleset_with_retry\(\)[\s\S]{0,5000}for attempt in 1 2 3; do[\s\S]{0,5000}--request POST/,
+        /create_firestore_ruleset_with_retry\(\)[\s\S]{0,5000}for attempt in 1 2 3 4 5 6; do[\s\S]{0,5000}--request POST/,
         'Production Firestore bounded ruleset create'
+    );
+    assertMatches(
+        deployProd,
+        /create_firestore_ruleset_with_retry\(\)[\s\S]{0,7000}firestore_rules_api_error[\s\S]{0,2500}find_recent_matching_firestore_ruleset "\$expected_rules_source"[\s\S]{0,2500}retry_delay_seconds=\$\(\(15 \* \(2 \*\* \(attempt - 1\)\)\)\)/,
+        'Production Firestore ambiguous-create reconciliation precedes exponential retry'
+    );
+    assertIncludes(
+        deployProd,
+        'retry_delay_seconds=$((retry_delay_seconds + (RANDOM % 16)))',
+        'Production Firestore ruleset retry jitter'
     );
     assertIncludes(
         deployProd,
         '[[ -n "$created_rules_b64" && "$created_rules_b64" == "$local_rules_b64" ]]',
         'Production Firestore created-ruleset exact-source comparison'
     );
+    assertIncludes(
+        deployProd,
+        '[[ "$created_fingerprint" == "$local_fingerprint" ]]',
+        'Production Firestore created-ruleset fingerprint comparison'
+    );
+    assertIncludes(
+        deployProd,
+        'certificate_compatibility_recovery_ruleset="projects/game-flow-c6311/rulesets/6da601e4-12e3-420a-8db3-907153c712c7"',
+        'Production Firestore exact compatibility recovery ruleset'
+    );
+    assertIncludes(
+        deployProd,
+        '[[ "$local_rules_sha256" == "$certificate_compatibility_recovery_source_sha256" ]]',
+        'Production Firestore compatibility recovery local-source proof'
+    );
+    assertIncludes(
+        deployProd,
+        '[[ "$remote_rules_sha256" == "$certificate_compatibility_recovery_canonical_sha256" ]]',
+        'Production Firestore compatibility recovery canonical-source proof'
+    );
+    assertIncludes(
+        deployProd,
+        'recovery_sha="b637109b4f51d9b8627bb081eaea1489dfc8b8c3"',
+        'Production Firestore active-recovery source commit'
+    );
+    assertIncludes(
+        deployProd,
+        'recovery_source_sha256="033fc321f5a10457a9093262ff1b8c907aa1a583624a7edf8455804f4f3ba1ef"',
+        'Production Firestore active-recovery formatted-source proof'
+    );
+    assertIncludes(
+        deployProd,
+        'git archive "$recovery_sha"',
+        'Production Firestore active-recovery exact commit reconstruction'
+    );
+    assertIncludes(
+        deployProd,
+        'git merge-base --is-ancestor "$recovery_sha" "$GITHUB_SHA"',
+        'Production Firestore active-recovery ancestry proof'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore-active-recovery.rules',
+        'Production Firestore active-recovery trusted handoff'
+    );
+    assertIncludes(
+        deployProd,
+        'certificate_active_recovery_ruleset="projects/game-flow-c6311/rulesets/537ed719-d2fa-4cae-9a20-97273db4e11a"',
+        'Production Firestore active-recovery immutable ruleset proof'
+    );
+    assertIncludes(
+        deployProd,
+        'certificate_active_recovery_canonical_sha256="033fc321f5a10457a9093262ff1b8c907aa1a583624a7edf8455804f4f3ba1ef"',
+        'Production Firestore active-recovery canonical-source proof'
+    );
+    assertMatches(
+        deployProd,
+        /expected_rules_source" == "\$active_recovery_firestore_rules"[\s\S]{0,1200}ruleset_name" == "\$certificate_active_recovery_ruleset"[\s\S]{0,1200}local_rules_sha256" == "\$certificate_active_recovery_source_sha256"[\s\S]{0,1200}remote_rules_sha256" == "\$certificate_active_recovery_canonical_sha256"/,
+        'Production Firestore active-recovery three-part proof'
+    );
+    assertIncludes(
+        deployProd,
+        'write_unrecognized_active_firestore_rules_evidence()',
+        'Production Firestore unrecognized-source evidence helper'
+    );
+    assertIncludes(
+        deployProd,
+        'remote_source_sha256=${active_ruleset_observed_source_sha256}',
+        'Production Firestore redacted active-source digest evidence'
+    );
+    assertIncludes(
+        deployProd,
+        'current_compatibility_sha256=${current_compatibility_sha256}',
+        'Production Firestore current compatibility candidate digest evidence'
+    );
+    assertIncludes(
+        deployProd,
+        'baseline_compatibility_sha256=${baseline_compatibility_sha256}',
+        'Production Firestore baseline compatibility candidate digest evidence'
+    );
+    assertIncludes(
+        deployProd,
+        'active_recovery_sha256=${active_recovery_sha256}',
+        'Production Firestore active-recovery candidate digest evidence'
+    );
+    assertMatches(
+        deployProd,
+        /if \[\[ -z "\$active_rules_variant" \]\]; then\s+write_unrecognized_active_firestore_rules_evidence\s+write_firestore_configuration_blocked_summary "active Firestore rules did not match a trusted final or compatibility baseline"\s+exit 2/,
+        'Production Firestore unrecognized-source evidence before fail-closed exit'
+    );
+    if (deployProd.includes('echo "$observed_rules_b64"') || deployProd.includes('echo "$remote_rules_b64"')) {
+        throw new Error('Production Firestore diagnostics must never print rule source content.');
+    }
     assertIncludes(
         deployProd,
         'ensure_exact_firestore_ruleset()',
@@ -415,6 +579,26 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
+        'verify_active_firestore_release_name "$ruleset_name"',
+        'Production Firestore immutable release-name verification'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore_rules_api_error "Firestore release update"',
+        'Production Firestore structured release failure diagnostics'
+    );
+    assertMatches(
+        deployProd,
+        /activate_firestore_ruleset_with_retry\(\)[\s\S]{0,5000}for attempt in 1 2 3 4 5 6 7 8; do[\s\S]{0,5000}--request PATCH/,
+        'Production Firestore bounded release update'
+    );
+    assertMatches(
+        deployProd,
+        /activate_firestore_ruleset_with_retry\(\)[\s\S]{0,7000}firestore_rules_api_error "Firestore release update"[\s\S]{0,2000}verify_active_firestore_release_name "\$ruleset_name"[\s\S]{0,2000}retry_delay_seconds=\$\(\(15 \* \(2 \*\* \(attempt - 1\)\)\)\)/,
+        'Production Firestore ambiguous-release reconciliation precedes exponential retry'
+    );
+    assertIncludes(
+        deployProd,
         'Created or reused and activated the exact staged Firestore ruleset.',
         'Production Firestore direct ruleset activation evidence'
     );
@@ -423,12 +607,121 @@ export function validateProductionDeployCommand(deployProd) {
         'write_firestore_configuration_blocked_summary()',
         'Production Firestore fail-closed summary'
     );
-    assertMatches(
+    assertIncludes(
         deployProd,
-        /if verify_active_firestore_rules; then[\s\S]{0,1000}else[\s\S]{0,2000}ensure_exact_firestore_ruleset[\s\S]{0,1000}activate_firestore_ruleset_with_retry[\s\S]{0,1000}fi[\s\S]{0,500}retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15/,
-        'Production Firestore create-release-index ordering'
+        'CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED: ${{ needs.prepare-deploy.outputs.certificate_defaults_lockdown_needed }}',
+        'Production certificate defaults lockdown change output'
     );
-    assertIncludes(deployProd, 'echo \'| Guaranteed not deployed | `hosting`, `functions` |\'', 'Production Firestore retry-exhaustion blocked application surfaces');
+    assertIncludes(
+        deployProd,
+        'git show "${firestore_success_sha}:firestore.rules"',
+        'Production certificate defaults lockdown baseline source'
+    );
+    assertIncludes(
+        deployProd,
+        "grep -Fq 'allow create, update, delete: if false;'",
+        'Production certificate defaults completed-lockdown detection'
+    );
+    assertIncludes(
+        deployProd,
+        'echo "certificate_defaults_lockdown_needed=false" >> "$GITHUB_OUTPUT"',
+        'Production certificate defaults one-time transition completion'
+    );
+    assertIncludes(
+        deployProd,
+        'echo "certificate_defaults_lockdown_needed=unknown" >> "$GITHUB_OUTPUT"',
+        'Production certificate defaults unknown-baseline fail-closed state'
+    );
+    assertIncludes(deployProd, 'certificate-defaults-writer-compatibility', 'Production certificate defaults writer compatibility deploy');
+    assertIncludes(deployProd, 'certificate-signature-inventory-producer', 'Production certificate signature inventory producer deploy');
+    assertIncludes(deployProd, 'backfill-certificate-legacy-signature-inventory.mjs" --apply', 'Production certificate signature inventory backfill');
+    assertIncludes(deployProd, 'certificate-signature-cleanup-compatibility', 'Production certificate signature cleanup compatibility deploy');
+    assertIncludes(deployProd, 'certificate-defaults-rules-compatibility', 'Production certificate defaults transitional rules activation');
+    assertIncludes(deployProd, 'certificate-defaults-rules-final', 'Production certificate defaults final rules activation');
+    assertIncludes(
+        deployProd,
+        'scripts/build-certificate-defaults-compat-rules.mjs',
+        'Production certificate defaults compatibility rules generator'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore-certificate-defaults-compat.rules',
+        'Production certificate defaults compacted compatibility rules handoff'
+    );
+    assertIncludes(deployProd, 'firestore-baseline.rules', 'Production Firestore exact baseline handoff');
+    assertIncludes(deployProd, 'firestore-baseline-compat.rules', 'Production Firestore compatibility baseline handoff');
+    assertIncludes(
+        deployProd,
+        'git archive "$FIRESTORE_BASELINE_SHA" | tar -x -C "$baseline_checkout"',
+        'Production Firestore isolated exact-SHA checkout'
+    );
+    assertIncludes(
+        deployProd,
+        'baseline_compactor="$baseline_checkout/scripts/compact-firestore-rules.mjs"',
+        'Production Firestore baseline-checkout compactor'
+    );
+    assertIncludes(
+        deployProd,
+        'baseline_transformer="$baseline_checkout/scripts/build-certificate-defaults-compat-rules.mjs"',
+        'Production Firestore baseline-checkout compatibility transformer'
+    );
+    assertIncludes(deployProd, 'cd "$baseline_checkout"', 'Production Firestore isolated pipeline execution');
+    assertIncludes(deployProd, 'baseline_node_major=', 'Production Firestore historical runtime provenance');
+    assertIncludes(deployProd, 'current_node_major=', 'Production Firestore compatible runtime enforcement');
+    assertIncludes(
+        deployProd,
+        'firestore_baseline_mode: ${{ steps.firestore_config.outputs.firestore_baseline_mode }}',
+        'Production Firestore baseline release-mode output'
+    );
+    assertIncludes(
+        deployProd,
+        'deployment_description" == *"compatibility rules"*',
+        'Production Firestore compatibility marker classification'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore_component_description="Firestore compatibility rules at ${GITHUB_SHA}; packaged native clients still use direct writes."',
+        'Production Firestore compatibility marker preservation'
+    );
+    assertIncludes(
+        deployProd,
+        'CERTIFICATE_DEFAULTS_NATIVE_CALLABLE_READY: ${{ vars.CERTIFICATE_DEFAULTS_NATIVE_CALLABLE_READY }}',
+        'Production installed-native callable readiness gate'
+    );
+    assertIncludes(
+        deployProd,
+        'Keeping certificate-defaults compatibility rules until supported installed native versions use the callable.',
+        'Production installed-native compatibility hold'
+    );
+    assertIncludes(
+        deployProd,
+        '&& "$CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED" == "true"',
+        'Production installed-native readiness forces finalization without source drift'
+    );
+    assertIncludes(
+        deployProd,
+        'return 2',
+        'Production active Firestore rules unknown-state classification'
+    );
+    const certificateInventoryProducer = deployProd.indexOf('certificate-signature-inventory-producer');
+    const certificateInventoryBackfill = deployProd.indexOf('backfill-certificate-legacy-signature-inventory.mjs" --apply');
+    const certificateCleanupConsumer = deployProd.indexOf('certificate-signature-cleanup-compatibility');
+    const certificateWriterDeploy = deployProd.indexOf('certificate-defaults-writer-compatibility');
+    const certificateCompatibilityRules = deployProd.indexOf('certificate-defaults-rules-compatibility');
+    const certificateApplicationDeploy = deployProd.indexOf('retry_firebase_deploy "hosting,functions" "application"');
+    const certificateFinalRules = deployProd.indexOf('certificate-defaults-rules-final');
+    if (
+        certificateInventoryProducer === -1
+        || certificateCleanupConsumer <= certificateInventoryProducer
+        || certificateInventoryBackfill <= certificateCleanupConsumer
+        || certificateWriterDeploy <= certificateInventoryBackfill
+        || certificateCompatibilityRules <= certificateWriterDeploy
+        || certificateApplicationDeploy <= certificateCompatibilityRules
+        || certificateFinalRules <= certificateApplicationDeploy
+    ) {
+        throw new Error('Production certificate defaults must deploy inventory producer, revalidating cleanup consumer, backfill, writer, transitional rules, callers, then the final denial.');
+    }
+    assertIncludes(deployProd, 'echo \'| Guaranteed not deployed | Full `hosting`, `functions` application |\'', 'Production Firestore retry-exhaustion blocked application surfaces');
     assertIncludes(
         deployProd,
         'Exact rules and indexes were not both verified.',
@@ -440,7 +733,8 @@ export function validateProductionDeployCommand(deployProd) {
         '${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion',
         'Production Firestore retry-exhaustion recovery link'
     );
-    assertIncludes(deployProd, 'Application deployment remains fail-closed, so Hosting and Functions were not deployed.', 'Production Firestore retry-exhaustion fail-closed guidance');
+    assertIncludes(deployProd, 'The full application deployment remains fail-closed.', 'Production Firestore retry-exhaustion fail-closed guidance');
+    assertIncludes(deployProd, 'No client outage was introduced.', 'Production Firestore finalization retry guidance');
     assertIncludes(deployProd, 'actions: read', 'Production workflow-run read permission');
     assertIncludes(deployProd, 'deployments: read', 'Production component deployment read permission');
     assertIncludes(deployProd, 'deployments: write', 'Production component deployment write permission');
@@ -449,7 +743,7 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, '-f branch="$baseline_branch"', 'Production successful deploy branch filter');
     assertIncludes(deployProd, '-f status=success', 'Production successful deploy filter');
     assertIncludes(deployProd, 'for ((lookup_attempt = 1; lookup_attempt <= lookup_max_attempts; lookup_attempt += 1)); do', 'Production successful deploy lookup retries');
-    assertIncludes(deployProd, 'if last_success_sha="$(gh api', 'Production successful deploy guarded lookup');
+    assertIncludes(deployProd, 'if last_success_run_json="$(gh api', 'Production successful deploy guarded lookup');
     assertIncludes(deployProd, 'if [[ "$lookup_succeeded" != "true" ]]; then', 'Production successful deploy lookup failure fallback');
     assertIncludes(deployProd, 'The successful production deploy lookup failed; forcing authorization rules-first ordering.', 'Production successful deploy lookup warning');
     const lookupFallbackStart = deployProd.indexOf('if [[ "$lookup_succeeded" != "true" ]]; then');
@@ -464,11 +758,113 @@ export function validateProductionDeployCommand(deployProd) {
     }
     assertIncludes(deployProd, 'repos/${GITHUB_REPOSITORY}/deployments', 'Production Firestore component deployment lookup');
     assertIncludes(deployProd, '-f environment=production-firestore', 'Production Firestore component environment filter');
+    assertIncludes(deployProd, 'component_page=1', 'Production Firestore component pagination start');
+    assertIncludes(deployProd, '-F page="$component_page"', 'Production Firestore component pagination request');
+    assertIncludes(
+        deployProd,
+        'component_page=$((component_page + 1))',
+        'Production Firestore component pagination advance'
+    );
+    assertIncludes(
+        deployProd,
+        'deployment_page_count < 100',
+        'Production Firestore component pagination completion'
+    );
+    assertIncludes(
+        deployProd,
+        '[.[] | select(.state == "success")][0] // empty',
+        'Production Firestore successful status lookup across inactive markers'
+    );
     assertIncludes(deployProd, 'firestore_success_sha="$deployment_sha"', 'Production Firestore component successful SHA');
     assertIncludes(
         deployProd,
         'git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"',
         'Production Firestore stale component baseline advancement'
+    );
+    assertIncludes(
+        deployProd,
+        'git diff --quiet "$firestore_success_sha" "$last_success_sha" --',
+        'Production Firestore unchanged-only component baseline advancement'
+    );
+    assertIncludes(
+        deployProd,
+        'advancing its SHA and forcing live mode classification',
+        'Production Firestore mode classification across unchanged deploys'
+    );
+    assertIncludes(
+        deployProd,
+        'The protected native-readiness gate can finalize the same',
+        'Production Firestore external finalization ambiguity handling'
+    );
+    assertIncludes(deployProd, 'latest_prior_run_id=', 'Production Firestore latest prior run identity');
+    assertIncludes(deployProd, 'select((.id | tostring) != $current)', 'Production Firestore current-run exclusion');
+    assertIncludes(deployProd, 'run_history_lookup_succeeded', 'Production Firestore run history lookup state');
+    assertIncludes(
+        deployProd,
+        'The production run history lookup failed; the active Firestore release mode is unknown.',
+        'Production Firestore run history unknown-state handling'
+    );
+    assertIncludes(deployProd, 'deployment_log_url=', 'Production Firestore component marker run identity');
+    assertIncludes(deployProd, 'component_marker_found="true"', 'Production Firestore component marker presence');
+    assertIncludes(
+        deployProd,
+        'The latest prior production run identity is missing or did not produce the active component marker; forcing live mode classification.',
+        'Production Firestore failed/incomplete retry ambiguity handling'
+    );
+    assertIncludes(
+        deployProd,
+        '[[ ! "$latest_prior_run_id" =~ ^[0-9]+$ ]]',
+        'Production Firestore missing prior-run identity ambiguity handling'
+    );
+    assertIncludes(
+        deployProd,
+        '[[ ! "$firestore_success_run_id" =~ ^[0-9]+$ ]]',
+        'Production Firestore missing component-marker run identity ambiguity handling'
+    );
+    assertIncludes(
+        deployProd,
+        'Preserving the durable Firestore component baseline despite unavailable successful workflow history.',
+        'Production Firestore retained component baseline after workflow history loss'
+    );
+    assertIncludes(
+        deployProd,
+        'conservatively enabling every non-Firestore migration',
+        'Production non-Firestore migration fallback after workflow history expiry'
+    );
+    assertIncludes(
+        deployProd,
+        'FIRESTORE_BASELINE_MODE="compatibility"',
+        'Production legacy writable baseline compatibility classification'
+    );
+    assertIncludes(
+        deployProd,
+        'A trusted final component marker cannot reference legacy client-writable certificate defaults rules.',
+        'Production contradictory legacy final marker rejection'
+    );
+    assertIncludes(
+        deployProd,
+        'The Firestore component deployment lookup failed; the active release mode is unknown.',
+        'Production Firestore component lookup unknown-state handling'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore_success_mode="unmarked"',
+        'Production Firestore missing component marker classification'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore_success_mode="ambiguous"',
+        'Production Firestore generated compatibility/final ambiguity state'
+    );
+    assertIncludes(
+        deployProd,
+        'forcing live exact-source classification',
+        'Production Firestore unmarked-mode live classification'
+    );
+    assertIncludes(
+        deployProd,
+        'if [[ "$component_lookup_succeeded" != "true" ]]; then\n              echo "certificate_defaults_lockdown_needed=unknown"',
+        'Production Firestore component lookup blocks lockdown inference'
     );
     assertIncludes(
         deployProd,
@@ -502,11 +898,17 @@ export function validateProductionDeployCommand(deployProd) {
         'ensure_exact_firestore_ruleset',
         'Production Firestore exact ruleset creation or reuse'
     );
-    assertMatches(
-        changedBranch,
-        /if verify_active_firestore_rules; then[\s\S]*else[\s\S]*ensure_exact_firestore_ruleset[\s\S]*activate_firestore_ruleset_with_retry[\s\S]*fi[\s\S]*retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15/,
-        'Production Firestore exact-source short circuit'
-    );
+    assertIncludes(changedBranch, 'verify_active_firestore_rules "$final_firestore_rules"', 'Production Firestore exact-source short circuit');
+    assertIncludes(changedBranch, 'active_rules_variant="baseline-${baseline_firestore_mode}"', 'Production Firestore trusted baseline classification');
+    assertIncludes(changedBranch, '[[ "$baseline_firestore_mode" == "ambiguous" ]]', 'Production Firestore ambiguous baseline exact-source resolution');
+    assertIncludes(changedBranch, 'active_rules_variant="baseline-compatibility"', 'Production Firestore compatibility baseline classification');
+    assertIncludes(changedBranch, 'active_rules_variant="historical-compatibility"', 'Production Firestore pinned historical compatibility classification');
+    assertIncludes(changedBranch, 'active_rules_status == 2', 'Production Firestore unreadable active-source block');
+    assertIncludes(changedBranch, '[[ "$active_rules_variant" == *-final ]]', 'Production Firestore final boundary preservation');
+    assertIncludes(changedBranch, '[[ "$native_callable_ready" == "true" ]]', 'Production certificate defaults native readiness finalization gate');
+    assertIncludes(changedBranch, 'ensure_exact_firestore_ruleset "$compatibility_firestore_rules"', 'Production Firestore compatibility ruleset verification');
+    assertIncludes(changedBranch, 'ensure_exact_firestore_ruleset "$final_firestore_rules"', 'Production Firestore final ruleset verification');
+    assertIncludes(changedBranch, 'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15', 'Production Firestore index ordering');
     assertIncludes(
         changedBranch,
         'currently unavailable projects:test request',
@@ -561,9 +963,11 @@ export function validateFirebaseRulesCi() {
     const gameEventsRules = (firestoreRules.match(/match \/events\/\{eventId} \{[\s\S]*?\n\s*}/) || [''])[0];
     const aggregatedStatsRules = (firestoreRules.match(/match \/aggregatedStats\/\{statId} \{[\s\S]*?\n\s*}/) || [''])[0];
     const deployProd = readText('.github/workflows/deploy-prod.yml');
+    const migrationCredential = readText('_migration/firebase-admin-credential.mjs');
     const deployPreviewBuild = readText('.github/workflows/deploy-preview.yml');
     const deployPreviewTrusted = readText('.github/workflows/deploy-preview-trusted.yml');
     const prIntegration = readText('.github/workflows/pr-integration.yml');
+    const prPreview = readText('.github/workflows/pr-preview.yml');
     const regressionGuards = readText('.github/workflows/regression-guards.yml');
 
     validateFirestoreRulesDeployBudget(compactFirestoreRules(firestoreRules));
@@ -582,6 +986,14 @@ export function validateFirebaseRulesCi() {
     );
     if (!authEmailDeliveryTtl) {
         throw new Error('Authentication email deliveries must keep an expiresAt TTL policy.');
+    }
+    const accessCodeValidationRateLimitTtl = (firestoreIndexes.fieldOverrides || []).some((override) =>
+        override.collectionGroup === 'accessCodeValidationRateLimits' &&
+        override.fieldPath === 'expiresAt' &&
+        override.ttl === true
+    );
+    if (!accessCodeValidationRateLimitTtl) {
+        throw new Error('Access-code validation rate limits must keep an expiresAt TTL policy.');
     }
 
     if (firebaseJson.storage?.rules !== 'storage.rules') {
@@ -607,7 +1019,8 @@ export function validateFirebaseRulesCi() {
         throw new Error('Firestore collection-group game visibility helper must not re-read the parent team document with exists(parentTeamPath).');
     }
     assertIncludes(firestoreRules, 'allow read: if canReadGameDocument(teamId, gameId, resource.data);', 'Firestore team game read rules');
-    assertIncludes(firestoreRules, 'allow read: if canReadGameSubcollectionDocument(teamId, gameId);', 'Firestore game subcollection read rules');
+    assertIncludes(gameEventsRules, '!gameUsesDiamondScorebook(teamId, gameId)', 'Firestore Diamond legacy-event isolation');
+    assertIncludes(gameEventsRules, 'canReadGameSubcollectionDocument(teamId, gameId);', 'Firestore game subcollection read rules');
     assertIncludes(firestoreRules, 'allow read: if canReadCollectionGroupGameDocument(path, resource.data);', 'Firestore collection-group game read rules');
     if (gameEventsRules.includes('allow read: if true;')) {
         throw new Error('Firestore game events read rules must not allow unconditional public reads.');
@@ -639,12 +1052,60 @@ export function validateFirebaseRulesCi() {
     assertIncludes(firestoreRules, 'isNestedChatMessageCreateValid(', 'Nested chat create rules');
 
     validateProductionDeployCommand(deployProd);
+    assertIncludes(
+        deployProd,
+        'retry_enabled_function_targets="functions:cleanupPrivateReplayArchiveOnGameDelete,functions:cleanupPrivateReplayArchiveOnSharedGameDelete,',
+        'Production replay cleanup trigger deployment'
+    );
+    assertIncludes(
+        deployProd,
+        'cp _migration/firebase-admin-credential.mjs',
+        'Production migration access-token credential handoff'
+    );
+    assertIncludes(
+        deployProd,
+        'test -f "$bundle/_migration/firebase-admin-credential.mjs"',
+        'Production migration credential handoff validation'
+    );
+    assertIncludes(
+        migrationCredential,
+        'if (env.GOOGLE_OAUTH_ACCESS_TOKEN)',
+        'Production migration workload-identity access-token preference'
+    );
+    assertIncludes(
+        migrationCredential,
+        'credential: applicationDefault()',
+        'Production migration local application-default fallback'
+    );
     validateFirebaseDeployWorkloadIdentity(deployProd, 'Production deploy');
-    assertMatches(deployProd, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Production deploy gate');
+    assertIncludes(
+        deployProd,
+        'needs: [validation-source, unit-tests, regression-guards]',
+        'Production validation aggregate gate'
+    );
+    assertIncludes(
+        deployProd,
+        'needs: [validation-source, production-validation-gate, validate-production-smoke-config]',
+        'Production deploy gate'
+    );
+    assertIncludes(
+        deployProd,
+        "needs.validation-source.outputs.change_impact != 'spec-only'",
+        'Production full-deploy impact gate'
+    );
+    assertIncludes(
+        deployProd,
+        "needs.validation-source.outputs.change_impact == 'spec-only'",
+        'Production no-op impact gate'
+    );
+    assertIncludes(deployProd, 'environment:"production-artifact"', 'Production artifact provenance marker');
+    assertIncludes(deployProd, 'release_kind:"no-op"', 'Production no-op release marker');
 
     assertIncludes(deployPreviewBuild, 'workflow_call:', 'Untrusted preview reusable workflow');
     assertIncludes(prIntegration, 'uses: ./.github/workflows/regression-guards.yml', 'PR integration regression gate');
-    assertIncludes(prIntegration, 'uses: ./.github/workflows/deploy-preview.yml', 'PR integration preview artifact gate');
+    assertIncludes(prPreview, 'workflow_dispatch:', 'Explicit PR preview dispatch gate');
+    assertIncludes(prPreview, 'head_sha: ${{ inputs.head_sha }}', 'Exact-head PR preview dispatch input');
+    assertIncludes(prPreview, 'uses: ./.github/workflows/deploy-preview.yml', 'PR preview artifact gate');
     assertIncludes(prIntegration, 'name: preview-smoke', 'PR integration stable preview context');
     assertIncludes(prIntegration, 'name: mobile-build', 'PR integration stable mobile context');
     validatePreviewDeployCommand(deployPreviewTrusted);
@@ -654,9 +1115,18 @@ export function validateFirebaseRulesCi() {
     assertIncludes(storageRules, 'match /game-clips/{teamId}/{gameId}/{userId}/{fileName}', 'Scoped Storage game clip rules');
     assertIncludes(storageRules, 'allow get: if canAccessTeamMedia(teamId);', 'Scoped Storage game clip read rules');
     assertIncludes(storageRules, 'function isVerifiedForSensitiveWrite()', 'Staged Storage verified-email policy helper');
-    assertIncludes(storageRules, 'allow create: if isVerifiedForSensitiveWrite() &&\n        canAccessTeamMedia(teamId) &&', 'Scoped Storage game clip create rules');
-    assertIncludes(storageRules, 'request.auth.uid == userId', 'Scoped Storage uploader match rules');
-    assertIncludes(storageRules, 'request.resource.contentType.matches(\'video/.*\')', 'Scoped Storage video content-type rules');
+    assertIncludes(storageRules, 'function canVideographStorageGame(teamId, gameId)', 'Game-scoped Storage videography helper');
+    assertIncludes(storageRules, "request.auth.uid in teamPermission(teamId, 'videography').get('memberIds', [])", 'Selected Storage videographer authorization');
+    assertIncludes(clipFallbackRules, 'allow create: if isVerifiedForSensitiveWrite() &&\n        canVideographStorageGame(teamId, gameId) &&', 'Scoped Storage game clip create rules');
+    assertIncludes(clipFallbackRules, 'request.auth.uid == userId', 'Scoped Storage uploader match rules');
+    assertIncludes(clipFallbackRules, 'request.resource.size > 0', 'Scoped Storage nonempty game clip rules');
+    assertIncludes(clipFallbackRules, 'request.resource.size <= 50 * 1024 * 1024', 'Scoped Storage game clip size rules');
+    assertIncludes(clipFallbackRules, 'request.resource.contentType.matches(\'video/.*\')', 'Scoped Storage video content-type rules');
+    assertIncludes(storageRules, 'function isAllowedDrillDiagramUpload(contentType, size)', 'Drill diagram Storage upload validator');
+    assertIncludes(drillFallbackRules, 'allow create: if isVerifiedForSensitiveWrite() &&\n        isTeamOwnerOrAdmin(teamId) &&', 'Drill diagram manager-only create rules');
+    assertIncludes(drillFallbackRules, 'drillId.size() > 0', 'Drill diagram nonempty drill scope');
+    assertIncludes(drillFallbackRules, 'request.auth.uid == userId', 'Drill diagram uploader match rules');
+    assertIncludes(drillFallbackRules, 'isAllowedDrillDiagramUpload(request.resource.contentType, request.resource.size);', 'Drill diagram bounded image rules');
     assertIncludes(storageRules, 'function canDeleteOwnTeamMediaObject(teamId, folderId, userId)', 'Team media scoped Storage delete helper');
     assertIncludes(storageRules, 'function canDeleteOwnChatAttachment(teamId, conversationId, userId)', 'Chat fallback scoped Storage delete helper');
     assertIncludes(storageRules, 'function canDeleteOwnTeamScopedUpload(teamId, userId)', 'Team scoped Storage delete helper');
@@ -665,7 +1135,7 @@ export function validateFirebaseRulesCi() {
     assertIncludes(storageRules, "teamPermission(teamId, 'teamMediaManagement').get('mode', '') == 'selected'", 'Storage team media manager selected permission');
     assertIncludes(storageRules, "request.auth.uid in teamPermission(teamId, 'teamMediaManagement').get('memberIds', [])", 'Storage team media manager member ID check');
     assertIncludes(teamMediaRules, 'allow delete: if isVerifiedForSensitiveWrite() &&\n        (canManageTeamMedia(teamId) || canDeleteOwnTeamMediaObject(teamId, folderId, userId));', 'Team media scoped Storage delete rules');
-    assertIncludes(chatFallbackRules, 'allow delete: if (isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId)) ||\n        canDeleteOwnChatAttachment(teamId, conversationId, userId);', 'Chat fallback scoped Storage delete rules');
+    assertIncludes(chatFallbackRules, 'allow delete: if (isVerifiedForSensitiveWrite() &&\n        isTeamOwnerOrAdmin(teamId) &&\n        canAccessChatAttachment(teamId, conversationId)) ||\n        canDeleteOwnChatAttachment(teamId, conversationId, userId);', 'Chat fallback scoped Storage delete rules');
     for (const [label, block] of [
         ['Legacy chat fallback scoped Storage delete rules', legacyChatFallbackRules],
         ['Stat sheet scoped Storage delete rules', statSheetFallbackRules],

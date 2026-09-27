@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const capacitorCoreMock = vi.hoisted(() => ({
+  isNativePlatform: vi.fn(() => false),
+  getPlatform: vi.fn(() => 'web')
+}));
+
+vi.mock('@capacitor/core', () => ({ Capacitor: capacitorCoreMock }));
 
 const firebaseAuthSdk = vi.hoisted(() => {
   const resolvedConfig = {
@@ -19,6 +26,7 @@ const firebaseAuthSdk = vi.hoisted(() => {
     getAuth: vi.fn((app: unknown) => ({ app, auth: true })),
     getRedirectResult: vi.fn(),
     GoogleAuthProvider: class {},
+    inMemoryPersistence: { type: 'inMemoryPersistence' },
     indexedDBLocalPersistence: { type: 'indexedDBLocalPersistence' },
     initializeApp: vi.fn(() => ({ name: '[DEFAULT]', created: true })),
     initializePrimaryAppCheck: vi.fn(() => Promise.resolve({ state: 'ready' })),
@@ -27,10 +35,12 @@ const firebaseAuthSdk = vi.hoisted(() => {
     onAuthStateChanged: vi.fn(),
     resolvePrimaryFirebaseConfig: vi.fn(() => Promise.resolve(resolvedConfig)),
     signInWithEmailAndPassword: vi.fn(),
+    signInWithCustomToken: vi.fn(),
     signInWithEmailLink: vi.fn(),
     signInWithPopup: vi.fn(),
     signInWithRedirect: vi.fn(),
     signOut: vi.fn(),
+    setPersistence: vi.fn(),
     updatePassword: vi.fn(),
     verifyPasswordResetCode: vi.fn()
   };
@@ -45,6 +55,9 @@ vi.mock('./logger', () => ({
 }));
 
 describe('firebaseAuthRuntime', () => {
+  const originalLocation = window.location;
+  const originalIndexedDb = window.indexedDB;
+
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
@@ -53,6 +66,59 @@ describe('firebaseAuthRuntime', () => {
     firebaseAuthSdk.initializePrimaryAppCheck.mockResolvedValue({ state: 'ready' });
     firebaseAuthSdk.getAuth.mockImplementation((app: unknown) => ({ app, auth: true }));
     firebaseAuthSdk.resolvePrimaryFirebaseConfig.mockResolvedValue(firebaseAuthSdk.resolvedConfig);
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+    capacitorCoreMock.getPlatform.mockReturnValue('web');
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, 'location', { value: originalLocation, writable: true, configurable: true });
+    Object.defineProperty(window, 'indexedDB', { value: originalIndexedDb, writable: true, configurable: true });
+  });
+
+  it('uses memory-only WebView auth before the Android bridge is injected at https://localhost', async () => {
+    Object.defineProperty(window, 'location', {
+      value: { ...originalLocation, protocol: 'https:', hostname: 'localhost' },
+      writable: true,
+      configurable: true
+    });
+    Object.defineProperty(window, 'indexedDB', {
+      value: { deleteDatabase: vi.fn() },
+      writable: true,
+      configurable: true
+    });
+    firebaseAuthSdk.initializeAuth.mockReturnValue({ nativeAuth: true });
+
+    const runtime = await import('./firebaseAuthRuntime');
+
+    expect(firebaseAuthSdk.resolvePrimaryFirebaseConfig).not.toHaveBeenCalled();
+    expect(firebaseAuthSdk.initializeApp).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'game-flow-c6311'
+    }));
+    expect(firebaseAuthSdk.initializeAuth).toHaveBeenCalledWith(
+      { name: '[DEFAULT]', created: true },
+      { persistence: firebaseAuthSdk.inMemoryPersistence }
+    );
+    expect(firebaseAuthSdk.getAuth).not.toHaveBeenCalled();
+    expect(runtime.auth).toEqual({ nativeAuth: true });
+  });
+
+  it('scrubs an existing native WebView auth user before moving the reused instance to memory', async () => {
+    Object.defineProperty(window, 'location', {
+      value: { ...originalLocation, protocol: 'capacitor:', hostname: 'localhost' },
+      writable: true,
+      configurable: true
+    });
+    const existingAuth = { app: null, auth: true, existing: true };
+    firebaseAuthSdk.initializeAuth.mockImplementationOnce(() => {
+      throw new Error('already initialized');
+    });
+    firebaseAuthSdk.getAuth.mockReturnValue(existingAuth);
+
+    const runtime = await import('./firebaseAuthRuntime');
+
+    expect(firebaseAuthSdk.signOut).toHaveBeenCalledWith(existingAuth);
+    expect(firebaseAuthSdk.setPersistence).toHaveBeenCalledWith(existingAuth, firebaseAuthSdk.inMemoryPersistence);
+    expect(runtime.auth).toBe(existingAuth);
   });
 
   it('initializes the default app when only named apps are registered', async () => {
@@ -78,5 +144,15 @@ describe('firebaseAuthRuntime', () => {
     expect(firebaseAuthSdk.initializeApp).not.toHaveBeenCalled();
     expect(firebaseAuthSdk.initializePrimaryAppCheck).toHaveBeenCalledWith(existingDefaultApp);
     expect(firebaseAuthSdk.getAuth).toHaveBeenCalledWith(existingDefaultApp);
+  });
+
+  it('does not block auth startup while native App Check attestation is pending', async () => {
+    firebaseAuthSdk.initializePrimaryAppCheck.mockReturnValue(new Promise(() => undefined));
+
+    const runtime = await import('./firebaseAuthRuntime');
+
+    expect(firebaseAuthSdk.initializePrimaryAppCheck).toHaveBeenCalledWith({ name: '[DEFAULT]', created: true });
+    expect(firebaseAuthSdk.getAuth).toHaveBeenCalledWith({ name: '[DEFAULT]', created: true });
+    expect(runtime.auth).toEqual({ app: { name: '[DEFAULT]', created: true }, auth: true });
   });
 });

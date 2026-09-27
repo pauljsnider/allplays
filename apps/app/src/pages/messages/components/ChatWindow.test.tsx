@@ -113,6 +113,13 @@ describe('Messages ALL PLAYS lazy loading', () => {
     expect(chatServiceImport).not.toContain('sendTeamEmailMessage');
   });
 
+  it('wires Team Email audience editing through the single-sheet return handoff', () => {
+    const source = readFileSync(resolveAppSourcePath('src/pages/messages/components/ChatWindow.tsx'), 'utf8');
+
+    expect(source).toContain('openEmailAudienceSheet();');
+    expect(source).toContain('onEditAudience={editEmailAudience}');
+  });
+
   it('loads and calls the AI module only through the lazy answer helper', async () => {
     const input = {
       teamId: 'team-1',

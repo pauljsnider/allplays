@@ -33,19 +33,28 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from './firebase.js?v=23';
-import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=11';
+} from './firebase.js?v=33';
+import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
+import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=18';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
-import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=2';
-import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath, buildStatSheetFallbackPath } from './fallback-media-paths.js?v=2';
-import { isAccessCodeExpired } from './access-code-utils.js?v=1';
+import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=3';
+import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath, buildGameScopedStatSheetFallbackPath } from './fallback-media-paths.js?v=4';
+import { createSecureUploadToken } from './secure-upload-token.js?v=1';
+import {
+    buildPlayerProfilePhotoPath,
+    buildTeamProfilePhotoPath,
+    buildUserProfilePhotoPath,
+    validateProfilePhotoFile
+} from './profile-photo-paths.js?v=3';
+import { isAccessCodeExpired } from './access-code-utils.js?v=2';
 import {
     buildParentMembershipRequestId,
     buildParentMembershipRequestUpdate,
     mergeApprovedParentMembershipRequests
-} from './parent-membership-utils.js?v=2';
+} from './parent-membership-utils.js?v=3';
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=2';
+import { assertTeamFeeRecipientLimit, normalizeTeamFeeRecipientRecords } from './team-fee-batch-limits.js?v=1';
 import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=3';
 import {
     buildRsvpFallbackPlayerIdsByUser,
@@ -56,8 +65,10 @@ import {
 import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
 import {
     collectOfficialLookupQueryTargets,
-    collectOfficialLookupTargets
-} from './admin-user-official-links.js?v=3';
+    collectOfficialLookupTargets,
+    normalizeOfficialLinkEmail,
+    normalizeOfficialLinkPhone
+} from './admin-user-official-links.js?v=4';
 import {
     ADMIN_OFFICIAL_ENRICHMENT_QUERY_CEILING,
     ADMIN_OFFICIAL_ENRICHMENT_USER_LIMIT,
@@ -66,9 +77,9 @@ import {
     ADMIN_USER_SEARCH_TEAM_LIMIT,
     buildAdminUserSearchStrategies,
     mergeBoundedAdminUserCandidates
-} from './admin-search.js?v=7';
+} from './admin-search.js?v=8';
 import { resolveAvailabilityCutoffEventDate } from './availability-cutoff-date.js?v=1';
-import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from './family-share-utils.js?v=2';
+import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from './family-share-utils.js?v=3';
 import { normalizeChatAttachments } from './team-chat-media.js';
 import {
     DEFAULT_TEAM_CONVERSATION_ID,
@@ -102,7 +113,12 @@ import {
     collectAthleteProfileMediaCleanupPaths,
     summarizeAthleteProfileCareer,
     collectAthleteGameClipsForPlayer
-} from './athlete-profile-utils.js?v=2';
+} from './athlete-profile-utils.js?v=4';
+import { loadCompleteAthleteProfileSeasonStats } from './diamond-legacy-game-context.js?v=1';
+import {
+    DIAMOND_PLAYER_STAT_CATALOG,
+    resolveDiamondPublicTeamStatDocument
+} from './diamond-stat-presentation.js?v=7';
 import {
     isTeamActive,
     filterTeamsByActive,
@@ -111,22 +127,14 @@ import {
 } from './team-visibility.js?v=2';
 import {
     FRIEND_INVITE_TYPE,
-    buildAcceptedFriendshipData,
-    buildFriendInviteAccessCodeData,
-    buildFriendInviteInviterProfile,
-    buildFriendshipId,
-    getDisplayName
+    buildFriendInviteAccessCodeData
 } from './friend-invite.js?v=1';
+import { commitCertificateDefaults } from './certificates/persistence.js?v=7';
 
 export async function normalizeParentScopeLinks(parentLinks = []) {
-    const activeLinks = [];
-    const accessLinks = [];
-    let blockedLinkCount = 0;
-    let staleLinkCount = 0;
-    const teamCache = new Map();
-    const playerCache = new Map();
+    // Dedupe first (no I/O) so every remaining link is fetched exactly once.
     const seenKeys = new Set();
-
+    const uniqueEntries = [];
     for (const link of (Array.isArray(parentLinks) ? parentLinks : [])) {
         const teamId = String(link?.teamId || '').trim();
         const playerId = String(link?.playerId || '').trim();
@@ -135,34 +143,53 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
         const playerKey = `${teamId}::${playerId}`;
         if (seenKeys.has(playerKey)) continue;
         seenKeys.add(playerKey);
+        uniqueEntries.push({ link, teamId, playerId, playerKey });
+    }
 
-        let team = teamCache.get(teamId);
-        if (team === undefined) {
-            team = await getTeam(teamId, { includeInactive: true });
-            teamCache.set(teamId, team || null);
-        }
+    // Team reads gate whether a player read is needed at all, so fetch all
+    // unique teams in parallel first, then only the players whose team is
+    // still active — instead of resolving each link's team+player one at a
+    // time, which serializes every parent's page load behind N round trips.
+    const uniqueTeamIds = [...new Set(uniqueEntries.map((entry) => entry.teamId))];
+    const teamResults = await Promise.all(
+        uniqueTeamIds.map((teamId) => getTeam(teamId, { includeInactive: true }))
+    );
+    const teamById = new Map(uniqueTeamIds.map((teamId, index) => [teamId, teamResults[index] || null]));
+
+    let staleLinkCount = 0;
+    const activeEntries = [];
+    uniqueEntries.forEach((entry) => {
+        const team = teamById.get(entry.teamId);
         if (!team || !isTeamActive(team)) {
             staleLinkCount += 1;
-            continue;
+            return;
         }
+        activeEntries.push({ ...entry, team });
+    });
 
-        let playerSnap = playerCache.get(playerKey);
-        if (playerSnap === undefined) {
+    const playerSnaps = await Promise.all(
+        activeEntries.map(async ({ teamId, playerId }) => {
             try {
-                playerSnap = await getDoc(doc(db, `teams/${teamId}/players`, playerId));
+                return await getDoc(doc(db, `teams/${teamId}/players`, playerId));
             } catch (error) {
                 if (error?.code === 'permission-denied') {
                     console.warn('[parent-scope] Preserving legacy player link while roster permissions are being repaired:', error);
-                    blockedLinkCount += 1;
-                    playerSnap = { blockedByPermissions: true };
-                } else {
-                    throw error;
+                    return { blockedByPermissions: true };
                 }
+                throw error;
             }
-            playerCache.set(playerKey, playerSnap);
-        }
+        })
+    );
+
+    const activeLinks = [];
+    const accessLinks = [];
+    let blockedLinkCount = 0;
+
+    activeEntries.forEach(({ link, teamId, playerId, team }, index) => {
+        const playerSnap = playerSnaps[index];
 
         if (playerSnap?.blockedByPermissions) {
+            blockedLinkCount += 1;
             const normalizedLink = {
                 ...link,
                 teamId,
@@ -174,12 +201,12 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
             };
             activeLinks.push(normalizedLink);
             accessLinks.push(normalizedLink);
-            continue;
+            return;
         }
 
         if (!playerSnap?.exists()) {
             staleLinkCount += 1;
-            continue;
+            return;
         }
 
         const player = { id: playerSnap.id, ...playerSnap.data() };
@@ -195,12 +222,12 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
 
         if (player.active === false) {
             accessLinks.push(normalizedLink);
-            continue;
+            return;
         }
 
         activeLinks.push(normalizedLink);
         accessLinks.push(normalizedLink);
-    }
+    });
 
     return {
         activeLinks,
@@ -210,7 +237,7 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
         staleLinkCount
     };
 }
-import { normalizeStatTrackerConfig, splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=2';
+import { normalizeStatTrackerConfig, splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=4';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
 import { buildRolloverPlayerCopy, buildRolloverPrivateRosterFields } from './team-rollover.js?v=4';
 import { isPublicTrackingItem, normalizeTrackingItem, normalizeTrackingStatus } from './player-tracking-summary.js?v=1';
@@ -228,18 +255,18 @@ import {
     loadVolunteerScreeningTargetRegistrations
 } from './volunteer-screening-access.js?v=2';
 import { buildTournamentGroupOverrideKey, buildTournamentPoolOverrideKey, matchesTournamentStandingsGroup } from './tournament-standings.js?v=4';
-import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeTeamMediaVideoDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=5';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeTeamMediaVideoDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=44339';
 import { getApp } from './vendor/firebase-app.js';
 import {
     computeOfficiatingCoverageStatus,
     updateOfficiatingSlotResponse,
     updateOfficiatingSlotResult
-} from './officiating-utils.js?v=4';
-import { buildOfficiatingNotificationRecord } from './officiating-notifications.js?v=2';
+} from './officiating-utils.js?v=5';
+import { buildOfficiatingNotificationRecord } from './officiating-notifications.js?v=3';
 import {
     getTeamEmailAttachmentTotalBytes,
     normalizeTeamEmailAttachments
-} from './team-email-attachments.js?v=2';
+} from './team-email-attachments.js?v=9';
 export {
     TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES,
     assertTeamEmailAttachmentLimit,
@@ -248,7 +275,7 @@ export {
     getTeamEmailDraft,
     normalizeTeamEmailAttachments,
     uploadTeamEmailAttachment
-} from './team-email-attachments.js?v=2';
+} from './team-email-attachments.js?v=9';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
@@ -256,6 +283,7 @@ const startAfterQuery = startAfter;
 const DEFAULT_PUBLIC_TEAM_DISCOVERY_PAGE_SIZE = 24;
 const MAX_PUBLIC_TEAM_ROSTER_COUNT = 200;
 export const DEFAULT_CHAT_CONVERSATION_PAGE_SIZE = 25;
+export const DEFAULT_TEAM_EMAIL_SAVED_PAGE_SIZE = 25;
 const CHAT_REACTIONS = [
     { key: 'thumbs_up', emoji: '👍' },
     { key: 'heart', emoji: '❤️' },
@@ -293,7 +321,9 @@ export function normalizeOfficialDraft(draft = {}) {
     return {
         name,
         email: email || null,
+        emailLower: normalizeOfficialLinkEmail(email) || null,
         phone: phone || null,
+        phoneDigits: normalizeOfficialLinkPhone(phone) || null,
         roles,
         tags
     };
@@ -330,11 +360,31 @@ function normalizeSharedGameSnapshot(docSnap) {
     };
 }
 
+const GAME_INVENTORY_CACHE_ONLY_ERROR_CODE = 'allplays/game-inventory-cache-only';
+
+function buildGameInventoryCacheOnlyError() {
+    const error = new Error('Game inventory was loaded only from the local cache.');
+    error.code = GAME_INVENTORY_CACHE_ONLY_ERROR_CODE;
+    return error;
+}
+
+function isGameInventoryCacheOnlyError(error) {
+    return error?.code === GAME_INVENTORY_CACHE_ONLY_ERROR_CODE;
+}
+
+function requireServerGameSnapshot(snapshot, required) {
+    if (required && snapshot?.metadata?.fromCache === true) {
+        throw buildGameInventoryCacheOnlyError();
+    }
+    return snapshot;
+}
+
 async function getSharedGamesForTeam(teamId, options = {}) {
     const sharedGamesRef = collectionGroup(db, 'sharedGames');
     const startDate = options?.startDate ?? null;
     const endDate = options?.endDate ?? null;
     const requireComplete = options?.requireComplete === true;
+    const requireServerSnapshots = options?.requireServerSnapshots === true;
     const dateConstraints = [];
     if (startDate instanceof Date) dateConstraints.push(where('date', '>=', Timestamp.fromDate(startDate)));
     if (endDate instanceof Date) dateConstraints.push(where('date', '<=', Timestamp.fromDate(endDate)));
@@ -359,6 +409,11 @@ async function getSharedGamesForTeam(teamId, options = {}) {
         const failedQuery = snapshots.find((result) => result.status === 'rejected');
         if (failedQuery) throw failedQuery.reason;
     }
+    if (requireServerSnapshots && snapshots.some((result) => (
+        result.status === 'fulfilled' && result.value?.metadata?.fromCache === true
+    ))) {
+        throw buildGameInventoryCacheOnlyError();
+    }
     const sharedGamesByPath = new Map();
 
     snapshots.forEach((result) => {
@@ -370,18 +425,6 @@ async function getSharedGamesForTeam(teamId, options = {}) {
 
     return Array.from(sharedGamesByPath.values())
         .filter((game) => isGameWithinDateRange(game, startDate, endDate));
-}
-
-async function hasSharedGameUsingConfig(teamId, configId) {
-    const sharedGamesRef = collectionGroup(db, 'sharedGames');
-    const queries = [
-        query(sharedGamesRef, where('homeTeamId', '==', teamId), where('statTrackerConfigId', '==', configId), limit(1)),
-        query(sharedGamesRef, where('awayTeamId', '==', teamId), where('statTrackerConfigId', '==', configId), limit(1)),
-        query(sharedGamesRef, where('teamIds', 'array-contains', teamId), where('statTrackerConfigId', '==', configId), limit(1))
-    ];
-
-    const snapshots = await Promise.allSettled(queries.map((q) => getDocs(q)));
-    return snapshots.some((result) => result.status === 'fulfilled' && !result.value.empty);
 }
 
 function daysAgoDate(days) {
@@ -478,67 +521,107 @@ export async function getTelemetrySessions({ maxSessions = 200 } = {}) {
     return mapSnapshot(await getDocs(q));
 }
 
-export async function uploadTeamPhoto(file) {
+async function getDownloadUrlOrDeleteUpload(storageRef) {
+    try {
+        return await getDownloadURL(storageRef);
+    } catch (error) {
+        await deleteObject(storageRef).catch(() => undefined);
+        throw error;
+    }
+}
+
+async function uploadStorageCandidateOrDelete(storageRef, file, metadata = {}) {
+    try {
+        return await uploadBytes(storageRef, file, metadata);
+    } catch (error) {
+        await deleteObject(storageRef).catch(() => undefined);
+        throw error;
+    }
+}
+
+export async function deleteLegacyImageUpload(path) {
+    const normalizedPath = String(path || '').trim();
+    if (!normalizedPath) return;
+    if (normalizedPath.startsWith('profile-photos/')) {
+        await deleteObject(ref(storage, normalizedPath));
+        return;
+    }
+    if (!/^(team-photos|player-photos|user-photos)\//.test(normalizedPath)) {
+        throw new Error('Invalid legacy image upload path.');
+    }
+    await ensureImageAuth();
+    await deleteObject(ref(imageStorage, normalizedPath));
+}
+
+export async function uploadTeamPhoto(file, options = {}) {
     console.log('Starting photo upload...', {
         fileName: file.name,
         fileSize: file.size,
         fileType: file.type
     });
 
-    await ensureImageAuth();
-
-    const path = `team-photos/${Date.now()}_${file.name}`;
+    validateProfilePhotoFile(file);
+    getRequiredSignedInUserId();
+    const path = buildTeamProfilePhotoPath(options?.teamId, file.name);
     console.log('Upload path:', path);
 
-    const storageRef = ref(imageStorage, path);
+    const storageRef = ref(storage, path);
     console.log('Storage reference created');
 
-    const snapshot = await uploadBytes(storageRef, file);
+    const snapshot = await uploadStorageCandidateOrDelete(storageRef, file, {
+        contentType: file.type || 'application/octet-stream'
+    });
     console.log('Upload complete, getting download URL...');
 
-    const downloadURL = await getDownloadURL(snapshot.ref);
+    const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('Download URL obtained:', downloadURL);
 
-    return downloadURL;
+    return { url: downloadURL, path };
 }
 
-export async function uploadPlayerPhoto(file) {
+export async function uploadPlayerPhoto(file, options = {}) {
     console.log('Starting player photo upload...', {
         fileName: file.name,
         fileSize: file.size,
         fileType: file.type
     });
 
-    await ensureImageAuth();
+    validateProfilePhotoFile(file);
+    getRequiredSignedInUserId();
+    const path = buildPlayerProfilePhotoPath(options?.teamId, options?.playerId, file.name);
+    const storageRef = ref(storage, path);
 
-    const path = `player-photos/${Date.now()}_${file.name}`;
-    const storageRef = ref(imageStorage, path);
-
-    const snapshot = await uploadBytes(storageRef, file);
-    const downloadURL = await getDownloadURL(snapshot.ref);
+    const snapshot = await uploadStorageCandidateOrDelete(storageRef, file, {
+        contentType: file.type || 'application/octet-stream'
+    });
+    const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('Player photo URL:', downloadURL);
 
-    return downloadURL;
+    return { url: downloadURL, path };
 }
 
-export async function uploadUserPhoto(file, uid = '') {
+export async function uploadUserPhoto(file, uid = '', options = {}) {
     console.log('Starting user photo upload...', {
         fileName: file.name,
         fileSize: file.size,
         fileType: file.type
     });
 
-    await ensureImageAuth();
+    validateProfilePhotoFile(file);
+    const userId = getRequiredSignedInUserId();
+    if (uid && String(uid).trim() !== userId) {
+        throw new Error('The signed-in account does not match this profile photo upload.');
+    }
+    const path = buildUserProfilePhotoPath(userId, file.name);
+    const storageRef = ref(storage, path);
 
-    const safeUid = String(uid || '').trim().replace(/[^\w.-]+/g, '_');
-    const path = `user-photos/${safeUid ? `${safeUid}/` : ''}${Date.now()}_${file.name}`;
-    const storageRef = ref(imageStorage, path);
-
-    const snapshot = await uploadBytes(storageRef, file);
-    const downloadURL = await getDownloadURL(snapshot.ref);
+    const snapshot = await uploadStorageCandidateOrDelete(storageRef, file, {
+        contentType: file.type || 'application/octet-stream'
+    });
+    const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('User photo URL:', downloadURL);
 
-    return downloadURL;
+    return { url: downloadURL, path };
 }
 
 function getRequiredSignedInUserId() {
@@ -547,6 +630,28 @@ function getRequiredSignedInUserId() {
         throw new Error('You must be signed in to upload team media.');
     }
     return userId;
+}
+
+async function canUseLegacyImageStorage(label) {
+    try {
+        await requireImageAuth();
+        return true;
+    } catch (error) {
+        console.warn(`Image authentication unavailable for ${label}; using main storage:`, error?.message || error);
+        return false;
+    }
+}
+
+async function withDeadline(operation, timeoutMs, message) {
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+    });
+    try {
+        return await Promise.race([operation, timeoutPromise]);
+    } finally {
+        clearTimeout(timeoutId);
+    }
 }
 
 const CHAT_MEDIA_UPLOAD_TIMEOUT_MS = 25000;
@@ -575,9 +680,15 @@ export async function uploadChatImage(teamId, file, { conversationId = DEFAULT_T
         storage.maxUploadRetryTime = CHAT_MEDIA_UPLOAD_TIMEOUT_MS;
         storage.maxOperationRetryTime = CHAT_MEDIA_UPLOAD_TIMEOUT_MS;
     }
-    const snapshot = await withChatMediaTimeout(uploadBytes(storageRef, file, {
-        contentType: file.type || 'application/octet-stream'
-    }));
+    let snapshot;
+    try {
+        snapshot = await withChatMediaTimeout(uploadBytes(storageRef, file, {
+            contentType: file.type || 'application/octet-stream'
+        }));
+    } catch (error) {
+        await withChatMediaTimeout(deleteObject(storageRef)).catch(() => undefined);
+        throw error;
+    }
     let url;
     try {
         url = await withChatMediaTimeout(getDownloadURL(snapshot.ref));
@@ -599,12 +710,18 @@ export async function uploadChatImage(teamId, file, { conversationId = DEFAULT_T
     };
 }
 
-export async function deleteUploadedChatAttachments(attachments = []) {
+export async function deleteUploadedMediaObjects(attachments = []) {
     const deletions = attachments
         .filter((attachment) => attachment?.path)
         .map(async (attachment) => {
-            const usesImageStorage = attachment.path.startsWith('team-photos/')
-                || attachment.path.startsWith('team-videos/');
+            const usesImageStorage = attachment.storage === 'image'
+                || (attachment.storage !== 'primary' && (
+                    attachment.path.startsWith('team-photos/')
+                    || attachment.path.startsWith('team-videos/')
+                    || attachment.path.startsWith('drill-diagrams/')
+                    || attachment.path.startsWith('player-photos/')
+                    || attachment.path.startsWith('user-photos/')
+                ));
             const storageRef = ref(usesImageStorage ? imageStorage : storage, attachment.path);
             await deleteObject(storageRef);
         });
@@ -616,82 +733,98 @@ export async function deleteUploadedChatAttachments(attachments = []) {
     }
 }
 
-export async function uploadGameClip(teamId, gameId, file) {
-    await requireImageAuth();
+export async function deleteUploadedChatAttachments(attachments = []) {
+    return deleteUploadedMediaObjects(attachments);
+}
 
+export async function uploadGameClip(teamId, gameId, file) {
     const ts = Date.now();
+    const nonce = createSecureUploadToken();
     const userId = getRequiredSignedInUserId();
     const safeName = String(file.name || 'clip').replace(/[^\w.\-]+/g, '_');
-    const clipPath = `team-videos/${ts}_game-clip_${teamId}_${gameId}_${safeName}`;
+    const clipPath = `team-videos/${ts}_${nonce}_game-clip_${teamId}_${gameId}_${safeName}`;
 
-    try {
-        const storageRef = ref(imageStorage, clipPath);
-        const snapshot = await uploadBytes(storageRef, file);
-        const url = await getDownloadURL(snapshot.ref);
-        return {
-            url,
-            path: clipPath,
-            name: file.name || null,
-            type: file.type || null,
-            size: Number.isFinite(file.size) ? file.size : null,
-            source: 'upload'
-        };
-    } catch (error) {
-        const code = error?.code || '';
-        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
-            console.warn('Image storage denied game clip upload, falling back to main storage:', error?.message || error);
-            const fallbackPath = buildGameClipFallbackPath(teamId, gameId, userId, file.name, ts);
-            const fallbackRef = ref(storage, fallbackPath);
-            const fallbackSnapshot = await uploadBytes(fallbackRef, file);
-            const fallbackUrl = await getDownloadURL(fallbackSnapshot.ref);
+    if (await canUseLegacyImageStorage('game clip upload')) {
+        try {
+            const storageRef = ref(imageStorage, clipPath);
+            const snapshot = await uploadStorageCandidateOrDelete(storageRef, file);
+            const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
             return {
-                url: fallbackUrl,
-                path: fallbackPath,
+                url,
+                path: clipPath,
+                storage: 'image',
                 name: file.name || null,
                 type: file.type || null,
                 size: Number.isFinite(file.size) ? file.size : null,
                 source: 'upload'
             };
+        } catch (error) {
+            const code = error?.code || '';
+            if (code !== 'storage/unauthorized' && code !== 'storage/unauthenticated') throw error;
+            console.warn('Image storage denied game clip upload, falling back to main storage:', error?.message || error);
         }
-        throw error;
+    }
+
+    const fallbackPath = buildGameClipFallbackPath(teamId, gameId, userId, file.name, ts, nonce);
+    const fallbackRef = ref(storage, fallbackPath);
+    const fallbackSnapshot = await uploadStorageCandidateOrDelete(fallbackRef, file);
+    const fallbackUrl = await getDownloadUrlOrDeleteUpload(fallbackSnapshot.ref);
+    return {
+        url: fallbackUrl,
+        path: fallbackPath,
+        storage: 'primary',
+        name: file.name || null,
+        type: file.type || null,
+        size: Number.isFinite(file.size) ? file.size : null,
+        source: 'upload'
+    };
+}
+
+const STAT_SHEET_MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+
+export function validateStatSheetPhotoUpload(teamId, gameId, file) {
+    if (typeof teamId !== 'string' || !teamId.trim()) {
+        throw new Error('Team-scoped stat sheet upload requires a team.');
+    }
+    if (typeof gameId !== 'string' || !gameId.trim()) {
+        throw new Error('Game-scoped stat sheet upload requires a game.');
+    }
+    if (!file || typeof file !== 'object') {
+        throw new Error('Stat sheet upload requires a file.');
+    }
+    if (typeof file.type !== 'string' || !/^image\/.+/i.test(file.type.trim())) {
+        throw new Error('Stat sheet upload requires an image file.');
+    }
+    if (typeof file.size !== 'number' || !Number.isFinite(file.size) || file.size <= 0) {
+        throw new Error('Stat sheet upload requires a non-empty file.');
+    }
+    if (file.size > STAT_SHEET_MAX_UPLOAD_BYTES) {
+        throw new Error('Stat sheet upload cannot exceed 20 MB.');
     }
 }
 
-export async function uploadStatSheetPhoto(teamId, file) {
+export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
+    validateStatSheetPhotoUpload(teamId, gameId, file);
     console.log('Starting stat sheet upload...', {
         fileName: file.name,
         fileSize: file.size,
         fileType: file.type
     });
 
-    await requireImageAuth();
-
-    const path = `team-photos/${Date.now()}_stat-sheet_${file.name}`;
-    try {
-        const storageRef = ref(imageStorage, path);
-        const snapshot = await uploadBytes(storageRef, file);
-        const downloadURL = await getDownloadURL(snapshot.ref);
-        console.log('Stat sheet URL (image storage):', downloadURL);
-        return downloadURL;
-    } catch (error) {
-        const code = error?.code || '';
-        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
-            console.warn('Image storage denied upload, falling back to main storage:', error?.message || error);
-            const userId = auth.currentUser?.uid;
-            if (!teamId || !userId) {
-                throw new Error('Team-scoped stat sheet fallback upload requires a signed-in team user.');
-            }
-            const fallbackRef = ref(storage, buildStatSheetFallbackPath(teamId, userId, file.name, Date.now()));
-            const snapshot = await uploadBytes(fallbackRef, file);
-            const downloadURL = await getDownloadURL(snapshot.ref);
-            console.log('Stat sheet URL (main storage):', downloadURL);
-            return downloadURL;
-        }
-        throw error;
-    }
+    const userId = getRequiredSignedInUserId();
+    const ts = Date.now();
+    const nonce = createSecureUploadToken();
+    const path = buildGameScopedStatSheetFallbackPath(teamId, gameId, userId, file.name, ts, nonce);
+    const storageRef = ref(storage, path);
+    const snapshot = await uploadStorageCandidateOrDelete(storageRef, file);
+    const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
+    console.log('Stat sheet URL (main storage):', downloadURL);
+    return options?.returnUpload === true
+        ? { url: downloadURL, path, storage: 'primary' }
+        : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=18'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443375'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -862,82 +995,27 @@ export async function discoverPublicTeams(options = {}) {
         ? Math.min(Math.max(Math.floor(rawPageSize), 1), 100)
         : DEFAULT_PUBLIC_TEAM_DISCOVERY_PAGE_SIZE;
     const searchText = normalizePublicTeamSearchInput(options.searchText || options.locationFilter || '');
-    const cursor = options.cursor || null;
-    const teamsRef = collection(db, 'teams');
-
-    if (!searchText) {
-        const constraints = [where('isPublic', '==', true), orderBy('name')];
-        if (cursor) {
-            constraints.push(startAfterQuery(cursor));
-        }
-        constraints.push(limitQuery(pageSize));
-        const snapshot = await getDocs(query(teamsRef, ...constraints));
-        const teams = filterTeamsByActive(snapshot.docs.map((teamDoc) => ({ id: teamDoc.id, ...teamDoc.data() })), false);
-        return {
-            teams,
-            nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null
-        };
-    }
-
-    let strategies = buildPublicTeamSearchStrategies(searchText);
-    if (!strategies.length) {
-        return { teams: [], nextCursor: null };
-    }
-
-    const previousPageCursor = readPublicTeamSearchPageCursor(cursor, searchText, strategies.length);
-    if (previousPageCursor.bufferedTeams.length >= pageSize) {
-        const teams = previousPageCursor.bufferedTeams.slice(0, pageSize);
-        const bufferedTeams = previousPageCursor.bufferedTeams.slice(pageSize);
-        return {
-            teams,
-            nextCursor: buildPublicTeamSearchPageCursor(searchText, previousPageCursor.strategyCursors, bufferedTeams)
-        };
-    }
-
-    strategies = strategies.map((strategy, index) => ({
-        ...strategy,
-        startAfterConstraint: previousPageCursor.strategyCursors[index]
-            ? [startAfterQuery(previousPageCursor.strategyCursors[index])]
-            : []
-    }));
-    const snapshots = await Promise.all(strategies.map((strategy) => getDocs(query(
-        teamsRef,
-        where('isPublic', '==', true),
-        where(strategy.field, '>=', strategy.start),
-        where(strategy.field, '<=', strategy.end),
-        orderBy(strategy.field),
-        ...strategy.startAfterConstraint,
-        limitQuery(pageSize)
-    ))));
-
-    const teamsById = new Map(previousPageCursor.bufferedTeams
-        .filter((team) => team?.id)
-        .map((team) => [team.id, team]));
-    snapshots.forEach((snapshot, index) => {
-        const strategy = strategies[index];
-        snapshot.docs.forEach((teamDoc) => {
-            const team = { id: teamDoc.id, ...teamDoc.data() };
-            if (typeof strategy.filter === 'function' && !strategy.filter(team)) {
-                return;
-            }
-            teamsById.set(team.id, team);
-        });
+    const callable = httpsCallable(functions, 'listPublicTeams');
+    const response = await callable({
+        searchText,
+        pageSize,
+        cursor: typeof options.cursor === 'string' ? options.cursor : null
     });
-
-    const sortedTeams = filterTeamsByActive(sortTeamsByName(Array.from(teamsById.values())), false);
-    const teams = sortedTeams.slice(0, pageSize);
-    const bufferedTeams = sortedTeams.slice(pageSize);
-    const strategyCursors = snapshots.map((snapshot, index) => snapshot.docs.length
-        ? snapshot.docs[snapshot.docs.length - 1]
-        : previousPageCursor.strategyCursors[index] || null);
-    const hasMorePages = bufferedTeams.length > 0 || snapshots.some((snapshot) => snapshot.docs.length === pageSize);
-
     return {
-        teams,
-        nextCursor: hasMorePages
-            ? buildPublicTeamSearchPageCursor(searchText, strategyCursors, bufferedTeams)
-            : null
+        teams: filterTeamsByActive(Array.isArray(response?.data?.items) ? response.data.items : [], false),
+        nextCursor: typeof response?.data?.nextCursor === 'string' ? response.data.nextCursor : null
     };
+}
+
+async function getAllPublicTeamProjections() {
+    const teams = [];
+    let cursor = null;
+    do {
+        const page = await discoverPublicTeams({ pageSize: 100, cursor });
+        teams.push(...page.teams);
+        cursor = page.nextCursor;
+    } while (cursor);
+    return teams;
 }
 
 export async function getPublicTeamRosterCount(teamId) {
@@ -999,14 +1077,12 @@ export async function getTeams(options = {}) {
         teams = (await getAllOrderedCollectionDocuments(teamsRef, "name"))
             .map(doc => ({ id: doc.id, ...doc.data() }));
     } else if (publicOnly) {
-        teams = (await getDocs(query(teamsRef, where("isPublic", "==", true)))).docs
-            .map(doc => ({ id: doc.id, ...doc.data() }))
-            .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+        teams = await getAllPublicTeamProjections();
     } else {
         const currentUser = auth.currentUser;
         const currentUserEmail = String(currentUser?.email || '').trim().toLowerCase();
-        const teamSnapshots = await Promise.all([
-            getDocs(query(teamsRef, where("isPublic", "==", true))),
+        const [publicTeams, ...teamSnapshots] = await Promise.all([
+            getAllPublicTeamProjections(),
             currentUser?.uid
                 ? getDocs(query(teamsRef, where("ownerId", "==", currentUser.uid)))
                 : Promise.resolve({ docs: [] }),
@@ -1018,7 +1094,7 @@ export async function getTeams(options = {}) {
                     })
                 : Promise.resolve({ docs: [] })
         ]);
-        const teamsById = new Map();
+        const teamsById = new Map(publicTeams.map((team) => [team.id, team]));
         teamSnapshots.forEach((snapshot) => {
             snapshot.docs.forEach(doc => teamsById.set(doc.id, { id: doc.id, ...doc.data() }));
         });
@@ -1060,13 +1136,54 @@ export async function getTeams(options = {}) {
 export async function getTeam(teamId, options = {}) {
     const includeInactive = !!options.includeInactive;
     const docRef = doc(db, "teams", teamId);
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
+    try {
+        const docSnap = await getDoc(docRef);
+        if (!docSnap.exists()) return null;
         const team = { id: docSnap.id, ...docSnap.data() };
         if (!includeInactive && !isTeamActive(team)) return null;
         return team;
-    } else {
-        return null;
+    } catch (error) {
+        if (!isPermissionDeniedError(error)) throw error;
+        const callable = httpsCallable(functions, 'getPublicTeamProfile');
+        try {
+            const response = await callable({ teamId });
+            const team = response?.data?.item || null;
+            if (!team || (!includeInactive && !isTeamActive(team))) return null;
+            return team;
+        } catch (projectionError) {
+            if (projectionError?.code === 'functions/not-found' || projectionError?.code === 'not-found') {
+                return null;
+            }
+            throw projectionError;
+        }
+    }
+}
+
+export async function getDelegatedTeamContext(teamId, gameId = null, options = {}) {
+    const includeInactive = options.includeInactive === true;
+    const callable = httpsCallable(functions, 'getDelegatedTeamContext');
+    const response = await callable({
+        teamId,
+        ...(gameId ? { gameId } : {})
+    });
+    const team = response?.data?.item || null;
+    if (!team || (!includeInactive && !isTeamActive(team))) return null;
+    return team;
+}
+
+export async function getGameDayTeamContext(teamId, gameId = null, options = {}) {
+    try {
+        return await getDelegatedTeamContext(teamId, gameId, options);
+    } catch (error) {
+        const code = String(error?.code || '');
+        if (!['functions/permission-denied', 'permission-denied', 'functions/unauthenticated', 'unauthenticated'].includes(code)) {
+            throw error;
+        }
+        const callable = httpsCallable(functions, 'getPublicTeamProfile');
+        const response = await callable({ teamId });
+        const team = response?.data?.item || null;
+        if (!team || (!options.includeInactive && !isTeamActive(team))) return null;
+        return team;
     }
 }
 
@@ -1479,7 +1596,7 @@ function buildMovedTeamMediaStoragePath(teamId, targetFolderId, item = {}) {
     const parsedPath = parseTeamMediaStoragePath(item.storagePath);
     const userId = parsedPath?.userId || String(item.uploadedBy || auth.currentUser?.uid || '').trim() || getRequiredSignedInUserId();
     const fileName = parsedPath?.fileName
-        || `${Date.now()}-${sanitizeTeamMediaFileName(item.fileName || item.title || item.id || 'media')}`;
+        || `${Date.now()}-${createSecureUploadToken()}-${sanitizeTeamMediaFileName(item.fileName || item.title || item.id || 'media')}`;
     return `team-media/${teamId}/${targetFolderId}/${userId}/${fileName}`;
 }
 
@@ -1565,45 +1682,49 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
     if (!currentUser?.uid) throw new Error('Sign in before uploading photos.');
     if (!isSupportedTeamMediaImage(file)) throw new Error('Choose an image file that is 10 MB or smaller.');
 
-    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${sanitizeTeamMediaFileName(file.name)}`;
+    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${createSecureUploadToken()}-${sanitizeTeamMediaFileName(file.name)}`;
     const storageRef = ref(storage, storagePath);
     const uploadTask = uploadBytesResumable(storageRef, file, { contentType: file.type || 'image/jpeg' });
 
-    const snapshot = await new Promise((resolve, reject) => {
-        uploadTask.on('state_changed', (progressSnapshot) => {
-            if (typeof options.onProgress === 'function') {
-                const percent = progressSnapshot.totalBytes > 0
-                    ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
-                    : 0;
-                options.onProgress({
-                    bytesTransferred: progressSnapshot.bytesTransferred,
-                    totalBytes: progressSnapshot.totalBytes,
-                    percent
-                });
-            }
-        }, reject, () => resolve(uploadTask.snapshot));
-    });
-
-    const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
-    const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
-    const mediaItem = {
-        folderId: cleanFolderId,
-        title: String(file.name || 'Uploaded photo').trim() || 'Uploaded photo',
-        type: 'photo',
-        storagePath,
-        uploadedBy: currentUser.uid,
-        size: Number(file.size || 0),
-        mimeType: file.type || 'image/jpeg',
-        order,
-        deleted: false,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-    };
-    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
-    if (options?.returnItem === true) {
-        return { id: docRef.id, ...mediaItem, url: runtimeUrl };
+    try {
+        const snapshot = await new Promise((resolve, reject) => {
+            uploadTask.on('state_changed', (progressSnapshot) => {
+                if (typeof options.onProgress === 'function') {
+                    const percent = progressSnapshot.totalBytes > 0
+                        ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
+                        : 0;
+                    options.onProgress({
+                        bytesTransferred: progressSnapshot.bytesTransferred,
+                        totalBytes: progressSnapshot.totalBytes,
+                        percent
+                    });
+                }
+            }, reject, () => resolve(uploadTask.snapshot));
+        });
+        const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
+        const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
+        const mediaItem = {
+            folderId: cleanFolderId,
+            title: String(file.name || 'Uploaded photo').trim() || 'Uploaded photo',
+            type: 'photo',
+            storagePath,
+            uploadedBy: currentUser.uid,
+            size: Number(file.size || 0),
+            mimeType: file.type || 'image/jpeg',
+            order,
+            deleted: false,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+        };
+        const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
+        if (options?.returnItem === true) {
+            return { id: docRef.id, ...mediaItem, url: runtimeUrl };
+        }
+        return docRef.id;
+    } catch (error) {
+        await deleteObject(storageRef).catch(() => undefined);
+        throw error;
     }
-    return docRef.id;
 }
 
 export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) {
@@ -1614,46 +1735,50 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
     if (!currentUser?.uid) throw new Error('Sign in before uploading files.');
     if (!isSupportedTeamMediaDocument(file)) throw new Error('Choose a supported document file that is 10 MB or smaller.');
 
-    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${sanitizeTeamMediaFileName(file.name)}`;
+    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${createSecureUploadToken()}-${sanitizeTeamMediaFileName(file.name)}`;
     const storageRef = ref(storage, storagePath);
     const uploadTask = uploadBytesResumable(storageRef, file, { contentType: file.type });
 
-    const snapshot = await new Promise((resolve, reject) => {
-        uploadTask.on('state_changed', (progressSnapshot) => {
-            if (typeof options.onProgress === 'function') {
-                const percent = progressSnapshot.totalBytes > 0
-                    ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
-                    : 0;
-                options.onProgress({
-                    bytesTransferred: progressSnapshot.bytesTransferred,
-                    totalBytes: progressSnapshot.totalBytes,
-                    percent
-                });
-            }
-        }, reject, () => resolve(uploadTask.snapshot));
-    });
-
-    const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
-    const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
-    const mediaItem = {
-        folderId: cleanFolderId,
-        title: String(file.name || 'Uploaded file').trim() || 'Uploaded file',
-        fileName: String(file.name || '').trim(),
-        type: 'file',
-        storagePath,
-        uploadedBy: currentUser.uid,
-        size: Number(file.size || 0),
-        mimeType: file.type,
-        order,
-        deleted: false,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-    };
-    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
-    if (options?.returnItem === true) {
-        return { id: docRef.id, ...mediaItem, url: runtimeUrl };
+    try {
+        const snapshot = await new Promise((resolve, reject) => {
+            uploadTask.on('state_changed', (progressSnapshot) => {
+                if (typeof options.onProgress === 'function') {
+                    const percent = progressSnapshot.totalBytes > 0
+                        ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
+                        : 0;
+                    options.onProgress({
+                        bytesTransferred: progressSnapshot.bytesTransferred,
+                        totalBytes: progressSnapshot.totalBytes,
+                        percent
+                    });
+                }
+            }, reject, () => resolve(uploadTask.snapshot));
+        });
+        const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
+        const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
+        const mediaItem = {
+            folderId: cleanFolderId,
+            title: String(file.name || 'Uploaded file').trim() || 'Uploaded file',
+            fileName: String(file.name || '').trim(),
+            type: 'file',
+            storagePath,
+            uploadedBy: currentUser.uid,
+            size: Number(file.size || 0),
+            mimeType: file.type,
+            order,
+            deleted: false,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+        };
+        const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
+        if (options?.returnItem === true) {
+            return { id: docRef.id, ...mediaItem, url: runtimeUrl };
+        }
+        return docRef.id;
+    } catch (error) {
+        await deleteObject(storageRef).catch(() => undefined);
+        throw error;
     }
-    return docRef.id;
 }
 
 export async function deleteTeamMediaItem(teamId, item) {
@@ -1818,52 +1943,102 @@ export async function getUserTeams(userId, options = {}) {
     return filterTeamsByActive(teams, includeInactive);
 }
 
+const MANAGED_TEAMS_HTTP_HEDGE_DELAY_MS = 2000;
+
+// The SDK callable and this authenticated REST endpoint reach the same
+// server-authorized listManagedTeams function, so either result is equally
+// authoritative — this exists purely so a cold SDK transport doesn't have to
+// be the only thing standing between the caller and an answer.
+async function fetchManagedTeamsViaRest() {
+    const user = auth.currentUser;
+    if (!user) throw new Error('Sign in to load your teams.');
+    const token = await user.getIdToken();
+    const projectId = auth.app?.options?.projectId;
+    if (!projectId) throw new Error('Firebase project ID is not configured.');
+    const requestUrl = `https://us-central1-${projectId}.cloudfunctions.net/listManagedTeams`;
+    const response = await fetch(requestUrl, {
+        method: 'POST',
+        headers: await getPrimaryAppCheckHeaders({
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        }, requestUrl),
+        body: JSON.stringify({ data: {} })
+    });
+    const payload = await response.json().catch(() => ({}));
+    const result = payload.result || payload.data;
+    if (!response.ok || payload.error || !Array.isArray(result?.items)) {
+        throw new Error(payload.error?.message || 'Managed teams response is invalid.');
+    }
+    return { items: result.items, isPartial: result.isPartial === true };
+}
+
+function requireCompleteManagedTeamsResult(result) {
+    if (result?.isPartial !== true) return result;
+    const error = new Error('Managed team discovery returned partial results.');
+    error.code = 'managed-team-discovery-partial';
+    error.partialResult = result;
+    throw error;
+}
+
+// Cold instances of listManagedTeams have been observed taking 4-5s+ in
+// production. Rather than always waiting on the SDK callable, start an
+// authenticated REST hedge shortly after if it hasn't resolved yet, and take
+// whichever source actually answers first. The hedge timer is cleared once
+// either side wins, so the common (warm) case never fires the extra request.
+async function raceManagedTeamsDiscovery(callPromise) {
+    let hedgeTimerId;
+    let hedgePromise = null;
+    const completeCallPromise = callPromise.then(requireCompleteManagedTeamsResult);
+    const hedgeAfterDelay = new Promise((resolve) => {
+        hedgeTimerId = setTimeout(() => {
+            hedgePromise = fetchManagedTeamsViaRest().then(requireCompleteManagedTeamsResult);
+            resolve(hedgePromise);
+        }, MANAGED_TEAMS_HTTP_HEDGE_DELAY_MS);
+    });
+
+    try {
+        return await Promise.any([completeCallPromise, hedgeAfterDelay]);
+    } catch (aggregateError) {
+        const partialError = aggregateError?.errors?.find((error) => error?.partialResult);
+        if (partialError) return partialError.partialResult;
+        throw aggregateError?.errors?.[0] || aggregateError;
+    } finally {
+        clearTimeout(hedgeTimerId);
+        // Surface an unhandled rejection from whichever source lost the race
+        // as a quiet warning instead of letting it hit the console unhandled.
+        if (hedgePromise) hedgePromise.catch(() => {});
+    }
+}
+
 export async function getUserTeamsWithAccess(userId, email, options = {}) {
     const includeInactive = !!options.includeInactive;
-    const profileSnap = userId ? getDoc(doc(db, "users", userId)).catch(() => null) : Promise.resolve(null);
-    const profile = await profileSnap;
-    const ownerEmailCandidates = [
-        email,
-        profile?.exists?.() ? profile.data()?.email : null,
-        ...(Array.isArray(options.ownerEmailCandidates) ? options.ownerEmailCandidates : [])
-    ].map((value) => String(value || '').trim()).filter(Boolean);
-    const normalizedEmail = ownerEmailCandidates[0] ? ownerEmailCandidates[0].toLowerCase() : '';
-    const optionalTeamQuery = (queryPromise, label) => queryPromise.catch((error) => {
-        console.warn(`Optional team access query failed (${label}).`, error);
-        return { docs: [] };
-    });
-    const ownerEmailQueries = ownerEmailCandidates.length
-        ? [...new Set([...ownerEmailCandidates, ...ownerEmailCandidates.map((value) => value.toLowerCase())])]
-            .map((ownerEmail) => optionalTeamQuery(
-                getDocs(query(collection(db, "teams"), where("ownerEmail", "==", ownerEmail))),
-                `ownerEmail:${ownerEmail}`
-            ))
-        : [];
-    const ownerEmailLowerQuery = normalizedEmail
-        ? optionalTeamQuery(
-            getDocs(query(collection(db, "teams"), where("ownerEmailLower", "==", normalizedEmail))),
-            `ownerEmailLower:${normalizedEmail}`
-        )
-        : Promise.resolve({ docs: [] });
-    const [ownedSnap, adminSnap, ...ownerEmailSnaps] = await Promise.all([
-        getDocs(query(collection(db, "teams"), where("ownerId", "==", userId))),
-        normalizedEmail
-            ? optionalTeamQuery(
-                getDocs(query(collection(db, "teams"), where("adminEmails", "array-contains", normalizedEmail))),
-                `adminEmails:${normalizedEmail}`
-            )
-            : Promise.resolve({ docs: [] }),
-        ownerEmailLowerQuery,
-        ...ownerEmailQueries
-    ]);
-
-    const map = new Map();
-    ownedSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
-    adminSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
-    ownerEmailSnaps.forEach((snap) => snap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() })));
-
-    const teams = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-    return filterTeamsByActive(teams, includeInactive);
+    if (!String(userId || '').trim()) return [];
+    // Firestore cannot authorize a legacy owner-email list query while also
+    // proving ownerId is absent on every possible result. Discover managed
+    // teams through the server, which evaluates each canonical document.
+    const callable = httpsCallable(functions, 'listManagedTeams');
+    const callPromise = callable({}).then((response) => ({
+        items: response?.data?.items,
+        isPartial: response?.data?.isPartial === true
+    }));
+    const racePromise = raceManagedTeamsDiscovery(callPromise);
+    const result = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+        ? await withDeadline(racePromise, options.timeoutMs, 'Managed team discovery timed out.')
+        : await racePromise;
+    if (!Array.isArray(result?.items)) {
+        throw new Error('Managed teams response is invalid.');
+    }
+    const teams = result.items
+        .filter((team) => team && typeof team === 'object' && !Array.isArray(team))
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+    const activeTeams = filterTeamsByActive(teams, includeInactive);
+    if (result.isPartial === true) {
+        const error = new Error('Managed team discovery returned partial results.');
+        error.code = 'managed-team-discovery-partial';
+        error.partialTeams = activeTeams;
+        throw error;
+    }
+    return activeTeams;
 }
 
 /**
@@ -1872,12 +2047,15 @@ export async function getUserTeamsWithAccess(userId, email, options = {}) {
  */
 export async function getParentTeams(userId, options = {}) {
     const includeInactive = !!options.includeInactive;
-    const profile = await getUserProfile(userId);
-    if (!profile || !Array.isArray(profile.parentOf) || profile.parentOf.length === 0) {
+    // Callers that already fetched the profile this page load (e.g. an auth
+    // check that ran moments ago) can pass its parentOf directly to skip a
+    // redundant read; everyone else falls back to fetching it here.
+    const parentOf = Array.isArray(options.parentOf) ? options.parentOf : (await getUserProfile(userId))?.parentOf;
+    if (!Array.isArray(parentOf) || parentOf.length === 0) {
         return [];
     }
 
-    const teamIds = [...new Set(profile.parentOf.map(p => p.teamId).filter(Boolean))];
+    const teamIds = [...new Set(parentOf.map(p => p.teamId).filter(Boolean))];
     if (teamIds.length === 0) return [];
 
     const teams = (await Promise.all(
@@ -2724,7 +2902,8 @@ function assertNoSensitivePlayerFields(playerData) {
         'contacts', 'contact', 'contactInfo', 'contact_info', 'contactEmail', 'contactPhone', 'contactRelation',
         'parents', 'parent', 'parentEmail', 'parentPhone', 'parentRelation',
         'guardian', 'guardians', 'guardianEmail', 'guardianPhone', 'guardianRelation',
-        'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation'
+        'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation',
+        'photoPath'
     ];
     const present = forbidden.filter(k => Object.prototype.hasOwnProperty.call(playerData, k));
     const rosterFieldSources = ['rosterFieldValues', 'customFields', 'profileFields', 'extraFields'];
@@ -2909,12 +3088,18 @@ export async function getPlayersWithPrivateRosterContacts(teamId, options = {}) 
             const privateProfile = await getPlayerPrivateProfile(teamId, player.id);
             return {
                 ...player,
+                // Cleanup paths can contain authorization-sensitive storage
+                // coordinates. Merge them only after this privileged read.
+                photoPath: privateProfile?.photoPath || player?.photoPath || null,
+                photoOwnershipLoaded: true,
                 privateProfileRosterFields: privateProfile?.rosterFields && typeof privateProfile.rosterFields === 'object' ? privateProfile.rosterFields : {},
                 privateProfileParents: Array.isArray(privateProfile?.parents) ? privateProfile.parents : [],
                 privateProfileContacts: Array.isArray(privateProfile?.contacts) ? privateProfile.contacts : []
             };
         } catch (error) {
-            if (error?.code === 'permission-denied') return player;
+            if (error?.code === 'permission-denied') {
+                return { ...player, photoOwnershipLoaded: false };
+            }
             throw error;
         }
     }));
@@ -3033,9 +3218,30 @@ export async function copySelectedPlayersForTeamRollover(sourceTeamId, targetTea
 }
 
 export async function updatePlayer(teamId, playerId, playerData) {
-    assertNoSensitivePlayerFields(playerData);
-    playerData.updatedAt = Timestamp.now();
-    await updateDoc(doc(db, `teams/${teamId}/players`, playerId), playerData);
+    const publicPlayerData = { ...(playerData || {}) };
+    const hasPhotoPath = Object.prototype.hasOwnProperty.call(publicPlayerData, 'photoPath');
+    const photoPath = hasPhotoPath ? (publicPlayerData.photoPath || null) : undefined;
+    delete publicPlayerData.photoPath;
+    assertNoSensitivePlayerFields(publicPlayerData);
+    const updatedAt = Timestamp.now();
+    if (!hasPhotoPath) {
+        await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
+            ...publicPlayerData,
+            updatedAt
+        });
+        return;
+    }
+    const batch = writeBatch(db);
+    batch.update(doc(db, `teams/${teamId}/players`, playerId), {
+        ...publicPlayerData,
+        photoPath: deleteField(),
+        updatedAt
+    });
+    batch.set(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), {
+        photoPath,
+        updatedAt
+    }, { merge: true });
+    await batch.commit();
 }
 
 export async function setPlayerPrivateRosterProfileFields(teamId, playerId, rosterFields = {}, extraData = {}) {
@@ -3051,19 +3257,28 @@ export async function setPlayerPrivateRosterProfileFields(teamId, playerId, rost
     if (Array.isArray(extraData?.contacts)) {
         privateProfileUpdate.contacts = extraData.contacts;
     }
+    if (Object.prototype.hasOwnProperty.call(extraData || {}, 'photoPath')) {
+        privateProfileUpdate.photoPath = extraData.photoPath || null;
+    }
     await setDoc(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), privateProfileUpdate, { merge: true });
 }
 
 export async function updatePlayerWithPrivateRosterProfileFields(teamId, playerId, playerData, rosterFields = null) {
-    assertNoSensitivePlayerFields(playerData);
+    const publicPlayerData = { ...(playerData || {}) };
+    const hasPhotoPath = Object.prototype.hasOwnProperty.call(publicPlayerData, 'photoPath');
+    const photoPath = hasPhotoPath ? (publicPlayerData.photoPath || null) : undefined;
+    delete publicPlayerData.photoPath;
+    assertNoSensitivePlayerFields(publicPlayerData);
     const updatedAt = Timestamp.now();
     const batch = writeBatch(db);
     batch.update(doc(db, `teams/${teamId}/players`, playerId), {
-        ...playerData,
+        ...publicPlayerData,
+        ...(hasPhotoPath ? { photoPath: deleteField() } : {}),
         updatedAt
     });
     batch.set(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), {
         rosterFields: rosterFields || {},
+        ...(hasPhotoPath ? { photoPath } : {}),
         updatedAt
     }, { merge: true });
     await batch.commit();
@@ -3090,6 +3305,9 @@ export async function applyRosterCsvImportOperations(teamId, operations = [], op
             throw new Error('Roster import contains an unsupported operation.');
         }
         const payload = { ...(operation.payload || {}) };
+        const hasPhotoPath = Object.prototype.hasOwnProperty.call(payload, 'photoPath');
+        const photoPath = hasPhotoPath ? (payload.photoPath || null) : undefined;
+        delete payload.photoPath;
         assertNoSensitivePlayerFields(payload);
         const existingPlayerId = String(operation.playerId || '').trim();
         if (type !== 'add' && !existingPlayerId) {
@@ -3103,7 +3321,11 @@ export async function applyRosterCsvImportOperations(teamId, operations = [], op
         if (!playerRef.id) throw new Error('Roster import player is required.');
 
         if (type === 'update') {
-            batch.update(playerRef, { ...payload, updatedAt: Timestamp.now() });
+            batch.update(playerRef, {
+                ...payload,
+                ...(hasPhotoPath ? { photoPath: deleteField() } : {}),
+                updatedAt: Timestamp.now()
+            });
         } else if (type === 'add') {
             batch.set(playerRef, {
                 ...payload,
@@ -3125,10 +3347,13 @@ export async function applyRosterCsvImportOperations(teamId, operations = [], op
             });
         }
 
-        if ((type === 'add' || type === 'update') && (operation.privateRosterFields || operation.privateFamilyContacts)) {
+        if ((type === 'add' || type === 'update') && (operation.privateRosterFields || operation.privateFamilyContacts || hasPhotoPath)) {
             const privateProfileUpdate = {
                 updatedAt: Timestamp.now()
             };
+            if (hasPhotoPath) {
+                privateProfileUpdate.photoPath = photoPath;
+            }
             if (operation.privateRosterFields && Object.keys(operation.privateRosterFields).length > 0) {
                 privateProfileUpdate.rosterFields = operation.privateRosterFields;
             }
@@ -3833,22 +4058,345 @@ function mergeGamesById(primaryGames, supplementalGames = []) {
     return Array.from(gamesById.values());
 }
 
-async function getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate) {
-    if (!startDate && !endDate) return [];
-    const snapshot = await getDocs(query(gamesRef, where("isSeriesMaster", "==", true)));
-    return snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }))
-        .filter(game => recurringPracticeMasterMayOverlapDateRange(game, startDate, endDate));
+function isPermissionDeniedError(error) {
+    const code = String(error?.code || '').toLowerCase();
+    return code === 'permission-denied' || code.endsWith('/permission-denied');
 }
 
-// Pass { startDate, endDate } (Date objects) to window ordinary schedule reads.
-// Direct tournament details pass { tournamentGroup } so standings load every
-// matching pool/division game through equality queries without scanning a
-// team's entire multi-season history (#2034).
-// Called with no options this preserves the original full-collection behavior.
-export async function getGames(teamId, options = {}) {
-    const startDate = options?.startDate ?? null;
-    const endDate = options?.endDate ?? null;
+function toPublicProjectionDate(value) {
+    if (!(value instanceof Date) || Number.isNaN(value.getTime())) return undefined;
+    return value.toISOString().slice(0, 10);
+}
+
+function shiftPublicProjectionDate(value, yearOffset) {
+    const shifted = new Date(value);
+    const targetYear = shifted.getUTCFullYear() + yearOffset;
+    const month = shifted.getUTCMonth();
+    const day = shifted.getUTCDate();
+    shifted.setUTCDate(1);
+    shifted.setUTCFullYear(targetYear);
+    shifted.setUTCMonth(month);
+    const lastDay = new Date(Date.UTC(targetYear, month + 1, 0)).getUTCDate();
+    shifted.setUTCDate(Math.min(day, lastDay));
+    return shifted;
+}
+
+function getPublicProjectionRange(options = {}) {
+    let fromDate = options?.startDate instanceof Date && !Number.isNaN(options.startDate.getTime())
+        ? options.startDate
+        : null;
+    let toDate = options?.endDate instanceof Date && !Number.isNaN(options.endDate.getTime())
+        ? options.endDate
+        : null;
+    if (!fromDate && !toDate) {
+        const now = new Date();
+        fromDate = shiftPublicProjectionDate(now, -7);
+        toDate = shiftPublicProjectionDate(now, 2);
+    } else if (fromDate && !toDate) {
+        toDate = shiftPublicProjectionDate(fromDate, 9);
+    } else if (!fromDate && toDate) {
+        fromDate = shiftPublicProjectionDate(toDate, -9);
+    }
+    return {
+        from: toPublicProjectionDate(fromDate),
+        to: toPublicProjectionDate(toDate)
+    };
+}
+
+const PUBLIC_DIAMOND_UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const PUBLIC_DIAMOND_SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const PUBLIC_DIAMOND_COVERAGE_STATUSES = new Set(['complete', 'partial', 'not_collected']);
+const PUBLIC_DIAMOND_PLAYER_STAT_IDS = new Set(DIAMOND_PLAYER_STAT_CATALOG.map(({ id }) => id));
+
+function exactPublicDiamondResourceId(value) {
+    return typeof value === 'string'
+        && value.length >= 1
+        && value.length <= 128
+        && value === value.trim()
+        && value !== '.'
+        && value !== '..'
+        && !value.includes('/')
+        && !/[\u0000-\u001f\u007f]/.test(value)
+        ? value
+        : '';
+}
+
+function decodePublicDiamondSharedGameId(gameId) {
+    if (typeof gameId !== 'string' || !gameId.startsWith('shared_')) return '';
+    let path;
+    try {
+        path = decodeURIComponent(gameId.slice('shared_'.length));
+    } catch {
+        return '';
+    }
+    const segments = path.split('/');
+    return segments.length === 4
+        && ['organizations', 'tournaments'].includes(segments[0])
+        && segments[2] === 'sharedGames'
+        && segments.every((segment) => exactPublicDiamondResourceId(segment))
+        && `shared_${encodeURIComponent(path)}` === gameId
+        ? path
+        : '';
+}
+
+function mapExactPublicDiamondOpponentStats(value, sourceRevision) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const entries = Object.entries(value);
+    if (entries.length > 100) return null;
+    const result = {};
+    for (const [rawId, rawStats] of entries) {
+        const playerId = exactPublicDiamondResourceId(rawId);
+        if (
+            !playerId
+            || playerId !== rawId
+            || !rawStats
+            || typeof rawStats !== 'object'
+            || Array.isArray(rawStats)
+            || exactPublicDiamondResourceId(rawStats.playerId) !== playerId
+            || rawStats.diamondSourceRevision !== sourceRevision
+            || !rawStats.diamondCoverage
+            || typeof rawStats.diamondCoverage !== 'object'
+            || Array.isArray(rawStats.diamondCoverage)
+        ) return null;
+        const coverageEntries = Object.entries(rawStats.diamondCoverage);
+        if (
+            coverageEntries.length === 0
+            || coverageEntries.length > 32
+            || coverageEntries.some(([family, status]) => (
+                !/^[a-z0-9][a-z0-9_]{0,63}$/.test(family)
+                || !PUBLIC_DIAMOND_COVERAGE_STATUSES.has(status)
+            ))
+        ) return null;
+        const mapped = {
+            playerId,
+            diamondCoverage: Object.fromEntries(coverageEntries),
+            diamondSourceRevision: sourceRevision
+        };
+        if (typeof rawStats.name === 'string' && rawStats.name.length <= 160) mapped.name = rawStats.name;
+        if (typeof rawStats.number === 'string' && rawStats.number.length <= 32) mapped.number = rawStats.number;
+        if (typeof rawStats.photoUrl === 'string' && rawStats.photoUrl.length <= 2048) {
+            try {
+                const photoUrl = new URL(rawStats.photoUrl);
+                if (
+                    ['https:', 'http:'].includes(photoUrl.protocol)
+                    && !photoUrl.username
+                    && !photoUrl.password
+                ) mapped.photoUrl = photoUrl.toString();
+            } catch {
+                // Invalid presentation metadata is omitted, never reflected.
+            }
+        }
+        Object.entries(rawStats).forEach(([key, statValue]) => {
+            if (!PUBLIC_DIAMOND_PLAYER_STAT_IDS.has(key)) return;
+            if (typeof statValue === 'number' && Number.isFinite(statValue) && statValue >= 0) {
+                mapped[key] = statValue;
+            } else if (key === 'innings_pitched' && typeof statValue === 'string' && /^\d+\.[012]$/.test(statValue)) {
+                mapped[key] = statValue;
+            }
+        });
+        result[playerId] = mapped;
+    }
+    return result;
+}
+
+function mapExactPublicDiamondEnvelope(game = {}, teamId = '') {
+    if (game?.trackingEngine !== 'diamond-v2') return null;
+    const sharedGamePath = decodePublicDiamondSharedGameId(game.id);
+    const isSharedGame = game.isSharedGame === true;
+    if (Boolean(sharedGamePath) !== isSharedGame) return null;
+    const id = isSharedGame
+        ? (typeof game.id === 'string' && game.id.length <= 1000 ? game.id : '')
+        : exactPublicDiamondResourceId(game.id);
+    const statTrackerConfigId = exactPublicDiamondResourceId(game.statTrackerConfigId);
+    const status = game.diamondProjectionStatus;
+    const instanceId = game.diamondScorebookInstanceId;
+    const sourceRevision = game.diamondProjectionRevision;
+    const checkpointHash = game.diamondProjectionCheckpointHash;
+    const statConfigSnapshotHash = game.diamondStatConfigSnapshotHash;
+    const projectionHash = game.diamondProjectionHash;
+    if (
+        !id
+        || !statTrackerConfigId
+        || !['current', 'complete'].includes(status)
+        || game.diamondProjectionComplete !== true
+        || typeof instanceId !== 'string'
+        || !PUBLIC_DIAMOND_UUID_V4_PATTERN.test(instanceId)
+        || !Number.isSafeInteger(sourceRevision)
+        || sourceRevision < 0
+        || typeof checkpointHash !== 'string'
+        || !PUBLIC_DIAMOND_SHA256_PATTERN.test(checkpointHash)
+        || typeof statConfigSnapshotHash !== 'string'
+        || !PUBLIC_DIAMOND_SHA256_PATTERN.test(statConfigSnapshotHash)
+        || typeof projectionHash !== 'string'
+        || !PUBLIC_DIAMOND_SHA256_PATTERN.test(projectionHash)
+    ) return null;
+
+    let readTeamId = teamId;
+    let readGameId = id;
+    const sourceBinding = {};
+    if (isSharedGame) {
+        const sourceTeamId = exactPublicDiamondResourceId(game.diamondSourceTeamId);
+        const sourceGameId = exactPublicDiamondResourceId(game.diamondSourceGameId);
+        // Public player/team projections are source-oriented. Do not map an
+        // opponent team's source projection onto this viewing team's report.
+        if (!sourceTeamId || sourceTeamId !== teamId || !sourceGameId) return null;
+        readTeamId = sourceTeamId;
+        readGameId = sourceGameId;
+        sourceBinding.diamondSourceTeamId = sourceTeamId;
+        sourceBinding.diamondSourceGameId = sourceGameId;
+    } else if (
+        Object.prototype.hasOwnProperty.call(game, 'diamondSourceTeamId')
+        || Object.prototype.hasOwnProperty.call(game, 'diamondSourceGameId')
+    ) {
+        return null;
+    }
+
+    const identity = {
+        statTrackerConfigId,
+        diamondProjectionStatus: status,
+        diamondProjectionComplete: true,
+        diamondScorebookInstanceId: instanceId,
+        diamondProjectionRevision: sourceRevision,
+        diamondProjectionCheckpointHash: checkpointHash,
+        diamondStatConfigSnapshotHash: statConfigSnapshotHash,
+        diamondProjectionHash: projectionHash,
+        ...sourceBinding
+    };
+    const teamStats = game.diamondPublicTeamStats;
+    if (
+        !teamStats
+        || typeof teamStats !== 'object'
+        || Array.isArray(teamStats)
+        || teamStats.teamId !== readTeamId
+        || teamStats.diamondGameId !== readGameId
+        || teamStats.instanceId !== instanceId
+        || teamStats.diamondScorebookInstanceId !== instanceId
+        || teamStats.projectionGeneration !== instanceId
+        || teamStats.sourceRevision !== sourceRevision
+        || teamStats.checkpointHash !== checkpointHash
+        || teamStats.statConfigSnapshotHash !== statConfigSnapshotHash
+        || teamStats.projectionHash !== projectionHash
+    ) return null;
+    const teamStatsResolution = resolveDiamondPublicTeamStatDocument({
+        game: {
+            ...game,
+            ...identity,
+            id: readGameId,
+            gameId: readGameId,
+            teamId: readTeamId
+        }
+    });
+    if (teamStatsResolution.status !== 'complete' || !teamStatsResolution.document) return null;
+    const opponentStats = mapExactPublicDiamondOpponentStats(game.opponentStats, sourceRevision);
+    if (opponentStats === null) return null;
+    return {
+        ...identity,
+        opponentStats,
+        diamondPublicTeamStats: teamStatsResolution.document
+    };
+}
+
+function mapPublicGameProjection(game = {}, teamId = '') {
+    const startsAt = game?.startsAt ? new Date(game.startsAt) : null;
+    const endsAt = game?.endsAt ? new Date(game.endsAt) : null;
+    const liveResetAt = game?.liveResetAt ? new Date(game.liveResetAt) : null;
+    const isHome = game?.isHome !== false;
+    const teamScore = Number.isFinite(game?.teamScore) ? game.teamScore : null;
+    const opponentScore = Number.isFinite(game?.opponentScore) ? game.opponentScore : null;
+    const exactDiamondEnvelope = mapExactPublicDiamondEnvelope(game, teamId);
+    const projectedSharedGame = game?.isSharedGame === true
+        && Boolean(decodeSharedGameSyntheticId(String(game?.id || '')));
+    return {
+        id: String(game?.id || ''),
+        teamId,
+        type: 'game',
+        date: startsAt && !Number.isNaN(startsAt.getTime()) ? startsAt : null,
+        endDate: endsAt && !Number.isNaN(endsAt.getTime()) ? endsAt : null,
+        opponent: String(game?.opponent || 'TBD'),
+        location: String(game?.location || ''),
+        isHome,
+        status: Object.prototype.hasOwnProperty.call(game, 'sourceStatus')
+            ? String(game?.sourceStatus || '')
+            : String(game?.status || 'scheduled'),
+        liveStatus: Object.prototype.hasOwnProperty.call(game, 'liveStatus')
+            ? String(game?.liveStatus || '')
+            : String(game?.status || 'scheduled'),
+        homeScore: isHome ? teamScore : opponentScore,
+        awayScore: isHome ? opponentScore : teamScore,
+        summary: game?.summary || null,
+        publicSummary: game?.summary || null,
+        videoUrl: game?.videoUrl || null,
+        seasonLabel: game?.seasonLabel || null,
+        competitionType: game?.competitionType || null,
+        countsTowardSeasonRecord: game?.countsTowardSeasonRecord !== false,
+        tournament: game?.tournament || null,
+        opponentStats: game?.trackingEngine === 'diamond-v2'
+            ? (exactDiamondEnvelope?.opponentStats || {})
+            : (game?.opponentStats || {}),
+        teamName: game?.teamName || null,
+        homeTeamName: game?.homeTeamName || null,
+        sport: game?.sport || null,
+        ...(game?.trackingEngine === 'diamond-v2'
+            ? { trackingEngine: 'diamond-v2' }
+            : {}),
+        ...(exactDiamondEnvelope || {}),
+        teamPhotoUrl: game?.teamPhotoUrl || null,
+        homeTeamPhoto: game?.homeTeamPhoto || game?.teamPhotoUrl || null,
+        opponentTeamPhoto: game?.opponentTeamPhoto || null,
+        statSheetPhotoUrl: game?.statSheetPhotoUrl || null,
+        liveResetAt: liveResetAt && !Number.isNaN(liveResetAt.getTime()) ? liveResetAt : null,
+        liveResetEventId: typeof game?.liveResetEventId === 'string'
+            ? game.liveResetEventId.trim().slice(0, 128)
+            : '',
+        isSharedGame: projectedSharedGame,
+        isPublicProjection: true
+    };
+}
+
+function markCanonicalGameProjectionProvenance(game) {
+    if (!game || typeof game !== 'object') return game;
+    return {
+        ...game,
+        // This marker is trusted only when this module constructs a sanitized
+        // callable projection through mapPublicGameProjection(). A canonical
+        // Firestore document cannot opt itself into projection-only behavior.
+        isPublicProjection: false
+    };
+}
+
+function getSourceOwnedDiamondSharedReportHydrationMode(data, teamId, gameId) {
+    const visibility = typeof data?.visibility === 'string'
+        ? data.visibility.trim().toLowerCase()
+        : '';
+    const status = typeof data?.status === 'string' ? data.status.trim().toLowerCase() : '';
+    const liveStatus = typeof data?.liveStatus === 'string' ? data.liveStatus.trim().toLowerCase() : '';
+    if (
+        !decodePublicDiamondSharedGameId(gameId)
+        || data?.trackingEngine !== 'diamond-v2'
+        || exactPublicDiamondResourceId(data?.diamondSourceTeamId) !== teamId
+        || !exactPublicDiamondResourceId(data?.diamondSourceGameId)
+        || visibility === 'private'
+        || data?.isPrivate === true
+        || data?.private === true
+        || data?.deleted === true
+        || data?.isDeleted === true
+        || status === 'deleted'
+        || liveStatus === 'deleted'
+    ) return '';
+    const hasExplicitPublicMarker = visibility === 'public'
+        || data.isPublic === true
+        || data.public === true
+        || data.shareable === true
+        || data.isShareable === true
+        || data.publicCalendar === true;
+    // Public teams commonly omit a per-game visibility marker. Probe the
+    // server-authoritative exact projection for those source-owned shared
+    // games, but preserve the directly authorized private result when the
+    // server says the unmarked game is not public.
+    return hasExplicitPublicMarker ? 'required' : 'probe';
+}
+
+function normalizeTournamentStandingsGroups(options = {}) {
     const rawTournamentGroups = Array.isArray(options?.tournamentGroups)
         ? options.tournamentGroups
         : options?.tournamentGroup ? [options.tournamentGroup] : [];
@@ -3862,7 +4410,119 @@ export async function getGames(teamId, options = {}) {
         if (!normalized.poolName && !normalized.divisionName) return;
         tournamentGroupsByKey.set(JSON.stringify([normalized.divisionName, normalized.poolName]), normalized);
     });
-    const tournamentGroups = Array.from(tournamentGroupsByKey.values());
+    return Array.from(tournamentGroupsByKey.values());
+}
+
+async function getPublicGamesProjection(teamId, options = {}) {
+    const callable = httpsCallable(functions, 'getPublicTeamGamesProjection');
+    const range = getPublicProjectionRange(options);
+    const pages = await getAllPublicProjectionPages(callable, {
+        teamId,
+        from: range.from,
+        to: range.to,
+        limit: 500
+    }, 'games');
+    const games = pages
+        .map((game) => mapPublicGameProjection(game, teamId))
+        .filter((game) => game.id && game.date);
+    const tournamentGroups = normalizeTournamentStandingsGroups(options);
+    return tournamentGroups.length
+        ? games.filter((game) => tournamentGroups.some((group) => matchesTournamentStandingsGroup(game, group)))
+        : games;
+}
+
+export async function getPublicTeamCalendarEvents(teamId, options = {}) {
+    const callable = httpsCallable(functions, 'getPublicTeamCalendarProjection');
+    const range = getPublicProjectionRange(options);
+    const pages = await getAllPublicProjectionPages(callable, {
+        teamId,
+        from: range.from,
+        to: range.to,
+        limit: 500
+    }, 'events');
+    return pages
+        .map((event) => {
+            const startsAt = event?.startsAt ? new Date(event.startsAt) : null;
+            const endsAt = event?.endsAt ? new Date(event.endsAt) : null;
+            if (!startsAt || Number.isNaN(startsAt.getTime())) return null;
+            const type = event?.type === 'practice' ? 'practice' : 'game';
+            const status = String(event?.status || 'scheduled').toUpperCase();
+            const summary = type === 'practice'
+                ? String(event?.title || 'Practice')
+                : `vs. ${String(event?.opponent || 'TBD')}`;
+            return {
+                id: String(event?.id || ''),
+                uid: String(event?.id || ''),
+                type,
+                dtstart: startsAt,
+                dtend: endsAt && !Number.isNaN(endsAt.getTime()) ? endsAt : null,
+                summary,
+                location: String(event?.location || 'TBD'),
+                status,
+                isPublicProjection: true
+            };
+        })
+        .filter(Boolean);
+}
+
+async function getAllPublicProjectionPages(callable, request, itemKey) {
+    const items = [];
+    const seenCursors = new Set();
+    let cursor = null;
+    do {
+        const response = await callable(cursor ? { ...request, cursor } : request);
+        const data = response?.data || {};
+        if (Array.isArray(data[itemKey])) items.push(...data[itemKey]);
+        if (data?.range?.truncated !== true) break;
+        cursor = typeof data.nextCursor === 'string' ? data.nextCursor : '';
+        if (!cursor || seenCursors.has(cursor)) {
+            throw new Error(`Public ${itemKey} projection pagination did not provide a usable cursor.`);
+        }
+        seenCursors.add(cursor);
+    } while (cursor);
+    return items;
+}
+
+async function getPublicGameProjection(teamId, gameId) {
+    const callable = httpsCallable(functions, 'getPublicGameProjection');
+    try {
+        const response = await callable({ teamId, gameId });
+        if (!response?.data?.item) return null;
+        if (response.data.item.id !== gameId) {
+            const mismatch = new Error('The public game projection did not match the requested game.');
+            mismatch.code = 'public-game-projection-mismatch';
+            throw mismatch;
+        }
+        return mapPublicGameProjection(response.data.item, teamId);
+    } catch (error) {
+        if (String(error?.code || '').endsWith('/not-found') || error?.code === 'not-found') {
+            return null;
+        }
+        throw error;
+    }
+}
+
+async function getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate, options = {}) {
+    if (!startDate && !endDate) return [];
+    const snapshot = requireServerGameSnapshot(
+        await getDocs(query(gamesRef, where("isSeriesMaster", "==", true))),
+        options?.requireServerSnapshot === true
+    );
+    return snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .filter(game => recurringPracticeMasterMayOverlapDateRange(game, startDate, endDate));
+}
+
+// Pass { startDate, endDate } (Date objects) to window ordinary schedule reads.
+// Direct tournament details pass { tournamentGroup } so standings load every
+// matching pool/division game through equality queries without scanning a
+// team's entire multi-season history (#2034).
+// Called with no options this preserves the original full-collection behavior.
+export async function getGames(teamId, options = {}) {
+    const startDate = options?.startDate ?? null;
+    const endDate = options?.endDate ?? null;
+    const requireCompleteSharedGames = options?.requireCompleteSharedGames === true;
+    const tournamentGroups = normalizeTournamentStandingsGroups(options);
     const hasTournamentGroup = tournamentGroups.length > 0;
     const gamesRef = getTeamGameCollectionRef(teamId);
     let teamGames = [];
@@ -3873,13 +4533,16 @@ export async function getGames(teamId, options = {}) {
         if (hasTournamentGroup) {
             const groupGames = await Promise.all(tournamentGroups.map(async (tournamentGroup) => {
                 if (tournamentGroup.poolName) {
-                    const snapshot = await getDocs(query(gamesRef, where("tournament.poolName", "==", tournamentGroup.poolName)));
+                    const snapshot = requireServerGameSnapshot(
+                        await getDocs(query(gamesRef, where("tournament.poolName", "==", tournamentGroup.poolName))),
+                        requireCompleteSharedGames
+                    );
                     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 }
-                const snapshots = await Promise.all([
+                const snapshots = (await Promise.all([
                     getDocs(query(gamesRef, where("tournament.divisionName", "==", tournamentGroup.divisionName))),
                     getDocs(query(gamesRef, where("tournament.division", "==", tournamentGroup.divisionName)))
-                ]);
+                ])).map((snapshot) => requireServerGameSnapshot(snapshot, requireCompleteSharedGames));
                 return mergeGamesById(
                     snapshots[0].docs.map(doc => ({ id: doc.id, ...doc.data() })),
                     snapshots[1].docs.map(doc => ({ id: doc.id, ...doc.data() }))
@@ -3887,34 +4550,52 @@ export async function getGames(teamId, options = {}) {
             }));
             teamGames = groupGames.reduce((merged, games) => mergeGamesById(merged, games), []);
         } else {
-            const snapshot = await getDocs(query(gamesRef, ...rangeConstraints, orderBy("date")));
+            const snapshot = requireServerGameSnapshot(
+                await getDocs(query(gamesRef, ...rangeConstraints, orderBy("date"))),
+                requireCompleteSharedGames
+            );
             teamGames = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         }
     } catch (error) {
+        if (requireCompleteSharedGames && isGameInventoryCacheOnlyError(error)) throw error;
+        if (isPermissionDeniedError(error)) {
+            return getPublicGamesProjection(teamId, options);
+        }
         // Tournament group equality queries use single fields and need no
         // composite index. Never replace them with an unbounded history read.
         if (hasTournamentGroup) throw error;
         // Fallback when indexes are still building or unavailable: read the
         // collection and apply the range client-side so results stay correct.
-        const snapshot = await getDocs(gamesRef);
+        const snapshot = requireServerGameSnapshot(
+            await getDocs(gamesRef),
+            requireCompleteSharedGames
+        );
         teamGames = snapshot.docs
             .map(doc => ({ id: doc.id, ...doc.data() }))
             .filter(game => isGameWithinDateRange(game, startDate, endDate));
     }
     if (!hasTournamentGroup && (startDate || endDate)) {
         try {
-            const recurringMasters = await getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate);
+            const recurringMasters = await getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate, {
+                requireServerSnapshot: requireCompleteSharedGames
+            });
             teamGames = mergeGamesById(teamGames, recurringMasters);
         } catch (error) {
+            if (requireCompleteSharedGames && isGameInventoryCacheOnlyError(error)) throw error;
             console.warn('[getGames] Failed to load recurring practice masters for team', teamId, error);
         }
     }
 
     let sharedGames = [];
     try {
-        sharedGames = await getSharedGamesForTeam(teamId, { startDate, endDate, requireComplete: hasTournamentGroup });
+        sharedGames = await getSharedGamesForTeam(teamId, {
+            startDate,
+            endDate,
+            requireComplete: hasTournamentGroup || requireCompleteSharedGames,
+            requireServerSnapshots: requireCompleteSharedGames
+        });
     } catch (error) {
-        if (hasTournamentGroup) throw error;
+        if (hasTournamentGroup || requireCompleteSharedGames) throw error;
         console.warn('[getGames] Failed to load shared games for team', teamId, error);
     }
 
@@ -3925,6 +4606,29 @@ export async function getGames(teamId, options = {}) {
     return (startDate || endDate)
         ? merged.filter(game => isGameWithinDateRange(game, startDate, endDate))
         : merged;
+}
+
+export async function getOfficiatingGames(teamId, user = auth.currentUser) {
+    const uid = String(user?.uid || '').trim();
+    const email = String(user?.email || '').trim().toLowerCase();
+    if (!teamId || (!uid && !email)) return [];
+    const gamesRef = getTeamGameCollectionRef(teamId);
+    const queries = [];
+    if (uid) {
+        queries.push(query(gamesRef, where('officiatingAuthorizedUserIds', 'array-contains', uid)));
+    }
+    if (email) {
+        queries.push(query(gamesRef, where('officiatingAuthorizedEmails', 'array-contains', email)));
+    }
+    const snapshots = await Promise.all(queries.map((officialQuery) => getDocs(officialQuery)));
+    const gamesById = new Map();
+    snapshots.forEach((snapshot) => {
+        snapshot.docs.forEach((gameDoc) => {
+            gamesById.set(gameDoc.id, { id: gameDoc.id, ...gameDoc.data() });
+        });
+    });
+    return Array.from(gamesById.values())
+        .sort((left, right) => (toComparableGameDate(left?.date)?.getTime() || 0) - (toComparableGameDate(right?.date)?.getTime() || 0));
 }
 
 export async function getAggregatedStatsForGames(teamId, gameIds) {
@@ -3995,13 +4699,33 @@ export async function getAggregatedStatsDocumentForPlayer(teamId, gameId, player
     return docSnap.data() || {};
 }
 
-export async function getGame(teamId, gameId) {
+export async function getGame(teamId, gameId, options = {}) {
     const docRef = getGameDocRef(teamId, gameId);
-    const docSnap = await getDoc(docRef);
+    let docSnap;
+    try {
+        docSnap = await getDoc(docRef);
+    } catch (error) {
+        if (isPermissionDeniedError(error)) {
+            return getPublicGameProjection(teamId, gameId);
+        }
+        throw error;
+    }
     if (docSnap.exists()) {
         const data = docSnap.data();
         if (isSharedGameSyntheticId(gameId)) {
-            return projectSharedGameForTeam({
+            const reportHydrationMode = options?.exactPublicDiamondReport === true
+                ? getSourceOwnedDiamondSharedReportHydrationMode(data, teamId, gameId)
+                : '';
+            if (reportHydrationMode) {
+                const exactProjection = await getPublicGameProjection(teamId, gameId);
+                if (exactProjection) return exactProjection;
+                if (reportHydrationMode === 'required') {
+                    const unavailable = new Error('The exact public Diamond report is unavailable.');
+                    unavailable.code = 'allplays/diamond-public-report-unavailable';
+                    throw unavailable;
+                }
+            }
+            return markCanonicalGameProjectionProvenance(projectSharedGameForTeam({
                 id: docSnap.id,
                 ...data,
                 _sharedGamePath: docRef.path
@@ -4011,27 +4735,69 @@ export async function getGame(teamId, gameId) {
                 sharedGameId: docSnap.id,
                 sharedGamePath: docRef.path,
                 isSharedGame: true
-            };
+            });
         }
-        return {
+        return markCanonicalGameProjectionProvenance({
             id: docSnap.id,
             ...data
-        };
+        });
     } else {
         return null;
     }
 }
 
-export function subscribeGame(teamId, gameId, callback, onError) {
+export function subscribeGame(teamId, gameId, callback, onError, options = {}) {
     const docRef = getGameDocRef(teamId, gameId);
-    return onSnapshot(docRef, (snapshot) => {
+    let stopped = false;
+    let projectionTimer = null;
+    let projectionPollingStarted = false;
+    let projectionPollRevision = 0;
+    let latestSettledProjectionPollRevision = 0;
+    const pollProjection = async () => {
+        if (stopped) return;
+        // Order completed requests without suppressing every response when the
+        // projection service is consistently slower than the polling interval.
+        const pollRevision = ++projectionPollRevision;
+        let projectedGame;
+        try {
+            projectedGame = await getPublicGameProjection(teamId, gameId);
+        } catch (error) {
+            if (stopped || pollRevision <= latestSettledProjectionPollRevision) return;
+            latestSettledProjectionPollRevision = pollRevision;
+            if (typeof onError === 'function') onError(error);
+            return;
+        }
+        if (stopped || pollRevision <= latestSettledProjectionPollRevision) return;
+        latestSettledProjectionPollRevision = pollRevision;
+        try {
+            callback(projectedGame);
+        } catch (error) {
+            if (!stopped && typeof onError === 'function') onError(error);
+        }
+    };
+    const startProjectionPolling = () => {
+        if (projectionPollingStarted || stopped) return;
+        projectionPollingStarted = true;
+        void pollProjection();
+        projectionTimer = globalThis.setInterval(() => void pollProjection(), 15000);
+    };
+    const stopSubscription = (unsubscribe = null) => {
+        stopped = true;
+        if (typeof unsubscribe === 'function') unsubscribe();
+        if (projectionTimer !== null) globalThis.clearInterval(projectionTimer);
+    };
+    if (options.publicProjection === true) {
+        startProjectionPolling();
+        return () => stopSubscription();
+    }
+    const unsubscribe = onSnapshot(docRef, (snapshot) => {
         if (!snapshot.exists()) {
             callback(null);
             return;
         }
         const data = snapshot.data();
         if (isSharedGameSyntheticId(gameId)) {
-            callback(projectSharedGameForTeam({
+            callback(markCanonicalGameProjectionProvenance(projectSharedGameForTeam({
                 id: snapshot.id,
                 ...data,
                 _sharedGamePath: docRef.path
@@ -4041,14 +4807,21 @@ export function subscribeGame(teamId, gameId, callback, onError) {
                 sharedGameId: snapshot.id,
                 sharedGamePath: docRef.path,
                 isSharedGame: true
-            });
+            }));
             return;
         }
-        callback({
+        callback(markCanonicalGameProjectionProvenance({
             id: snapshot.id,
             ...data
-        });
-    }, onError);
+        }));
+    }, (error) => {
+        if (isPermissionDeniedError(error)) {
+            startProjectionPolling();
+            return;
+        }
+        if (typeof onError === 'function') onError(error);
+    });
+    return () => stopSubscription(unsubscribe);
 }
 
 export async function getGameEvents(teamId, gameId, { limit = 50 } = {}) {
@@ -4518,61 +5291,22 @@ export async function addConfig(teamId, configData) {
 }
 
 export async function deleteConfig(teamId, configId) {
-    const referencingGames = await getDocs(query(
-        collection(db, `teams/${teamId}/games`),
-        where("statTrackerConfigId", "==", configId),
-        limit(1)
-    ));
-    if (!referencingGames.empty || await hasSharedGameUsingConfig(teamId, configId)) {
-        throw new Error('This config is still assigned to one or more games. Remove it from those games before deleting the config.');
+    const callable = httpsCallable(functions, 'deleteStatConfig');
+    const response = await callable({ teamId, configId });
+    if (typeof response?.data?.deleted !== 'boolean') {
+        throw new Error('Stat config deletion response is invalid.');
     }
-    await deleteDoc(doc(db, `teams/${teamId}/statTrackerConfigs`, configId));
-}
-
-function isResetBlockingLocalGameAssignment(game = {}) {
-    return Boolean(String(game?.statTrackerConfigId || '').trim());
-}
-
-async function hasResetBlockingLocalGameUsingConfig(teamId, configId) {
-    const referencingGames = await getDocs(query(
-        collection(db, `teams/${teamId}/games`),
-        where("statTrackerConfigId", "==", configId)
-    ));
-
-    return referencingGames.docs.some((gameDoc) => isResetBlockingLocalGameAssignment(gameDoc.data()));
-}
-
-async function hasResetBlockingSharedGameUsingConfig(teamId, configId) {
-    const sharedGamesRef = collectionGroup(db, 'sharedGames');
-    const queries = [
-        query(sharedGamesRef, where('homeTeamId', '==', teamId), where('statTrackerConfigId', '==', configId)),
-        query(sharedGamesRef, where('awayTeamId', '==', teamId), where('statTrackerConfigId', '==', configId)),
-        query(sharedGamesRef, where('teamIds', 'array-contains', teamId), where('statTrackerConfigId', '==', configId))
-    ];
-
-    const snapshots = await Promise.allSettled(queries.map((q) => getDocs(q)));
-    return snapshots.some((result) => (
-        result.status === 'fulfilled'
-        && result.value.docs.some((gameDoc) => isResetBlockingLocalGameAssignment(gameDoc.data()))
-    ));
+    return response.data.deleted;
 }
 
 export async function resetTeamStatConfigs(teamId) {
-    const configs = await getConfigs(teamId);
-
-    for (const config of configs) {
-        if (await hasResetBlockingLocalGameUsingConfig(teamId, config.id) || await hasResetBlockingSharedGameUsingConfig(teamId, config.id)) {
-            throw new Error('One or more stat configs are still assigned to existing games, including completed history. Remove those assignments before resetting the stats setup.');
-        }
+    const callable = httpsCallable(functions, 'resetTeamStatConfigs');
+    const response = await callable({ teamId });
+    const resetCount = Number(response?.data?.resetCount);
+    if (!Number.isInteger(resetCount) || resetCount < 0) {
+        throw new Error('Stat config reset response is invalid.');
     }
-
-    const batch = writeBatch(db);
-    configs.forEach((config) => {
-        batch.delete(doc(db, `teams/${teamId}/statTrackerConfigs`, config.id));
-    });
-
-    await batch.commit();
-    return configs.length;
+    return resetCount;
 }
 
 // Stats
@@ -4895,14 +5629,19 @@ export async function validateAccessCode(code, options = {}) {
     if (!normalizedCode) {
         return { valid: false, message: "Invalid access code" };
     }
-    const nativeAuthToken = typeof options?.nativeAuthToken === 'string'
+    let authenticatedSessionToken = typeof options?.nativeAuthToken === 'string'
         ? options.nativeAuthToken.trim()
         : '';
+    if (!authenticatedSessionToken && typeof auth.currentUser?.getIdToken === 'function') {
+        authenticatedSessionToken = String(
+            await auth.currentUser.getIdToken().catch(() => '')
+        ).trim();
+    }
 
     const callable = httpsCallable(functions, 'validateAccessCodeForAcceptance');
     const response = await callable({
         code: normalizedCode,
-        ...(nativeAuthToken ? { nativeAuthToken } : {})
+        ...(authenticatedSessionToken ? { nativeAuthToken: authenticatedSessionToken } : {})
     });
     const payload = response?.data || response;
     return payload && typeof payload === 'object'
@@ -5209,47 +5948,32 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         throw new Error('You must be signed in to invite a parent');
     }
 
-    // Get team and player info for the invite
-    const [team, players] = await Promise.all([
-        getTeam(teamId),
-        getPlayers(teamId)
-    ]);
-    const player = players.find(p => p.id === playerId);
-
     const normalizedParentEmail = String(parentEmail || '').trim().toLowerCase();
-    const accessCodeData = {
-        type: 'parent_invite',
-        teamId,
-        playerId,
-        playerNum, // Added for quick context
-        playerName: player?.name || null,
-        teamName: team?.name || null,
-        relation,
-        email: normalizedParentEmail || null,
-        generatedBy: currentUser.uid,
-        createdAt: Timestamp.now(),
-        // 7 days from now
-        expiresAt: Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        used: false,
-        usedBy: null,
-        usedAt: null
-    };
-    const {
-        id: accessCodeId,
-        code,
-        reused = false,
-        completed = false,
-        existingData = null
-    } = await createUniqueAccessCode(accessCodeData, null, {
-        idempotencyKey: String(options?.idempotencyKey || '').trim()
+    const createParentInvite = httpsCallable(functions, 'createParentInvite');
+    const response = await createParentInvite({
+        teamId: String(teamId || '').trim(),
+        playerId: String(playerId || '').trim(),
+        email: normalizedParentEmail,
+        relation: String(relation || '').trim() || 'Parent',
+        ...(String(options?.idempotencyKey || '').trim()
+            ? { idempotencyKey: String(options.idempotencyKey).trim() }
+            : {})
     });
+    const inviteResult = response?.data || response || {};
+    const accessCodeId = String(inviteResult.id || inviteResult.code || '').trim().toUpperCase();
+    const code = String(inviteResult.code || '').trim().toUpperCase();
+    if (!accessCodeId || !code) {
+        throw new Error('Invite code was not created.');
+    }
+    const reused = inviteResult.reused === true;
+    const completed = inviteResult.completed === true;
 
     // Let the server decide whether a user with this email already exists.
     // Non-global-admin team owners/admins cannot query /users from the client,
     // so a client-side lookup would throw permission-denied here even though
     // the invite code was already created and the invite email already queued.
-    let existingUser = reused && (completed || existingData?.used === true);
-    let autoLinked = existingUser;
+    let autoLinked = inviteResult.autoLinked === true;
+    let existingUser = inviteResult.existingUser === true || autoLinked;
     if (normalizedParentEmail && !completed) {
         try {
             const autoAcceptResult = await autoAcceptParentInviteForExistingUser(accessCodeId);
@@ -5257,7 +5981,7 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
             autoLinked = autoAcceptResult.autoLinked;
         } catch (error) {
             // The invite was already created; never fail it on auto-link.
-            // The caller still queues the correct invite-or-linked email.
+            // The server trigger still queues the correct invite-or-linked email.
             console.warn(`Could not auto-link existing parent invite: ${error?.message || 'Unknown error'}`);
         }
     }
@@ -5265,12 +5989,15 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
     return {
         id: accessCodeId,
         code,
-        teamName: team?.name || null,
-        playerName: player?.name || null,
+        teamName: inviteResult.teamName || null,
+        playerName: inviteResult.playerName || null,
         existingUser,
         autoLinked,
+        completed,
+        completedBy: completed ? String(inviteResult.completedBy || '').trim() || null : null,
+        completedAt: completed ? inviteResult.completedAt || null : null,
         reused,
-        completed
+        created: inviteResult.created === true
     };
 }
 
@@ -5403,10 +6130,6 @@ export async function inviteCoParentToAthlete(primaryParentUid, teamId, playerId
 }
 
 
-function normalizeInviteEmail(email) {
-    return String(email || '').trim().toLowerCase();
-}
-
 export async function redeemParentInvite(userId, code, authEmail = null) {
     console.log('[redeemParentInvite] start', { userId, code });
     if (!userId) {
@@ -5416,8 +6139,7 @@ export async function redeemParentInvite(userId, code, authEmail = null) {
     const redeemParentInviteCallable = httpsCallable(functions, 'redeemParentInvite');
     const result = await redeemParentInviteCallable({
         userId,
-        code: String(code || '').trim().toUpperCase(),
-        authEmail: normalizeInviteEmail(authEmail || auth.currentUser?.email || '')
+        code: String(code || '').trim().toUpperCase()
     });
     const payload = result?.data || result || {};
 
@@ -5443,8 +6165,7 @@ export async function redeemCoParentInvite(userId, code, authEmail = null) {
     const redeemCoParentInviteCallable = httpsCallable(functions, 'redeemCoParentInvite');
     const result = await redeemCoParentInviteCallable({
         userId,
-        code: String(code || '').trim().toUpperCase(),
-        authEmail: normalizeInviteEmail(authEmail || auth.currentUser?.email || '')
+        code: String(code || '').trim().toUpperCase()
     });
     const payload = result?.data || result || {};
 
@@ -5462,10 +6183,6 @@ export async function redeemCoParentInvite(userId, code, authEmail = null) {
 }
 
 
-function normalizeHouseholdInviteEmail(email) {
-    return String(email || '').trim().toLowerCase();
-}
-
 export async function redeemHouseholdInvite(userId, code) {
     console.log('[redeemHouseholdInvite] start', { userId, code });
     if (!userId) {
@@ -5475,8 +6192,7 @@ export async function redeemHouseholdInvite(userId, code) {
     const redeemHouseholdInviteCallable = httpsCallable(functions, 'redeemHouseholdInvite');
     const result = await redeemHouseholdInviteCallable({
         userId,
-        code: String(code || '').trim().toUpperCase(),
-        authEmail: normalizeHouseholdInviteEmail(auth.currentUser?.email || '')
+        code: String(code || '').trim().toUpperCase()
     });
     const payload = result?.data || result || {};
 
@@ -5499,78 +6215,18 @@ export async function redeemFriendInvite(userId, code, fallbackEmail = null) {
         throw new Error('User and invite code are required');
     }
 
-    const codeRef = doc(db, "accessCodes", normalizedCode);
-    return runTransaction(db, async (transaction) => {
-        const codeSnapshot = await transaction.get(codeRef);
-        if (!codeSnapshot.exists()) {
-            throw new Error('Invalid or used friend invite');
-        }
+    const currentUserId = String(auth.currentUser?.uid || '').trim();
+    if (!currentUserId || currentUserId !== userId) {
+        throw new Error('Unable to redeem friend invite.');
+    }
 
-        const codeData = codeSnapshot.data() || {};
-        if (codeData.type !== FRIEND_INVITE_TYPE) {
-            throw new Error('Not a friend invite code');
-        }
-        if (codeData.used) {
-            throw new Error('Code already used');
-        }
-        if (isAccessCodeExpired(codeData.expiresAt)) {
-            throw new Error('Code has expired');
-        }
-
-        const inviterId = String(codeData.generatedBy || '').trim();
-        if (!inviterId) {
-            throw new Error('Friend invite is missing an inviter');
-        }
-        if (inviterId === userId) {
-            throw new Error('You cannot redeem your own friend invite');
-        }
-
-        const friendshipId = buildFriendshipId(inviterId, userId);
-        const friendshipRef = doc(db, "friendships", friendshipId);
-        const inviteeRef = doc(db, "users", userId);
-        const friendshipSnapshot = await transaction.get(friendshipRef);
-        const inviteeSnapshot = await transaction.get(inviteeRef);
-        const existingFriendship = friendshipSnapshot.exists() ? (friendshipSnapshot.data() || {}) : {};
-        if (existingFriendship.status === 'blocked' ||
-            (Array.isArray(existingFriendship.blockedBy) && existingFriendship.blockedBy.length > 0)) {
-            throw new Error('This friend invite cannot be redeemed for a blocked friendship');
-        }
-
-        const now = Timestamp.now();
-        const inviterProfile = buildFriendInviteInviterProfile(codeData.inviterProfile || {});
-        const inviteeProfile = inviteeSnapshot.exists() ? (inviteeSnapshot.data() || {}) : {};
-        const inviteeEmail = String(inviteeProfile.email || fallbackEmail || auth.currentUser?.email || '').trim();
-
-        const acceptedFriendshipData = buildAcceptedFriendshipData({
-            inviterId,
-            inviteeId: userId,
-            inviterProfile,
-            inviteeProfile: {
-                ...inviteeProfile,
-                email: inviteeProfile.email || inviteeEmail || null
-            },
-            existingFriendship,
-            now,
-            inviteCodeId: normalizedCode
-        });
-        if (friendshipSnapshot.exists()) {
-            transaction.update(friendshipRef, acceptedFriendshipData);
-        } else {
-            transaction.set(friendshipRef, acceptedFriendshipData);
-        }
-        transaction.update(codeRef, {
-            used: true,
-            usedBy: userId,
-            usedAt: now
-        });
-
-        return {
-            success: true,
-            friendshipId,
-            inviterId,
-            inviterName: getDisplayName(inviterProfile)
-        };
-    });
+    const callable = httpsCallable(functions, 'redeemFriendInvite');
+    const result = await callable({ code: normalizedCode });
+    const payload = result?.data || result || {};
+    if (payload.success !== true) {
+        throw new Error('Unable to redeem friend invite.');
+    }
+    return payload;
 }
 
 export async function rollbackParentInviteRedemption(userId, code) {
@@ -5668,16 +6324,19 @@ export async function listTeamFeeBatches(teamId) {
     return snapshot.docs.map((batchDoc) => ({ id: batchDoc.id, ...batchDoc.data() }));
 }
 
-export async function listTeamFeeRecipients(teamId, batchId) {
+export async function listTeamFeeRecipients(teamId, batchId, { hydrateAdminBilling = true } = {}) {
     if (!teamId || !batchId) return [];
     const recipientsRef = collection(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients');
     const snapshot = await getDocs(recipientsRef);
-    const recipients = await Promise.all(snapshot.docs.map(async (recipientDoc) => {
-        const recipient = { id: recipientDoc.id, ...recipientDoc.data() };
+    const recipients = snapshot.docs.map((recipientDoc) => ({ id: recipientDoc.id, ...recipientDoc.data() }));
+    const sortRecipients = (items) => items.sort((a, b) => String(a.playerName || a.childName || a.parentName || a.parentEmail || '').localeCompare(String(b.playerName || b.childName || b.parentName || b.parentEmail || '')));
+    if (!hydrateAdminBilling) return sortRecipients(recipients);
+
+    const hydratedRecipients = await Promise.all(recipients.map(async (recipient) => {
         if (recipient?.hasAdminBilling !== true) return recipient;
 
         try {
-            const adminBillingRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientDoc.id, 'adminBilling', 'latest');
+            const adminBillingRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipient.id, 'adminBilling', 'latest');
             const adminBillingSnap = await getDoc(adminBillingRef);
             if (!adminBillingSnap.exists()) return recipient;
             return {
@@ -5690,8 +6349,7 @@ export async function listTeamFeeRecipients(teamId, batchId) {
         }
     }));
 
-    return recipients
-        .sort((a, b) => String(a.playerName || a.childName || a.parentName || a.parentEmail || '').localeCompare(String(b.playerName || b.childName || b.parentName || b.parentEmail || '')));
+    return sortRecipients(hydratedRecipients);
 }
 
 const PRIVATE_TEAM_FEE_RECIPIENT_FIELDS = new Set([
@@ -5959,8 +6617,6 @@ export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user
     if (!feeDraft?.title) throw new Error('Fee title is required.');
     if (!feeDraft?.amountCents || feeDraft.amountCents <= 0) throw new Error('Fee amount is required.');
     if (!feeDraft?.dueDate) throw new Error('Due date is required.');
-    if (!recipients.length) throw new Error('At least one recipient is required.');
-
     const normalizedCollectionMode = String(feeDraft?.collectionMode || 'offline_manual').trim().toLowerCase();
     const collectionMode = ['online_stripe', 'online', 'stripe', 'stripe_checkout'].includes(normalizedCollectionMode)
         ? 'online_stripe'
@@ -5971,6 +6627,10 @@ export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user
     if (collectionMode === 'online_stripe' && recipients.some((recipient) => !recipient?.playerId)) {
         throw new Error('Online Stripe collection requires roster recipients with player IDs.');
     }
+
+    const normalizedRecipients = normalizeTeamFeeRecipientRecords(recipients);
+    if (!normalizedRecipients.length) throw new Error('At least one recipient is required.');
+    assertTeamFeeRecipientLimit(normalizedRecipients.length);
 
     const batchRef = doc(collection(db, `teams/${teamId}/feeBatches`));
     const write = writeBatch(db);
@@ -5985,7 +6645,7 @@ export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user
         amountCents: feeDraft.amountCents,
         dueDate: feeDraft.dueDate,
         notes: feeDraft.notes || '',
-        recipientCount: recipients.length,
+        recipientCount: normalizedRecipients.length,
         status: 'open',
         collectionMode,
         offlinePaymentInstructions,
@@ -5997,8 +6657,7 @@ export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user
         updatedAt: now
     });
 
-    recipients.forEach((recipient) => {
-        if (!recipient.playerId) return;
+    normalizedRecipients.forEach((recipient) => {
         const recipientRef = doc(db, `teams/${teamId}/feeBatches/${batchRef.id}/feeRecipients/${recipient.playerId}`);
         write.set(recipientRef, {
             ...recipient,
@@ -6040,43 +6699,295 @@ function formatParentRegistrationStatusLabel(status = '') {
     return labels[normalized] || 'Pending Review';
 }
 
+export const PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT = 10;
+
+async function queryRegistrationIdentityPage(fieldPath, value, previousCursor = null) {
+    const constraints = [
+        where(fieldPath, '==', value),
+        orderBy(documentId(), 'desc')
+    ];
+    if (previousCursor) constraints.push(startAfterQuery(previousCursor));
+    constraints.push(limitQuery(PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT));
+
+    const snapshot = await getDocs(query(collectionGroup(db, 'registrations'), ...constraints));
+    return {
+        snapshot,
+        cursor: snapshot.docs.at(-1) || null,
+        hasMore: snapshot.docs.length === PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT
+    };
+}
+
+export async function queryRegistrationsByGuardianEmail(email, previousCursor = null) {
+    const normalizedEmail = normalizeParentRegistrationEmail(email);
+    if (!normalizedEmail) return { snapshot: { docs: [] }, cursor: null };
+    return queryRegistrationIdentityPage('guardian.email', normalizedEmail, previousCursor);
+}
+
+export async function queryRegistrationsBySubmitterUid(userId, previousCursor = null) {
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId) return { snapshot: { docs: [] }, cursor: null };
+    return queryRegistrationIdentityPage('submittedByUserId', normalizedUserId, previousCursor);
+}
+
+function getParentRegistrationDocumentKey(registrationDoc) {
+    const registrationData = registrationDoc.data() || {};
+    return registrationDoc.ref?.path || [registrationData.teamId, registrationData.formId, registrationDoc.id].join('/');
+}
+
+function getParentRegistrationSubmittedAtSortParts(registrationDoc) {
+    const registration = registrationDoc.data() || {};
+    const submittedAt = registration.submittedAt || registration.createdAt;
+    if (Number.isFinite(submittedAt?.seconds) && Number.isFinite(submittedAt?.nanoseconds)) {
+        return {
+            seconds: submittedAt.seconds,
+            nanoseconds: submittedAt.nanoseconds
+        };
+    }
+
+    const milliseconds = submittedAt?.toMillis
+        ? submittedAt.toMillis()
+        : (submittedAt ? new Date(submittedAt).getTime() : 0);
+    if (!Number.isFinite(milliseconds)) return { seconds: 0, nanoseconds: 0 };
+
+    const seconds = Math.floor(milliseconds / 1000);
+    return {
+        seconds,
+        nanoseconds: Math.floor((milliseconds - (seconds * 1000)) * 1000000)
+    };
+}
+
+function compareParentRegistrationDocuments(a, b) {
+    const aSubmittedAt = getParentRegistrationSubmittedAtSortParts(a);
+    const bSubmittedAt = getParentRegistrationSubmittedAtSortParts(b);
+    if (aSubmittedAt.seconds !== bSubmittedAt.seconds) {
+        return bSubmittedAt.seconds - aSubmittedAt.seconds;
+    }
+    if (aSubmittedAt.nanoseconds !== bSubmittedAt.nanoseconds) {
+        return bSubmittedAt.nanoseconds - aSubmittedAt.nanoseconds;
+    }
+
+    const aKey = getParentRegistrationDocumentKey(a);
+    const bKey = getParentRegistrationDocumentKey(b);
+    if (aKey === bKey) return 0;
+    return aKey < bKey ? 1 : -1;
+}
+
+export function mergeParentRegistrationQueryResults(querySnapshots = []) {
+    const documentsByKey = new Map();
+    querySnapshots.forEach((snapshot) => {
+        (snapshot?.docs || []).forEach((registrationDoc) => {
+            const key = getParentRegistrationDocumentKey(registrationDoc);
+            if (!documentsByKey.has(key)) documentsByKey.set(key, registrationDoc);
+        });
+    });
+
+    return [...documentsByKey.values()].sort(compareParentRegistrationDocuments);
+}
+
+export const PARENT_REGISTRATION_APPLICATION_PAGE_SIZE = 10;
+
+function buildParentRegistrationError(kind, identity) {
+    const messages = {
+        query: 'Some registration applications could not be loaded. Retry this registration page.',
+        enrichment: 'Some registration application details could not be loaded. Retry this registration page.'
+    };
+    return {
+        code: `parent-registration-${kind}-failed`,
+        identity,
+        retryable: true,
+        message: messages[kind]
+    };
+}
+
+async function enrichParentRegistrationApplicationDocuments(registrationDocs = []) {
+    const teamCache = new Map();
+    const formCache = new Map();
+    const enriched = await Promise.all(registrationDocs.map(async (registrationDoc) => {
+        const registration = { id: registrationDoc.id, ...(registrationDoc.data() || {}) };
+        const registrationKey = getParentRegistrationDocumentKey(registrationDoc);
+        const teamId = registration.teamId || '';
+        const formId = registration.formId || '';
+        const player = getRegistrationPlayerDraft(registration);
+        const guardians = getRegistrationGuardianDrafts(registration);
+        const errors = [];
+
+        let team = null;
+        if (teamId) {
+            if (!teamCache.has(teamId)) {
+                teamCache.set(teamId, getTeam(teamId)
+                    .then((value) => ({ value, error: null }))
+                    .catch(() => ({
+                        value: null,
+                        error: buildParentRegistrationError('enrichment', `team:${teamId}`)
+                    })));
+            }
+            const teamResult = await teamCache.get(teamId);
+            team = teamResult.value;
+            if (teamResult.error) {
+                errors.push({
+                    ...teamResult.error,
+                    registrationId: registration.id,
+                    registrationKey
+                });
+            }
+        }
+
+        let form = null;
+        if (!registration.programName && teamId && formId) {
+            const formKey = `${teamId}::${formId}`;
+            if (!formCache.has(formKey)) {
+                formCache.set(formKey, getDoc(doc(db, `teams/${teamId}/registrationForms`, formId))
+                    .then((snapshot) => ({
+                        value: snapshot.exists() ? (snapshot.data() || {}) : null,
+                        error: null
+                    }))
+                    .catch(() => ({
+                        value: null,
+                        error: buildParentRegistrationError('enrichment', `form:${formKey}`)
+                    })));
+            }
+            const formResult = await formCache.get(formKey);
+            form = formResult.value;
+            if (formResult.error) {
+                errors.push({
+                    ...formResult.error,
+                    registrationId: registration.id,
+                    registrationKey
+                });
+            }
+        }
+
+        const selectedOption = registration.selectedOption || {};
+        return {
+            application: {
+                id: registration.id,
+                registrationKey,
+                teamId,
+                formId,
+                teamName: team?.name || registration.teamName || form?.teamName || 'Team registration',
+                programName: registration.programName || form?.programName || form?.title || 'Registration',
+                playerName: player.name || registration.participant?.name || 'Unnamed player',
+                guardianEmail: guardians[0]?.email || registration.guardian?.email || '',
+                status: normalizeRegistrationStatus(registration.status),
+                statusLabel: formatParentRegistrationStatusLabel(registration.status),
+                selectedOptionLabel: selectedOption.title || selectedOption.label || '',
+                submittedAt: registration.submittedAt || registration.createdAt || null
+            },
+            errors
+        };
+    }));
+
+    return {
+        applications: enriched.map((result) => result.application),
+        errors: enriched.flatMap((result) => result.errors)
+    };
+}
+
+export async function listParentRegistrationApplicationsPage(userProfile = {}, options = {}) {
+    const email = normalizeParentRegistrationEmail(userProfile.email || auth.currentUser?.email);
+    const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
+    const cursor = options.cursor || {};
+    const queryDefinitions = [
+        email ? {
+            identity: 'guardian-email',
+            cursorKey: 'guardianEmail',
+            load: () => queryRegistrationsByGuardianEmail(email, cursor.guardianEmail || null)
+        } : null,
+        userId ? {
+            identity: 'submitter-uid',
+            cursorKey: 'submittedByUserId',
+            load: () => queryRegistrationsBySubmitterUid(userId, cursor.submittedByUserId || null)
+        } : null
+    ].filter(Boolean);
+    const nextCursor = {
+        guardianEmail: cursor.guardianEmail || null,
+        submittedByUserId: cursor.submittedByUserId || null
+    };
+
+    if (queryDefinitions.length === 0) {
+        return { applications: [], nextCursor: null, retryCursor: null, hasMore: false, errors: [] };
+    }
+
+    const queryResults = await Promise.all(queryDefinitions.map(async (definition) => {
+        try {
+            return { definition, page: await definition.load(), error: null };
+        } catch {
+            return {
+                definition,
+                page: { snapshot: { docs: [] }, cursor: null, hasMore: false },
+                error: buildParentRegistrationError('query', definition.identity)
+            };
+        }
+    }));
+    const pageDocuments = mergeParentRegistrationQueryResults(
+        queryResults.map((result) => result.page.snapshot)
+    ).slice(0, PARENT_REGISTRATION_APPLICATION_PAGE_SIZE);
+    const pageDocumentKeys = new Set(pageDocuments.map(getParentRegistrationDocumentKey));
+
+    let hasMore = queryResults.some((result) => result.error);
+    queryResults.forEach((result) => {
+        if (result.error) return;
+        let consumedCount = 0;
+        for (const registrationDoc of result.page.snapshot.docs) {
+            if (!pageDocumentKeys.has(getParentRegistrationDocumentKey(registrationDoc))) break;
+            nextCursor[result.definition.cursorKey] = registrationDoc;
+            consumedCount += 1;
+        }
+        if (consumedCount < result.page.snapshot.docs.length || result.page.hasMore) {
+            hasMore = true;
+        }
+    });
+
+    const enrichment = await enrichParentRegistrationApplicationDocuments(pageDocuments);
+    const errors = [
+        ...queryResults.map((result) => result.error).filter(Boolean),
+        ...enrichment.errors
+    ];
+    return {
+        applications: enrichment.applications,
+        nextCursor: (hasMore || enrichment.errors.length > 0) ? nextCursor : null,
+        retryCursor: errors.length > 0 ? cursor : null,
+        hasMore,
+        errors
+    };
+}
+
 async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
     const email = normalizeParentRegistrationEmail(userProfile.email || auth.currentUser?.email);
     const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
     if (!email && !userId) return [];
 
-    const registrationQueries = [];
+    const registrationQueryLoaders = [];
     if (email) {
-        registrationQueries.push(query(
-            collectionGroup(db, 'registrations'),
-            where('guardian.email', '==', email)
-        ));
+        registrationQueryLoaders.push((cursor) => queryRegistrationsByGuardianEmail(email, cursor));
     }
     if (userId) {
-        registrationQueries.push(query(
-            collectionGroup(db, 'registrations'),
-            where('submittedByUserId', '==', userId)
-        ));
+        registrationQueryLoaders.push((cursor) => queryRegistrationsBySubmitterUid(userId, cursor));
     }
-    const queryResults = await Promise.all(registrationQueries.map(async (registrationQuery) => {
+
+    const queryResults = await Promise.all(registrationQueryLoaders.map(async (loadRegistrationPage) => {
         try {
-            return { snapshot: await getDocs(registrationQuery), error: null };
+            const snapshots = [];
+            let cursor = null;
+            let hasMore = true;
+            while (hasMore) {
+                const page = await loadRegistrationPage(cursor);
+                snapshots.push(page.snapshot);
+                cursor = page.cursor;
+                hasMore = page.hasMore && Boolean(cursor);
+            }
+            return { snapshots, error: null };
         } catch (error) {
-            return { snapshot: null, error };
+            return { snapshots: null, error };
         }
     }));
-    const successfulResults = queryResults.filter((result) => result.snapshot);
+    const successfulResults = queryResults.filter((result) => result.snapshots);
     if (successfulResults.length === 0) {
         throw queryResults.find((result) => result.error)?.error || new Error('Registration applications could not be loaded.');
     }
-    const seenRegistrationPaths = new Set();
-    const registrationDocs = successfulResults.flatMap((result) => result.snapshot.docs).filter((registrationDoc) => {
-        const registrationData = registrationDoc.data() || {};
-        const dedupKey = registrationDoc.ref?.path || [registrationData.teamId, registrationData.formId, registrationDoc.id].join('/');
-        if (seenRegistrationPaths.has(dedupKey)) return false;
-        seenRegistrationPaths.add(dedupKey);
-        return true;
-    });
+    const registrationDocs = mergeParentRegistrationQueryResults(
+        successfulResults.flatMap((result) => result.snapshots)
+    );
 
     const teamCache = new Map();
     const formCache = new Map();
@@ -6095,7 +7006,7 @@ async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
         }
 
         let form = null;
-        if (teamId && formId) {
+        if (!registration.programName && teamId && formId) {
             const formKey = `${teamId}::${formId}`;
             if (!formCache.has(formKey)) {
                 formCache.set(formKey, getDoc(doc(db, `teams/${teamId}/registrationForms`, formId)).then((snap) => snap.exists() ? (snap.data() || {}) : null));
@@ -6119,11 +7030,7 @@ async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
         };
     }));
 
-    return applications.sort((a, b) => {
-        const aDate = a.submittedAt?.toDate ? a.submittedAt.toDate() : (a.submittedAt ? new Date(a.submittedAt) : new Date(0));
-        const bDate = b.submittedAt?.toDate ? b.submittedAt.toDate() : (b.submittedAt ? new Date(b.submittedAt) : new Date(0));
-        return bDate - aDate;
-    });
+    return applications;
 }
 
 export async function getParentDashboardData(userId) {
@@ -6141,18 +7048,9 @@ export async function getParentDashboardData(userId) {
     }
 
     if (!userProfile.parentOf || userProfile.parentOf.length === 0) {
-        // A registration-applications failure (e.g. a missing collection-group
-        // index) must never crash the dashboard, so degrade to an empty list.
-        let registrationApplications = [];
-        try {
-            registrationApplications = await listParentRegistrationApplicationsForProfile(userProfile || {});
-        } catch (error) {
-            console.warn('[parent-dashboard] Failed to load registration applications; continuing without them:', error);
-        }
         return {
             upcomingGames: [],
             children: [],
-            registrationApplications,
             dashboardState: {
                 kind: 'no-links',
                 blockedLinkCount: 0,
@@ -6240,16 +7138,6 @@ export async function getParentDashboardData(userId) {
         return dA - dB;
     });
 
-    // The parent's players are already loaded above. A registration-applications
-    // failure (e.g. a missing collection-group index) must never propagate and
-    // hide those players, so degrade to an empty list instead.
-    let registrationApplications = [];
-    try {
-        registrationApplications = await listParentRegistrationApplicationsForProfile(userProfile);
-    } catch (error) {
-        console.warn('[parent-dashboard] Failed to load registration applications; continuing without them:', error);
-    }
-
     if (activeChildren.length === 0) {
         if (dashboardState.blockedLinkCount > 0) {
             dashboardState.kind = 'access-blocked';
@@ -6262,29 +7150,49 @@ export async function getParentDashboardData(userId) {
         dashboardState.kind = 'degraded';
     }
 
-    return { upcomingGames, children: activeChildren, registrationApplications, dashboardState };
+    return { upcomingGames, children: activeChildren, dashboardState };
 }
 
 export async function updatePlayerProfile(teamId, playerId, data) {
     // Restricted update for parents.
     // SECURITY: sensitive fields must never live on the public player doc.
-    assertNoSensitivePlayerFields(data || {});
+    const publicInput = { ...(data || {}) };
+    const hasPhotoPath = Object.prototype.hasOwnProperty.call(publicInput, 'photoPath');
+    const photoPath = hasPhotoPath ? (publicInput.photoPath || null) : undefined;
+    delete publicInput.photoPath;
+    assertNoSensitivePlayerFields(publicInput);
     const now = Timestamp.now();
 
-    // Public player doc: allow photoUrl and non-sensitive roster profile fields.
+    // Public player doc: allow the display URL and non-sensitive roster profile
+    // fields. The cleanup path is stored in the linked private profile because
+    // Firebase download URLs expose encoded object paths.
     const publicUpdate = {};
-    if (Object.prototype.hasOwnProperty.call(data, 'photoUrl')) {
-        publicUpdate.photoUrl = data.photoUrl || null;
+    if (Object.prototype.hasOwnProperty.call(publicInput, 'photoUrl')) {
+        publicUpdate.photoUrl = publicInput.photoUrl || null;
     }
-    if (Object.prototype.hasOwnProperty.call(data, 'profile')) {
-        publicUpdate.profile = data.profile || {};
+    if (Object.prototype.hasOwnProperty.call(publicInput, 'profile')) {
+        publicUpdate.profile = publicInput.profile || {};
     }
-    if (Object.keys(publicUpdate).length > 0) {
-        await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
+    if (!hasPhotoPath) {
+        if (Object.keys(publicUpdate).length > 0) {
+            await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
+                ...publicUpdate,
+                updatedAt: now
+            });
+        }
+        return;
+    }
+    const batch = writeBatch(db);
+    batch.update(doc(db, `teams/${teamId}/players`, playerId), {
             ...publicUpdate,
+            photoPath: deleteField(),
             updatedAt: now
-        });
-    }
+    });
+    batch.set(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), {
+        photoPath,
+        updatedAt: now
+    }, { merge: true });
+    await batch.commit();
 }
 
 export async function updatePlayerPrivateProfile(teamId, playerId, data) {
@@ -6294,6 +7202,9 @@ export async function updatePlayerPrivateProfile(teamId, playerId, data) {
     }
     if (Object.prototype.hasOwnProperty.call(data, 'medicalInfo')) {
         privateUpdate.medicalInfo = data.medicalInfo || '';
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'photoPath')) {
+        privateUpdate.photoPath = data.photoPath || null;
     }
     if (Object.keys(privateUpdate).length > 0) {
         privateUpdate.updatedAt = Timestamp.now();
@@ -6325,7 +7236,7 @@ async function buildAthleteProfileSeasonSummary(link) {
     const [team, playerSnap, games] = await Promise.all([
         getTeam(link.teamId, { includeInactive: true }),
         getDoc(doc(db, `teams/${link.teamId}/players`, link.playerId)),
-        getGames(link.teamId)
+        getGames(link.teamId, { requireCompleteSharedGames: true })
     ]);
 
     if (!team || !playerSnap.exists()) {
@@ -6333,23 +7244,23 @@ async function buildAthleteProfileSeasonSummary(link) {
     }
 
     const player = playerSnap.data() || {};
-    let gamesPlayed = 0;
-    let totalTimeMs = 0;
-    const statTotals = {};
-
-    for (const game of (games || [])) {
-        const statsSnap = await getDoc(doc(db, `teams/${link.teamId}/games/${game.id}/aggregatedStats`, link.playerId));
-        if (!statsSnap.exists()) continue;
-
-        const statsData = statsSnap.data() || {};
-        const stats = statsData.stats || {};
-
-        gamesPlayed += 1;
-        totalTimeMs += Number(statsData.timeMs || 0);
-        Object.entries(stats).forEach(([statKey, value]) => {
-            statTotals[statKey] = (statTotals[statKey] || 0) + Number(value || 0);
-        });
-    }
+    const seasonStatGames = (games || []).filter((game) => {
+        if (String(game?.trackingEngine || '').trim().toLowerCase() !== 'diamond-v2') return true;
+        const status = String(game?.status || '').trim().toLowerCase();
+        const liveStatus = String(game?.liveStatus || '').trim().toLowerCase();
+        return ['completed', 'complete', 'final'].includes(status)
+            || ['completed', 'complete', 'final'].includes(liveStatus);
+    });
+    const seasonStats = await loadCompleteAthleteProfileSeasonStats({
+        teamId: link.teamId,
+        games: seasonStatGames,
+        playerId: link.playerId,
+        loadClassicPlayerRecord: async (teamId, gameId, playerId) => {
+            const gameRef = getGameDocRef(teamId, gameId);
+            const statsSnap = await getDoc(doc(db, `${gameRef.path}/aggregatedStats`, playerId));
+            return statsSnap.exists() ? (statsSnap.data() || {}) : null;
+        }
+    });
 
     return {
         seasonKey: buildParentSeasonKey(link.teamId, link.playerId),
@@ -6358,9 +7269,30 @@ async function buildAthleteProfileSeasonSummary(link) {
         playerId: link.playerId,
         playerName: link.playerName || player.name || 'Athlete',
         playerPhotoUrl: player.photoUrl || link.playerPhotoUrl || null,
-        gamesPlayed,
-        totalTimeMs,
-        statTotals,
+        gamesPlayed: seasonStats.gamesPlayed,
+        totalTimeMs: seasonStats.totalTimeMs,
+        statTotals: seasonStats.statTotals,
+        ...(seasonStats.evidence
+            ? {
+                playingTimeComplete: seasonStats.playingTimeComplete,
+                playingTimeEvidence: {
+                    complete: seasonStats.evidence.playingTime?.complete === true,
+                    instructions: seasonStats.evidence.playingTime?.instructions || 'Unavailable playing time is unknown, never zero.'
+                },
+                statEvidence: {
+                    complete: seasonStats.evidence.complete === true,
+                    readComplete: seasonStats.evidence.readComplete === true,
+                    visibility: 'public',
+                    completeStatKeys: Array.isArray(seasonStats.evidence.completeStatKeys)
+                        ? seasonStats.evidence.completeStatKeys
+                        : [],
+                    omittedOrIncompleteStatKeys: Array.isArray(seasonStats.evidence.omittedOrIncompleteStatKeys)
+                        ? seasonStats.evidence.omittedOrIncompleteStatKeys
+                        : [],
+                    instructions: 'Only complete public totals are stored. Omitted counters are unknown, never zero.'
+                }
+            }
+            : {}),
         gameClips: collectAthleteGameClipsForPlayer(games, {
             teamId: link.teamId,
             teamName: team.name || link.teamName || 'Team',
@@ -6479,10 +7411,10 @@ export async function uploadAthleteProfileMedia(userId, profileId, file, options
 
     const safeName = sanitizeAthleteProfileMediaName(file.name);
     const kind = options.kind === 'profile-photo' ? 'profile-photo' : 'clip';
-    const storagePath = `athlete-profile-media/${userId}/${profileId}/${Date.now()}_${kind}_${safeName}`;
+    const storagePath = `athlete-profile-media/${userId}/${profileId}/${Date.now()}_${createSecureUploadToken()}_${kind}_${safeName}`;
     const storageRef = ref(storage, storagePath);
-    const snapshot = await uploadBytes(storageRef, file);
-    const url = await getDownloadURL(snapshot.ref);
+    const snapshot = await uploadStorageCandidateOrDelete(storageRef, file);
+    const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     const mimeType = String(file.type || '').trim();
     const mediaType = kind === 'profile-photo'
         ? 'image'
@@ -6636,7 +7568,10 @@ export function canAccessTeamChat(user, team) {
     // Team owner
     if (team.ownerId === user.uid) return true;
 
-    if (user.email && team.ownerEmail && team.ownerEmail.toLowerCase() === user.email.toLowerCase()) {
+    const legacyOwnerEmails = [...new Set([team.ownerEmailLower, team.ownerEmail]
+        .map((email) => String(email || '').trim().toLowerCase())
+        .filter(Boolean))];
+    if (!String(team.ownerId || '').trim() && legacyOwnerEmails.length === 1 && user.email && legacyOwnerEmails[0] === user.email.trim().toLowerCase()) {
         return true;
     }
 
@@ -6671,7 +7606,10 @@ export function canModerateChat(user, team) {
     // Team owner
     if (team.ownerId === user.uid) return true;
 
-    if (user.email && team.ownerEmail && team.ownerEmail.toLowerCase() === user.email.toLowerCase()) {
+    const legacyOwnerEmails = [...new Set([team.ownerEmailLower, team.ownerEmail]
+        .map((email) => String(email || '').trim().toLowerCase())
+        .filter(Boolean))];
+    if (!String(team.ownerId || '').trim() && legacyOwnerEmails.length === 1 && user.email && legacyOwnerEmails[0] === user.email.trim().toLowerCase()) {
         return true;
     }
 
@@ -6687,7 +7625,7 @@ export function canModerateChat(user, team) {
 }
 
 function getNormalizedCertificateEmail(user) {
-    return String(user?.email || user?.profileEmail || '').trim().toLowerCase();
+    return String(user?.email || '').trim().toLowerCase();
 }
 
 function hasCertificateCoachAccess(user, team) {
@@ -6761,15 +7699,7 @@ export async function getCertificateDefaults(teamId) {
 }
 
 export async function setCertificateDefaults(teamId, defaults = {}) {
-    if (!teamId) throw new Error('Missing team for certificate defaults');
-    const actor = getCertificateActor();
-    const payload = {
-        ...defaults,
-        updatedAt: Timestamp.now(),
-        updatedBy: actor.actorId
-    };
-    await setDoc(doc(db, 'teams', teamId, 'settings', 'certificateDefaults'), payload, { merge: true });
-    return payload;
+    return commitCertificateDefaults(teamId, defaults);
 }
 
 export async function listCertificateAssets(teamId) {
@@ -7013,22 +7943,39 @@ function normalizeTeamEmailDraftPayload(draft = {}) {
     };
 }
 
-export async function getTeamEmailTemplates(teamId) {
-    if (!teamId) return [];
-    const templatesRef = getTeamEmailTemplatesRef(teamId);
-    try {
-        const snapshot = await getDocs(query(templatesRef, orderBy('updatedAt', 'desc')));
-        return snapshot.docs.map((templateDoc) => ({ id: templateDoc.id, ...templateDoc.data() }));
-    } catch (error) {
-        const snapshot = await getDocs(templatesRef);
-        return snapshot.docs
-            .map((templateDoc) => ({ id: templateDoc.id, ...templateDoc.data() }))
-            .sort((a, b) => {
-                const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
-                const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
-                return bTime - aTime;
-            });
+function normalizeTeamEmailSavedPageSize(pageSize = DEFAULT_TEAM_EMAIL_SAVED_PAGE_SIZE) {
+    const numericPageSize = Number(pageSize);
+    if (!Number.isFinite(numericPageSize) || numericPageSize <= 0) {
+        return DEFAULT_TEAM_EMAIL_SAVED_PAGE_SIZE;
     }
+    return Math.min(Math.max(Math.floor(numericPageSize), 1), 100);
+}
+
+async function getTeamEmailSavedPage(itemsRef, { pageSize = DEFAULT_TEAM_EMAIL_SAVED_PAGE_SIZE, cursor = null } = {}) {
+    const normalizedPageSize = normalizeTeamEmailSavedPageSize(pageSize);
+    const constraints = [
+        orderBy('updatedAt', 'desc'),
+        orderBy(documentId(), 'desc')
+    ];
+    if (cursor?.updatedAt && cursor?.id) {
+        constraints.push(startAfterQuery(cursor.updatedAt, cursor.id));
+    }
+    constraints.push(limitQuery(normalizedPageSize));
+
+    const snapshot = await getDocs(query(itemsRef, ...constraints));
+    const items = snapshot.docs.map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }));
+    const lastDoc = snapshot.docs.at(-1);
+    return {
+        items,
+        nextCursor: snapshot.docs.length === normalizedPageSize && lastDoc
+            ? { updatedAt: lastDoc.data()?.updatedAt || null, id: lastDoc.id }
+            : null
+    };
+}
+
+export async function getTeamEmailTemplates(teamId, options = {}) {
+    if (!teamId) return { items: [], nextCursor: null };
+    return getTeamEmailSavedPage(getTeamEmailTemplatesRef(teamId), options);
 }
 
 export async function saveTeamEmailTemplate(teamId, template, { templateId = null } = {}) {
@@ -7057,22 +8004,9 @@ export async function deleteTeamEmailTemplate(teamId, templateId) {
     await deleteDoc(doc(db, 'teams', teamId, 'emailTemplates', templateId));
 }
 
-export async function getTeamEmailDrafts(teamId) {
-    if (!teamId) return [];
-    const draftsRef = getTeamEmailDraftsRef(teamId);
-    try {
-        const snapshot = await getDocs(query(draftsRef, orderBy('updatedAt', 'desc')));
-        return snapshot.docs.map((draftDoc) => ({ id: draftDoc.id, ...draftDoc.data() }));
-    } catch (error) {
-        const snapshot = await getDocs(draftsRef);
-        return snapshot.docs
-            .map((draftDoc) => ({ id: draftDoc.id, ...draftDoc.data() }))
-            .sort((a, b) => {
-                const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
-                const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
-                return bTime - aTime;
-            });
-    }
+export async function getTeamEmailDrafts(teamId, options = {}) {
+    if (!teamId) return { items: [], nextCursor: null };
+    return getTeamEmailSavedPage(getTeamEmailDraftsRef(teamId), options);
 }
 
 export async function saveTeamEmailDraft(teamId, draft, { draftId = null } = {}) {
@@ -7223,6 +8157,16 @@ export async function getChatConversations(teamId, user = null, {
 /**
  * Create or update a lightweight conversation record.
  */
+export async function createAuthorizedChatConversation(teamId, participantSelectors = [], { name = null } = {}) {
+    const createConversation = httpsCallable(functions, 'createAuthorizedChatConversation');
+    const response = await createConversation({
+        teamId,
+        participantSelectors: normalizeConversationParticipantIds(participantSelectors),
+        name: name || null
+    });
+    return response.data;
+}
+
 export async function upsertChatConversation(teamId, conversation = {}) {
     const {
         type = 'group',
@@ -7242,6 +8186,15 @@ export async function upsertChatConversation(teamId, conversation = {}) {
         .map((role) => String(role || '').trim())
         .filter(Boolean)))
         .sort();
+    const isCanonicalStaffConversation = normalizedType === 'group' &&
+        normalizedParticipantIds.length === 0 &&
+        normalizedParticipantRoles.length === 1 &&
+        normalizedParticipantRoles[0] === 'staff';
+    if (!isCanonicalStaffConversation &&
+        normalizedParticipantIds.length > 0 &&
+        (normalizedType === 'direct' || normalizedType === 'group')) {
+        return createAuthorizedChatConversation(teamId, normalizedParticipantIds, { name });
+    }
     const conversationId = buildConversationId(normalizedType, normalizedParticipantIds, normalizedParticipantRoles);
     const now = Timestamp.now();
     const conversationRef = doc(db, 'teams', teamId, 'chatConversations', conversationId);
@@ -7264,11 +8217,6 @@ export async function upsertChatConversation(teamId, conversation = {}) {
             initiatedBy: normalizedDirectAccess === 'team_admin' ? normalizedInitiatedBy : null
         }
         : {};
-    const isCanonicalStaffConversation = normalizedType === 'group' &&
-        normalizedParticipantIds.length === 0 &&
-        normalizedParticipantRoles.length === 1 &&
-        normalizedParticipantRoles[0] === 'staff';
-
     const payload = {
         type: normalizedType,
         participantIds: normalizedParticipantIds,
@@ -7827,73 +8775,208 @@ export async function getUnreadChatCount(userId, teamId, options = {}) {
  * @param {string[]} teamIds - Array of team IDs
  * @returns {Promise<Object>} Map of teamId to unread count
  */
+// One count job can issue two Firestore aggregation reads, so keep the global
+// ceiling low enough to protect large inboxes while still filling normal ones.
+export const UNREAD_CHAT_COUNT_CONCURRENCY = 6;
+
+const unreadChatCountJobQueue = [];
+let activeUnreadChatCountJobs = 0;
+
+function drainUnreadChatCountJobQueue() {
+    while (activeUnreadChatCountJobs < UNREAD_CHAT_COUNT_CONCURRENCY && unreadChatCountJobQueue.length > 0) {
+        const entry = unreadChatCountJobQueue.shift();
+        if (entry.deadlineTimer) clearTimeout(entry.deadlineTimer);
+        if (entry.deadlineAt !== null && Date.now() >= entry.deadlineAt) {
+            entry.resolve();
+            continue;
+        }
+
+        activeUnreadChatCountJobs += 1;
+        void Promise.resolve()
+            .then(entry.run)
+            .then(entry.resolve, entry.reject)
+            .finally(() => {
+                activeUnreadChatCountJobs -= 1;
+                drainUnreadChatCountJobQueue();
+            });
+    }
+}
+
+function enqueueUnreadChatCountJob(run, deadlineAt) {
+    return new Promise((resolve, reject) => {
+        const entry = { run, deadlineAt, resolve, reject, deadlineTimer: null };
+        if (deadlineAt !== null) {
+            const remainingMs = deadlineAt - Date.now();
+            if (remainingMs <= 0) {
+                resolve();
+                return;
+            }
+            entry.deadlineTimer = setTimeout(() => {
+                const queueIndex = unreadChatCountJobQueue.indexOf(entry);
+                if (queueIndex === -1) return;
+                unreadChatCountJobQueue.splice(queueIndex, 1);
+                resolve();
+            }, remainingMs);
+        }
+        unreadChatCountJobQueue.push(entry);
+        drainUnreadChatCountJobQueue();
+    });
+}
+
 export async function getUnreadChatCounts(userId, teamIds, options = {}) {
+    const uniqueTeamIds = Array.from(new Set(teamIds));
+    // Missing keys are intentionally unknown. Only publish zero after every
+    // job for that team has completed, so deadline results cannot hide unread
+    // messages behind an authoritative-looking partial zero.
     const counts = {};
     const latestMessageAtByTeam = options?.latestMessageAtByTeam || {};
     const latestMessageAtByConversationByTeam = options?.latestMessageAtByConversationByTeam || {};
     const conversationIdsByTeam = options?.conversationIdsByTeam || {};
     const conversationLookupByTeam = options?.conversationLookupByTeam || {};
     const defaultConversationOnly = options?.defaultConversationOnly === true;
+    const deadlineAt = Number.isFinite(options?.deadlineAt) ? Number(options.deadlineAt) : null;
     let userData = {};
 
     try {
-        const userDoc = await getDoc(doc(db, 'users', userId));
+        const userDocRead = getDoc(doc(db, 'users', userId));
+        const userDoc = deadlineAt === null
+            ? await userDocRead
+            : await withDeadline(
+                userDocRead,
+                Math.max(1, deadlineAt - Date.now()),
+                'Unread chat profile read timed out.'
+            );
         userData = userDoc.data() || {};
     } catch (err) {
         console.warn(`Failed to load chat state for user ${userId}:`, err);
-        teamIds.forEach((teamId) => {
-            counts[teamId] = 0;
-        });
         return counts;
     }
 
-    await Promise.all(teamIds.map(async (teamId) => {
-        try {
-            const storedConversationIds = Array.isArray(conversationIdsByTeam?.[teamId])
-                ? conversationIdsByTeam[teamId]
-                : null;
-            const conversationLookup = conversationLookupByTeam?.[teamId] || {};
-            const loadedConversationIds = storedConversationIds || (defaultConversationOnly
-                ? [DEFAULT_TEAM_CONVERSATION_ID]
-                : (await getChatConversations(
-                    teamId,
-                    conversationLookup.user || null,
-                    {
-                        team: conversationLookup.team || null,
-                        canModerate: conversationLookup.canModerate === true
-                    }
-                )).map((conversation) => conversation?.id).filter(Boolean));
-            const conversationIds = Array.from(new Set([
-                DEFAULT_TEAM_CONVERSATION_ID,
-                ...loadedConversationIds.filter((conversationId) => !isDefaultTeamConversation(conversationId))
-            ]));
+    const teamStates = Object.fromEntries(uniqueTeamIds.map((teamId) => [teamId, {
+        pending: 0,
+        total: 0,
+        complete: true
+    }]));
+    const jobs = [];
+    const conversationIdsForTeam = (loadedConversationIds) => Array.from(new Set([
+        DEFAULT_TEAM_CONVERSATION_ID,
+        ...loadedConversationIds.filter((conversationId) => !isDefaultTeamConversation(conversationId))
+    ]));
+    const addConversationJobs = (teamId, conversationIds) => {
+        teamStates[teamId].pending += conversationIds.length;
+        conversationIds.forEach((conversationId) => {
+            jobs.push({ type: 'count', teamId, conversationId });
+        });
+    };
 
-            const unreadCounts = await Promise.all(conversationIds.map(async (conversationId) => {
+    uniqueTeamIds.forEach((teamId) => {
+        const storedConversationIds = Array.isArray(conversationIdsByTeam?.[teamId])
+            ? conversationIdsByTeam[teamId]
+            : null;
+        if (storedConversationIds || defaultConversationOnly) {
+            addConversationJobs(teamId, conversationIdsForTeam(storedConversationIds || [DEFAULT_TEAM_CONVERSATION_ID]));
+            return;
+        }
+
+        teamStates[teamId].pending = 1;
+        jobs.push({ type: 'discover', teamId });
+    });
+
+    return await new Promise((resolve) => {
+        let activeJobs = 0;
+        let nextJobIndex = 0;
+        let settled = false;
+        let deadlineTimer = null;
+
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            if (deadlineTimer) clearTimeout(deadlineTimer);
+            resolve({ ...counts });
+        };
+        const isExpired = () => deadlineAt !== null && Date.now() >= deadlineAt;
+        const completeTeamJob = (teamId, count = 0, succeeded = true) => {
+            const state = teamStates[teamId];
+            if (!succeeded) state.complete = false;
+            state.total += Number(count || 0);
+            state.pending -= 1;
+            if (state.pending === 0 && state.complete) counts[teamId] = state.total;
+        };
+        const runJob = async (job) => {
+            if (job.type === 'discover') {
                 try {
-                    const latestMessageAtByConversation = latestMessageAtByConversationByTeam?.[teamId] || {};
-                    return await getUnreadChatCount(userId, teamId, {
-                        userData,
-                        conversationId,
-                        latestMessageAt: Object.prototype.hasOwnProperty.call(latestMessageAtByConversation, conversationId)
-                            ? latestMessageAtByConversation[conversationId]
-                            : isDefaultTeamConversation(conversationId)
-                                && Object.prototype.hasOwnProperty.call(latestMessageAtByTeam, teamId)
-                                ? latestMessageAtByTeam[teamId]
-                                : undefined
+                    const conversationLookup = conversationLookupByTeam?.[job.teamId] || {};
+                    const loadedConversationIds = (await getChatConversations(
+                        job.teamId,
+                        conversationLookup.user || null,
+                        {
+                            team: conversationLookup.team || null,
+                            canModerate: conversationLookup.canModerate === true
+                        }
+                    )).map((conversation) => conversation?.id).filter(Boolean);
+                    if (settled || isExpired()) return;
+                    const conversationIds = conversationIdsForTeam(loadedConversationIds);
+                    teamStates[job.teamId].pending += conversationIds.length - 1;
+                    conversationIds.forEach((conversationId) => {
+                        jobs.push({ type: 'count', teamId: job.teamId, conversationId });
                     });
                 } catch (err) {
-                    console.warn(`Failed to get unread count for team ${teamId} conversation ${conversationId}:`, err);
-                    return 0;
+                    console.warn(`Failed to get unread count for team ${job.teamId}:`, err);
+                    if (!settled) completeTeamJob(job.teamId, 0, false);
                 }
-            }));
+                return;
+            }
 
-            counts[teamId] = unreadCounts.reduce((sum, count) => sum + Number(count || 0), 0);
-        } catch (err) {
-            console.warn(`Failed to get unread count for team ${teamId}:`, err);
-            counts[teamId] = 0;
+            try {
+                const latestMessageAtByConversation = latestMessageAtByConversationByTeam?.[job.teamId] || {};
+                const count = await getUnreadChatCount(userId, job.teamId, {
+                    userData,
+                    conversationId: job.conversationId,
+                    latestMessageAt: Object.prototype.hasOwnProperty.call(latestMessageAtByConversation, job.conversationId)
+                        ? latestMessageAtByConversation[job.conversationId]
+                        : isDefaultTeamConversation(job.conversationId)
+                            && Object.prototype.hasOwnProperty.call(latestMessageAtByTeam, job.teamId)
+                            ? latestMessageAtByTeam[job.teamId]
+                            : undefined
+                });
+                if (!settled) completeTeamJob(job.teamId, count);
+            } catch (err) {
+                console.warn(`Failed to get unread count for team ${job.teamId} conversation ${job.conversationId}:`, err);
+                if (!settled) completeTeamJob(job.teamId, 0, false);
+            }
+        };
+        const scheduleNext = () => {
+            if (settled) return;
+            if (isExpired()) {
+                finish();
+                return;
+            }
+            const job = jobs[nextJobIndex];
+            if (!job) {
+                if (activeJobs === 0) finish();
+                return;
+            }
+            nextJobIndex += 1;
+            activeJobs += 1;
+            void enqueueUnreadChatCountJob(() => runJob(job), deadlineAt).finally(() => {
+                activeJobs -= 1;
+                scheduleNext();
+            });
+        };
+
+        if (deadlineAt !== null) {
+            const remainingMs = deadlineAt - Date.now();
+            if (remainingMs <= 0) {
+                finish();
+                return;
+            }
+            deadlineTimer = setTimeout(finish, remainingMs);
         }
-    }));
-    return counts;
+
+        const workerCount = Math.min(UNREAD_CHAT_COUNT_CONCURRENCY, jobs.length);
+        for (let workerIndex = 0; workerIndex < workerCount; workerIndex += 1) scheduleNext();
+        if (workerCount === 0) finish();
+    });
 }
 
 
@@ -8013,10 +9096,12 @@ export async function broadcastLiveEvent(teamId, gameId, eventData) {
  */
 export function subscribeLiveEvents(teamId, gameId, callback, onError) {
     const eventsRef = getGameSubcollectionRef(teamId, gameId, 'liveEvents');
-    const q = query(eventsRef, orderBy('createdAt', 'asc'));
+    const q = query(eventsRef, orderBy('createdAt', 'desc'), limit(20));
 
     return onSnapshot(q, (snapshot) => {
-        const events = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const events = snapshot.docs
+            .map(doc => ({ id: doc.id, ...doc.data() }))
+            .reverse();
         callback(events);
     }, onError);
 }
@@ -8483,27 +9568,29 @@ export async function deleteDrill(drillId) {
 // Drill Diagrams
 // ============================================
 
-export async function uploadDrillDiagram(teamId, drillId, file) {
-    await ensureImageAuth();
+export async function uploadDrillDiagram(teamId, drillId, file, options = {}) {
     const userId = auth.currentUser?.uid;
-    const { imagePath, fallbackPath } = buildDrillDiagramUploadPaths(teamId, drillId, userId, file?.name, Date.now());
-    try {
-        const storageRef = ref(imageStorage, imagePath);
-        const snapshot = await uploadBytes(storageRef, file);
-        return await getDownloadURL(snapshot.ref);
-    } catch (error) {
-        const code = error?.code || '';
-        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated' || code === 'storage/unknown') {
-            // Match fallback behavior used by chat/stat-sheet uploads.
-            if (!teamId || !userId) {
-                throw new Error('Team-scoped drill fallback upload requires a signed-in team user.');
-            }
-            const fallbackRef = ref(storage, fallbackPath);
-            const snapshot = await uploadBytes(fallbackRef, file);
-            return await getDownloadURL(snapshot.ref);
-        }
-        throw error;
+    if (!teamId || !userId) {
+        throw new Error('Team-scoped drill upload requires a signed-in team user.');
     }
+    const { imagePath, fallbackPath } = buildDrillDiagramUploadPaths(teamId, drillId, userId, file?.name, Date.now());
+    if (await canUseLegacyImageStorage('drill upload')) {
+        try {
+            const storageRef = ref(imageStorage, imagePath);
+            const snapshot = await uploadStorageCandidateOrDelete(storageRef, file);
+            const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
+            return options?.returnUpload === true ? { url, path: imagePath, storage: 'image' } : url;
+        } catch (error) {
+            const code = error?.code || '';
+            if (!['storage/unauthorized', 'storage/unauthenticated', 'storage/unknown'].includes(code)) throw error;
+            console.warn('Image storage denied drill upload, falling back to main storage:', error?.message || error);
+        }
+    }
+
+    const fallbackRef = ref(storage, fallbackPath);
+    const snapshot = await uploadStorageCandidateOrDelete(fallbackRef, file);
+    const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
+    return options?.returnUpload === true ? { url, path: fallbackPath, storage: 'primary' } : url;
 }
 
 // ============================================
@@ -9604,18 +10691,59 @@ function normalizeRideEventIds(primaryGameId, fallbackGameIds = []) {
     )];
 }
 
-async function loadRideOffersForGameId(teamId, gameId) {
+function normalizeRideRequestReadOptions(options = {}) {
+    return {
+        requesterUserId: String(options?.requesterUserId || auth.currentUser?.uid || '').trim(),
+        childIds: [...new Set((Array.isArray(options?.childIds) ? options.childIds : [])
+            .map((childId) => String(childId || '').trim())
+            .filter(Boolean))],
+        canManageTeamRequests: options?.canManageTeamRequests === true
+    };
+}
+
+function isRideRequestPermissionDenied(error) {
+    const code = String(error?.code || '').toLowerCase();
+    const message = String(error?.message || '').toLowerCase();
+    return code.includes('permission-denied') || message.includes('permission denied') || message.includes('missing or insufficient permissions');
+}
+
+async function loadRideRequestsForOffer(teamId, gameId, offerId, offerData, options = {}) {
+    const readOptions = normalizeRideRequestReadOptions(options);
+    const requestsPath = `teams/${teamId}/games/${gameId}/rideOffers/${offerId}/requests`;
+    let requestDocs = [];
+
+    if (readOptions.canManageTeamRequests || offerData?.driverUserId === readOptions.requesterUserId) {
+        const requestsSnap = await getDocs(collection(db, requestsPath));
+        requestDocs = requestsSnap.docs;
+    } else if (readOptions.requesterUserId && readOptions.childIds.length > 0) {
+        const requestSnaps = await Promise.all(readOptions.childIds.map(async (childId) => {
+            const requestId = `${readOptions.requesterUserId}__${childId}`;
+            try {
+                return await getDoc(doc(db, requestsPath, requestId));
+            } catch (error) {
+                // A stale or no-longer-linked child scope can be denied.
+                // Treat that exact probe as unavailable; never broaden to a list.
+                if (isRideRequestPermissionDenied(error)) return null;
+                throw error;
+            }
+        }));
+        requestDocs = requestSnaps.filter((requestSnap) => requestSnap?.exists?.());
+    }
+
+    return requestDocs
+        .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }))
+        .sort((a, b) => {
+            const at = a?.requestedAt?.toMillis?.() || 0;
+            const bt = b?.requestedAt?.toMillis?.() || 0;
+            return at - bt;
+        });
+}
+
+async function loadRideOffersForGameId(teamId, gameId, options = {}) {
     const offersSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers`));
     const offers = await Promise.all(offersSnap.docs.map(async (offerDoc) => {
         const offerData = offerDoc.data() || {};
-        const requestsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerDoc.id}/requests`));
-        const requests = requestsSnap.docs
-            .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }))
-            .sort((a, b) => {
-                const at = a?.requestedAt?.toMillis?.() || 0;
-                const bt = b?.requestedAt?.toMillis?.() || 0;
-                return at - bt;
-            });
+        const requests = await loadRideRequestsForOffer(teamId, gameId, offerDoc.id, offerData, options);
         return {
             id: offerDoc.id,
             ...offerData,
@@ -9684,7 +10812,7 @@ export async function listRideOffersForEvent(teamId, gameId, options = {}) {
 
     for (let index = 0; index < candidateGameIds.length; index += 1) {
         const candidateGameId = candidateGameIds[index];
-        const offers = await loadRideOffersForGameId(teamId, candidateGameId);
+        const offers = await loadRideOffersForGameId(teamId, candidateGameId, options);
         if (offers.length > 0 || index === candidateGameIds.length - 1) {
             return offers;
         }

@@ -45,7 +45,7 @@ describe('schedule and RSVP notification contract', () => {
         expect(functionsSource).toContain('const isPracticeSeries = isPractice && (game.isSeriesMaster === true || Boolean(game.recurrence));');
         expect(functionsSource).toContain("category: 'schedule'");
         expect(functionsSource).toContain('title: payload.title');
-        expect(functionsSource).toContain('const notifyGameCreated = functions.firestore');
+        expect(functionsSource).toContain('const notifyGameCreated = retryableNotificationFunctions.firestore');
         expect(functionsSource).toContain(".document('teams/{teamId}/games/{gameId}')");
         expect(functionsSource).toContain("if (status === 'draft') return null;");
         expect(functionsSource).toContain('if (importBatch && importBatch.totalCount > 3) {');

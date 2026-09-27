@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 const teamDrillsPageSource = readFileSync(new URL('../../apps/app/src/pages/TeamDrills.tsx', import.meta.url), 'utf8');
 const teamDrillsServiceSource = readFileSync(new URL('../../apps/app/src/lib/teamDrillsService.ts', import.meta.url), 'utf8');
 const practiceAiCoachServiceSource = readFileSync(new URL('../../apps/app/src/lib/practiceAiCoachService.ts', import.meta.url), 'utf8');
-const scheduleEventDetailSource = readFileSync(new URL('../../apps/app/src/pages/ScheduleEventDetail.tsx', import.meta.url), 'utf8');
+const scheduleEventDetailSource = readFileSync(new URL('../../apps/app/src/pages/schedule/ScheduleGameHubSection.tsx', import.meta.url), 'utf8');
 const practiceTimelineServiceTestSource = readFileSync(new URL('../../apps/app/src/lib/practiceTimelineService.test.ts', import.meta.url), 'utf8');
 const teamDrillsPageTestSource = readFileSync(new URL('../../apps/app/src/pages/TeamDrills.test.tsx', import.meta.url), 'utf8');
 const scheduleEventDetailTestSource = readFileSync(new URL('../../apps/app/src/pages/ScheduleEventDetail.test.tsx', import.meta.url), 'utf8');
@@ -13,7 +13,8 @@ describe('issue 2026 team drills picker source contract', () => {
     it('keeps the native team drill library wired to search, filters, pagination, and favorites', () => {
         expect(teamDrillsPageSource).toContain("type DrillTab = 'community' | 'favorites';");
         expect(teamDrillsPageSource).toContain('loadTeamDrillLibraryPage(teamId, auth.user, {');
-        expect(teamDrillsPageSource).toContain('loadFavoriteDrills(teamId, auth.user)');
+        expect(teamDrillsPageSource).toContain('authUserRef.current = auth.user;');
+        expect(teamDrillsPageSource).toContain('loadFavoriteDrills(teamId, authUserRef.current)');
         expect(teamDrillsPageSource).toContain('filterDrillSummaries(favoriteDrills || [], {');
         expect(teamDrillsPageSource).toContain('await setTeamDrillFavorite(teamId, auth.user, drill.id, !isFavorite);');
         expect(teamDrillsPageSource).toContain('Team-scoped favorites sync with drills.html automatically.');

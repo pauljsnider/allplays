@@ -164,8 +164,8 @@ describe('HelpArticle', () => {
         // HelpPortal takes auth as a prop (like every other page) instead of calling
         // useAuth() itself, so navigating here doesn't mount a second, redundant
         // auth listener alongside the one App.tsx already set up.
-        expect(appSource).toContain('<Route path="/help" element={<Protected auth={auth}><HelpPortal auth={auth} /></Protected>} />');
-        expect(appSource).toContain('<Route path="/help/:helpId" element={<Protected auth={auth}><HelpArticle /></Protected>} />');
+        expect(appSource.replace(/\s/g, '')).toContain('<Route path="/help" element={<Protected auth={auth}><HelpPortal auth={auth} /></Protected>} />'.replace(/\s/g, ''));
+        expect(appSource.replace(/\s/g, '')).toContain('<Route path="/help/:helpId" element={<Protected auth={auth}><HelpArticle /></Protected>} />'.replace(/\s/g, ''));
     });
 
     it('shows a friendly not-found state for unknown help ids', async () => {

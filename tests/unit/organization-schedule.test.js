@@ -5,8 +5,10 @@ import {
     buildOrganizationScheduleCsvTemplate,
     buildOrganizationScheduleDraftSlots,
     buildOrganizationScheduleImportPreview,
+    buildOrganizationPublishedMatchups,
     buildOrganizationSharedGamePayload,
     buildVenueAvailabilityPayload,
+    collectSeedOrderedTeams,
     formatBlackoutDateRecord,
     formatOrganizationVenueLocation,
     formatVenueAvailabilityRecord,
@@ -19,6 +21,42 @@ import {
 } from '../../js/organization-schedule.js';
 
 describe('organization schedule helpers', () => {
+
+    function buildSharedPair({
+        sharedScheduleId = 'shared-team-1-source-1',
+        sourceGameId = 'source-1',
+        counterpartGameId = 'mirror-1',
+        date = '2026-09-01T18:00:00.000Z',
+        sourceStatus = 'scheduled',
+        counterpartStatus = sourceStatus,
+        includeSourceMarker = false
+    } = {}) {
+        const source = {
+            id: sourceGameId,
+            type: 'game',
+            date: { toDate: () => new Date(date) },
+            location: 'Main Field',
+            isHome: true,
+            status: sourceStatus,
+            sharedScheduleId,
+            sharedScheduleOpponentTeamId: 'team-2',
+            sharedScheduleOpponentGameId: counterpartGameId,
+            ...(includeSourceMarker ? { sharedScheduleSourceTeamId: 'team-1' } : {})
+        };
+        const counterpart = {
+            id: counterpartGameId,
+            type: 'game',
+            date: new Date(date),
+            location: 'Main Field',
+            isHome: false,
+            status: counterpartStatus,
+            sharedScheduleId,
+            sharedScheduleSourceTeamId: 'team-1',
+            sharedScheduleOpponentTeamId: 'team-1',
+            sharedScheduleOpponentGameId: sourceGameId
+        };
+        return { source, counterpart };
+    }
 
     it('validates venue availability time windows before saving', () => {
         expect(buildVenueAvailabilityPayload({
@@ -101,6 +139,113 @@ describe('organization schedule helpers', () => {
         { id: 'team-2', name: 'Bravo', ownerId: 'org-1', photoUrl: 'bravo.png' },
         { id: 'team-3', name: 'Charlie', ownerId: 'org-2', photoUrl: 'charlie.png' }
     ];
+
+    it('selects canonical reciprocal sources, deduplicates shared IDs, and sorts upcoming matchups', () => {
+        const later = buildSharedPair();
+        const earlier = buildSharedPair({
+            sharedScheduleId: 'shared-team-1-source-2',
+            sourceGameId: 'source-2',
+            counterpartGameId: 'mirror-2',
+            date: '2026-08-20T17:00:00.000Z',
+            sourceStatus: 'cancelled',
+            counterpartStatus: 'cancelled',
+            includeSourceMarker: true
+        });
+
+        const matchups = buildOrganizationPublishedMatchups({
+            organizationTeams: accessibleTeams.slice(0, 2),
+            gamesByTeam: {
+                'team-1': [later.source, earlier.source, later.source],
+                'team-2': [earlier.counterpart, later.counterpart]
+            },
+            now: new Date('2026-08-16T00:00:00.000Z')
+        });
+
+        expect(matchups).toHaveLength(2);
+        expect(matchups.map((matchup) => matchup.sharedScheduleId)).toEqual([
+            'shared-team-1-source-2',
+            'shared-team-1-source-1'
+        ]);
+        expect(matchups[0]).toMatchObject({
+            sourceTeamId: 'team-1',
+            sourceGameId: 'source-2',
+            counterpartTeamId: 'team-2',
+            counterpartGameId: 'mirror-2',
+            homeTeam: { id: 'team-1', name: 'Alpha' },
+            awayTeam: { id: 'team-2', name: 'Bravo' },
+            location: 'Main Field',
+            status: 'cancelled',
+            cancellationIncomplete: false
+        });
+        expect(matchups[0].date.toISOString()).toBe('2026-08-20T17:00:00.000Z');
+    });
+
+    it('filters past, non-shared, outside-organization, and malformed reciprocal records', () => {
+        const valid = buildSharedPair();
+        const malformed = buildSharedPair({
+            sharedScheduleId: 'shared-malformed',
+            sourceGameId: 'bad-source',
+            counterpartGameId: 'bad-mirror'
+        });
+        malformed.counterpart.sharedScheduleOpponentGameId = 'wrong-source';
+        const outside = buildSharedPair({
+            sharedScheduleId: 'shared-outside',
+            sourceGameId: 'outside-source',
+            counterpartGameId: 'outside-mirror'
+        });
+        outside.source.sharedScheduleOpponentTeamId = 'team-3';
+        outside.counterpart.sharedScheduleOpponentTeamId = 'team-1';
+        const past = buildSharedPair({
+            sharedScheduleId: 'shared-past',
+            sourceGameId: 'past-source',
+            counterpartGameId: 'past-mirror',
+            date: '2026-08-15T18:00:00.000Z'
+        });
+
+        const matchups = buildOrganizationPublishedMatchups({
+            organizationTeams: accessibleTeams.slice(0, 2),
+            gamesByTeam: {
+                'team-1': [valid.source, malformed.source, outside.source, past.source, { id: 'ordinary', type: 'game' }],
+                'team-2': [valid.counterpart, malformed.counterpart, past.counterpart],
+                'team-3': [outside.counterpart]
+            },
+            now: new Date('2026-08-16T00:00:00.000Z')
+        });
+
+        expect(matchups.map((matchup) => matchup.sharedScheduleId)).toEqual(['shared-team-1-source-1']);
+    });
+
+    it('rejects ambiguous reused shared IDs and exposes incomplete cancellation for retry', () => {
+        const first = buildSharedPair({ sharedScheduleId: 'shared-reused' });
+        const second = buildSharedPair({
+            sharedScheduleId: 'shared-reused',
+            sourceGameId: 'source-2',
+            counterpartGameId: 'mirror-2'
+        });
+        const partial = buildSharedPair({
+            sharedScheduleId: 'shared-partial',
+            sourceGameId: 'partial-source',
+            counterpartGameId: 'partial-mirror',
+            sourceStatus: 'cancelled',
+            counterpartStatus: 'scheduled'
+        });
+
+        const matchups = buildOrganizationPublishedMatchups({
+            organizationTeams: accessibleTeams.slice(0, 2),
+            gamesByTeam: {
+                'team-1': [first.source, second.source, partial.source],
+                'team-2': [first.counterpart, second.counterpart, partial.counterpart]
+            },
+            now: new Date('2026-08-16T00:00:00.000Z')
+        });
+
+        expect(matchups).toHaveLength(1);
+        expect(matchups[0]).toMatchObject({
+            sharedScheduleId: 'shared-partial',
+            status: 'incomplete',
+            cancellationIncomplete: true
+        });
+    });
 
     it('limits organization teams to the current owner grouping', () => {
         expect(getOrganizationTeams({
@@ -297,6 +442,63 @@ describe('organization schedule helpers', () => {
         ]));
     });
 
+    it('schedules resolved single-elimination first-round games and preserves BYE/TBD preview state', () => {
+        const draft = buildOrganizationScheduleDraftSlots({
+            selectedTeams: accessibleTeams,
+            organizationId: 'org-1',
+            scheduleFormat: 'single_elimination',
+            seasonStart: '2026-08-01',
+            seasonEnd: '2026-08-31',
+            durationMinutes: 60,
+            venues: [{
+                name: 'Main Field',
+                availability: [
+                    { date: '2026-08-15', startTime: '09:00', endTime: '10:00' },
+                    { date: '2026-08-15', startTime: '10:00', endTime: '11:00' }
+                ],
+                blackoutDates: []
+            }]
+        });
+
+        expect(draft.format).toBe('single_elimination');
+        expect(draft.draftSlots).toHaveLength(1);
+        expect(draft.draftSlots[0]).toMatchObject({
+            homeTeamId: 'team-2',
+            awayTeamId: 'team-3',
+            bracketGameId: 'R1G2',
+            homeSeed: 2,
+            awaySeed: 3
+        });
+        expect(draft.byeTeams).toEqual([{ id: 'team-1', name: 'Alpha', ownerId: 'org-1', photoUrl: 'alpha.png' }]);
+        expect(draft.bracket.games.some((game) => game.roundIndex > 0 && game.status === 'pending')).toBe(true);
+        expect(draft.draftSlots.every((slot) => slot.homeTeamId && slot.awayTeamId)).toBe(true);
+    });
+
+    it('collects selected teams in the explicit UI seed order passed to the generator', () => {
+        const selectedTeams = collectSeedOrderedTeams({
+            selectedOptions: [{ value: 'team-1' }, { value: 'team-2' }, { value: 'team-3' }],
+            organizationTeams: accessibleTeams,
+            seedOrderIds: ['team-3', 'team-1', 'team-2']
+        });
+
+        expect(selectedTeams.map((team) => team.id)).toEqual(['team-3', 'team-1', 'team-2']);
+
+        const draft = buildOrganizationScheduleDraftSlots({
+            selectedTeams,
+            organizationId: 'org-1',
+            scheduleFormat: 'single_elimination',
+            seasonStart: '2026-08-01',
+            seasonEnd: '2026-08-31',
+            venues: [{
+                name: 'Main Field',
+                availability: [{ date: '2026-08-15', startTime: '09:00', endTime: '10:00' }]
+            }]
+        });
+
+        expect(draft.byeTeams.map((team) => team.id)).toEqual(['team-3']);
+        expect(draft.draftSlots[0]).toMatchObject({ homeTeamId: 'team-1', awayTeamId: 'team-2', homeSeed: 2, awaySeed: 3 });
+    });
+
     it('exposes the organization schedule entry point from team schedule', () => {
         const source = readFileSync(new URL('../../edit-schedule.html', import.meta.url), 'utf8');
 
@@ -310,6 +512,30 @@ describe('organization schedule helpers', () => {
         expect(source).toContain("const option = document.createElement('option');");
         expect(source).toContain('option.textContent = team.name;');
         expect(source).not.toContain('selectEl.innerHTML = teams.map');
+    });
+
+    it('loads the current organization schedule module cache key', () => {
+        const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
+
+        expect(source).toContain("from './js/organization-schedule.js?v=6';");
+        expect(source).not.toContain("from './js/organization-schedule.js?v=5';");
+    });
+
+    it('wires bounded published matchup loading, safe rendering, and verified cancellation', () => {
+        const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
+
+        expect(source).toContain('id="published-matchups-list"');
+        expect(source).toContain('buildOrganizationPublishedMatchups');
+        expect(source).toContain('getGames(team.id, { startDate, endDate })');
+        expect(source).toContain('lastCompletePublishedMatchups');
+        expect(source).toContain("import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=4';");
+        expect(source).toContain('await getGame(teamId, gameId)');
+        expect(source).toContain('Cancellation is incomplete. Please retry.');
+        expect(source).toContain('Matchup cancelled, but team notifications were incomplete.');
+        expect(source).toContain('publishedMatchupsList.replaceChildren');
+        expect(source).toContain('encodeURIComponent(team.id)');
+        expect(source).not.toContain('publishedMatchupsList.innerHTML');
+        expect(source.match(/await refreshPublishedMatchups\(\);/g)?.length).toBeGreaterThanOrEqual(5);
     });
 
     it('wires the organization schedule bulk import UI', () => {
@@ -328,6 +554,11 @@ describe('organization schedule helpers', () => {
 
         expect(source).toContain('id="draft-generator-tab"');
         expect(source).toContain('id="draft-team-ids"');
+        expect(source).toContain('id="draft-team-seed-order"');
+        expect(source).toContain('collectSeedOrderedTeams');
+        expect(source).toContain("button.textContent = direction === -1 ? 'Move up' : 'Move down';");
+        expect(source).toContain('id="draft-schedule-format"');
+        expect(source).toContain('value="single_elimination"');
         expect(source).toContain('id="draft-venue-availability"');
         expect(source).toContain('id="draft-organization-blackouts"');
         expect(source).toContain('buildOrganizationScheduleDraftSlots');

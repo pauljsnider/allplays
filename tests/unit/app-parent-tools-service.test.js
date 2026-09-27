@@ -6,6 +6,8 @@ import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 const dbMocks = vi.hoisted(() => ({
     acceptTeamRegistrationOffer: vi.fn(),
     approveTeamRegistration: vi.fn(),
+    createAccessCode: vi.fn(),
+    createAccountMergeRequest: vi.fn(),
     createFamilyShareToken: vi.fn(),
     createParentMembershipRequest: vi.fn(),
     extendTeamRegistrationOffer: vi.fn(),
@@ -19,12 +21,19 @@ const dbMocks = vi.hoisted(() => ({
     })),
     collection: vi.fn((db, path) => ({ path })),
     getDoc: vi.fn(),
+    generateAccessCode: vi.fn(),
     updateDoc: vi.fn(),
     setDoc: vi.fn(),
     runTransaction: vi.fn(),
     getPlayers: vi.fn(),
+    getNotificationPreferencesForTeam: vi.fn(),
+    getParentTeams: vi.fn(),
     getTeamRegistrationForm: vi.fn(),
     getTeam: vi.fn(),
+    getUserAccessCodes: vi.fn(),
+    getUserAccessCodesPage: vi.fn(),
+    getUserProfile: vi.fn(),
+    getUserTeamsWithAccess: vi.fn(),
     getTeamMediaFolders: vi.fn(),
     getTeamMediaItems: vi.fn(),
     getTeamMediaItemsPage: vi.fn(),
@@ -39,7 +48,10 @@ const dbMocks = vi.hoisted(() => ({
     listTeamRegistrationReviewsPage: vi.fn(),
     rejectTeamRegistration: vi.fn(),
     revokeFamilyShareToken: vi.fn(),
+    saveNotificationPreferencesForTeam: vi.fn(),
     updateFamilyShareTokenCalendars: vi.fn(),
+    updateUserProfile: vi.fn(),
+    upsertNotificationDeviceToken: vi.fn(),
     uploadTeamMediaFile: vi.fn(),
     uploadTeamMediaPhoto: vi.fn(),
     deleteTeamMediaItem: vi.fn(),
@@ -264,6 +276,9 @@ const user = {
 beforeEach(() => {
     vi.clearAllMocks();
     clearAppDataCache();
+    delete window.__ALLPLAYS_CONFIG__;
+    delete window.ALLPLAYS_CALENDAR_FUNCTION_URL;
+    delete window.ALLPLAYS_TEAM_CALENDAR_FEED_URL;
     authMocks.firebaseAuth.currentUser.getIdToken.mockResolvedValue('firebase-token');
     authMocks.getNativeAuthIdToken.mockResolvedValue('native-token');
 });
@@ -490,12 +505,12 @@ describe('React app parent tools service', () => {
             statusLabel: 'Open',
             collectionMode: 'online_stripe',
             checkoutStatus: 'open',
-            checkoutUrl: 'https://pay.example.test/open',
+            checkoutUrl: '',
             notes: 'Bring jersey deposit form.',
             offlinePaymentInstructions: 'Cash or check accepted at practice.',
-            canPay: true,
+            canPay: false,
             checkoutInitiatable: false,
-            paymentAction: 'checkoutUrl',
+            paymentAction: '',
             lineItems: [{ title: 'Season', amountCents: 10000 }],
             installments: [{ label: 'Deposit', amountCents: 5000 }],
             ledgerEntries: [{ label: 'Adjustment', amountCents: -1000 }]
@@ -503,7 +518,7 @@ describe('React app parent tools service', () => {
         expect(fees[1]).toMatchObject({
             collectionMode: 'offline_manual',
             checkoutStatus: 'open',
-            checkoutUrl: 'https://pay.example.test/offline',
+            checkoutUrl: '',
             offlinePaymentInstructions: 'Pay by cash or check.',
             canPay: false,
             checkoutInitiatable: false,
@@ -536,8 +551,8 @@ describe('React app parent tools service', () => {
         });
         expect(adjustedFee).toMatchObject({
             canPay: true,
-            checkoutInitiatable: false,
-            paymentAction: 'checkoutUrl'
+            checkoutInitiatable: true,
+            paymentAction: 'createCheckout'
         });
         expect(staleFee).toMatchObject({
             canPay: true,
@@ -609,21 +624,19 @@ describe('React app parent tools service', () => {
         expect(ics).toContain('DESCRIPTION:Bears\\nGame\\nPlayer: Pat Star\\nBring water\\; arrive early');
     });
 
-    it('builds private calendar feed URLs from stored team subscription URLs or tokens', () => {
-        expect(buildPrivateTeamCalendarFeedUrl('team-1', { privateCalendarFeedUrl: 'webcal://example.test/private.ics?teamId=team-1&token=stored' })).toBe('https://example.test/private.ics?teamId=team-1&token=stored');
-        expect(buildPrivateTeamCalendarFeedUrl('team-1', { calendarSubscriptionToken: 'stored-token' })).toBe('https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=stored-token');
+    it('builds private calendar feed URLs only from a server-returned token', () => {
+        expect(buildPrivateTeamCalendarFeedUrl('team-1', 'server-token')).toBe('https://us-central1-game-flow-c6311.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=server-token');
+        expect(buildPrivateTeamCalendarFeedUrl('team-1', { calendarSubscriptionToken: 'stored-token' })).toBe('');
     });
 
-    it('creates private calendar feed URLs with stored-team and native token fallback support', async () => {
-        dbMocks.getTeam.mockResolvedValueOnce({ id: 'team-1', calendarSubscriptionToken: 'stored-token' });
-        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=stored-token');
-
-        dbMocks.getTeam.mockResolvedValueOnce(null);
-        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=native-token');
-
-        dbMocks.getTeam.mockResolvedValueOnce(null);
-        authMocks.getNativeAuthIdToken.mockRejectedValueOnce(new Error('native unavailable'));
-        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=firebase-token');
+    it('provisions a server-authorized bearer without using Firebase ID tokens as feed credentials', async () => {
+        const provisionFeedToken = vi.fn().mockResolvedValue({ data: { teamId: 'team-1', token: 'provisioned-token', reused: false } });
+        firebaseMocks.httpsCallable.mockReturnValueOnce(provisionFeedToken);
+        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-game-flow-c6311.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=provisioned-token');
+        expect(firebaseMocks.httpsCallable).toHaveBeenCalledWith(firebaseMocks.functions, 'getPrivateTeamCalendarFeedToken');
+        expect(provisionFeedToken).toHaveBeenCalledWith({ teamId: 'team-1' });
+        expect(authMocks.getNativeAuthIdToken).not.toHaveBeenCalled();
+        expect(authMocks.firebaseAuth.currentUser.getIdToken).not.toHaveBeenCalled();
     });
 
     it('loads and mutates family share tokens using current website contracts', async () => {
@@ -937,16 +950,16 @@ describe('React app parent tools service', () => {
         expect(dbMocks.getTeam).not.toHaveBeenCalled();
     });
 
-    it('rejects unavailable public registration details with safe errors', async () => {
+    it('rejects public registration details with missing identifiers', async () => {
         await expect(loadPublicRegistrationDetail('', 'form-1')).rejects.toThrow('Team and form are required.');
+    });
 
-        firebaseMocks.getDoc.mockResolvedValue({ exists: () => true, data: () => ({ id: 'form-1', published: false, status: 'published' }) });
-        await expect(loadPublicRegistrationDetail('team-1', 'form-1')).rejects.toThrow('This registration form is not available right now.');
-
-        firebaseMocks.getDoc.mockResolvedValue({ exists: () => true, data: () => ({ id: 'form-1', published: true, status: 'closed' }) });
-        await expect(loadPublicRegistrationDetail('team-1', 'form-1')).rejects.toThrow('This registration form is not available right now.');
-
-        firebaseMocks.getDoc.mockResolvedValue({ exists: () => true, data: () => ({ id: 'form-1', published: true, status: 'archived' }) });
+    it.each([
+        ['draft', false],
+        ['closed', true],
+        ['archived', true]
+    ])('keeps %s registration details unavailable through the public loader', async (status, published) => {
+        firebaseMocks.getDoc.mockResolvedValue({ exists: () => true, data: () => ({ id: 'form-1', published, status }) });
         await expect(loadPublicRegistrationDetail('team-1', 'form-1')).rejects.toThrow('This registration form is not available right now.');
     });
 
@@ -1221,7 +1234,7 @@ describe('React app parent tools service', () => {
     it('throws error if checkout URL is not returned from backend', async () => {
         dbMocks.createRegistrationCheckoutSession.mockResolvedValue({ checkoutUrl: null });
         await expect(initiateRegistrationCheckout('t', 'f', 'r', 'o', 'p', 1, 100, 'USD'))
-            .rejects.toThrow('Failed to get checkout URL.');
+            .rejects.toThrow('invalid checkout destination');
     });
 
     it('allows capability-based checkout cancellation without a raw registration id', async () => {
@@ -1245,11 +1258,11 @@ describe('React app parent tools service', () => {
     });
 
     it('initiates Stripe checkout for team fees and requires a returned URL', async () => {
-        stripeMocks.initiateTeamFeeCheckout.mockResolvedValue('https://checkout.stripe.test/team-fee');
+        stripeMocks.initiateTeamFeeCheckout.mockResolvedValue('https://checkout.stripe.com/c/pay/team-fee');
 
         await expect(initiateParentTeamFeeCheckout('team-1', 'batch-1', 'recipient-1')).resolves.toEqual({
             success: true,
-            checkoutUrl: 'https://checkout.stripe.test/team-fee'
+            checkoutUrl: 'https://checkout.stripe.com/c/pay/team-fee'
         });
         expect(stripeMocks.initiateTeamFeeCheckout).toHaveBeenCalledWith({ teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' });
 
@@ -1258,7 +1271,11 @@ describe('React app parent tools service', () => {
 
         stripeMocks.initiateTeamFeeCheckout.mockResolvedValueOnce('');
         await expect(initiateParentTeamFeeCheckout('team-1', 'batch-1', 'recipient-1'))
-            .rejects.toThrow('Failed to get checkout URL.');
+            .rejects.toThrow('Stripe returned an invalid checkout destination.');
+
+        stripeMocks.initiateTeamFeeCheckout.mockResolvedValueOnce('https://checkout.stripe.com.attacker.example/c/pay/team-fee');
+        await expect(initiateParentTeamFeeCheckout('team-1', 'batch-1', 'recipient-1'))
+            .rejects.toThrow('Stripe returned an invalid checkout destination.');
     });
 
     describe('updateTeamMediaItemForApp', () => {

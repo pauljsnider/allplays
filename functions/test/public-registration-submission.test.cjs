@@ -5,6 +5,7 @@ const Module = require('node:module');
 const repoIndexPath = require.resolve('../index.js');
 const originalModuleLoad = Module._load;
 const registrationSecurityEnvKeys = [
+    'PAYMENTS_ENABLED',
     'PUBLIC_REGISTRATION_APP_CHECK_MODE',
     'PUBLIC_REGISTRATION_NETWORK_RATE_LIMIT_MODE',
     'PUBLIC_REGISTRATION_FORM_RATE_LIMIT_MODE',
@@ -140,10 +141,43 @@ function makeFirestore(seed = {}) {
         };
     }
 
+    function collectionGroup(name) {
+        let filters = [];
+        let resultLimit = Infinity;
+        const query = {
+            where(field, operator, value) {
+                if (operator !== '==') throw new Error(`Unsupported collection-group operator: ${operator}`);
+                filters = [...filters, { field, value }];
+                return query;
+            },
+            limit(value) {
+                resultLimit = Number(value) || Infinity;
+                return query;
+            },
+            async get() {
+                const docs = [...state.entries()]
+                    .filter(([path, data]) => {
+                        const parts = path.split('/');
+                        return parts.at(-2) === name
+                            && filters.every((filter) => String(data?.[filter.field] || '') === String(filter.value || ''));
+                    })
+                    .slice(0, resultLimit)
+                    .map(([path, data]) => ({
+                        id: path.split('/').at(-1),
+                        ref: doc(path),
+                        data: () => clone(data)
+                    }));
+                return { docs, empty: docs.length === 0, size: docs.length };
+            }
+        };
+        return query;
+    }
+
     return {
         _state: state,
         doc,
         collection,
+        collectionGroup,
         runTransaction(handler) {
             const execute = async () => {
                 if (nextTransactionError) {
@@ -214,9 +248,13 @@ function makeFunctionsStub() {
         },
         timeZone() {
             return this;
+        },
+        user() {
+            return this;
         }
     };
     triggerChain.https = triggerChain;
+    triggerChain.auth = triggerChain;
     triggerChain.firestore = triggerChain;
     triggerChain.pubsub = triggerChain;
 
@@ -266,7 +304,7 @@ function installModuleStubs(firestore) {
                     stripeState.checkoutSessions.push(clone(payload));
                     return {
                         id: `cs_test_${stripeState.checkoutSessions.length}`,
-                        url: `https://stripe.test/checkout/${stripeState.checkoutSessions.length}`,
+                        url: `https://checkout.stripe.com/c/pay/${stripeState.checkoutSessions.length}`,
                         payment_status: 'unpaid',
                         ...(clone(stripeState.nextCheckoutResponse) || {})
                     };
@@ -360,6 +398,7 @@ test.beforeEach(() => {
     StripeStub = null;
     stripeState = null;
     registrationSecurityEnvKeys.forEach((key) => delete process.env[key]);
+    process.env.PAYMENTS_ENABLED = 'true';
 });
 
 test.afterEach(() => {
@@ -376,9 +415,8 @@ test.afterEach(() => {
     });
 });
 
-test('loads unrelated callables without Firestore transaction support', () => {
+test('loads unrelated callables with the shared Firestore stub', () => {
     const firestore = makeFirestore();
-    delete firestore.runTransaction;
     installModuleStubs(firestore);
 
     const mod = require('../index.js');
@@ -642,6 +680,77 @@ test('isolates guardian submission limits for families sharing an IP address', a
     assert.equal(firestore.registrationDocs().length, 4);
 });
 
+test('uses the authoritative opaque guardian email field for throttling', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState({
+        guardianFields: [
+            { id: 'guardian_1', label: 'Guardian name', type: 'text', required: true },
+            { id: 'guardian_2', label: 'Guardian email', type: 'email', required: true }
+        ]
+    }));
+    const firstGuardian = buildSubmission({
+        guardian: {
+            guardian_1: 'Guardian One',
+            guardian_2: ' Parent@One.Example ',
+            email: 'attacker-selected@example.com'
+        }
+    });
+
+    await submitPublicRegistration(firstGuardian, context);
+    await submitPublicRegistration(firstGuardian, context);
+    await submitPublicRegistration(firstGuardian, context);
+    const formBeforeThrottle = firestore.snapshot('teams/team-1/registrationForms/form-1');
+    const registrationsBeforeThrottle = firestore.registrationDocs().length;
+
+    await assert.rejects(
+        submitPublicRegistration(firstGuardian, context),
+        (error) => error.code === 'resource-exhausted' && error.details.reason === 'rate-limited'
+    );
+
+    assert.deepEqual(
+        firestore.snapshot('teams/team-1/registrationForms/form-1').registrationOptionCounts,
+        formBeforeThrottle.registrationOptionCounts
+    );
+    assert.equal(firestore.registrationDocs().length, registrationsBeforeThrottle);
+
+    const secondGuardian = await submitPublicRegistration(buildSubmission({
+        guardian: {
+            guardian_1: 'Guardian Two',
+            guardian_2: 'parent@two.example',
+            email: 'attacker-selected@example.com'
+        }
+    }), context);
+
+    assert.equal(secondGuardian.success, true);
+    assert.equal(firestore.registrationDocs().length, registrationsBeforeThrottle + 1);
+    assert.doesNotMatch(JSON.stringify(firestore.rateLimitDocs()), /@/);
+});
+
+test('does not let an extra caller-selected email field override the published email field', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState({
+        guardianFields: [{ id: 'guardian_2', label: 'Guardian email', type: 'email', required: true }]
+    }));
+
+    for (let index = 0; index < 3; index += 1) {
+        await submitPublicRegistration(buildSubmission({
+            guardian: {
+                guardian_2: 'authoritative@example.com',
+                email: `caller-selected-${index}@example.com`
+            }
+        }), context);
+    }
+
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission({
+            guardian: {
+                guardian_2: 'authoritative@example.com',
+                email: 'caller-selected-fourth@example.com'
+            }
+        }), context),
+        (error) => error.code === 'resource-exhausted' && error.details.reason === 'rate-limited'
+    );
+    assert.equal(firestore.registrationDocs().length, 3);
+});
+
 test('replays an identical keyed submission without duplicating capacity or consuming another rate slot', async () => {
     const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
     const input = buildSubmission({ submissionIdempotencyKey: 'submission_token_1234567890' });
@@ -775,7 +884,7 @@ test('applies the staged App Check gate to public registration checkout and canc
         (error) => error.code === 'failed-precondition' && error.details.reason === 'app-check-required'
     );
     const checkout = await mod.createStripeRegistrationCheckout(checkoutInput, verifiedContext);
-    assert.equal(checkout.checkoutUrl, 'https://stripe.test/checkout/1');
+    assert.equal(checkout.checkoutUrl, 'https://checkout.stripe.com/c/pay/1');
 
     const cancelCheckoutAttemptToken = 'cancelcheckouttoken123456';
     const cancelSubmission = await mod.submitPublicRegistration(buildSubmission({
@@ -915,7 +1024,7 @@ test('keeps checkout available when an observe-only limiter reservation fails', 
         checkoutAttemptToken
     }, context);
 
-    assert.equal(checkout.checkoutUrl, 'https://stripe.test/checkout/1');
+    assert.equal(checkout.checkoutUrl, 'https://checkout.stripe.com/c/pay/1');
     assert.equal(stripeState.checkoutSessions.length, 1);
 });
 
@@ -1170,6 +1279,11 @@ test('charges only the first scheduled installment for installment registrations
     const storedRegistration = firestore.snapshot(registrationPath);
     assert.equal(storedRegistration.paymentPlan.id, 'installments');
     assert.deepEqual(storedRegistration.paymentPlan.schedule.map((entry) => entry.amountCents), [4166, 4166, 4168]);
+    assert.equal(Object.prototype.hasOwnProperty.call(storedRegistration, 'checkoutAttemptToken'), false);
+    assert.equal(
+        firestore.snapshot(`${registrationPath}/checkoutAttempts/current`).checkoutAttemptToken,
+        'checkouttoken123456'
+    );
 
     const checkout = await mod.createStripeRegistrationCheckout({
         teamId: 'team-1',
@@ -1180,15 +1294,154 @@ test('charges only the first scheduled installment for installment registrations
         checkoutAttemptToken: 'checkouttoken123456'
     });
 
-    assert.equal(checkout.checkoutUrl, 'https://stripe.test/checkout/1');
+    assert.equal(checkout.checkoutUrl, 'https://checkout.stripe.com/c/pay/1');
     assert.equal(stripeState.checkoutSessions.length, 1);
     assert.equal(stripeState.checkoutSessions[0].line_items[0].price_data.unit_amount, 4166);
     assert.match(stripeState.checkoutSessions[0].success_url, /paymentPlanId=installments/);
 
     const checkoutRegistration = firestore.snapshot(registrationPath);
-    assert.equal(checkoutRegistration.checkoutAmountCents, 4166);
+    const checkoutAttempt = firestore.snapshot(`${registrationPath}/checkoutAttempts/current`);
+    assert.equal(checkoutAttempt.checkoutAmountCents, 4166);
+    assert.equal(Object.prototype.hasOwnProperty.call(checkoutRegistration, 'checkoutAmountCents'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(checkoutRegistration, 'checkoutUrl'), false);
     assert.equal(checkoutRegistration.paymentStatus, 'checkout_open');
   });
+
+test('resolves a returning public checkout capability only through private attempt state', async () => {
+    const { firestore, stripeState, mod } = loadFunctionsModule(buildSeedState({
+        paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+    }));
+    const submission = await mod.submitPublicRegistration(buildSubmission({
+        checkoutAttemptToken: 'checkouttoken123456'
+    }), context);
+    const registrationPath = `teams/team-1/registrationForms/form-1/registrations/${submission.registrationId}`;
+
+    const first = await mod.createStripeRegistrationCheckout({
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: submission.registrationId,
+        checkoutAttemptToken: 'checkouttoken123456'
+    });
+    const publicCheckoutCapability = stripeState.checkoutSessions[0].metadata.publicCheckoutCapability;
+    const returning = await mod.createStripeRegistrationCheckout({
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: '',
+        publicCheckoutCapability,
+        retryPayment: true
+    });
+
+    assert.deepEqual(returning, first);
+    assert.equal(stripeState.checkoutSessions.length, 1);
+    const registration = firestore.snapshot(registrationPath);
+    const checkoutAttempt = firestore.snapshot(`${registrationPath}/checkoutAttempts/current`);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutUrl'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'stripeCheckoutSessionId'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'publicCheckoutCapabilityHash'), false);
+    assert.equal(checkoutAttempt.checkoutUrl, first.checkoutUrl);
+    assert.equal(checkoutAttempt.stripeCheckoutSessionId, first.sessionId);
+    assert.match(checkoutAttempt.publicCheckoutCapabilityHash, /^[a-f0-9]{64}$/);
+});
+
+test('migrates a legacy readable registration checkout before capability reuse', async () => {
+    const { firestore, stripeState, mod } = loadFunctionsModule(buildSeedState({
+        paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+    }));
+    const submission = await mod.submitPublicRegistration(buildSubmission({
+        checkoutAttemptToken: 'checkouttoken123456'
+    }), context);
+    const registrationPath = `teams/team-1/registrationForms/form-1/registrations/${submission.registrationId}`;
+    const attemptPath = `${registrationPath}/checkoutAttempts/current`;
+    const first = await mod.createStripeRegistrationCheckout({
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: submission.registrationId,
+        checkoutAttemptToken: 'checkouttoken123456'
+    });
+    const publicCheckoutCapability = stripeState.checkoutSessions[0].metadata.publicCheckoutCapability;
+    const privateAttempt = firestore.snapshot(attemptPath);
+    await firestore.doc(registrationPath).set({
+        checkoutAttemptToken: privateAttempt.checkoutAttemptToken,
+        publicCheckoutCapabilityHash: privateAttempt.publicCheckoutCapabilityHash,
+        checkoutUrl: privateAttempt.checkoutUrl,
+        stripeCheckoutSessionId: privateAttempt.stripeCheckoutSessionId,
+        checkoutAmountCents: privateAttempt.checkoutAmountCents,
+        checkoutCurrency: privateAttempt.checkoutCurrency
+    }, { merge: true });
+    firestore._state.delete(attemptPath);
+
+    const returning = await mod.createStripeRegistrationCheckout({
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: '',
+        publicCheckoutCapability,
+        retryPayment: true
+    });
+
+    assert.deepEqual(returning, first);
+    assert.equal(stripeState.checkoutSessions.length, 1);
+    const registration = firestore.snapshot(registrationPath);
+    const migratedAttempt = firestore.snapshot(attemptPath);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutUrl'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'stripeCheckoutSessionId'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'publicCheckoutCapabilityHash'), false);
+    assert.equal(migratedAttempt.checkoutUrl, first.checkoutUrl);
+    assert.equal(migratedAttempt.stripeCheckoutSessionId, first.sessionId);
+});
+
+test('scrubs legacy readable checkout data when a private attempt document already exists', async () => {
+    const { firestore, stripeState, mod } = loadFunctionsModule(buildSeedState({
+        paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+    }));
+    const submission = await mod.submitPublicRegistration(buildSubmission({
+        checkoutAttemptToken: 'checkouttoken123456'
+    }), context);
+    const registrationPath = `teams/team-1/registrationForms/form-1/registrations/${submission.registrationId}`;
+    const attemptPath = `${registrationPath}/checkoutAttempts/current`;
+    const first = await mod.createStripeRegistrationCheckout({
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: submission.registrationId,
+        checkoutAttemptToken: 'checkouttoken123456'
+    });
+    const publicCheckoutCapability = stripeState.checkoutSessions[0].metadata.publicCheckoutCapability;
+    const privateAttempt = firestore.snapshot(attemptPath);
+    await firestore.doc(registrationPath).set({
+        checkoutAttemptToken: privateAttempt.checkoutAttemptToken,
+        publicCheckoutCapabilityHash: privateAttempt.publicCheckoutCapabilityHash,
+        checkoutUrl: privateAttempt.checkoutUrl,
+        stripeCheckoutSessionId: privateAttempt.stripeCheckoutSessionId,
+        checkoutAmountCents: privateAttempt.checkoutAmountCents,
+        checkoutCurrency: privateAttempt.checkoutCurrency
+    }, { merge: true });
+    await firestore.doc(attemptPath).set({
+        checkoutUrl: null,
+        stripeCheckoutSessionId: null,
+        publicCheckoutCapabilityHash: null,
+        checkoutCreationRequest: privateAttempt.checkoutCreationRequest,
+        reservationId: privateAttempt.reservationId
+    }, { merge: true });
+
+    const returning = await mod.createStripeRegistrationCheckout({
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: '',
+        publicCheckoutCapability,
+        retryPayment: true
+    });
+
+    assert.deepEqual(returning, first);
+    assert.equal(stripeState.checkoutSessions.length, 1);
+    const registration = firestore.snapshot(registrationPath);
+    const migratedAttempt = firestore.snapshot(attemptPath);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutUrl'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'stripeCheckoutSessionId'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'publicCheckoutCapabilityHash'), false);
+    assert.equal(migratedAttempt.checkoutUrl, first.checkoutUrl);
+    assert.equal(migratedAttempt.stripeCheckoutSessionId, first.sessionId);
+    assert.match(migratedAttempt.publicCheckoutCapabilityHash, /^[a-f0-9]{64}$/);
+    assert.deepEqual(migratedAttempt.checkoutCreationRequest, privateAttempt.checkoutCreationRequest);
+});
 
 test('keeps the stored installment schedule for later checkout attempts after form pricing changes', async () => {
     const { firestore, stripeState, mod } = loadFunctionsModule(buildSeedState({
@@ -1246,13 +1499,15 @@ test('keeps the stored installment schedule for later checkout attempts after fo
         checkoutAttemptToken: 'checkouttoken123456'
     });
 
-    assert.equal(checkout.checkoutUrl, 'https://stripe.test/checkout/1');
+    assert.equal(checkout.checkoutUrl, 'https://checkout.stripe.com/c/pay/1');
     assert.equal(stripeState.checkoutSessions[0].line_items[0].price_data.unit_amount, 4166);
     assert.match(stripeState.checkoutSessions[0].success_url, /paymentPlanId=installments/);
     assert.match(stripeState.checkoutSessions[0].success_url, /paidInstallmentCount=2/);
 
     const checkoutRegistration = firestore.snapshot(registrationPath);
-    assert.equal(checkoutRegistration.checkoutAmountCents, 4166);
+    const checkoutAttempt = firestore.snapshot(`${registrationPath}/checkoutAttempts/current`);
+    assert.equal(checkoutAttempt.checkoutAmountCents, 4166);
+    assert.equal(Object.prototype.hasOwnProperty.call(checkoutRegistration, 'checkoutAmountCents'), false);
 });
 
 function createMockResponse() {
@@ -1278,6 +1533,84 @@ function createMockResponse() {
         }
     };
 }
+
+test('migrates a legacy readable registration checkout inside a paid webhook transaction', async () => {
+    const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/legacy-registration';
+    const seed = buildSeedState();
+    seed[registrationPath] = {
+        id: 'legacy-registration',
+        teamId: 'team-1',
+        formId: 'form-1',
+        status: 'pending',
+        paymentStatus: 'checkout_open',
+        checkoutStatus: 'open',
+        registrationCapacityReleased: false,
+        selectedOption: { id: 'u10', countKey: 'u10', capacityLimit: 5 },
+        guardian: { email: 'parent@example.com' },
+        checkoutUrl: 'https://checkout.stripe.com/c/pay/legacy-registration',
+        paymentLink: 'https://checkout.stripe.com/c/pay/legacy-registration',
+        stripeCheckoutSessionId: 'cs_legacy_registration',
+        stripePaymentIntentId: 'pi_legacy_registration',
+        checkoutAttemptToken: 'legacytoken123456',
+        publicCheckoutCapabilityHash: 'legacy-capability-hash',
+        checkoutAmountCents: 5000,
+        checkoutCurrency: 'usd',
+        paymentReminder: {
+            status: 'active',
+            retryUrl: 'https://allplays.test/app/#/registration?publicCheckoutCapability=legacy'
+        }
+    };
+    const { firestore, stripeState, mod } = loadFunctionsModule(seed);
+    stripeState.webhookEvent = {
+        id: 'evt_legacy_registration_paid',
+        type: 'checkout.session.completed',
+        data: {
+            object: {
+                id: 'cs_legacy_registration',
+                payment_status: 'paid',
+                payment_intent: 'pi_legacy_registration',
+                amount_total: 5000,
+                currency: 'usd',
+                metadata: {
+                    product: 'registration',
+                    teamId: 'team-1',
+                    formId: 'form-1',
+                    registrationId: 'legacy-registration',
+                    checkoutAttemptToken: 'legacytoken123456'
+                }
+            }
+        }
+    };
+
+    const response = createMockResponse();
+    await mod.stripeTeamPassWebhook({
+        method: 'POST',
+        rawBody: Buffer.from('event'),
+        headers: { 'stripe-signature': 'sig_test' }
+    }, response);
+
+    assert.equal(response.statusCode, 200);
+    const registration = firestore.snapshot(registrationPath);
+    assert.equal(registration.paymentStatus, 'paid');
+    for (const field of [
+        'checkoutUrl',
+        'paymentLink',
+        'stripeCheckoutSessionId',
+        'stripePaymentIntentId',
+        'checkoutAttemptToken',
+        'publicCheckoutCapabilityHash',
+        'checkoutAmountCents',
+        'checkoutCurrency'
+    ]) {
+        assert.equal(Object.prototype.hasOwnProperty.call(registration, field), false);
+    }
+    assert.equal(Object.prototype.hasOwnProperty.call(registration.paymentReminder || {}, 'retryUrl'), false);
+    const privateAttempt = firestore.snapshot(`${registrationPath}/checkoutAttempts/current`);
+    assert.equal(privateAttempt.checkoutStatus, 'complete');
+    assert.equal(privateAttempt.stripeCheckoutSessionId, 'cs_legacy_registration');
+    assert.equal(privateAttempt.stripePaymentIntentId, 'pi_legacy_registration');
+    assert.equal(firestore.snapshot('stripeEvents/evt_legacy_registration_paid').ignored, undefined);
+});
 
 test('records installment payment progress after Stripe marks the first installment paid', async () => {
     const { firestore, stripeState, mod } = loadFunctionsModule(buildSeedState({
@@ -1422,7 +1755,8 @@ test('ignores a signed stale registration checkout success without advancing ins
     const registration = firestore.snapshot(registrationPath);
     assert.equal(registration.paymentStatus, 'checkout_open');
     assert.equal(Number(registration.paymentPlan.paidInstallmentCount || 0), 0);
-    assert.equal(registration.stripeCheckoutSessionId, 'cs_test_1');
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'stripeCheckoutSessionId'), false);
+    assert.equal(firestore.snapshot(`${registrationPath}/checkoutAttempts/current`).stripeCheckoutSessionId, 'cs_test_1');
     assert.equal(firestore.snapshot('stripeEvents/evt_installment_stale').ignoredReason, 'checkout_session_mismatch');
 });
 
@@ -1460,7 +1794,8 @@ test('deduplicates distinct paid events for one registration checkout session', 
     const registration = firestore.snapshot(registrationPath);
     assert.equal(registration.paymentStatus, 'installment_in_progress');
     assert.equal(registration.paymentPlan.paidInstallmentCount, 1);
-    assert.equal(registration.lastPaidStripeCheckoutSessionId, 'cs_test_1');
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'lastPaidStripeCheckoutSessionId'), false);
+    assert.equal(firestore.snapshot(`${registrationPath}/checkoutAttempts/current`).lastPaidStripeCheckoutSessionId, 'cs_test_1');
     assert.equal(firestore.snapshot('stripeEvents/evt_installment_replay_distinct_event').ignoredReason, 'checkout_session_already_processed');
 });
 

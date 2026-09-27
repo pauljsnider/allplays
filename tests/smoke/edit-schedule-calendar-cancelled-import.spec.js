@@ -50,6 +50,12 @@ export async function deleteOfficial() {}
 export async function createOfficiatingAssignmentNotificationRecords() { return []; }
 `;
 
+const CALENDAR_GAME_MATERIALIZATION_STUB = `
+export async function materializeCalendarGame() {
+    return 'calendar-created';
+}
+`;
+
 const UTILS_STUB = `
 function relativeDate(daysFromNow, hour, minute) {
     const date = new Date();
@@ -317,14 +323,15 @@ export function parseCsvText() {
 
 async function mockEditScheduleDependencies(page) {
     await page.route('**/js/db.js*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DB_STUB }));
+    await page.route('**/js/calendar-game-materialization.js*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: CALENDAR_GAME_MATERIALIZATION_STUB }));
     await page.route('**/js/utils.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
     await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
-    await page.route('**/js/team-admin-banner.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
-    await page.route('**/js/team-access.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ACCESS_STUB }));
-    await page.route('**/js/live-game-state.js?v=3', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_STATE_STUB }));
-    await page.route('**/js/edit-schedule-cancel-game.js?v=3', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: CANCEL_GAME_STUB }));
+    await page.route('**/js/team-admin-banner.js*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
+    await page.route('**/js/team-access.js*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ACCESS_STUB }));
+    await page.route(/\/js\/live-game-state\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_STATE_STUB }));
+    await page.route('**/js/edit-schedule-cancel-game.js?v=4', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: CANCEL_GAME_STUB }));
     await page.route('**/js/edit-schedule-practice-payload.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: PRACTICE_PAYLOAD_STUB }));
-    await page.route('**/js/edit-schedule-practice-submit.js?v=2', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: PRACTICE_SUBMIT_STUB }));
+    await page.route(/\/js\/edit-schedule-practice-submit\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: PRACTICE_SUBMIT_STUB }));
     await page.route('**/js/firebase.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_STUB }));
     await page.route('**/js/vendor/firebase-app.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
     await page.route('**/js/vendor/firebase-ai.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));

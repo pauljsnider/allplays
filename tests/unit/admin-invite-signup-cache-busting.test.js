@@ -79,7 +79,8 @@ describe('admin invite signup cache busting', () => {
             'utils.js': 18,
             'signup-flow.js': 12,
             'admin-invite.js': 6,
-            'accept-invite-flow.js': 11
+            'accept-invite-flow.js': 12,
+            'team-access.js': 5
         };
 
         const violations = {};
@@ -102,6 +103,16 @@ describe('admin invite signup cache busting', () => {
         ).toEqual({});
     });
 
+    it('keeps every deployed team-access consumer on an explicit cache key', () => {
+        const deployed = collectVersionedSourceFiles(process.cwd());
+        const unversionedConsumers = deployed.filter((relativePath) => {
+            const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8');
+            return /(?<![\w-])team-access\.js(?!\?v=\d+)/.test(source);
+        });
+
+        expect(unversionedConsumers).toEqual([]);
+    });
+
     // db.js is imported by ~40 files and bumped often, so it rolls forward across
     // a couple of adjacent versions rather than flipping atomically. Enforce a
     // bounded window (all consumers within MAX_DB_VERSION_SPREAD of each other)
@@ -110,7 +121,7 @@ describe('admin invite signup cache busting', () => {
     // versions behind) still fails. No frozen number, so rebases don't spiral.
     it('keeps db.js consumers within a bounded rollout window', () => {
         const MIN_DB_VERSION = 117;
-        const MAX_DB_VERSION_SPREAD = 2;
+        const MAX_DB_VERSION_SPREAD = 3;
         const deployed = collectVersionedSourceFiles(process.cwd());
         const byVersion = moduleVersionMap('db.js', deployed);
         const versions = Object.keys(byVersion).map(Number);

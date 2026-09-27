@@ -12,6 +12,15 @@ function appUrl(baseURL, hashPath) {
     return url.toString();
 }
 
+function captureUnexpectedPageErrors(page) {
+    const pageErrors = [];
+    page.on('pageerror', (error) => {
+        if (/Installations:.*API key not valid/i.test(error.message)) return;
+        pageErrors.push(error.message);
+    });
+    return pageErrors;
+}
+
 async function openPrivateAi(page) {
     const trigger = page.getByTitle('Private AI').first();
 
@@ -142,6 +151,9 @@ async function mockPrivateAiModules(page, { firstRun = false, roles = ['parent']
                         toolNames: []
                     }
                 ]`};
+                let nextMessageNumber = 2;
+                let pendingWrite = '';
+                let awaitingGameDetails = false;
 
                 export async function loadPrivateAiConversations() {
                     return conversations;
@@ -230,20 +242,67 @@ async function mockPrivateAiModules(page, { firstRun = false, roles = ['parent']
                     const savedConversationId = conversationId === 'default' && !conversations.some((conversation) => conversation.id === conversationId)
                         ? 'conversation-2'
                         : conversationId;
+                    const normalizedText = text.trim().toLowerCase();
+                    let assistantText = '**Bears** play Monday at 6:00 PM.';
+                    let toolNames = ['get_schedule'];
+                    let pendingActionIds = [];
+                    let toolResults = [{ name: 'get_schedule', ok: true }];
+
+                    if (/^(yes|confirm|confirm it)[.!]?$/.test(normalizedText) && pendingWrite === 'team') {
+                        assistantText = 'Confirmed. Team paul score test created with the Soccer stat template.';
+                        toolNames = ['create_team'];
+                        toolResults = [{ name: 'create_team', ok: true }];
+                        pendingWrite = '';
+                    } else if (/^(yes|confirm|confirm it)[.!]?$/.test(normalizedText) && pendingWrite === 'game') {
+                        assistantText = 'Confirmed. Game for Test Team against Vipers was created for Saturday, August 15, 2026 at 3:00 PM CDT.';
+                        toolNames = ['create_schedule_event'];
+                        toolResults = [{ name: 'create_schedule_event', ok: true }];
+                        pendingWrite = '';
+                    } else if (normalizedText.includes('create a new team called paul score test')) {
+                        assistantText = 'Team paul score test is ready for review with the Soccer stat template. Reply yes to create it.';
+                        toolNames = ['create_team'];
+                        pendingActionIds = ['ai_team1234'];
+                        toolResults = [{
+                            name: 'create_team',
+                            ok: true,
+                            requiresConfirmation: true,
+                            confirmationId: 'ai_team1234'
+                        }];
+                        pendingWrite = 'team';
+                    } else if (normalizedText.includes('create a new game for test team for saturday 3pm')) {
+                        assistantText = 'What time zone, opponent, and location should I use for Saturday at 3:00 PM?';
+                        toolNames = [];
+                        toolResults = [];
+                        awaitingGameDetails = true;
+                    } else if (awaitingGameDetails && normalizedText.includes('america/chicago')) {
+                        assistantText = 'Game for Test Team against Vipers at South Field on Saturday, August 15, 2026 at 3:00 PM CDT is ready for review. Reply yes to create it.';
+                        toolNames = ['create_schedule_event'];
+                        pendingActionIds = ['ai_game1234'];
+                        toolResults = [{
+                            name: 'create_schedule_event',
+                            ok: true,
+                            requiresConfirmation: true,
+                            confirmationId: 'ai_game1234'
+                        }];
+                        awaitingGameDetails = false;
+                        pendingWrite = 'game';
+                    }
+
                     const userMessage = {
-                        id: 'msg-2',
+                        id: 'msg-' + nextMessageNumber++,
                         role: 'user',
                         text,
                         conversationId: savedConversationId,
                         createdAt: new Date('2026-05-21T12:01:00Z')
                     };
                     const assistantMessage = {
-                        id: 'msg-3',
+                        id: 'msg-' + nextMessageNumber++,
                         role: 'assistant',
-                        text: '**Bears** play Monday at 6:00 PM.',
+                        text: assistantText,
                         conversationId: savedConversationId,
                         createdAt: new Date('2026-05-21T12:01:02Z'),
-                        toolNames: ['get_schedule']
+                        toolNames,
+                        pendingActionIds
                     };
                     messages = [...messages, userMessage, assistantMessage];
                     const savedConversation = {
@@ -259,7 +318,7 @@ async function mockPrivateAiModules(page, { firstRun = false, roles = ['parent']
                     return {
                         userMessage,
                         assistantMessage,
-                        toolResults: [{ name: 'get_schedule', ok: true }]
+                        toolResults
                     };
                 }
             `
@@ -268,6 +327,59 @@ async function mockPrivateAiModules(page, { firstRun = false, roles = ['parent']
 }
 
 test.describe('private AI chat', () => {
+    test('stages and confirms a new team from the reported mobile request', async ({ page, baseURL }) => {
+        const pageErrors = captureUnexpectedPageErrors(page);
+        await mockPrivateAiModules(page, { roles: ['coach'] });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto(appUrl(baseURL, '/ai'), { waitUntil: 'networkidle' });
+
+        expect(pageErrors).toEqual([]);
+        await page.getByPlaceholder('Ask ALL PLAYS...').fill('Create a new team called paul score test with soccer template');
+        await page.getByRole('button', { name: 'Send AI message' }).click();
+        await expect.poll(() => page.evaluate(() => window.__privateAiCalls.length)).toBe(1);
+        expect(pageErrors).toEqual([]);
+        await expect(page.getByText('Team paul score test is ready for review with the Soccer stat template. Reply yes to create it.')).toBeVisible();
+        await expect.poll(() => page.evaluate(() => window.__privateAiCalls)).toEqual([
+            {
+                uid: 'user-1',
+                text: 'Create a new team called paul score test with soccer template',
+                conversationId: 'default'
+            }
+        ]);
+
+        await page.getByPlaceholder('Ask ALL PLAYS...').fill('yes');
+        await page.getByRole('button', { name: 'Send AI message' }).click();
+        await expect.poll(() => page.evaluate(() => window.__privateAiCalls.length)).toBe(2);
+        expect(pageErrors).toEqual([]);
+        await expect(page.getByText('Confirmed. Team paul score test created with the Soccer stat template.')).toBeVisible();
+    });
+
+    test('clarifies then stages and confirms the reported relative-date game request', async ({ page, baseURL }) => {
+        const pageErrors = captureUnexpectedPageErrors(page);
+        await mockPrivateAiModules(page, { roles: ['coach'] });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto(appUrl(baseURL, '/ai'), { waitUntil: 'networkidle' });
+
+        expect(pageErrors).toEqual([]);
+        await page.getByPlaceholder('Ask ALL PLAYS...').fill('Create a new game for test team for Saturday 3pm.');
+        await page.getByRole('button', { name: 'Send AI message' }).click();
+        await expect.poll(() => page.evaluate(() => window.__privateAiCalls.length)).toBe(1);
+        expect(pageErrors).toEqual([]);
+        await expect(page.getByText('What time zone, opponent, and location should I use for Saturday at 3:00 PM?')).toBeVisible();
+
+        await page.getByPlaceholder('Ask ALL PLAYS...').fill('America/Chicago, against Vipers at South Field.');
+        await page.getByRole('button', { name: 'Send AI message' }).click();
+        await expect.poll(() => page.evaluate(() => window.__privateAiCalls.length)).toBe(2);
+        expect(pageErrors).toEqual([]);
+        await expect(page.getByText('Game for Test Team against Vipers at South Field on Saturday, August 15, 2026 at 3:00 PM CDT is ready for review. Reply yes to create it.')).toBeVisible();
+
+        await page.getByPlaceholder('Ask ALL PLAYS...').fill('yes');
+        await page.getByRole('button', { name: 'Send AI message' }).click();
+        await expect.poll(() => page.evaluate(() => window.__privateAiCalls.length)).toBe(3);
+        expect(pageErrors).toEqual([]);
+        await expect(page.getByText('Confirmed. Game for Test Team against Vipers was created for Saturday, August 15, 2026 at 3:00 PM CDT.')).toBeVisible();
+    });
+
     test('desktop first run defers history controls until the first saved conversation', async ({ page, baseURL }) => {
         await mockPrivateAiModules(page, { firstRun: true });
         await page.setViewportSize({ width: 1440, height: 900 });

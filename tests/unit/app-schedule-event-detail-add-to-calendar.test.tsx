@@ -9,7 +9,7 @@ describe('React app schedule event detail add-to-calendar coverage', () => {
     it('keeps the add-to-calendar CTA in the root unit suite', () => {
         const source = readScheduleEventDetailSource();
 
-        expect(source).toContain("import { exportCalendarIcsFile, openPublicUrl, sharePublicUrl } from '../lib/publicActions';");
+        expect(source).toContain("import { exportCalendarIcsFile } from '../lib/publicActions';");
         expect(source).toContain("import { buildParentScheduleEventIcs } from '../lib/parentToolsService';");
         expect(source).toContain('const addEventToCalendar = async () => {');
         expect(source).toContain('const icsTitle = `${title} | ${selectedEvent.teamName}`;');

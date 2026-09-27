@@ -353,6 +353,7 @@
     <script type="module">
         import {
             getParentDashboardData,
+            listParentRegistrationApplicationsPage,
             redeemParentInvite,
             getTeam,
             getTeams,
@@ -383,13 +384,12 @@
             claimAssignmentSlot,
             releaseAssignmentClaim,
             getAssignmentClaims,
-            inviteCoParentToAthlete,
             createFamilyShareToken,
             listFamilyShareTokens,
             revokeFamilyShareToken,
             updateFamilyShareTokenCalendars
-        } from './js/db.js?v=127';
-        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=18';
+        } from './js/db.js?v=4433199';
+        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=443375';
         import {
             getIncentiveRules,
             saveIncentiveRule as saveIncentiveRuleFn,
@@ -406,9 +406,11 @@
             renderRuleBuilder,
             getCapSetting,
             saveCapSetting as saveCapSettingFn,
-        } from './js/parent-incentives.js?v=3';
-        import { requireAuth, checkAuth } from './js/auth.js?v=135';
-        import { resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=1';
+        } from './js/parent-incentives.js?v=9';
+        import { functions, httpsCallable } from './js/firebase.js?v=33';
+        import { requireAuth, checkAuth } from './js/auth.js?v=4433203';
+        import { assertCompletePlayerStatEvidence, loadCompletePlayerStatsForGames } from './js/diamond-legacy-game-context.js?v=1';
+        import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=3';
         import {
             resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase,
             resolvePracticePacketContextForEvent as resolvePracticePacketContextForEventBase,
@@ -422,9 +424,9 @@
         import { mergeAssignmentsWithClaims } from './js/snack-helpers.js?v=1';
         import { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=2';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
-        import { handleParentTeamFeeCheckoutClick, renderParentTeamFees } from './js/parent-dashboard-fees.js?v=6';
-        import { initiateTeamFeeCheckout } from './js/stripe-service.js?v=1';
-        import { renderFamilyPlanSection } from './js/family-plan.js?v=5';
+        import { handleParentTeamFeeCheckoutClick, renderParentTeamFees } from './js/parent-dashboard-fees.js?v=7';
+        import { initiateTeamFeeCheckout } from './js/stripe-service.js?v=8';
+        import { renderFamilyPlanSection } from './js/family-plan.js?v=12';
         import { buildAppJoinUrl } from './js/join-code.js?v=2';
         import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
 
@@ -434,6 +436,13 @@
         let allScheduleEvents = [];
         let currentUserId = null;
         let currentUser = null;
+        let registrationApplications = [];
+        let registrationNextCursor = null;
+        let registrationRetryCursor = null;
+        let registrationRetryAvailable = false;
+        let registrationErrors = [];
+        let registrationLoadInFlight = false;
+        let registrationUser = null;
         let allPracticePacketSessions = [];
         let practicePacketFilter = 'recent_upcoming';
         let scheduleViewFilter = 'upcoming-all';
@@ -549,7 +558,13 @@
                     statusEl.textContent = '';
                 }
 
-                const invite = await inviteCoParentToAthlete(currentUserId, teamId, playerId, coParentEmail, playerName);
+                const createCoParentInvite = httpsCallable(functions, 'createCoParentInvite');
+                const response = await createCoParentInvite({
+                    teamId,
+                    playerId,
+                    email: coParentEmail
+                });
+                const invite = response?.data || {};
                 const inviteCode = String(invite?.code || '').trim().toUpperCase();
                 const inviteUrl = buildAppJoinUrl(inviteCode, 'coparent', window.location.origin);
 
@@ -924,7 +939,7 @@
                         : `<div class="mt-2 space-y-2">${offers.map((offer) => {
                             const offerGameId = offer.sourceGameId || event.id;
                             const seatInfo = getOfferSeatInfo(offer);
-                            const canManageOffer = offer.driverUserId === currentUserId;
+                            const canManageOffer = offer.driverUserId === currentUserId || event.isTeamAdmin === true || currentUser?.isAdmin === true;
                             const childSelectorId = `ride-child-${renderKey}-${offer.id}`.replace(/[^a-zA-Z0-9_-]/g, '_');
                             const selectedChildId = getSelectedRideChildId(
                                 event.teamId,
@@ -1001,8 +1016,12 @@
         async function refreshRideshareForEvent(teamId, gameId, legacyGameId = '') {
             const key = getEventRideKey(teamId, gameId);
             try {
+                const matchingEvents = allScheduleEvents.filter((event) => event.teamId === teamId && event.id === gameId);
                 const offers = await listRideOffersForEvent(teamId, gameId, {
-                    fallbackGameIds: legacyGameId ? [legacyGameId] : []
+                    fallbackGameIds: legacyGameId ? [legacyGameId] : [],
+                    requesterUserId: currentUserId,
+                    childIds: resolveChildChoices(teamId).map((child) => child.childId),
+                    canManageTeamRequests: currentUser?.isAdmin === true || matchingEvents.some((event) => event.isTeamAdmin === true)
                 });
                 rideshareOffersByEvent.set(key, offers);
             } catch (err) {
@@ -1553,7 +1572,7 @@
                 await loadShareLinks();
                 await loadParentCertificateLinks(data.children);
                 renderPlayers(data.children, data.dashboardState || null);
-                renderRegistrationApplications(data.registrationApplications || []);
+                void loadInitialRegistrationApplications(user);
                 teamChildrenByTeamId.clear();
                 (data.children || []).forEach((child) => {
                     if (!child?.teamId) return;
@@ -1890,7 +1909,15 @@
                 for (const game of dbGames) {
                     const isPractice = game.type === 'practice';
                     const type = isPractice ? 'practice' : 'game';
-                    const isCancelled = game.status === 'cancelled';
+                    const normalizedGameStatus = String(game.status || '').trim().toLowerCase();
+                    const normalizedGameLiveStatus = String(game.liveStatus || '').trim().toLowerCase();
+                    const isCancelled = game.isCancelled === true
+                        || game.deleted === true
+                        || game.isDeleted === true
+                        || normalizedGameStatus === 'cancelled'
+                        || normalizedGameStatus === 'canceled'
+                        || normalizedGameLiveStatus === 'cancelled'
+                        || normalizedGameLiveStatus === 'canceled';
 
                     if (isPractice && game.isSeriesMaster && game.recurrence) {
                         // Expand recurring practice series — each occurrence gets its own
@@ -1911,7 +1938,7 @@
                                     childId: child.playerId,
                                     childName: child.playerName,
                                     title: occ.title || null,
-                                    status: game.status || 'scheduled',
+                                    status: game.status || null,
                                     isCancelled,
                                     isHome: null,
                                     kitColor: null,
@@ -1945,8 +1972,17 @@
                                 childId: child.playerId,
                                 childName: child.playerName,
                                 title: game.title || null,
-                                status: game.status || 'scheduled',
+                                status: game.status || null,
                                 liveStatus: game.liveStatus || null,
+                                trackingEngine: game.trackingEngine || null,
+                                diamondProjectionStatus: game.diamondProjectionStatus || null,
+                                diamondProjectionComplete: game.diamondProjectionComplete === true,
+                                diamondScorebookInstanceId: game.diamondScorebookInstanceId || null,
+                                diamondProjectionRevision: game.diamondProjectionRevision ?? null,
+                                diamondProjectionCheckpointHash: game.diamondProjectionCheckpointHash || null,
+                                diamondStatConfigSnapshotHash: game.diamondStatConfigSnapshotHash || null,
+                                diamondProjectionHash: game.diamondProjectionHash || null,
+                                hasReplayVideo: hasReplayVideoEvidence(game),
                                 isCancelled,
                                 isHome: game.isHome ?? null,
                                 kitColor: game.kitColor || null,
@@ -2596,11 +2632,89 @@
             document.getElementById('packet-preview-modal')?.classList.add('hidden');
         }
 
-        function renderRegistrationApplications(applications) {
+        async function loadInitialRegistrationApplications(user) {
+            registrationUser = user;
+            registrationApplications = [];
+            registrationNextCursor = null;
+            registrationRetryCursor = null;
+            registrationRetryAvailable = false;
+            registrationErrors = [];
+            await loadRegistrationApplicationsPage(null);
+        }
+
+        function getRegistrationApplicationKey(application = {}) {
+            return application.registrationKey || application.id || '';
+        }
+
+        function getRegistrationApplicationSubmittedAt(application = {}) {
+            const submittedAt = application.submittedAt;
+            if (typeof submittedAt?.toMillis === 'function') return submittedAt.toMillis();
+            if (Number.isFinite(submittedAt?.seconds)) {
+                return (submittedAt.seconds * 1000) + Math.floor((submittedAt.nanoseconds || 0) / 1000000);
+            }
+            const milliseconds = submittedAt ? new Date(submittedAt).getTime() : 0;
+            return Number.isFinite(milliseconds) ? milliseconds : 0;
+        }
+
+        function mergeRegistrationApplications(existing = [], incoming = []) {
+            const applicationsByKey = new Map();
+            [...existing, ...incoming].forEach((application) => {
+                const key = getRegistrationApplicationKey(application);
+                if (key) applicationsByKey.set(key, application);
+            });
+            return [...applicationsByKey.values()].sort((a, b) => {
+                const submittedAtDifference = getRegistrationApplicationSubmittedAt(b)
+                    - getRegistrationApplicationSubmittedAt(a);
+                if (submittedAtDifference !== 0) return submittedAtDifference;
+                return getRegistrationApplicationKey(b).localeCompare(getRegistrationApplicationKey(a));
+            });
+        }
+
+        async function loadRegistrationApplicationsPage(cursor) {
+            if (!registrationUser || registrationLoadInFlight) return;
+            registrationLoadInFlight = true;
+            renderRegistrationApplications(registrationApplications, registrationErrors, { loading: true });
+            try {
+                const page = await listParentRegistrationApplicationsPage(registrationUser, { cursor });
+                registrationApplications = mergeRegistrationApplications(
+                    registrationApplications,
+                    page.applications || []
+                );
+                registrationErrors = page.errors || [];
+                registrationRetryAvailable = registrationErrors.length > 0;
+                registrationRetryCursor = registrationRetryAvailable
+                    ? (page.retryCursor ?? cursor)
+                    : null;
+                registrationNextCursor = page.nextCursor || null;
+            } catch (error) {
+                console.warn('[parent-dashboard] Failed to load registration applications:', error);
+                registrationErrors = [{
+                    message: 'Registration applications could not be loaded. Retry this registration page.'
+                }];
+                registrationRetryAvailable = true;
+                registrationRetryCursor = cursor;
+            } finally {
+                registrationLoadInFlight = false;
+                renderRegistrationApplications(registrationApplications, registrationErrors);
+            }
+        }
+
+        function renderRegistrationApplications(applications, errors = [], options = {}) {
             const container = document.getElementById('registration-applications-list');
             if (!container) return;
+            const errorHtml = errors.length > 0
+                ? `<div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    <div>${escapeHtml(errors[0].message || 'Registration applications could not be loaded.')}</div>
+                    <button type="button" id="registration-retry-btn" class="mt-2 font-semibold underline disabled:opacity-60" ${options.loading ? 'disabled' : ''}>${options.loading ? 'Retrying...' : 'Retry'}</button>
+                </div>`
+                : '';
             if (!applications || applications.length === 0) {
-                container.innerHTML = `<div class="text-center py-4 text-gray-500 text-sm">No registration applications submitted yet.</div>`;
+                container.innerHTML = errorHtml || (options.loading
+                    ? `<div class="text-xs text-gray-500">Loading applications...</div>`
+                    : `<div class="text-center py-4 text-gray-500 text-sm">No registration applications submitted yet.</div>`);
+                document.getElementById('registration-retry-btn')?.addEventListener('click', () => {
+                    void loadRegistrationApplicationsPage(registrationRetryCursor);
+                });
                 return;
             }
 
@@ -2614,7 +2728,7 @@
                 rejected: 'bg-red-50 text-red-700 border-red-200'
             };
 
-            container.innerHTML = applications.map((application) => {
+            const applicationsHtml = applications.map((application) => {
                 const statusClass = statusClasses[application.status] || statusClasses.pending;
                 const optionLabel = application.selectedOptionLabel
                     ? `<div class="text-xs text-gray-500 mt-1">Option: ${escapeHtml(application.selectedOptionLabel)}</div>`
@@ -2635,6 +2749,16 @@
                     </div>
                 `;
             }).join('');
+            const loadMoreHtml = !registrationRetryAvailable && registrationNextCursor
+                ? `<button type="button" id="registration-load-more-btn" class="w-full rounded-lg border border-primary-200 px-3 py-2 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:opacity-60" ${options.loading ? 'disabled' : ''}>${options.loading ? 'Loading...' : 'Load more'}</button>`
+                : '';
+            container.innerHTML = errorHtml + applicationsHtml + loadMoreHtml;
+            document.getElementById('registration-retry-btn')?.addEventListener('click', () => {
+                void loadRegistrationApplicationsPage(registrationRetryCursor);
+            });
+            document.getElementById('registration-load-more-btn')?.addEventListener('click', () => {
+                void loadRegistrationApplicationsPage(registrationNextCursor);
+            });
         }
 
         function renderPlayers(children, dashboardState = null) {
@@ -2664,7 +2788,7 @@
                        class="flex items-center gap-4 p-3 hover:border-primary-300 hover:bg-primary-50 transition group">
                         <div class="h-12 w-12 flex-shrink-0 rounded-full bg-gray-200 overflow-hidden border border-gray-300">
                             ${child.playerPhotoUrl
-                                ? `<img src="${escapeHtml(child.playerPhotoUrl)}" class="w-full h-full object-cover">`
+                                ? `<img loading="lazy" decoding="async" src="${escapeHtml(child.playerPhotoUrl)}" class="w-full h-full object-cover">`
                                 : `<div class="w-full h-full flex items-center justify-center text-gray-400 text-xs">No Img</div>`
                             }
                         </div>
@@ -3015,6 +3139,13 @@
             incentivesPanelPlayer = null;
         }
 
+        function assertCompleteIncentiveStatEvidence(activeRules, gameStats) {
+            assertCompletePlayerStatEvidence({
+                evidence: gameStats?.evidence,
+                requiredStatKeys: (activeRules || []).map((rule) => rule?.statKey)
+            });
+        }
+
         async function refreshIncentivesPanel() {
             if (!incentivesPanelPlayer || !currentUserId) return;
             const { id: playerId, name: playerName, teamId } = incentivesPanelPlayer;
@@ -3027,28 +3158,51 @@
                     getCapSetting(currentUserId, playerId),
                 ]);
 
-                // Fetch stats for recent past games for this player
-                const pastGames = allScheduleEvents
-                    .filter(g => g.isDbGame && g.type === 'game' && !g.isCancelled && g.childId === playerId && g.teamId === teamId && new Date(g.date) < new Date())
-                    .sort((a, b) => new Date(b.date) - new Date(a.date));
+                // Reload the authoritative inventory before computing season
+                // absence/totals. The general schedule may be a cache-only or
+                // partial shared-game view and is not completeness evidence.
+                const completeTeamGames = await getGames(teamId, { requireCompleteSharedGames: true });
+                const pastGames = completeTeamGames
+                    .filter((game) => {
+                        const type = String(game?.type || 'game').trim().toLowerCase();
+                        const status = String(game?.status || '').trim().toLowerCase();
+                        const liveStatus = String(game?.liveStatus || '').trim().toLowerCase();
+                        const isCancelled = game?.isCancelled === true
+                            || game?.deleted === true
+                            || game?.isDeleted === true
+                            || ['cancelled', 'canceled'].includes(status)
+                            || ['cancelled', 'canceled'].includes(liveStatus);
+                        const gameDate = game?.date?.toDate ? game.date.toDate() : new Date(game?.date);
+                        return type === 'game' && !isCancelled && !Number.isNaN(gameDate.getTime()) && gameDate < new Date();
+                    })
+                    .sort((a, b) => {
+                        const aDate = a?.date?.toDate ? a.date.toDate() : new Date(a?.date);
+                        const bDate = b?.date?.toDate ? b.date.toDate() : new Date(b?.date);
+                        return bDate - aDate;
+                    });
 
                 const recentGames = pastGames.slice(0, 5);
                 const recentGameIds = new Set(recentGames.map(game => game.id));
 
-                const seasonGameStats = await Promise.all(
-                    pastGames.map(async (game) => {
-                        const stats = await getAggregatedStatsForPlayer(teamId, game.id, playerId);
-                        return { game, stats };
-                    })
-                );
+                const seasonGameStats = await loadCompletePlayerStatsForGames({
+                    teamId,
+                    games: pastGames,
+                    playerId,
+                    loadClassicPlayerStats: getAggregatedStatsForPlayer
+                });
                 incentivesPanelRules = rules;
 
-                // Update earnings cache for schedule chips
-                for (const { game, stats } of seasonGameStats) {
-                    if (stats) {
-                        const { totalCents } = calculateEarnings(getApplicableRulesForGame(rules, game.date), stats, maxPerGameCents);
-                        incentivesEarningsCache.set(`${game.id}__${playerId}`, totalCents);
-                    }
+                // Validate every game before mutating the last-complete earnings cache.
+                const evaluatedGameStats = seasonGameStats.map((gameStats) => {
+                    const activeRules = getApplicableRulesForGame(rules, gameStats.game.date);
+                    assertCompleteIncentiveStatEvidence(activeRules, gameStats);
+                    return {
+                        ...gameStats,
+                        totalCents: calculateEarnings(activeRules, gameStats.stats, maxPerGameCents).totalCents
+                    };
+                });
+                for (const { game, totalCents } of evaluatedGameStats) {
+                    incentivesEarningsCache.set(`${game.id}__${playerId}`, totalCents);
                 }
 
                 content.innerHTML = renderIncentivesPanel({

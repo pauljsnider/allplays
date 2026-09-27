@@ -11,10 +11,12 @@ import {
   computeAppSearchResults,
   getImmediateAppTeamSearchResults,
   getKnownAppSearchTeams,
+  loadAppSearchHelpResults,
   loadAppSearchTeams,
   searchAppTeams,
   searchAppPlayers,
   type AppSearchItem,
+  type AppSearchHelp,
   type AppSearchPlayer,
   type AppSearchTeam
 } from '../lib/searchService';
@@ -27,6 +29,7 @@ type AppSearchDialogProps = {
 };
 
 const backdropCloseGuardMs = 750;
+const helpSearchDebounceMs = 150;
 const hydrationSearchFallbackMs = 250;
 const keyboardInsetActivationThresholdPx = 80;
 const remotePlayerSearchCoalesceMs = 120;
@@ -36,12 +39,18 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [teams, setTeams] = useState<AppSearchTeam[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
   const [teamsError, setTeamsError] = useState('');
+  const [teamsRetrying, setTeamsRetrying] = useState(false);
   const [players, setPlayers] = useState<AppSearchPlayer[]>([]);
   const [playersLoading, setPlayersLoading] = useState(false);
   const [playersError, setPlayersError] = useState('');
+  const [playersRetrying, setPlayersRetrying] = useState(false);
+  const [helpResults, setHelpResults] = useState<AppSearchHelp[]>([]);
+  const [helpLoading, setHelpLoading] = useState(false);
+  const [searchAttempt, setSearchAttempt] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
   const [keyboardInset, setKeyboardInset] = useState(0);
   const searchRequestId = useRef(0);
+  const helpSearchRequestId = useRef(0);
   const playerSearchGenerationRef = useRef(0);
   const playerSearchTimeoutRef = useRef<number | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -53,11 +62,10 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const helpRoleFilter = derivePrimaryHelpRole(auth);
 
   const results = useMemo(
-    () => computeAppSearchResults({ queryText: query, auth, teams, players, helpRoleFilter }),
-    [auth, helpRoleFilter, players, query, teams]
+    () => computeAppSearchResults({ queryText: query, auth, teams, players, helpResults }),
+    [auth, helpResults, players, query, teams]
   );
-  const helpResults = results.help ?? [];
-  const flatResults = results.flat ?? [...results.actions, ...results.teams, ...helpResults, ...results.players];
+  const flatResults = results.flat ?? [...results.actions, ...results.teams, ...results.help, ...results.players];
 
   useEffect(() => {
     if (!open) return;
@@ -79,6 +87,9 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setPlayers([]);
     setPlayersError('');
     setPlayersLoading(false);
+    setPlayersRetrying(false);
+    setHelpResults([]);
+    setHelpLoading(false);
     clearScheduledPlayerSearch();
     const knownTeams = getKnownAppSearchTeams(auth.user);
     baseTeamsRef.current = knownTeams;
@@ -86,7 +97,37 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setActiveIndex(0);
     setTeamsLoading(false);
     setTeamsError('');
+    setTeamsRetrying(false);
   }, [auth.user, open]);
+
+  useEffect(() => {
+    const requestId = ++helpSearchRequestId.current;
+    const trimmedQuery = query.trim();
+
+    if (!open || trimmedQuery.length < 2) {
+      setHelpResults([]);
+      setHelpLoading(false);
+      return;
+    }
+
+    setHelpResults([]);
+    setHelpLoading(true);
+    const timeoutId = window.setTimeout(() => {
+      void loadAppSearchHelpResults({ queryText: trimmedQuery, auth, helpRoleFilter })
+        .then((nextHelpResults) => {
+          if (requestId !== helpSearchRequestId.current) return;
+          setHelpResults(nextHelpResults);
+          setHelpLoading(false);
+        })
+        .catch(() => {
+          if (requestId !== helpSearchRequestId.current) return;
+          setHelpResults([]);
+          setHelpLoading(false);
+        });
+    }, helpSearchDebounceMs);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [auth, helpRoleFilter, open, query]);
 
   useEffect(() => {
     if (!open) return;
@@ -99,9 +140,11 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       setTeams(baseTeamsRef.current);
       setTeamsLoading(false);
       setTeamsError('');
+      setTeamsRetrying(false);
       setPlayers([]);
       setPlayersLoading(false);
       setPlayersError('');
+      setPlayersRetrying(false);
       return () => {
         disposed = true;
         clearScheduledPlayerSearch();
@@ -141,11 +184,13 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
             setPlayersError(getPlayerSearchError(playersResult.reason));
           }
           setPlayersLoading(false);
+          setPlayersRetrying(false);
         }, remotePlayerSearchCoalesceMs);
       };
 
       const applyTeamResults = (teamsResult: PromiseSettledResult<AppSearchTeam[]>) => {
         if (disposed || requestId !== searchRequestId.current) return;
+        setTeamsRetrying(false);
         if (teamsResult.status === 'fulfilled') {
           setTeams(teamsResult.value);
           setTeamsError('');
@@ -214,6 +259,8 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
           if (!disposed && requestId === searchRequestId.current) {
             setTeamsLoading(false);
             setPlayersLoading(false);
+            setTeamsRetrying(false);
+            setPlayersRetrying(false);
             clearScheduledPlayerSearch();
           }
         });
@@ -224,7 +271,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       window.clearTimeout(timeoutId);
       clearScheduledPlayerSearch();
     };
-  }, [auth.user, open, query]);
+  }, [auth.user, open, query, searchAttempt]);
 
   useEffect(() => {
     setActiveIndex(0);
@@ -323,6 +370,19 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     searchInputRef.current?.focus();
   };
 
+  const retrySearch = (section: 'teams' | 'players') => {
+    if (query.trim().length < 2) return;
+    if (teamsRetrying || playersRetrying) return;
+    if (section === 'teams') {
+      if (!teamsError) return;
+    } else {
+      if (!playersError) return;
+    }
+    setTeamsRetrying(true);
+    setPlayersRetrying(true);
+    setSearchAttempt((attempt) => attempt + 1);
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -349,7 +409,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
   const hasRealQuery = query.trim().length >= 2;
   const teamsStatus = hasRealQuery
-    ? teamsLoading
+    ? teamsRetrying || teamsLoading
       ? 'Searching teams...'
       : teamsError
         ? teamsError
@@ -357,12 +417,14 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
           ? 'No matching teams'
           : ''
     : teamsError;
-  const helpStatus = hasRealQuery && helpResults.length === 0
-    ? 'No matching help articles'
+  const helpStatus = hasRealQuery && helpLoading
+    ? 'Searching help...'
+    : hasRealQuery && results.help.length === 0
+      ? 'No matching help articles'
     : '';
   const playersStatus = !hasRealQuery
     ? 'Type at least 2 characters to search players'
-    : playersLoading
+    : playersRetrying || playersLoading
       ? 'Searching players...'
       : playersError
         ? playersError
@@ -402,6 +464,12 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
                   autoComplete="off"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' || !isNativeRuntime()) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    event.currentTarget.blur();
+                  }}
                   className="min-h-11 w-full rounded-xl border border-gray-200 px-3 pr-11 text-base font-semibold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
                   placeholder="Search teams, players, actions, help..."
                   aria-label="Search teams, players, actions, help"
@@ -454,14 +522,16 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               activeIndex={activeIndex}
               offset={results.actions.length}
               status={teamsStatus}
-              statusTone={teamsError ? 'error' : 'neutral'}
+              statusTone={teamsError && !teamsRetrying ? 'error' : 'neutral'}
+              onRetry={teamsError ? () => retrySearch('teams') : undefined}
+              retrying={teamsRetrying || playersRetrying}
               onOpen={openResult}
               onHover={setActiveResultIndex}
             />
 
             <SearchSection
               title="Help"
-              items={helpResults}
+              items={results.help}
               activeIndex={activeIndex}
               offset={results.actions.length + results.teams.length}
               status={helpStatus}
@@ -487,9 +557,11 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               title="Players"
               items={results.players}
               activeIndex={activeIndex}
-              offset={results.actions.length + results.teams.length + helpResults.length}
+              offset={results.actions.length + results.teams.length + results.help.length}
               status={playersStatus}
-              statusTone={playersError ? 'error' : 'neutral'}
+              statusTone={playersError && !playersRetrying ? 'error' : 'neutral'}
+              onRetry={playersError ? () => retrySearch('players') : undefined}
+              retrying={teamsRetrying || playersRetrying}
               onOpen={openResult}
               onHover={setActiveResultIndex}
             />
@@ -514,6 +586,8 @@ function SearchSection({
   status = '',
   statusTone = 'neutral',
   headerAccessory,
+  onRetry,
+  retrying = false,
   onOpen,
   onHover
 }: {
@@ -524,6 +598,8 @@ function SearchSection({
   status?: string;
   statusTone?: 'neutral' | 'error';
   headerAccessory?: ReactNode;
+  onRetry?: () => void;
+  retrying?: boolean;
   onOpen: (item: AppSearchItem) => void;
   onHover: (index: number) => void;
 }) {
@@ -547,8 +623,22 @@ function SearchSection({
         ))}
       </div>
       {status ? (
-        <div className={`px-1 py-2 text-sm font-semibold ${statusTone === 'error' ? 'text-rose-700' : 'text-gray-500'}`}>
-          {status}
+        <div className={`flex min-w-0 flex-wrap items-center justify-between gap-2 px-1 py-2 text-sm font-semibold ${statusTone === 'error' ? 'text-rose-700' : 'text-gray-500'}`}>
+          <span className="min-w-0 break-words">{status}</span>
+          {onRetry ? (
+            <button
+              type="button"
+              className="flex-none whitespace-nowrap rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-extrabold text-rose-700 transition hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-200 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={onRetry}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.stopPropagation();
+              }}
+              disabled={retrying}
+              aria-label={`Retry ${title.toLowerCase()} search`}
+            >
+              Retry
+            </button>
+          ) : null}
         </div>
       ) : null}
     </section>

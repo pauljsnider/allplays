@@ -31,7 +31,9 @@ function getReadOnlyAvailabilityMessage(event: ParentScheduleEvent) {
     return 'This event was cancelled, so availability can no longer be changed.';
   }
   if (!event.isDbGame) {
-    return 'This event is not tracked in the team schedule, so availability is unavailable.';
+    return event.isImported && event.sourceType === 'calendar'
+      ? 'RSVP is not enabled for this imported event.'
+      : 'This event is not tracked in the team schedule, so availability is unavailable.';
   }
   if (event.availabilityLocked) {
     const cutoffLabel = String(event.availabilityCutoffLabel || '').trim().toLowerCase();
@@ -48,13 +50,14 @@ export function ReadOnlyAvailabilityPanel({ event, rsvp }: {
 }) {
   const savedNote = String(event.myRsvpNote || '').trim();
   const responseLabel = rsvp === 'not_responded' ? 'No response recorded' : rsvpLabels[rsvp];
+  const isCalendarOnly = !event.isDbGame && event.isImported && event.sourceType === 'calendar';
 
   return (
     <div className="border-b border-gray-200 bg-gray-50 px-3 py-3 sm:px-4">
       <div className="flex items-start gap-2.5 sm:gap-3">
         <PlayerInitials name={event.childName} />
         <div className="min-w-0 flex-1">
-          <div className="text-[11px] font-black uppercase tracking-[0.06em] text-gray-500">Availability unavailable</div>
+          <div className="text-[11px] font-black uppercase tracking-[0.06em] text-gray-500">{isCalendarOnly ? 'Calendar-only event' : 'Availability unavailable'}</div>
           <div className="mt-1 text-sm font-semibold leading-5 text-gray-700">{getReadOnlyAvailabilityMessage(event)}</div>
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2">
             <span className="text-xs font-bold text-gray-600">Current response for {event.childName}</span>

@@ -429,8 +429,8 @@ describe('public registration flow', () => {
 
         const rules = fs.readFileSync('firestore.rules', 'utf8');
         expect(rules).toContain('match /registrationForms/{formId}');
-        expect(rules).toContain('allow update: if isTeamOwnerOrAdmin(teamId);');
-        expect(rules).toContain("allow create: if isTeamOwnerOrAdmin(teamId) && request.resource.data.status == 'pending';");
+        expect(rules).toContain('hasNoChangedServerOwnedRegistrationCheckoutFields();');
+        expect(rules).toContain('hasNoServerOwnedRegistrationCheckoutFields(request.resource.data);');
         expect(rules).not.toContain('function isPendingRegistrationPayloadValid');
         expect(rules).not.toContain('isPublicRegistrationCapacityCounterUpdate');
         expect(rules).not.toContain('isPublicPendingRegistrationCreate');
@@ -779,9 +779,9 @@ describe('public registration flow', () => {
         expect(functionsSource).toContain("paymentStatus: 'checkout_open'");
         expect(functionsSource).toContain('canReleasePreCheckoutReservation');
         expect(functionsSource).toContain('normalizeCheckoutAttemptToken');
-        expect(functionsSource).toContain('registrationCheckoutAuthorityMatches(registration, input)');
-        expect(functionsSource).toContain('registrationCheckoutAuthorityStrictlyMatches(registration, input)');
-        expect(functionsSource).toContain('registrationPublicCheckoutCapabilityMatches(registration, input)');
+        expect(functionsSource).toContain('registrationCheckoutAuthorityMatches(checkoutAuthority, input)');
+        expect(functionsSource).toContain('registrationCheckoutAuthorityStrictlyMatches(checkoutAuthority, input)');
+        expect(functionsSource).toContain('registrationPublicCheckoutCapabilityMatches(checkoutAuthority, input)');
         expect(functionsSource).toContain('return Boolean(registrationToken && inputToken && registrationToken === inputToken);');
         expect(functionsSource).toContain('Public checkout capability does not match.');
         expect(functionsSource).toContain('Current public checkout capability is required to release this reservation.');
@@ -797,14 +797,14 @@ describe('public registration flow', () => {
         const releaseStart = functionsSource.indexOf('async function releaseRegistrationCheckoutCapacity');
         const releaseEnd = functionsSource.indexOf('async function getUserForEligibility');
         const releaseBody = functionsSource.slice(releaseStart, releaseEnd);
-        const preCheckoutGuardIndex = releaseBody.indexOf('if (canReleasePreCheckoutReservation && !registrationCheckoutAuthorityStrictlyMatches(registration, input))');
-        const relaxedOpenCheckoutGuardIndex = releaseBody.indexOf('if (!canReleasePreCheckoutReservation && !registrationCheckoutAuthorityMatches(registration, input))');
+        const preCheckoutGuardIndex = releaseBody.indexOf('if (canReleasePreCheckoutReservation && !registrationCheckoutAuthorityStrictlyMatches(checkoutAuthority, input))');
+        const relaxedOpenCheckoutGuardIndex = releaseBody.indexOf('if (!canReleasePreCheckoutReservation && !registrationCheckoutAuthorityMatches(checkoutAuthority, input))');
         const selectedOptionIndex = releaseBody.indexOf('const selectedOption = registration.selectedOption || {};');
 
         expect(releaseStart).toBeGreaterThanOrEqual(0);
         expect(releaseEnd).toBeGreaterThan(releaseStart);
-        expect(functionsSource).toContain('function registrationCheckoutAuthorityStrictlyMatches(registration = {}, input = {})');
-        expect(functionsSource).toContain('registrationPublicCheckoutCapabilityMatches(registration, input)');
+        expect(functionsSource).toContain('function registrationCheckoutAuthorityStrictlyMatches(checkoutAuthority = {}, input = {})');
+        expect(functionsSource).toContain('registrationPublicCheckoutCapabilityMatches(checkoutAuthority, input)');
         expect(preCheckoutGuardIndex).toBeGreaterThanOrEqual(0);
         expect(relaxedOpenCheckoutGuardIndex).toBeGreaterThan(preCheckoutGuardIndex);
         expect(selectedOptionIndex).toBeGreaterThan(relaxedOpenCheckoutGuardIndex);
@@ -815,9 +815,12 @@ describe('public registration flow', () => {
         const functionsSource = fs.readFileSync('functions/index.js', 'utf8');
 
         expect(rules).not.toContain('isPendingRegistrationPayloadValid');
-        expect(rules).toContain("allow create: if isTeamOwnerOrAdmin(teamId) && request.resource.data.status == 'pending';");
+        expect(rules).toContain('hasNoServerOwnedRegistrationCheckoutFields(request.resource.data);');
         expect(functionsSource).toContain('checkoutAttemptToken: normalizeCheckoutAttemptToken(data.checkoutAttemptToken)');
-        expect(functionsSource).toContain('registrationPublicCheckoutCapabilityMatches(registration, input)');
+        expect(functionsSource).toContain('registrationPublicCheckoutCapabilityMatches(checkoutAuthority, input)');
+        expect(functionsSource).toContain('transaction.set(buildRegistrationCheckoutAttemptRef(registrationRef), {');
+        expect(functionsSource).toContain('checkoutAttemptToken: input.checkoutAttemptToken');
+        expect(functionsSource).not.toContain('record.checkoutAttemptToken = input.checkoutAttemptToken;');
     });
 
     it('does not write cancellation state before returning for paid registrations', () => {

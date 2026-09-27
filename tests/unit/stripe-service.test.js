@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cancelStripeRegistrationCheckout, initiateStripeCheckout, initiateTeamFeeCheckout } from '../../js/stripe-service.js';
+import { cancelStripeRegistrationCheckout, getCanonicalStripeCheckoutUrl, initiateStripeCheckout, initiateTeamFeeCheckout } from '../../js/stripe-service.js';
 
 const mockInnerCallable = vi.fn();
 
-vi.mock('../../js/firebase.js?v=22', () => {
+vi.mock('../../js/firebase.js?v=33', () => {
     return {
         getFunctions: vi.fn(() => ({})),
         httpsCallable: vi.fn(() => mockInnerCallable)
@@ -14,7 +14,7 @@ describe('Stripe Service', () => {
     let httpsCallable;
 
     beforeEach(async () => {
-        const firebaseMocks = await import('../../js/firebase.js?v=22');
+        const firebaseMocks = await import('../../js/firebase.js?v=33');
         httpsCallable = firebaseMocks.httpsCallable;
         httpsCallable.mockClear();
         mockInnerCallable.mockReset();
@@ -52,6 +52,19 @@ describe('Stripe Service', () => {
 
         await expect(initiateStripeCheckout({ registrationId: 'reg-789' })).rejects.toThrow('Failed to get Stripe checkout URL.');
         expect(httpsCallable).toHaveBeenCalledWith(expect.any(Object), 'createStripeRegistrationCheckout');
+    });
+
+    it.each([
+        'http://checkout.stripe.com/c/pay/insecure',
+        'https://checkout.stripe.com.attacker.example/c/pay/lookalike',
+        'https://user:password@checkout.stripe.com/c/pay/credentialed',
+        'https://checkout.stripe.com:8443/c/pay/port',
+        'https://checkout.stripe.com/'
+    ])('rejects an untrusted callable destination: %s', async (checkoutUrl) => {
+        mockInnerCallable.mockResolvedValueOnce({ data: { checkoutUrl } });
+        await expect(initiateStripeCheckout({ registrationId: 'reg-invalid' }))
+            .rejects.toThrow('invalid checkout destination');
+        expect(getCanonicalStripeCheckoutUrl(checkoutUrl)).toBe('');
     });
 
     it('cancels registration checkout and returns release status', async () => {

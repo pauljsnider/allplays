@@ -16,31 +16,24 @@ export type StartedPerformanceSpan = {
   end: (meta?: PerformanceMeta) => void;
 };
 
-type FirebasePerformanceApi = typeof import('@capacitor-firebase/performance').FirebasePerformance;
 type FirebasePerformanceRef = { api: FirebasePerformanceApi };
+type FirebasePerformanceApi = typeof import('@capacitor-firebase/performance').FirebasePerformance;
+type NativeTraceLease = {
+  baseTraceName: string;
+  lane: number;
+  traceName: string;
+};
 
 const logger = createLogger('performance');
 const MAX_FIREBASE_ATTRIBUTE_COUNT = 5;
 const MAX_FIREBASE_METRIC_COUNT = 10;
 const MAX_ATTRIBUTE_VALUE_LENGTH = 100;
+const MAX_NATIVE_TRACE_LANES = 8;
 
 let sequence = 0;
 let firebasePerformancePromise: Promise<FirebasePerformanceRef | null> | null = null;
-const activeFirebaseTraceCounts = new Map<string, number>();
-const firebaseTraceQueues = new Map<string, Promise<void>>();
-
-/**
- * Plugin trace calls are async, so a short-lived span can issue stopTrace
- * while its startTrace is still in flight ("No trace was found"). Chain all
- * plugin operations for a trace name so start/stop pairs run in order. The
- * queue map stays bounded because trace names come from a fixed label set.
- */
-function enqueueFirebaseTraceOp(traceName: string, op: () => Promise<void>) {
-  const prev = firebaseTraceQueues.get(traceName) || Promise.resolve();
-  const run = prev.then(op, op);
-  firebaseTraceQueues.set(traceName, run.catch(() => {}));
-  return run;
-}
+const activeNativeTraceLanes = new Map<string, Set<number>>();
+const nativeTraceQueues = new Map<string, Promise<void>>();
 
 export function now() {
   return typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -54,19 +47,32 @@ export function startPerformanceSpan(label: string, options: PerformanceSpanOpti
   const traceName = buildPerformanceTraceName(label, options.kind);
   const startMark = `allplays:${traceName}:${id}:start`;
   const endMark = `allplays:${traceName}:${id}:end`;
+  const platform = getPerformancePlatform();
+  const nativeTraceLease = platform === 'web' ? null : acquireNativeTraceLease(traceName);
+  let ended = false;
 
   mark(startMark);
-  void startFirebaseTrace(traceName, options.meta);
+  if (nativeTraceLease) {
+    void startNativeFirebaseTrace(nativeTraceLease.traceName, options.meta);
+  }
 
   return {
     label,
     traceName,
     startedAt,
     end(meta: PerformanceMeta = {}) {
+      if (ended) return;
+      ended = true;
       const durationMs = Math.max(0, Math.round(now() - startedAt));
       mark(endMark);
       measure(`allplays:${traceName}`, startMark, endMark);
-      void stopFirebaseTrace(traceName, { ...options.meta, ...meta }, durationMs);
+      const mergedMeta = { ...options.meta, ...meta };
+      if (platform === 'web') {
+        void recordFirebaseTrace(traceName, getEpochStartTime(startedAt), durationMs, mergedMeta);
+      } else if (nativeTraceLease) {
+        void stopNativeFirebaseTrace(nativeTraceLease.traceName, mergedMeta, durationMs);
+        releaseNativeTraceLease(nativeTraceLease);
+      }
     }
   };
 }
@@ -78,11 +84,10 @@ export function recordCompletedPerformanceSpan(label: string, startedAt: number,
 
   if (typeof performance !== 'undefined' && typeof performance.mark === 'function') {
     try {
-      const timeOrigin = typeof performance.timeOrigin === 'number' ? performance.timeOrigin : Date.now() - now();
       performance.mark(startMark, { startTime: Math.max(0, startedAt) });
       performance.mark(endMark, { startTime: Math.max(0, startedAt + durationMs) });
       measure(`allplays:${traceName}`, startMark, endMark);
-      void recordFirebaseTrace(traceName, Math.round(timeOrigin + startedAt), durationMs, options.meta);
+      void recordFirebaseTrace(traceName, getEpochStartTime(startedAt), durationMs, options.meta);
       return;
     } catch (error) {
       logger.debug('Completed span mark failed.', { error, label });
@@ -136,7 +141,24 @@ function measure(name: string, startMark: string, endMark: string) {
     performance.measure(name, startMark, endMark);
   } catch (error) {
     logger.debug('Performance measure failed.', { error, name });
+  } finally {
+    try {
+      performance.clearMarks?.(startMark);
+      performance.clearMarks?.(endMark);
+    } catch (error) {
+      logger.debug('Performance mark cleanup failed.', { error, name });
+    }
   }
+}
+
+function getEpochStartTime(startedAt: number) {
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    const timeOrigin = typeof performance.timeOrigin === 'number'
+      ? performance.timeOrigin
+      : Date.now() - now();
+    return Math.round(timeOrigin + startedAt);
+  }
+  return Math.round(startedAt);
 }
 
 async function loadFirebasePerformance(): Promise<FirebasePerformanceRef | null> {
@@ -170,32 +192,59 @@ async function ensureNpmFirebaseAppInitialized() {
   }
 }
 
-async function startFirebaseTrace(traceName: string, meta: PerformanceMeta = {}) {
-  const currentCount = activeFirebaseTraceCounts.get(traceName) || 0;
-  activeFirebaseTraceCounts.set(traceName, currentCount + 1);
-  if (currentCount > 0) return;
+function acquireNativeTraceLease(baseTraceName: string): NativeTraceLease | null {
+  const activeLanes = activeNativeTraceLanes.get(baseTraceName) || new Set<number>();
+  for (let lane = 0; lane < MAX_NATIVE_TRACE_LANES; lane += 1) {
+    if (activeLanes.has(lane)) continue;
+    activeLanes.add(lane);
+    activeNativeTraceLanes.set(baseTraceName, activeLanes);
+    const suffix = lane === 0 ? '' : `_p${lane + 1}`;
+    return {
+      baseTraceName,
+      lane,
+      traceName: `${baseTraceName.slice(0, 100 - suffix.length)}${suffix}`
+    };
+  }
+  logger.debug('Native Firebase trace concurrency limit reached.', { traceName: baseTraceName });
+  return null;
+}
 
-  await enqueueFirebaseTraceOp(traceName, async () => {
+function releaseNativeTraceLease(lease: NativeTraceLease) {
+  const activeLanes = activeNativeTraceLanes.get(lease.baseTraceName);
+  if (!activeLanes) return;
+  activeLanes.delete(lease.lane);
+  if (!activeLanes.size) {
+    activeNativeTraceLanes.delete(lease.baseTraceName);
+  }
+}
+
+function enqueueNativeTraceOp(traceName: string, operation: () => Promise<void>) {
+  const previous = nativeTraceQueues.get(traceName) || Promise.resolve();
+  const current = previous.then(operation, operation);
+  const queued = current.catch(() => {});
+  nativeTraceQueues.set(traceName, queued);
+  return current.finally(() => {
+    if (nativeTraceQueues.get(traceName) === queued) {
+      nativeTraceQueues.delete(traceName);
+    }
+  });
+}
+
+async function startNativeFirebaseTrace(traceName: string, meta: PerformanceMeta = {}) {
+  await enqueueNativeTraceOp(traceName, async () => {
     try {
       const firebasePerformance = await loadFirebasePerformance();
       if (!firebasePerformance) return;
       await firebasePerformance.api.startTrace({ traceName });
       await applyFirebaseAttributes(firebasePerformance.api, traceName, meta);
     } catch (error) {
-      logger.debug('Firebase trace start failed.', { error, traceName });
+      logger.debug('Firebase native trace start failed.', { error, traceName });
     }
   });
 }
 
-async function stopFirebaseTrace(traceName: string, meta: PerformanceMeta = {}, durationMs = 0) {
-  const currentCount = activeFirebaseTraceCounts.get(traceName) || 0;
-  if (currentCount > 1) {
-    activeFirebaseTraceCounts.set(traceName, currentCount - 1);
-    return;
-  }
-  activeFirebaseTraceCounts.delete(traceName);
-
-  await enqueueFirebaseTraceOp(traceName, async () => {
+async function stopNativeFirebaseTrace(traceName: string, meta: PerformanceMeta = {}, durationMs = 0) {
+  await enqueueNativeTraceOp(traceName, async () => {
     try {
       const firebasePerformance = await loadFirebasePerformance();
       if (!firebasePerformance) return;
@@ -203,12 +252,13 @@ async function stopFirebaseTrace(traceName: string, meta: PerformanceMeta = {}, 
       await applyFirebaseMetrics(firebasePerformance.api, traceName, meta, durationMs);
       await firebasePerformance.api.stopTrace({ traceName });
     } catch (error) {
-      logger.debug('Firebase trace stop failed.', { error, traceName });
+      logger.debug('Firebase native trace stop failed.', { error, traceName });
     }
   });
 }
 
 async function recordFirebaseTrace(traceName: string, startTime: number, durationMs: number, meta: PerformanceMeta = {}) {
+  if (getPerformancePlatform() !== 'web') return;
   try {
     const firebasePerformance = await loadFirebasePerformance();
     if (!firebasePerformance?.api.record) return;

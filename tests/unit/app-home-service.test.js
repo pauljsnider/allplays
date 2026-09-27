@@ -31,6 +31,13 @@ const feeMocks = vi.hoisted(() => ({
     }))
 }));
 
+const uxTimingMocks = vi.hoisted(() => ({
+    startUxTimer: vi.fn(() => ({
+        end: vi.fn(),
+        cancel: vi.fn()
+    }))
+}));
+
 vi.mock('@capacitor/core', () => ({
     Capacitor: {
         isNativePlatform: () => false
@@ -67,6 +74,8 @@ vi.mock('../../apps/app/src/lib/chatService.ts', () => chatMocks);
 vi.mock('../../apps/app/src/lib/chatService', () => chatMocks);
 vi.mock('../../js/db.js', () => dbMocks);
 vi.mock('../../js/parent-dashboard-fees.js', () => feeMocks);
+vi.mock('../../apps/app/src/lib/uxTiming.ts', () => uxTimingMocks);
+vi.mock('../../apps/app/src/lib/uxTiming', () => uxTimingMocks);
 
 const user = {
     uid: 'user-1',
@@ -224,9 +233,10 @@ describe('React app Home service', () => {
         });
     });
 
-    it('throws a typed permission error when Home fees are denied', async () => {
+    it('streams Home data and returns retryable partial state when only the fees slice is denied', async () => {
         dbMocks.listParentTeamFeeRecipients.mockRejectedValueOnce(new Error('Permission denied for fees'));
         const { loadParentHomeWithSecondaryData } = await import('../../apps/app/src/lib/homeService.ts');
+        const partials = [];
 
         await expect(loadParentHomeWithSecondaryData(user, {
             schedule: {
@@ -239,19 +249,29 @@ describe('React app Home service', () => {
                     }
                 ],
                 events: [event()]
-            }
+            },
+            onPartial: (partial) => partials.push(partial)
         })).rejects.toMatchObject({
             name: 'AppServiceError',
             type: 'permission',
             message: 'Permission denied for fees'
         });
+
+        const latest = partials.at(-1);
+        expect(latest.fees).toEqual([]);
+        expect(latest.players).toEqual([expect.objectContaining({ playerId: 'player-1' })]);
+        expect(latest.teams).toEqual(expect.arrayContaining([
+            expect.objectContaining({ teamId: 'team-1' }),
+            expect.objectContaining({ teamId: 'team-staff' })
+        ]));
     });
 
-    it('keeps rendering Home secondary data when fees fail for a non-permission reason', async () => {
+    it('streams Home data and returns retryable partial state when the fees network read fails', async () => {
         dbMocks.listParentTeamFeeRecipients.mockRejectedValueOnce(new TypeError('Failed to fetch'));
         const { loadParentHomeWithSecondaryData } = await import('../../apps/app/src/lib/homeService.ts');
+        const partials = [];
 
-        const home = await loadParentHomeWithSecondaryData(user, {
+        await expect(loadParentHomeWithSecondaryData(user, {
             schedule: {
                 children: [
                     {
@@ -262,11 +282,17 @@ describe('React app Home service', () => {
                     }
                 ],
                 events: [event()]
-            }
+            },
+            onPartial: (partial) => partials.push(partial)
+        })).rejects.toMatchObject({
+            name: 'AppServiceError',
+            type: 'network',
+            message: 'Failed to fetch'
         });
 
-        expect(home.fees).toEqual([]);
-        expect(home.teams).toEqual(expect.arrayContaining([
+        const latest = partials.at(-1);
+        expect(latest.fees).toEqual([]);
+        expect(latest.teams).toEqual(expect.arrayContaining([
             expect.objectContaining({ teamId: 'team-1', unreadCount: 2 })
         ]));
     });
@@ -334,11 +360,12 @@ describe('React app Home service', () => {
                 }
             ]
         });
-        await Promise.resolve();
-        expect(onPartial).toHaveBeenCalledWith(expect.objectContaining({
-            metrics: expect.objectContaining({ unreadMessages: 4 }),
-            fees: []
-        }));
+        await vi.waitFor(() => {
+            expect(onPartial).toHaveBeenCalledWith(expect.objectContaining({
+                metrics: expect.objectContaining({ unreadMessages: 4 }),
+                fees: []
+            }));
+        });
 
         resolveFees([
             {
@@ -364,8 +391,25 @@ describe('React app Home service', () => {
         expect(home.actionItems.map((item) => item.kind)).toEqual(expect.arrayContaining(['fee', 'message']));
     });
 
-    it('throws a typed network error when the Teams summary chat load fails', async () => {
+    it('keeps schedule-discovered teams visible when the optional chat summary fails', async () => {
         chatMocks.loadChatInbox.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        const { loadParentTeamsSummary } = await import('../../apps/app/src/lib/homeService.ts');
+
+        const home = await loadParentTeamsSummary(user, { force: true });
+
+        expect(chatMocks.loadChatInbox).toHaveBeenCalledWith(user, { includeLastMessages: false });
+        expect(home.teams).toEqual([
+            expect.objectContaining({
+                teamId: 'team-1',
+                teamName: 'Bears',
+                players: [expect.objectContaining({ playerId: 'player-1' })]
+            })
+        ]);
+        expect(home.metrics.teams).toBe(1);
+    });
+
+    it('still fails the Teams summary when the authoritative schedule access scope fails', async () => {
+        scheduleMocks.loadParentScheduleScope.mockRejectedValueOnce(new TypeError('Failed to fetch'));
         const { loadParentTeamsSummary } = await import('../../apps/app/src/lib/homeService.ts');
 
         await expect(loadParentTeamsSummary(user, { force: true })).rejects.toMatchObject({
@@ -373,8 +417,53 @@ describe('React app Home service', () => {
             type: 'network',
             message: 'Failed to fetch'
         });
+    });
 
-        expect(chatMocks.loadChatInbox).toHaveBeenCalledWith(user, { includeLastMessages: false });
+    it('fails instead of caching an empty chooser when chat and staff discovery are both partial', async () => {
+        chatMocks.loadChatInbox.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        scheduleMocks.loadParentScheduleScope.mockResolvedValueOnce({
+            profile: { id: 'profile-user-1' },
+            children: [],
+            staffTeams: [],
+            staffTeamsPartial: true,
+            isPartial: true
+        });
+        const { loadParentTeamsSummary } = await import('../../apps/app/src/lib/homeService.ts');
+
+        await expect(loadParentTeamsSummary(user, { force: true })).rejects.toMatchObject({
+            name: 'AppServiceError',
+            type: 'network',
+            message: 'Failed to fetch'
+        });
+    });
+
+    it('keeps parent-linked teams visible when chat fails and only staff discovery is partial', async () => {
+        chatMocks.loadChatInbox.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        scheduleMocks.loadParentScheduleScope.mockResolvedValueOnce({
+            profile: { id: 'profile-user-1' },
+            children: [
+                {
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    playerId: 'player-1',
+                    playerName: 'Pat Star'
+                }
+            ],
+            staffTeams: [],
+            staffTeamsPartial: true,
+            isPartial: true
+        });
+        const { loadParentTeamsSummary } = await import('../../apps/app/src/lib/homeService.ts');
+
+        const home = await loadParentTeamsSummary(user, { force: true });
+
+        expect(home.teams).toEqual([
+            expect.objectContaining({
+                teamId: 'team-1',
+                teamName: 'Bears',
+                players: [expect.objectContaining({ playerId: 'player-1' })]
+            })
+        ]);
     });
 
     it('uses the shared parent scope resolver for the fast Teams summary', async () => {

@@ -245,7 +245,14 @@ describe('useScheduleRideOffers', () => {
         renderProbe();
 
         await waitFor(() => {
-            expect(loadParentScheduleRideOffers).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }));
+            expect(loadParentScheduleRideOffers).toHaveBeenCalledWith(
+                expect.objectContaining({ id: 'game-1' }),
+                auth.user,
+                expect.arrayContaining([
+                    expect.objectContaining({ childId: 'player-1' }),
+                    expect.objectContaining({ childId: 'player-2' })
+                ])
+            );
         });
 
         fireEvent.click(screen.getByRole('button', { name: 'Switch event' }));
@@ -254,7 +261,14 @@ describe('useScheduleRideOffers', () => {
             expect(screen.getByTestId('event-id').textContent).toBe('game-2');
         });
         await waitFor(() => {
-            expect(loadParentScheduleRideOffers).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-2' }));
+            expect(loadParentScheduleRideOffers).toHaveBeenCalledWith(
+                expect.objectContaining({ id: 'game-2' }),
+                auth.user,
+                expect.arrayContaining([
+                    expect.objectContaining({ childId: 'player-1' }),
+                    expect.objectContaining({ childId: 'player-2' })
+                ])
+            );
         });
         expect(screen.getByTestId('offers-count').textContent).toBe('1');
         expect(screen.getByTestId('summary-count').textContent).toBe('1');

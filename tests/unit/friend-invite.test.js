@@ -142,16 +142,17 @@ describe('friend invite helpers', () => {
         });
     });
 
-    it('updates existing deterministic friendship docs during invite redemption', () => {
+    it('routes redemption through the authenticated callable without client document access', () => {
         const source = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
         const redemptionStart = source.indexOf('export async function redeemFriendInvite');
-        const existingBranch = source.indexOf('if (friendshipSnapshot.exists())', redemptionStart);
-        const updateCall = source.indexOf('transaction.update(friendshipRef, acceptedFriendshipData);', existingBranch);
-        const createBranch = source.indexOf('transaction.set(friendshipRef, acceptedFriendshipData);', existingBranch);
+        const redemptionEnd = source.indexOf('export async function rollbackParentInviteRedemption', redemptionStart);
+        const redemptionSource = source.slice(redemptionStart, redemptionEnd);
 
         expect(redemptionStart).toBeGreaterThan(-1);
-        expect(existingBranch).toBeGreaterThan(redemptionStart);
-        expect(updateCall).toBeGreaterThan(existingBranch);
-        expect(createBranch).toBeGreaterThan(updateCall);
+        expect(redemptionSource).toContain("httpsCallable(functions, 'redeemFriendInvite')");
+        expect(redemptionSource).toContain('await callable({ code: normalizedCode })');
+        expect(redemptionSource).not.toContain('runTransaction');
+        expect(redemptionSource).not.toContain('accessCodes');
+        expect(redemptionSource).not.toContain('friendships');
     });
 });

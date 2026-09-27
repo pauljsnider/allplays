@@ -1,6 +1,35 @@
 const firestoreApiOrigin = 'https://firestore.googleapis.com';
 const identityToolkitOrigin = 'https://identitytoolkit.googleapis.com';
 const firebaseStorageOrigin = 'https://firebasestorage.googleapis.com';
+export const FIREBASE_REST_REQUEST_TIMEOUT_MS = 30_000;
+const FIREBASE_REST_RETRY_ATTEMPTS = 2;
+
+async function fetchFirebase(input, init = {}, { retrySafe = false } = {}) {
+    const attempts = retrySafe ? FIREBASE_REST_RETRY_ATTEMPTS : 1;
+    let lastError;
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+            const response = await fetch(input, {
+                ...init,
+                signal: AbortSignal.timeout(FIREBASE_REST_REQUEST_TIMEOUT_MS)
+            });
+            const retryableStatus = response.status === 429 || response.status >= 500;
+            if (!retrySafe || !retryableStatus || attempt === attempts) return response;
+            await response.arrayBuffer().catch(() => {});
+        } catch (error) {
+            lastError = error;
+            if (!retrySafe || attempt === attempts) {
+                throw new Error(
+                    `Firebase smoke request failed within ${FIREBASE_REST_REQUEST_TIMEOUT_MS}ms`,
+                    { cause: error }
+                );
+            }
+        }
+    }
+
+    throw lastError || new Error('Firebase smoke request failed');
+}
 
 function encodeDocumentPath(path) {
     return String(path || '')
@@ -19,16 +48,16 @@ async function readJson(response, operation) {
 
 async function loadFirebaseSmokeConfig(appBaseUrl) {
     const origin = new URL(appBaseUrl).origin;
-    const hostingResponse = await fetch(`${origin}/__/firebase/init.json`, {
+    const hostingResponse = await fetchFirebase(`${origin}/__/firebase/init.json`, {
         headers: { accept: 'application/json' }
-    });
+    }, { retrySafe: true });
     if (hostingResponse.ok) {
         return hostingResponse.json();
     }
 
-    const runtimeResponse = await fetch(`${origin}/.well-known/allplays-runtime-config.json`, {
+    const runtimeResponse = await fetchFirebase(`${origin}/.well-known/allplays-runtime-config.json`, {
         headers: { accept: 'application/json' }
-    });
+    }, { retrySafe: true });
     const runtimeConfig = await readJson(runtimeResponse, 'AllPlays smoke runtime configuration load');
     return runtimeConfig.firebase || runtimeConfig.firebasePrimary || {};
 }
@@ -40,7 +69,7 @@ export async function createFirebaseRestSession({ appBaseUrl, email, password })
         throw new Error('Firebase smoke configuration is incomplete');
     }
 
-    const authResponse = await fetch(
+    const authResponse = await fetchFirebase(
         `${identityToolkitOrigin}/v1/accounts:signInWithPassword?key=${encodeURIComponent(config.apiKey)}`,
         {
             method: 'POST',
@@ -64,7 +93,8 @@ export async function createFirebaseRestSession({ appBaseUrl, email, password })
         projectId: config.projectId,
         storageBucket: config.storageBucket || '',
         idToken: auth.idToken,
-        localId: auth.localId
+        localId: auth.localId,
+        email: String(auth.email || email || '').trim()
     };
 }
 
@@ -80,9 +110,9 @@ export async function listFirestoreDocuments(session, collectionPath) {
     const documents = [];
     let pageToken = '';
     do {
-        const response = await fetch(documentsUrl(session, collectionPath, pageToken), {
+        const response = await fetchFirebase(documentsUrl(session, collectionPath, pageToken), {
             headers: { authorization: `Bearer ${session.idToken}` }
-        });
+        }, { retrySafe: true });
         if (response.status === 404) return documents;
         const payload = await readJson(response, 'Firestore smoke collection read');
         documents.push(...(payload.documents || []));
@@ -93,6 +123,10 @@ export async function listFirestoreDocuments(session, collectionPath) {
 
 export function getFirestoreStringField(document, fieldName) {
     return String(document?.fields?.[fieldName]?.stringValue || '');
+}
+
+export function isEmptyFirestoreDocument(document) {
+    return Boolean(document) && Object.keys(document.fields || {}).length === 0;
 }
 
 function buildStructuredQuery(collectionPath, fields) {
@@ -117,6 +151,41 @@ function buildStructuredQuery(collectionPath, fields) {
     };
 }
 
+function buildSingleStringFieldQuery(collectionPath, fieldName, operator, stringValue) {
+    const { parentPath, structuredQuery } = buildStructuredQuery(collectionPath, {
+        [fieldName]: stringValue
+    });
+    structuredQuery.where.fieldFilter.op = operator;
+    return { parentPath, structuredQuery };
+}
+
+async function runFirestoreStringFieldQuery(
+    session,
+    collectionPath,
+    fieldName,
+    expectedValue,
+    operator
+) {
+    const { parentPath, structuredQuery } = buildSingleStringFieldQuery(
+        collectionPath,
+        fieldName,
+        operator,
+        expectedValue
+    );
+    const parentSuffix = parentPath ? `/${encodeDocumentPath(parentPath)}` : '';
+    const url = `${firestoreApiOrigin}/v1/projects/${encodeURIComponent(session.projectId)}/databases/(default)/documents${parentSuffix}:runQuery`;
+    const response = await fetchFirebase(url, {
+        method: 'POST',
+        headers: {
+            authorization: `Bearer ${session.idToken}`,
+            'content-type': 'application/json'
+        },
+        body: JSON.stringify({ structuredQuery })
+    }, { retrySafe: true });
+    const payload = await readJson(response, 'Firestore smoke filtered query');
+    return payload.map((entry) => entry.document).filter(Boolean);
+}
+
 export async function findFirestoreDocumentsByStringFields(session, collectionPath, fields) {
     const entries = Object.entries(fields);
     if (!entries.length) throw new Error('Firestore smoke query requires at least one field');
@@ -126,14 +195,14 @@ export async function findFirestoreDocumentsByStringFields(session, collectionPa
     );
     const parentSuffix = parentPath ? `/${encodeDocumentPath(parentPath)}` : '';
     const url = `${firestoreApiOrigin}/v1/projects/${encodeURIComponent(session.projectId)}/databases/(default)/documents${parentSuffix}:runQuery`;
-    const response = await fetch(url, {
+    const response = await fetchFirebase(url, {
         method: 'POST',
         headers: {
             authorization: `Bearer ${session.idToken}`,
             'content-type': 'application/json'
         },
         body: JSON.stringify({ structuredQuery })
-    });
+    }, { retrySafe: true });
     const payload = await readJson(response, 'Firestore smoke filtered query');
     return payload
         .map((entry) => entry.document)
@@ -144,9 +213,35 @@ export async function findFirestoreDocumentsByStringFields(session, collectionPa
 }
 
 export async function findFirestoreDocumentsByStringField(session, collectionPath, fieldName, expectedValue) {
-    return findFirestoreDocumentsByStringFields(session, collectionPath, {
-        [fieldName]: expectedValue
-    });
+    const documents = await runFirestoreStringFieldQuery(
+        session,
+        collectionPath,
+        fieldName,
+        expectedValue,
+        'EQUAL'
+    );
+    return documents.filter(
+        (document) => getFirestoreStringField(document, fieldName) === String(expectedValue)
+    );
+}
+
+export async function findFirestoreDocumentsByStringArrayContains(
+    session,
+    collectionPath,
+    fieldName,
+    expectedValue
+) {
+    const documents = await runFirestoreStringFieldQuery(
+        session,
+        collectionPath,
+        fieldName,
+        expectedValue,
+        'ARRAY_CONTAINS'
+    );
+    return documents.filter((document) => (
+        (document?.fields?.[fieldName]?.arrayValue?.values || [])
+            .some((value) => String(value?.stringValue || '') === String(expectedValue))
+    ));
 }
 
 export function getFirestoreDocumentPath(document) {
@@ -157,12 +252,17 @@ export function getFirestoreDocumentPath(document) {
     return name.slice(index + marker.length);
 }
 
-export async function deleteFirestoreDocument(session, documentPath) {
-    const url = `${firestoreApiOrigin}/v1/projects/${encodeURIComponent(session.projectId)}/databases/(default)/documents/${encodeDocumentPath(documentPath)}`;
-    const response = await fetch(url, {
+export async function deleteFirestoreDocument(session, documentPath, { updateTime = '' } = {}) {
+    const url = new URL(
+        `${firestoreApiOrigin}/v1/projects/${encodeURIComponent(session.projectId)}/databases/(default)/documents/${encodeDocumentPath(documentPath)}`
+    );
+    if (updateTime) {
+        url.searchParams.set('currentDocument.updateTime', updateTime);
+    }
+    const response = await fetchFirebase(url, {
         method: 'DELETE',
         headers: { authorization: `Bearer ${session.idToken}` }
-    });
+    }, { retrySafe: true });
     if (!response.ok && response.status !== 404) {
         throw new Error(`Firestore smoke cleanup failed with status ${response.status}`);
     }
@@ -170,9 +270,9 @@ export async function deleteFirestoreDocument(session, documentPath) {
 
 export async function getFirestoreDocument(session, documentPath) {
     const url = `${firestoreApiOrigin}/v1/projects/${encodeURIComponent(session.projectId)}/databases/(default)/documents/${encodeDocumentPath(documentPath)}`;
-    const response = await fetch(url, {
+    const response = await fetchFirebase(url, {
         headers: { authorization: `Bearer ${session.idToken}` }
-    });
+    }, { retrySafe: true });
     if (response.status === 404) return null;
     return readJson(response, 'Firestore smoke document read');
 }
@@ -197,7 +297,7 @@ export async function patchFirestoreDocumentFields(
     if (updateTime) {
         url.searchParams.set('currentDocument.updateTime', updateTime);
     }
-    const response = await fetch(url, {
+    const response = await fetchFirebase(url, {
         method: 'PATCH',
         headers: {
             authorization: `Bearer ${session.idToken}`,
@@ -210,13 +310,67 @@ export async function patchFirestoreDocumentFields(
     return readJson(response, 'Firestore smoke document patch');
 }
 
+export async function restoreFirestoreDocumentFields(
+    session,
+    documentPath,
+    originalDocument,
+    fieldNames,
+    { updateTime = '' } = {}
+) {
+    const normalizedFieldNames = [...new Set(
+        (fieldNames || []).map((fieldName) => String(fieldName || '').trim()).filter(Boolean)
+    )].sort();
+    if (!normalizedFieldNames.length) {
+        throw new Error('Firestore smoke field restore requires at least one field');
+    }
+    const url = new URL(
+        `${firestoreApiOrigin}/v1/projects/${encodeURIComponent(session.projectId)}/databases/(default)/documents/${encodeDocumentPath(documentPath)}`
+    );
+    normalizedFieldNames.forEach((fieldPath) => url.searchParams.append('updateMask.fieldPaths', fieldPath));
+    if (updateTime) {
+        url.searchParams.set('currentDocument.updateTime', updateTime);
+    }
+    const originalFields = originalDocument?.fields || {};
+    const response = await fetchFirebase(url, {
+        method: 'PATCH',
+        headers: {
+            authorization: `Bearer ${session.idToken}`,
+            'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+            fields: Object.fromEntries(
+                normalizedFieldNames
+                    .filter((fieldName) => Object.hasOwn(originalFields, fieldName))
+                    .map((fieldName) => [fieldName, originalFields[fieldName]])
+            )
+        })
+    });
+    return readJson(response, 'Firestore smoke field restore');
+}
+
+export async function createFirestoreDocument(session, documentPath, fields) {
+    const url = new URL(
+        `${firestoreApiOrigin}/v1/projects/${encodeURIComponent(session.projectId)}/databases/(default)/documents/${encodeDocumentPath(documentPath)}`
+    );
+    url.searchParams.set('currentDocument.exists', 'false');
+    const response = await fetchFirebase(url, {
+        method: 'PATCH',
+        headers: {
+            authorization: `Bearer ${session.idToken}`,
+            'content-type': 'application/json'
+        },
+        body: JSON.stringify({ fields })
+    });
+    return readJson(response, 'Firestore smoke document create');
+}
+
 export async function restoreFirestoreDocument(session, documentPath, originalDocument) {
     if (!originalDocument) {
         await deleteFirestoreDocument(session, documentPath);
         return;
     }
     const url = `${firestoreApiOrigin}/v1/projects/${encodeURIComponent(session.projectId)}/databases/(default)/documents/${encodeDocumentPath(documentPath)}`;
-    const response = await fetch(url, {
+    const response = await fetchFirebase(url, {
         method: 'PATCH',
         headers: {
             authorization: `Bearer ${session.idToken}`,
@@ -241,14 +395,33 @@ export async function deleteFirestoreDocumentsByStringFields(session, collection
     return documents.length;
 }
 
-async function deleteFirebaseStorageObject(session, storagePath) {
+export async function uploadFirebaseStorageObject(session, storagePath, body, contentType = 'image/png') {
+    if (!storagePath) throw new Error('Firebase smoke storage upload requires a path');
+    if (!session.storageBucket) throw new Error('Firebase smoke storage bucket is unavailable');
+    const url = new URL(
+        `${firebaseStorageOrigin}/v0/b/${encodeURIComponent(session.storageBucket)}/o`
+    );
+    url.searchParams.set('uploadType', 'media');
+    url.searchParams.set('name', storagePath);
+    const response = await fetchFirebase(url, {
+        method: 'POST',
+        headers: {
+            authorization: `Bearer ${session.idToken}`,
+            'content-type': contentType
+        },
+        body
+    });
+    return readJson(response, 'Firebase smoke storage upload');
+}
+
+export async function deleteFirebaseStorageObject(session, storagePath) {
     if (!storagePath) return;
     if (!session.storageBucket) throw new Error('Firebase smoke storage bucket is unavailable');
     const url = `${firebaseStorageOrigin}/v0/b/${encodeURIComponent(session.storageBucket)}/o/${encodeURIComponent(storagePath)}`;
-    const response = await fetch(url, {
+    const response = await fetchFirebase(url, {
         method: 'DELETE',
         headers: { authorization: `Bearer ${session.idToken}` }
-    });
+    }, { retrySafe: true });
     if (!response.ok && response.status !== 404) {
         throw new Error(`Firebase smoke storage cleanup failed with status ${response.status}`);
     }

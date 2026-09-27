@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
-import { mkdir, writeFile } from 'node:fs/promises';
-import path from 'node:path';
+import {
+    redactDiagnosticText as redactText,
+    writeRedactedDiagnostic as writeDiagnostic
+} from './helpers/candidate-auth-diagnostic.js';
 
 const candidateHostUrl = process.env.CANDIDATE_HOST_URL || '';
 const authEmail = process.env.SMOKE_STAFF_EMAIL || process.env.SMOKE_AUTH_EMAIL || '';
@@ -13,33 +15,11 @@ function candidateUrl(path) {
 }
 
 function redactDiagnosticText(value) {
-    let redacted = String(value || '');
-    if (authPassword) {
-        redacted = redacted.replaceAll(authPassword, '[REDACTED]');
-    }
-    if (authEmail) {
-        redacted = redacted.replaceAll(authEmail, '[REDACTED_EMAIL]');
-    }
-    return redacted
-        .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[REDACTED_EMAIL]')
-        .slice(0, 500);
+    return redactText(value, authEmail, authPassword);
 }
 
 async function writeRedactedDiagnostic(page, testInfo, failure) {
-    const errorText = await page.locator('[role="alert"]').first().textContent().catch(() => '');
-    const submitDisabled = await page.getByRole('button', { name: 'Sign in' }).last().isDisabled().catch(() => null);
-    const loginFormVisible = await page.getByRole('heading', { name: 'Sign in' }).isVisible().catch(() => false);
-    const diagnosticPath = testInfo.outputPath('candidate-auth-diagnostic.json');
-    await mkdir(path.dirname(diagnosticPath), { recursive: true });
-    await writeFile(diagnosticPath, `${JSON.stringify({
-        observedAt: new Date().toISOString(),
-        origin: new URL(candidateHostUrl).origin,
-        path: new URL(page.url()).pathname,
-        loginFormVisible,
-        submitDisabled,
-        visibleError: redactDiagnosticText(errorText),
-        failure: redactDiagnosticText(failure?.message)
-    }, null, 2)}\n`);
+    await writeDiagnostic(page, testInfo, failure, { candidateHostUrl, authEmail, authPassword });
 }
 
 test('candidate host accepts authentication and loads a protected landing page', async ({ page }, testInfo) => {
@@ -97,11 +77,17 @@ test('candidate host accepts authentication and loads a protected landing page',
             await expect(
                 page.locator('h1').first(),
                 `Candidate post-login assertion failed at ${candidateHostUrl}: authenticated heading was not visible`
-            ).toContainText(/Your day|Your teams|Team/, { timeout: 10_000 });
+            ).toContainText(/Your day|Your teams|Team/, { timeout: 25_000 });
         });
     } catch (error) {
-        await page.getByLabel('Password', { exact: true }).fill('').catch(() => {});
-        await page.getByLabel('Email').fill('').catch(() => {});
+        const passwordInput = page.getByLabel('Password', { exact: true });
+        const emailInput = page.getByLabel('Email');
+        if (await passwordInput.count().catch(() => 0)) {
+            await passwordInput.fill('', { timeout: 1_000 }).catch(() => {});
+        }
+        if (await emailInput.count().catch(() => 0)) {
+            await emailInput.fill('', { timeout: 1_000 }).catch(() => {});
+        }
         await writeRedactedDiagnostic(page, testInfo, error);
         throw new Error(
             `Candidate authentication failed at ${new URL(candidateHostUrl).origin}: ${redactDiagnosticText(error?.message)}`

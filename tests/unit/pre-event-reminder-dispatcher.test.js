@@ -23,7 +23,7 @@ function createDoc(id, dueIso, status = 'pending') {
 
 describe('pre-event reminder dispatcher function', () => {
     it('registers a bounded scheduled dispatcher that drains ordered pages of due reminders', () => {
-        expect(functionsSource).toContain('exports.dispatchDuePreEventReminders = functions.pubsub');
+        expect(functionsSource).toContain('exports.dispatchDuePreEventReminders = retryableNotificationFunctions.pubsub');
         expect(functionsSource).toContain(".schedule('every 15 minutes')");
         expect(functionsSource).toContain(".collectionGroup('games')");
         expect(functionsSource).toContain(".where('scheduleNotifications.nextReminderAt', '<=', dueIso)");

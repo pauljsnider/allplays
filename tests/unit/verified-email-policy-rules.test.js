@@ -16,7 +16,7 @@ describe('staged verified-email policy rules', () => {
     expect(firestoreRules).toContain('function isVerifiedForSensitiveWrite()');
     expect(firestoreRules).toContain("get(policyPath).data.get('mode', 'observe') != 'enforce'");
     expect(firestoreRules).toContain('match /securityPolicies/{policyId}');
-    expect(firestoreRules).toContain('allow create: if isVerifiedForSensitiveWrite() && request.resource.data.ownerId == request.auth.uid;');
+    expect(firestoreRules).toContain('allow create: if isVerifiedForSensitiveWrite() &&\n                       request.resource.data.ownerId == request.auth.uid &&\n                       hasNoClientCalendarCredentialFields(request.resource.data);');
     expect(firestoreRules).toContain('allow create: if isVerifiedForSensitiveWrite() &&\n                           canAccessChatConversation');
     expect(firestoreRules.match(/allow update: if isVerifiedForSensitiveWrite\(\) &&\n                           canAccessChatConversation/g)).toHaveLength(3);
     expect(firestoreRules).toContain('allow delete: if (resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)) ||\n                           (isVerifiedForSensitiveWrite() &&');
@@ -25,6 +25,13 @@ describe('staged verified-email policy rules', () => {
     expect(dbSource).toContain("console.warn('[public-user-profile] Presentation sync deferred:', error);");
     expect(dbSource).toContain("console.warn('[public-user-profile] Trusted projection sync deferred:', callableError);");
     expect(storageRules).toContain('function isVerifiedForSensitiveWrite()');
+  });
+
+  it('requires a verified claim whenever a team email supplies manager authority', () => {
+    expect(firestoreRules).toContain("request.auth.token.get('email_verified', false) == true &&\n             team.get('ownerId', '') == ''");
+    expect(firestoreRules).toContain("request.auth.token.get('email_verified', false) == true &&\n             adminEmails is list");
+    expect(storageRules).toContain("request.auth.token.get('email_verified', false) == true &&\n          team.get('ownerId', '') == ''");
+    expect(storageRules).toContain("request.auth.token.get('email_verified', false) == true &&\n          request.auth.token.email.lower() in team.get('adminEmails', [])");
   });
 
   it('gates every direct auth-only write rule except mixed invite redemption/revocation', () => {

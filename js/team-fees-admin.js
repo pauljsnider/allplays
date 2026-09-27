@@ -1,4 +1,5 @@
-import { escapeHtml, getUrlParams, renderFooter, renderHeader } from './utils.js?v=18';
+import { escapeHtml, getUrlParams, renderFooter, renderHeader } from './utils.js?v=443375';
+import { assertTeamFeeRecipientLimit, normalizeTeamFeeRecipientIds } from './team-fee-batch-limits.js?v=1';
 
 export const OFFLINE_TEAM_FEE_LABEL = 'Offline/manual collection only';
 export const OFFLINE_TEAM_FEE_INSTRUCTIONS = 'Collect payment outside ALL PLAYS. No online payment is processed.';
@@ -83,7 +84,7 @@ export function isTeamFeeAdmin(team, user = {}) {
     if (user.isAdmin === true) return true;
     if (team.ownerId && user.uid && team.ownerId === user.uid) return true;
 
-    const email = normalizeString(user.email || user.profileEmail).toLowerCase();
+    const email = normalizeString(user.email).toLowerCase();
     if (!email) return false;
 
     return (team.adminEmails || [])
@@ -97,14 +98,13 @@ export function normalizeTeamFeeDraft(formValues = {}) {
     const dueDate = normalizeString(formValues.dueDate);
     const notes = normalizeString(formValues.notes);
     const collectionMode = normalizeTeamFeeCollectionMode(formValues.collectionMode);
-    const recipientIds = Array.from(new Set((formValues.recipientIds || [])
-        .map((id) => normalizeString(id))
-        .filter(Boolean)));
+    const recipientIds = normalizeTeamFeeRecipientIds(formValues.recipientIds);
 
     if (!title) throw new Error('Fee title is required.');
     if (!amountCents) throw new Error('Enter an amount greater than $0.');
     if (!dueDate) throw new Error('Due date is required.');
     if (recipientIds.length === 0) throw new Error('Select at least one roster recipient.');
+    assertTeamFeeRecipientLimit(recipientIds.length);
 
     const lineItems = normalizeInvoiceEntries(formValues.lineItems, {
         requireDescription: true,
@@ -615,7 +615,7 @@ export function buildOnlineRefundRequest({ amount, reason, teamId, batchId, reci
 }
 
 export async function submitOnlineTeamFeeRefund(request) {
-    const { getFunctions, httpsCallable } = await import('./firebase.js?v=22');
+    const { getFunctions, httpsCallable } = await import('./firebase.js?v=33');
     const functions = getFunctions();
     const refundTeamFee = httpsCallable(functions, 'refundStripeTeamFeePayment');
     const result = await refundTeamFee(request);
@@ -902,7 +902,7 @@ function canManageTeamFees(team, user, canModerateChat) {
     return isTeamFeeAdmin(team, user) || canModerateChat(user, team);
 }
 
-async function renderCreateMode({ container, teamId, team, user, getPlayers, createTeamFeeBatch, listTeamFeeBatches }) {
+export async function renderCreateTeamFeeMode({ container, teamId, team, user, getPlayers, createTeamFeeBatch, listTeamFeeBatches }) {
     const [players, existingBatches] = await Promise.all([
         getPlayers(teamId),
         listTeamFeeBatches ? listTeamFeeBatches(teamId).catch((error) => {
@@ -1255,8 +1255,8 @@ async function initTeamFeesAdminPage() {
     renderFooter(document.getElementById('footer-container'));
 
     const [{ getTeam, getPlayers, getUserProfile, createTeamFeeBatch, getTeamFeeBatch, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient, canModerateChat }, { requireAuth }] = await Promise.all([
-        import('./db.js?v=127'),
-        import('./auth.js?v=135')
+        import('./db.js?v=4433199'),
+        import('./auth.js?v=4433203')
     ]);
 
     try {
@@ -1299,7 +1299,7 @@ async function initTeamFeesAdminPage() {
         if (batchId) {
             await renderManageMode({ container, teamId, batchId, team, user, getTeamFeeBatch, listTeamFeeRecipients, updateTeamFeeRecipient });
         } else {
-            await renderCreateMode({ container, teamId, team, user, getPlayers, createTeamFeeBatch, listTeamFeeBatches });
+            await renderCreateTeamFeeMode({ container, teamId, team, user, getPlayers, createTeamFeeBatch, listTeamFeeBatches });
         }
     } catch (error) {
         console.error('[team-fees] init failed:', error);

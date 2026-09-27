@@ -271,9 +271,13 @@
                 <aside class="border-b md:border-b-0 md:border-r border-gray-200 p-4 bg-gray-50">
                     <button id="email-draft-new-btn" type="button" class="w-full rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700">New draft</button>
                     <div class="mt-4 text-xs font-semibold uppercase tracking-wide text-gray-500">Saved Drafts</div>
+                    <button id="email-drafts-refresh-btn" type="button" class="mt-2 text-xs font-semibold text-primary-700 hover:text-primary-800">Refresh drafts</button>
                     <div id="email-drafts-list" class="mt-2 space-y-2 text-sm text-gray-600">No drafts yet.</div>
+                    <button id="email-drafts-load-more-btn" type="button" class="hidden mt-2 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-100">Load more drafts</button>
                     <div class="mt-5 text-xs font-semibold uppercase tracking-wide text-gray-500">Reusable Templates</div>
+                    <button id="email-templates-refresh-btn" type="button" class="mt-2 text-xs font-semibold text-primary-700 hover:text-primary-800">Refresh templates</button>
                     <div id="email-draft-templates-list" class="mt-2 space-y-2 text-sm text-gray-600">No reusable templates yet.</div>
+                    <button id="email-templates-load-more-btn" type="button" class="hidden mt-2 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-100">Load more templates</button>
                 </aside>
                 <section class="p-5 space-y-4">
                     <div id="email-draft-error" class="hidden rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"></div>
@@ -342,9 +346,9 @@
     </div>
 
     <script type="module">
-        import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=18';
-        import { checkAuth } from './js/auth.js?v=135';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, repairLegacyDirectConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, getTeamEmailTemplates, saveTeamEmailTemplate, deleteTeamEmailTemplate, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=127';
+        import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=443375';
+        import { checkAuth } from './js/auth.js?v=4433203';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, repairLegacyDirectConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, getTeamEmailTemplates, saveTeamEmailTemplate, deleteTeamEmailTemplate, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=4433199';
         import { DEFAULT_TEAM_CONVERSATION_ID, buildDefaultTeamConversation, getConversationDisplayName, isDefaultTeamConversation } from './js/team-chat-conversations.js?v=2';
         import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from './js/team-chat-last-read.js?v=3';
         import {
@@ -355,8 +359,9 @@
             getChatMediaActionState,
             getChatMediaDownloadName
         } from './js/team-chat-media.js?v=2';
-        import { renderTeamAdminBanner } from './js/team-admin-banner.js';
-        import { functions, httpsCallable } from './js/firebase.js?v=20';
+        import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443350';
+        import { loadCompleteAiGameContext } from './js/diamond-legacy-game-context.js?v=1';
+        import { functions, httpsCallable } from './js/firebase.js?v=33';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { getApp } from './js/vendor/firebase-app.js';
 
@@ -446,7 +451,7 @@
                     <div class="p-5 bg-gradient-to-r from-gray-50 to-white">
                         <div class="flex items-center gap-4">
                             ${photoUrl
-                                ? `<img src="${escapeHtml(photoUrl)}" alt="${escapeHtml(name)}" class="w-14 h-14 rounded-xl object-cover border-2 border-gray-200 shadow-sm">`
+                                ? `<img decoding="async" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(name)}" class="w-14 h-14 rounded-xl object-cover border-2 border-gray-200 shadow-sm">`
                                 : `<div class="w-14 h-14 rounded-xl bg-gradient-to-br from-primary-100 to-primary-200 flex items-center justify-center border-2 border-gray-200 shadow-sm">
                                     <span class="text-xl font-bold text-primary-600">${escapeHtml(name.charAt(0))}</span>
                                   </div>`
@@ -493,12 +498,12 @@
         const AI_EVENTS_GAMES_LIMIT = 3;
         const AI_EVENTS_PER_GAME_LIMIT = 25;
         const CHAT_REACTIONS = [
-            { key: 'thumbs_up', emoji: '👍' },
-            { key: 'heart', emoji: '❤️' },
-            { key: 'joy', emoji: '😂' },
-            { key: 'wow', emoji: '😮' },
-            { key: 'sad', emoji: '😢' },
-            { key: 'clap', emoji: '👏' }
+            { key: 'thumbs_up', emoji: '👍', label: 'Like' },
+            { key: 'heart', emoji: '❤️', label: 'Love' },
+            { key: 'joy', emoji: '😂', label: 'Funny' },
+            { key: 'wow', emoji: '😮', label: 'Wow' },
+            { key: 'sad', emoji: '😢', label: 'Sad' },
+            { key: 'clap', emoji: '👏', label: 'Clap' }
         ];
         const CHAT_REACTION_BY_KEY = new Map(CHAT_REACTIONS.map(r => [r.key, r.emoji]));
         let aiModelCache = null;
@@ -510,7 +515,7 @@
         let isLoadingMediaGalleryHistory = false;
         const chatMediaShareFileCache = new Map();
         const chatMediaShareFilePending = new Map();
-        let activeReactionPickerMessageId = null;
+        let activeMessageMenuId = null;
         let activeReactionInfo = null;
         const pendingReactionOps = new Set();
         const reactionUserNameCache = new Map();
@@ -521,6 +526,8 @@
         let selectedRecipientIds = new Set();
         let emailDrafts = [];
         let emailTemplates = [];
+        let emailDraftsNextCursor = null;
+        let emailTemplatesNextCursor = null;
         let selectedEmailDraftId = null;
         let emailRecipientOptions = [];
         let selectedEmailRecipientKeys = new Set();
@@ -793,11 +800,13 @@
                 return;
             }
 
-            let html = messages.map(msg => renderMessage(msg)).join('');
+            let html = messages.map((msg, index) => renderMessage(msg, {
+                preferActionsAbove: messages.length > 2 && index >= messages.length - 2
+            })).join('');
             if (aiUiPending) {
                 html += `
                     <div id="ai-thinking-placeholder" class="flex justify-start gap-2">
-                        <img src="img/logo_small.png" class="w-8 h-8 rounded-full object-cover border border-indigo-200">
+                        <img loading="lazy" decoding="async" src="img/logo_small.png" class="w-8 h-8 rounded-full object-cover border border-indigo-200">
                         <div class="max-w-[75%]">
                             <div class="text-xs text-gray-500 mb-1">
                                 <span class="font-medium">ALL PLAYS</span>
@@ -893,7 +902,7 @@
             return normalized;
         }
 
-        function renderReactionControls(msg, { isOwn }) {
+        function renderReactionControls(msg, { isOwn, canEdit, canDelete, displayName, preferActionsAbove }) {
             const reactions = normalizeMessageReactions(msg);
             const pills = CHAT_REACTIONS
                 .map(({ key, emoji }) => {
@@ -929,35 +938,61 @@
                 .filter(Boolean)
                 .join('');
 
-            const pickerOpen = activeReactionPickerMessageId === msg.id;
-            const picker = pickerOpen ? `
-                <div class="absolute bottom-full ${isOwn ? 'right-0' : 'left-0'} mb-2 inline-flex items-center gap-1.5 px-2 py-1.5 rounded-full border border-gray-200 bg-white shadow-lg z-20" data-reaction-ui="true">
-                    ${CHAT_REACTIONS.map(({ key, emoji }) => `
+            const menuOpen = activeMessageMenuId === msg.id;
+            const managementActions = [
+                canEdit ? `
+                    <button type="button" onclick="window.editMessage('${msg.id}')"
+                        class="min-h-9 flex-1 inline-flex items-center justify-center rounded-lg px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-primary-400" data-reaction-ui="true">
+                        Edit
+                    </button>
+                ` : '',
+                canDelete ? `
+                    <button type="button" onclick="window.deleteMessage('${msg.id}')"
+                        class="min-h-9 flex-1 inline-flex items-center justify-center rounded-lg px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-primary-400" data-reaction-ui="true">
+                        Delete
+                    </button>
+                ` : ''
+            ].filter(Boolean).join('');
+            const menu = menuOpen ? `
+                <div id="message-actions-${escapeHtml(msg.id)}" role="group" aria-label="Message actions for ${escapeHtml(displayName)}"
+                    class="absolute ${preferActionsAbove ? 'bottom-full mb-2' : 'top-full mt-2'} ${isOwn ? 'left-0' : 'right-0 sm:left-0 sm:right-auto'} z-20 w-max max-w-[calc(100vw-3rem)] rounded-xl border border-gray-200 bg-white p-1 shadow-lg" data-reaction-ui="true">
+                    <div class="flex items-center gap-0.5" aria-label="Reactions" data-reaction-ui="true">
+                    ${CHAT_REACTIONS.map(({ key, emoji, label }) => `
                         <button type="button" onclick="window.reactToMessage('${msg.id}', '${key}')"
-                            class="w-8 h-8 rounded-full border border-gray-200 bg-white hover:bg-gray-50 text-sm" data-reaction-ui="true">
+                            class="w-9 h-9 rounded-full bg-white hover:bg-gray-50 text-lg focus:outline-none focus:ring-2 focus:ring-primary-400" aria-label="${label}" data-reaction-ui="true">
                             ${emoji}
                         </button>
                     `).join('')}
+                    </div>
+                    ${managementActions ? `
+                        <div class="mt-1 flex gap-1 border-t border-gray-100 pt-1" data-reaction-ui="true">
+                            ${managementActions}
+                        </div>
+                    ` : ''}
                 </div>
             ` : '';
 
             const alignClass = isOwn ? 'justify-end' : 'justify-start';
-            const addBtnState = pickerOpen ? 'opacity-100' : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100';
-            return `
-                <div class="mt-1 flex ${alignClass} gap-1.5 flex-wrap" data-reaction-ui="true">
-                    <div class="relative inline-flex items-center gap-1.5" data-reaction-ui="true">
-                        ${pills}
-                        <button type="button" onclick="window.toggleReactionPicker('${msg.id}')" data-reaction-ui="true"
-                            class="inline-flex items-center justify-center w-7 h-7 rounded-full border border-gray-200 bg-white text-gray-500 hover:text-primary-600 hover:border-primary-200 transition ${addBtnState}">
-                            <span class="text-sm">😊</span>
-                        </button>
-                        ${picker}
-                    </div>
+            const menuButtonState = menuOpen ? 'opacity-100' : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100';
+            const reactionControls = pills ? `
+                <div class="mt-1 flex ${alignClass} gap-1.5 flex-wrap" data-message-actions-footer="true" data-reaction-ui="true">
+                    ${pills}
+                </div>
+            ` : '';
+            const actionControl = `
+                <div class="absolute bottom-0 ${isOwn ? 'right-full mr-1.5' : 'left-full ml-1.5'} z-10 inline-flex" data-reaction-ui="true">
+                    <button type="button" onclick="window.toggleMessageMenu('${msg.id}')" data-reaction-ui="true"
+                            class="inline-flex items-center justify-center w-7 h-7 rounded-full border border-gray-200 bg-white text-gray-500 shadow-sm hover:text-primary-600 hover:border-primary-200 focus:outline-none focus:ring-2 focus:ring-primary-400 transition ${menuButtonState}"
+                            aria-label="Open message actions for ${escapeHtml(displayName)}" aria-expanded="${menuOpen}" aria-controls="message-actions-${escapeHtml(msg.id)}">
+                        <span class="text-lg leading-none" aria-hidden="true">⋮</span>
+                    </button>
+                    ${menu}
                 </div>
             `;
+            return { reactionControls, actionControl };
         }
 
-        function renderMessage(msg) {
+        function renderMessage(msg, { preferActionsAbove = false } = {}) {
             const isAi = msg.ai === true;
             const isOwn = !isAi && msg.senderId === currentUser.uid;
             const isDeleted = msg.deleted === true;
@@ -978,9 +1013,9 @@
             }
 
             const avatar = isAi
-                ? `<img src="img/logo_small.png" class="w-8 h-8 rounded-full object-cover border border-indigo-200">`
+                ? `<img loading="lazy" decoding="async" src="img/logo_small.png" class="w-8 h-8 rounded-full object-cover border border-indigo-200">`
                 : msg.senderPhotoUrl
-                    ? `<img src="${escapeHtml(msg.senderPhotoUrl)}" class="w-8 h-8 rounded-full object-cover">`
+                    ? `<img loading="lazy" decoding="async" src="${escapeHtml(msg.senderPhotoUrl)}" class="w-8 h-8 rounded-full object-cover">`
                     : `<div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center">
                          <span class="text-xs font-bold text-gray-600">${escapeHtml(displayName.charAt(0).toUpperCase())}</span>
                        </div>`;
@@ -994,15 +1029,7 @@
                 </div>
             ` : '';
             const messageText = msg.text ? `<p class="text-sm whitespace-pre-wrap break-words">${formatMessageText(msg.text)}</p>` : '';
-            const reactionControls = renderReactionControls(msg, { isOwn });
-
-            const actions = [];
-            if (canEdit) {
-                actions.push(`<button onclick="window.editMessage('${msg.id}')" class="text-gray-400 hover:text-primary-600 text-xs">Edit</button>`);
-            }
-            if (canDelete) {
-                actions.push(`<button onclick="window.deleteMessage('${msg.id}')" class="text-gray-400 hover:text-red-600 text-xs">Delete</button>`);
-            }
+            const { reactionControls, actionControl } = renderReactionControls(msg, { isOwn, canEdit, canDelete, displayName, preferActionsAbove });
 
             const bubbleClass = isAi
                 ? 'bg-indigo-50 text-gray-900 border border-indigo-100'
@@ -1012,8 +1039,8 @@
 
             if (isOwn) {
                 return `
-                    <div class="group flex justify-end gap-2">
-                        <div class="max-w-[75%]">
+                    <div class="group flex justify-end gap-2" data-message-id="${escapeHtml(msg.id)}">
+                        <div class="relative max-w-[75%]">
                             <div class="text-xs text-gray-500 text-right mb-1">
                                 ${msg.editedAt ? '<span class="italic">(edited)</span> ' : ''}${timestamp}
                             </div>
@@ -1021,20 +1048,16 @@
                                 ${messageMedia}${messageText}
                             </div>
                             ${reactionControls}
-                            ${actions.length > 0 ? `
-                                <div class="flex justify-end gap-2 mt-1">
-                                    ${actions.join(' ')}
-                                </div>
-                            ` : ''}
+                            ${actionControl}
                         </div>
                         ${avatar}
                     </div>
                 `;
             } else {
                 return `
-                    <div class="group flex justify-start gap-2">
+                    <div class="group flex justify-start gap-2" data-message-id="${escapeHtml(msg.id)}">
                         ${avatar}
-                        <div class="max-w-[75%]">
+                        <div class="relative max-w-[75%]">
                             <div class="text-xs text-gray-500 mb-1">
                                 <span class="font-medium">${escapeHtml(displayName)}</span>
                                 ${msg.editedAt ? '<span class="italic">(edited)</span>' : ''}
@@ -1044,11 +1067,7 @@
                                 ${messageMedia}${messageText}
                             </div>
                             ${reactionControls}
-                            ${actions.length > 0 ? `
-                                <div class="flex gap-2 mt-1">
-                                    ${actions.join(' ')}
-                                </div>
-                            ` : ''}
+                            ${actionControl}
                         </div>
                     </div>
                 `;
@@ -1170,7 +1189,7 @@
                 pendingMediaPreviewUrls.push(objectUrl);
                 const mediaPreview = file.type.startsWith('video/')
                     ? `<video src="${objectUrl}" class="w-14 h-14 rounded-md object-cover border border-gray-200 bg-black" muted playsinline></video>`
-                    : `<img src="${objectUrl}" alt="${escapeHtml(file.name)}" class="w-14 h-14 rounded-md object-cover border border-gray-200">`;
+                    : `<img loading="lazy" decoding="async" src="${objectUrl}" alt="${escapeHtml(file.name)}" class="w-14 h-14 rounded-md object-cover border border-gray-200">`;
                 const label = file.type.startsWith('video/') ? 'Video' : 'Photo';
                 return `
                     <div class="flex items-center gap-3">
@@ -1304,24 +1323,36 @@
             emailRecipientOptions = buildEligibleEmailRecipientsFromPlayers(players);
         }
 
-        async function loadEmailDrafts() {
+        function mergeEmailSavedItems(current, next) {
+            const merged = new Map(current.map((item) => [item.id, item]));
+            next.forEach((item) => merged.set(item.id, item));
+            return Array.from(merged.values());
+        }
+
+        async function loadEmailDrafts({ append = false } = {}) {
             if (!canModerate) return;
+            if (!append) emailDraftsNextCursor = null;
             try {
-                emailDrafts = await getTeamEmailDrafts(teamId);
+                const page = await getTeamEmailDrafts(teamId, { cursor: append ? emailDraftsNextCursor : null });
+                emailDrafts = append ? mergeEmailSavedItems(emailDrafts, page.items) : page.items;
+                emailDraftsNextCursor = page.nextCursor;
             } catch (error) {
                 console.warn('Failed to load email drafts:', error);
-                emailDrafts = [];
+                if (!append) emailDrafts = [];
             }
             renderEmailDraftsList();
         }
 
-        async function loadEmailTemplates() {
+        async function loadEmailTemplates({ append = false } = {}) {
             if (!canModerate) return;
+            if (!append) emailTemplatesNextCursor = null;
             try {
-                emailTemplates = await getTeamEmailTemplates(teamId);
+                const page = await getTeamEmailTemplates(teamId, { cursor: append ? emailTemplatesNextCursor : null });
+                emailTemplates = append ? mergeEmailSavedItems(emailTemplates, page.items) : page.items;
+                emailTemplatesNextCursor = page.nextCursor;
             } catch (error) {
                 console.warn('Failed to load email templates:', error);
-                emailTemplates = [];
+                if (!append) emailTemplates = [];
             }
             renderEmailTemplateControls();
         }
@@ -1357,6 +1388,7 @@
                         </div>
                     `).join('');
             }
+            document.getElementById('email-templates-load-more-btn')?.classList.toggle('hidden', !emailTemplatesNextCursor);
         }
 
         function getEmailTemplate(templateId) {
@@ -1397,7 +1429,7 @@
                 return;
             }
             try {
-                await saveTeamEmailTemplate(teamId, {
+                const saved = await saveTeamEmailTemplate(teamId, {
                     name,
                     subject,
                     body,
@@ -1406,7 +1438,8 @@
                     authorName: currentUserProfile?.fullName || null
                 });
                 nameInput.value = '';
-                await loadEmailTemplates();
+                emailTemplates = [saved, ...emailTemplates.filter((template) => template.id !== saved.id)];
+                renderEmailTemplateControls();
                 setEmailTemplateStatus('Template saved. No email was sent.', 'success', target);
             } catch (error) {
                 console.error('Error saving email template:', error);
@@ -1418,7 +1451,8 @@
             if (!templateId) return;
             try {
                 await deleteTeamEmailTemplate(teamId, templateId);
-                await loadEmailTemplates();
+                emailTemplates = emailTemplates.filter((template) => template.id !== templateId);
+                renderEmailTemplateControls();
                 setEmailTemplateStatus('Template deleted.', 'success', 'draft');
             } catch (error) {
                 console.error('Error deleting email template:', error);
@@ -1463,6 +1497,7 @@
             if (!list) return;
             if (emailDrafts.length === 0) {
                 list.innerHTML = '<div class="rounded-lg border border-dashed border-gray-300 bg-white px-3 py-4 text-center text-sm text-gray-500">No drafts yet.</div>';
+                document.getElementById('email-drafts-load-more-btn')?.classList.toggle('hidden', !emailDraftsNextCursor);
                 return;
             }
             list.innerHTML = emailDrafts.map((draft) => `
@@ -1472,6 +1507,7 @@
                     <span class="block text-xs text-gray-500">${(draft.recipients || []).length} recipient${(draft.recipients || []).length === 1 ? '' : 's'}</span>
                 </button>
             `).join('');
+            document.getElementById('email-drafts-load-more-btn')?.classList.toggle('hidden', !emailDraftsNextCursor);
         }
 
         function renderEmailRecipientPicker() {
@@ -1552,7 +1588,7 @@
                     status: 'draft'
                 }, { draftId: selectedEmailDraftId });
                 selectedEmailDraftId = saved.id;
-                await loadEmailDrafts();
+                emailDrafts = [saved, ...emailDrafts.filter((draft) => draft.id !== saved.id)];
                 selectEmailDraft(saved.id);
             } catch (error) {
                 console.error('Error saving email draft:', error);
@@ -1622,7 +1658,7 @@
             liveMessages = [];
             liveOldestDoc = null;
             hasMoreMessages = true;
-            activeReactionPickerMessageId = null;
+            activeMessageMenuId = null;
             activeReactionInfo = null;
             document.getElementById('messages-container').innerHTML = `
                 <div class="text-center py-8">
@@ -2024,7 +2060,7 @@
 
             return `
                 <a href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener noreferrer" class="block rounded-lg overflow-hidden border border-gray-200">
-                    <img src="${escapeHtml(attachment.url)}" alt="${label}" class="w-full max-h-72 object-cover bg-white">
+                    <img loading="lazy" decoding="async" src="${escapeHtml(attachment.url)}" alt="${label}" class="w-full max-h-72 object-cover bg-white">
                 </a>
             `;
         }
@@ -2090,7 +2126,7 @@
                 return `
                     <div class="rounded-xl overflow-hidden border border-gray-200 bg-white shadow-sm">
                         <a href="${escapeHtml(entry.url)}" target="_blank" rel="noopener noreferrer" class="block">
-                            <img src="${escapeHtml(entry.url)}" alt="${escapeHtml(entry.name || 'Photo')}" class="w-full aspect-video object-cover bg-white">
+                            <img loading="lazy" decoding="async" src="${escapeHtml(entry.url)}" alt="${escapeHtml(entry.name || 'Photo')}" class="w-full aspect-video object-cover bg-white">
                         </a>
                         ${footer}
                         ${actions}
@@ -2418,24 +2454,32 @@
             const player = event.playerId ? playersById.get(event.playerId) : null;
             return {
                 id: event.id,
+                revision: event.revision ?? null,
                 timestamp: event.timestamp ?? null,
                 period: event.period ?? null,
                 gameTime: event.gameTime ?? null,
                 text: event.text || null,
+                inning: event.inning ?? null,
+                half: event.half || null,
+                description: event.description || null,
+                createdAt: event.createdAt || null,
                 type: event.type || null,
                 playerId: event.playerId || null,
                 playerName: player?.name || null,
                 playerNumber: player?.number ?? null,
                 statKey: event.statKey || null,
                 value: event.value ?? null,
-                isOpponent: event.isOpponent === true
+                isOpponent: event.isOpponent === true,
+                isCorrection: event.isCorrection === true,
+                isScoringPlay: event.isScoringPlay === true,
+                score: event.score || null
             };
         }
 
         async function buildAiContext(question, { fetchStats, fetchEvents }) {
             const [players, games] = await Promise.all([
                 getPlayers(teamId, { includeInactive: true }),
-                getGames(teamId)
+                getGames(teamId, { requireCompleteSharedGames: true })
             ]);
             const playersById = new Map(players.map(p => [p.id, p]));
 
@@ -2457,49 +2501,77 @@
                 .slice(0, AI_GAMES_CONTEXT_LIMIT)
                 .map(serializeGame);
 
-            let statsSummary = null;
-            if (fetchStats) {
-                const completedGames = gamesWithDates
+            const completedGames = fetchStats
+                ? gamesWithDates
                     .filter(isCompletedGame)
                     .sort((a, b) => b._date - a._date)
-                    .slice(0, AI_STATS_GAMES_LIMIT);
-                const totals = await getAggregatedStatsForGames(teamId, completedGames.map(g => g.id));
+                    .slice(0, AI_STATS_GAMES_LIMIT)
+                : [];
+            const recentCompleted = fetchEvents
+                ? gamesWithDates
+                    .filter(isCompletedGame)
+                    .sort((a, b) => b._date - a._date)
+                    .slice(0, AI_EVENTS_GAMES_LIMIT)
+                : [];
+            const completeGameContext = await loadCompleteAiGameContext({
+                teamId,
+                statsGames: completedGames,
+                eventGames: recentCompleted,
+                loadClassicAggregatedStats: getAggregatedStatsForGames,
+                loadClassicGameEvents: getGameEvents,
+                eventLimit: AI_EVENTS_PER_GAME_LIMIT
+            });
 
+            let statsSummary = null;
+            if (fetchStats) {
                 statsSummary = {
                     gamesUsed: completedGames.map(serializeGame),
-                    totalsByPlayer: Object.entries(totals).map(([playerId, stats]) => ({
+                    totalsByPlayer: Object.entries(completeGameContext.stats.classicTotalsByPlayer).map(([playerId, stats]) => ({
                         id: playerId,
                         name: playersById.get(playerId)?.name || 'Unknown',
                         number: playersById.get(playerId)?.number || null,
                         stats
-                    }))
+                    })),
+                    diamondByGame: completedGames.flatMap((game) => {
+                        const projectedPlayers = completeGameContext.stats.diamondPlayersByGame[game.id];
+                        if (!projectedPlayers) return [];
+                        return [{
+                            game: serializeGame(game),
+                            players: projectedPlayers.map((player) => ({
+                                id: player.playerId,
+                                name: player.playerName,
+                                number: player.playerNumber,
+                                participated: player.participated,
+                                stats: player.stats,
+                                completeStatKeys: player.completeStatKeys,
+                                omittedOrIncompleteStatKeys: player.omittedOrIncompleteStatKeys
+                            })),
+                            evidence: completeGameContext.stats.evidence.diamondByGame[game.id]
+                        }];
+                    }),
+                    evidence: completeGameContext.stats.evidence
                 };
             }
 
             let eventsSummary = null;
             if (fetchEvents) {
-                const recentCompleted = gamesWithDates
-                    .filter(isCompletedGame)
-                    .sort((a, b) => b._date - a._date)
-                    .slice(0, AI_EVENTS_GAMES_LIMIT);
-
-                const eventsByGame = await Promise.all(
-                    recentCompleted.map(async (game) => {
-                        const events = await getGameEvents(teamId, game.id, { limit: AI_EVENTS_PER_GAME_LIMIT });
-                        const ordered = events
-                            .slice()
-                            .reverse()
-                            .map(evt => serializeEvent(evt, playersById));
-                        return {
-                            game: serializeGame(game),
-                            events: ordered
-                        };
-                    })
-                );
+                const eventsByGame = recentCompleted.map((game) => {
+                    const events = completeGameContext.events.eventsByGame[game.id] || [];
+                    const ordered = events
+                        .slice()
+                        .reverse()
+                        .map(evt => serializeEvent(evt, playersById));
+                    return {
+                        game: serializeGame(game),
+                        events: ordered,
+                        evidence: completeGameContext.events.evidenceByGame[game.id]
+                    };
+                });
 
                 eventsSummary = {
                     gamesUsed: recentCompleted.map(serializeGame),
-                    eventsByGame
+                    eventsByGame,
+                    evidence: completeGameContext.events.evidence
                 };
             }
 
@@ -2593,6 +2665,7 @@
                 `If the question is about stats, summarize with top performers and include key numbers.\\n` +
                 `If game summaries are provided, use them to mention recent performance or highlights.\\n` +
                 `If play-by-play events are provided, use them to answer timeline or highlight questions.\\n` +
+                `Diamond stats include only complete public counters. Treat omittedOrIncompleteStatKeys as unknown, never zero, and honor truncation evidence.\\n` +
                 `If individual stats are missing, give 3-5 general improvement tips aligned to the team's sport and ask a short follow-up question.\\n\\n` +
                 `QUESTION:\\n${question}\\n\\n` +
                 `DATA (JSON):\\n${JSON.stringify(context)}\\n`;
@@ -2655,8 +2728,8 @@
             return postChatMessage(teamId, message);
         }
 
-        window.toggleReactionPicker = function(messageId) {
-            activeReactionPickerMessageId = activeReactionPickerMessageId === messageId ? null : messageId;
+        window.toggleMessageMenu = function(messageId) {
+            activeMessageMenuId = activeMessageMenuId === messageId ? null : messageId;
             activeReactionInfo = null;
             renderMessages();
         };
@@ -2708,7 +2781,7 @@
 
             try {
                 await toggleChatReaction(teamId, messageId, reactionKey, currentUser.uid, { conversationId: selectedConversationId });
-                activeReactionPickerMessageId = null;
+                activeMessageMenuId = null;
                 activeReactionInfo = null;
             } catch (error) {
                 console.error('Error toggling reaction:', error);
@@ -2741,6 +2814,10 @@
             document.getElementById('email-drafts-btn').addEventListener('click', () => openEmailDraftModal());
             document.getElementById('email-draft-close-btn').addEventListener('click', closeEmailDraftModal);
             document.getElementById('email-draft-new-btn').addEventListener('click', () => selectEmailDraft(null));
+            document.getElementById('email-drafts-refresh-btn').addEventListener('click', () => loadEmailDrafts());
+            document.getElementById('email-drafts-load-more-btn').addEventListener('click', () => loadEmailDrafts({ append: true }));
+            document.getElementById('email-templates-refresh-btn').addEventListener('click', () => loadEmailTemplates());
+            document.getElementById('email-templates-load-more-btn').addEventListener('click', () => loadEmailTemplates({ append: true }));
             document.getElementById('email-draft-save-btn').addEventListener('click', saveEmailDraftFromForm);
             document.getElementById('email-drafts-list').addEventListener('click', (event) => {
                 const button = event.target.closest('[data-email-draft-id]');
@@ -2834,7 +2911,7 @@
                 liveMessages = [];
                 liveOldestDoc = null;
                 hasMoreMessages = true;
-                activeReactionPickerMessageId = null;
+                activeMessageMenuId = null;
                 activeReactionInfo = null;
                 startRealtimeUpdates();
                 btn.disabled = false;
@@ -2907,11 +2984,11 @@
                     hideMentionMenu();
                 }
                 if (!e.target.closest('[data-reaction-ui="true"]')) {
-                    const hadPicker = activeReactionPickerMessageId !== null;
+                    const hadMenu = activeMessageMenuId !== null;
                     const hadInfo = activeReactionInfo !== null;
-                    activeReactionPickerMessageId = null;
+                    activeMessageMenuId = null;
                     activeReactionInfo = null;
-                    if (hadPicker || hadInfo) {
+                    if (hadMenu || hadInfo) {
                         renderMessages();
                     }
                 }
@@ -3101,6 +3178,8 @@
             const msg = messages.find(m => m.id === messageId);
             if (!msg || msg.deleted || !msg.text) return;
 
+            activeMessageMenuId = null;
+            renderMessages();
             editingMessageId = messageId;
             document.getElementById('edit-textarea').value = msg.text;
             document.getElementById('edit-modal').classList.remove('hidden');
@@ -3140,6 +3219,8 @@
 
         // Delete functionality
         window.deleteMessage = async function(messageId) {
+            activeMessageMenuId = null;
+            renderMessages();
             if (!confirm('Delete this message?')) return;
 
             try {

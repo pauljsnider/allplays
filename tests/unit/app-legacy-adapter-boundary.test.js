@@ -79,15 +79,17 @@ describe('app legacy adapter boundary', () => {
 
     it('keeps ScheduleEventDetail RSVP helpers behind the schedule helper adapter', () => {
         const detailSource = readRepoFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+        const gameHubSource = readRepoFile('apps/app/src/pages/schedule/ScheduleGameHubSection.tsx');
         const rsvpHookSource = readRepoFile('apps/app/src/hooks/schedule/useScheduleEventRsvp.ts');
         const scheduleServiceSource = readRepoFile('apps/app/src/lib/scheduleService.ts');
         const helperAdapterSource = readRepoFile('apps/app/src/lib/adapters/legacyScheduleHelpers.ts');
 
         expect(directLegacyImportPattern.test(detailSource)).toBe(false);
+        expect(directLegacyImportPattern.test(gameHubSource)).toBe(false);
         expect(directLegacyImportPattern.test(rsvpHookSource)).toBe(false);
         expect(directLegacyImportPattern.test(scheduleServiceSource)).toBe(false);
-        expect(detailSource).toContain("typeof import('../lib/adapters/legacyScheduleHelpers')");
-        expect(detailSource).toContain("import('../lib/adapters/legacyScheduleHelpers')");
+        expect(gameHubSource).toContain("typeof import('../../lib/adapters/legacyScheduleHelpers')");
+        expect(gameHubSource).toContain("import('../../lib/adapters/legacyScheduleHelpers')");
         expect(rsvpHookSource).toContain("from '../../lib/scheduleService'");
         expect(scheduleServiceSource).toContain("from './adapters/legacyScheduleHelpers'");
         expect(helperAdapterSource).toContain("from '@legacy/parent-dashboard-rsvp.js'");

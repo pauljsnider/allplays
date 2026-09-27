@@ -7,11 +7,19 @@ const capacitorMock = vi.hoisted(() => ({
 }));
 
 const firebasePerformanceMock = vi.hoisted(() => ({
-  startTrace: vi.fn(() => Promise.resolve()),
-  stopTrace: vi.fn(() => Promise.resolve()),
+  startTrace: vi.fn((_payload: { traceName: string }) => Promise.resolve()),
+  stopTrace: vi.fn((_payload: { traceName: string }) => Promise.resolve()),
   putAttribute: vi.fn(() => Promise.resolve()),
   putMetric: vi.fn(() => Promise.resolve()),
-  record: vi.fn(() => Promise.resolve())
+  record: vi.fn((_payload: {
+    traceName: string;
+    startTime: number;
+    duration: number;
+    options: {
+      attributes: Record<string, string>;
+      metrics: Record<string, number>;
+    };
+  }) => Promise.resolve())
 }));
 
 const firebaseAppMock = vi.hoisted(() => ({
@@ -38,6 +46,7 @@ describe('performanceInstrumentation', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    capacitorMock.getPlatform.mockReturnValue('web');
     delete (window as typeof window & { ALLPLAYS_PERFORMANCE_ENABLED?: boolean }).ALLPLAYS_PERFORMANCE_ENABLED;
     delete window.__ALLPLAYS_CONFIG__;
     vi.spyOn(performance, 'now')
@@ -59,7 +68,7 @@ describe('performanceInstrumentation', () => {
     expect(buildPerformanceTraceName('x'.repeat(160), 'initial_load')).toHaveLength(98);
   });
 
-  it('exports started spans to User Timing and Firebase Performance', async () => {
+  it('exports each completed span to User Timing and Firebase Performance', async () => {
     const { startPerformanceSpan } = await import('./performanceInstrumentation');
 
     const span = startPerformanceSpan('schedule import', {
@@ -79,18 +88,23 @@ describe('performanceInstrumentation', () => {
       expect.stringContaining(':start'),
       expect.stringContaining(':end')
     );
-    expect(firebasePerformanceMock.startTrace).toHaveBeenCalledWith({ traceName: 'ap_workflow_schedule_import' });
-    expect(firebasePerformanceMock.putAttribute).toHaveBeenCalledWith(expect.objectContaining({
+    expect(firebasePerformanceMock.record).toHaveBeenCalledWith(expect.objectContaining({
       traceName: 'ap_workflow_schedule_import',
-      attribute: 'category',
-      value: 'workflow'
+      duration: 75,
+      options: expect.objectContaining({
+        attributes: expect.objectContaining({
+          category: 'workflow',
+          outcome: 'success'
+        }),
+        metrics: expect.objectContaining({
+          duration_ms: 75,
+          rowCount: 4,
+          importedCount: 4
+        })
+      })
     }));
-    expect(firebasePerformanceMock.putMetric).toHaveBeenCalledWith(expect.objectContaining({
-      traceName: 'ap_workflow_schedule_import',
-      metricName: 'rowCount',
-      num: 4
-    }));
-    expect(firebasePerformanceMock.stopTrace).toHaveBeenCalledWith({ traceName: 'ap_workflow_schedule_import' });
+    expect(firebasePerformanceMock.startTrace).not.toHaveBeenCalled();
+    expect(firebasePerformanceMock.stopTrace).not.toHaveBeenCalled();
   });
 
   it('lets Vite resolve the Firebase Performance dynamic import', () => {
@@ -138,7 +152,7 @@ describe('performanceInstrumentation', () => {
 
     expect(legacyFirebaseAuthSdkMock.resolvePrimaryFirebaseConfig).toHaveBeenCalled();
     expect(firebaseAppMock.initializeApp).toHaveBeenCalledWith({ projectId: 'test-project' });
-    expect(firebasePerformanceMock.startTrace).toHaveBeenCalledWith({ traceName: 'ap_ux_home_mount_load' });
+    expect(firebasePerformanceMock.record).toHaveBeenCalledWith(expect.objectContaining({ traceName: 'ap_ux_home_mount_load' }));
   });
 
   it('reuses an existing npm Firebase app on web', async () => {
@@ -150,30 +164,97 @@ describe('performanceInstrumentation', () => {
     await flushInstrumentation();
 
     expect(firebaseAppMock.initializeApp).not.toHaveBeenCalled();
-    expect(firebasePerformanceMock.startTrace).toHaveBeenCalledWith({ traceName: 'ap_ux_home_mount_load' });
+    expect(firebasePerformanceMock.record).toHaveBeenCalledWith(expect.objectContaining({ traceName: 'ap_ux_home_mount_load' }));
   });
 
-  it('does not stop a trace before its start call settles', async () => {
-    // Near-zero spans (e.g. an unmounted view timer cancelling immediately)
-    // used to race stopTrace ahead of the in-flight startTrace, so the plugin
-    // rejected every call with "No trace was found".
-    let resolveStart: () => void = () => {};
-    firebasePerformanceMock.startTrace.mockReturnValueOnce(new Promise<void>((resolve) => {
-      resolveStart = resolve;
-    }));
+  it('records overlapping spans with the same label independently', async () => {
+    vi.spyOn(performance, 'now')
+      .mockReset()
+      .mockReturnValueOnce(100)
+      .mockReturnValueOnce(120)
+      .mockReturnValueOnce(170)
+      .mockReturnValueOnce(220);
     const { startPerformanceSpan } = await import('./performanceInstrumentation');
 
-    const span = startPerformanceSpan('home today load', { kind: 'ux' });
-    span.end();
+    const first = startPerformanceSpan('home today load', { kind: 'ux', meta: { source: 'first' } });
+    const second = startPerformanceSpan('home today load', { kind: 'ux', meta: { source: 'second' } });
+    first.end();
+    second.end();
     await flushInstrumentation();
 
-    expect(firebasePerformanceMock.startTrace).toHaveBeenCalledTimes(1);
-    expect(firebasePerformanceMock.stopTrace).not.toHaveBeenCalled();
+    expect(firebasePerformanceMock.record).toHaveBeenCalledTimes(2);
+    expect(firebasePerformanceMock.record.mock.calls.map(([payload]) => payload.duration)).toEqual([70, 100]);
+    expect(firebasePerformanceMock.record.mock.calls.map(([payload]) => payload.options.attributes.source)).toEqual(['first', 'second']);
+  });
 
-    resolveStart();
+  it('uses start and stop traces on native platforms instead of the web-only record API', async () => {
+    capacitorMock.getPlatform.mockReturnValue('ios');
+    const { startPerformanceSpan } = await import('./performanceInstrumentation');
+
+    const span = startPerformanceSpan('schedule import', {
+      kind: 'workflow',
+      meta: { category: 'workflow', rowCount: 4 }
+    });
+    span.end({ outcome: 'success', importedCount: 4 });
     await flushInstrumentation();
 
-    expect(firebasePerformanceMock.stopTrace).toHaveBeenCalledWith({ traceName: 'ap_ux_home_today_load' });
+    expect(firebasePerformanceMock.record).not.toHaveBeenCalled();
+    expect(firebaseAppMock.initializeApp).not.toHaveBeenCalled();
+    expect(firebasePerformanceMock.startTrace).toHaveBeenCalledWith({ traceName: 'ap_workflow_schedule_import' });
+    expect(firebasePerformanceMock.putAttribute).toHaveBeenCalledWith(expect.objectContaining({
+      traceName: 'ap_workflow_schedule_import',
+      attribute: 'platform',
+      value: 'ios'
+    }));
+    expect(firebasePerformanceMock.putMetric).toHaveBeenCalledWith(expect.objectContaining({
+      traceName: 'ap_workflow_schedule_import',
+      metricName: 'duration_ms',
+      num: 75
+    }));
+    expect(firebasePerformanceMock.stopTrace).toHaveBeenCalledWith({ traceName: 'ap_workflow_schedule_import' });
+  });
+
+  it('assigns bounded native lanes so overlapping same-label traces do not overwrite each other', async () => {
+    capacitorMock.getPlatform.mockReturnValue('android');
+    vi.spyOn(performance, 'now')
+      .mockReset()
+      .mockReturnValueOnce(100)
+      .mockReturnValueOnce(120)
+      .mockReturnValueOnce(170)
+      .mockReturnValueOnce(220);
+    const { startPerformanceSpan } = await import('./performanceInstrumentation');
+
+    const first = startPerformanceSpan('home today load', { kind: 'ux' });
+    const second = startPerformanceSpan('home today load', { kind: 'ux' });
+    first.end();
+    second.end();
+    await flushInstrumentation();
+
+    expect(firebasePerformanceMock.record).not.toHaveBeenCalled();
+    expect(firebasePerformanceMock.startTrace.mock.calls.map(([payload]) => payload.traceName)).toEqual([
+      'ap_ux_home_today_load',
+      'ap_ux_home_today_load_p2'
+    ]);
+    expect(firebasePerformanceMock.stopTrace.mock.calls.map(([payload]) => payload.traceName)).toEqual([
+      'ap_ux_home_today_load',
+      'ap_ux_home_today_load_p2'
+    ]);
+  });
+
+  it('ends a span only once when competing cleanup paths fire', async () => {
+    const { startPerformanceSpan } = await import('./performanceInstrumentation');
+
+    const span = startPerformanceSpan('messages mount load', { kind: 'ux' });
+    span.end({ outcome: 'success' });
+    span.end({ outcome: 'abandoned' });
+    await flushInstrumentation();
+
+    expect(firebasePerformanceMock.record).toHaveBeenCalledTimes(1);
+    expect(firebasePerformanceMock.record).toHaveBeenCalledWith(expect.objectContaining({
+      options: expect.objectContaining({
+        attributes: expect.objectContaining({ outcome: 'success' })
+      })
+    }));
   });
 
   it('honors runtime performance opt out', async () => {
@@ -184,7 +265,6 @@ describe('performanceInstrumentation', () => {
     span.end();
     await flushInstrumentation();
 
-    expect(firebasePerformanceMock.startTrace).not.toHaveBeenCalled();
-    expect(firebasePerformanceMock.stopTrace).not.toHaveBeenCalled();
+    expect(firebasePerformanceMock.record).not.toHaveBeenCalled();
   });
 });

@@ -8,6 +8,7 @@ import {
 import {
     collection,
     doc,
+    documentId,
     getDoc,
     getDocs,
     limit,
@@ -32,6 +33,8 @@ const immutableSocialPostScopeFields = [
     'visibility',
     'visibleUserIds',
     'createdAt',
+    'route',
+    'href',
     'snapshot'
 ];
 
@@ -112,6 +115,8 @@ describe('React app social Firestore rules', () => {
 
         expect(source).toContain('function canReadSocialPost(data)');
         expect(source).toContain('function isSocialPostCreatePayloadValid(data)');
+        expect(source).toContain('function isCanonicalSocialPostRoute(value)');
+        expect(source).toContain('function isSocialPostNavigationValid(data)');
         expect(source).toContain('function canModerateSocialPost(data)');
         expect(source).toContain('function socialPostImmutableScopeFields()');
         expect(source).toContain('function isSocialPostAuthorContentUpdateValid()');
@@ -124,6 +129,9 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain('match /comments/{commentId}');
         expect(source).toContain('match /reactions/{userId}');
         expect(source).toContain('match /hiddenSocialPosts/{postId}');
+        expect(source).toContain('allow get: if isOwner(userId);');
+        expect(source).toContain('request.query.limit <= 200');
+        expect(source).not.toContain('match /hiddenSocialPosts/{postId} {\n        allow read: if isOwner(userId);');
         expect(source).toContain('match /friendships/{friendshipId}');
         expect(source).toContain('match /socialReports/{reportId}');
         expect(source).toContain("request.auth.uid in data.get('visibleUserIds', [])");
@@ -136,6 +144,130 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain('allow delete: if isVerifiedForSensitiveWrite() && isSocialPostReactionDeleteValid(postId, userId);');
         expect(source).toContain("request.resource.data.get('postId', '') == postId");
         expect(source).toContain("request.resource.data.keys().hasOnly(['postId', 'hiddenAt'])");
+        expect(source).toContain("data.get('href', null) == null");
+        expect(source).toContain("snapshot.get('route', null) == route");
+        expect(source).toContain("snapshot.get('href', null) == null");
+        expect(source).toContain('isSocialPostNavigationValid(data)');
+    });
+
+    describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('social post navigation rules engine coverage', () => {
+        let testEnv;
+
+        beforeAll(async () => {
+            testEnv = await initializeTestEnvironment({
+                projectId: `allplays-social-navigation-rules-${Date.now()}`,
+                firestore: { rules: rulesSource() }
+            });
+        }, 30_000);
+
+        beforeEach(async () => {
+            await testEnv.clearFirestore();
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'teams', 'team-1'), {
+                    ownerId: 'owner-1',
+                    adminEmails: []
+                });
+            });
+        });
+
+        afterAll(async () => {
+            await testEnv?.cleanup();
+        });
+
+        function socialPostPayload(overrides = {}) {
+            const route = Object.prototype.hasOwnProperty.call(overrides, 'route')
+                ? overrides.route
+                : '/teams/team-1';
+            const href = Object.prototype.hasOwnProperty.call(overrides, 'href')
+                ? overrides.href
+                : null;
+            const snapshotRoute = Object.prototype.hasOwnProperty.call(overrides, 'snapshotRoute')
+                ? overrides.snapshotRoute
+                : route;
+            const snapshotHref = Object.prototype.hasOwnProperty.call(overrides, 'snapshotHref')
+                ? overrides.snapshotHref
+                : href;
+            return {
+                authorId: overrides.authorId || 'owner-1',
+                type: 'team_media',
+                visibility: 'team',
+                title: 'Team update',
+                detail: 'Team media · Bears',
+                caption: '',
+                teamId: 'team-1',
+                teamIds: ['team-1'],
+                playerIds: [],
+                playerNames: [],
+                media: [],
+                visibleUserIds: [overrides.authorId || 'owner-1'],
+                route,
+                href,
+                snapshot: {
+                    type: 'team_media',
+                    title: 'Team update',
+                    detail: 'Team media · Bears',
+                    teamId: 'team-1',
+                    playerIds: [],
+                    playerNames: [],
+                    route: snapshotRoute,
+                    href: snapshotHref
+                },
+                hidden: false,
+                reactionCounts: {},
+                commentCount: 0,
+                createdAt: Timestamp.now(),
+                updatedAt: Timestamp.now()
+            };
+        }
+
+        it('allows the team owner to create a post with a canonical app route', async () => {
+            const db = testEnv.authenticatedContext('owner-1', {
+                email: 'owner@example.com',
+                email_verified: true
+            }).firestore();
+
+            await assertSucceeds(setDoc(doc(db, 'socialPosts', 'valid-team-post'), socialPostPayload()));
+        });
+
+        it('allows the team owner to create a post with no navigation destination', async () => {
+            const db = testEnv.authenticatedContext('owner-1', {
+                email: 'owner@example.com',
+                email_verified: true
+            }).firestore();
+            const payload = socialPostPayload({ route: null, snapshotRoute: null });
+            delete payload.href;
+            delete payload.snapshot.href;
+
+            await assertSucceeds(setDoc(doc(db, 'socialPosts', 'post-without-navigation'), payload));
+        });
+
+        it('denies a cross-team caller even when the navigation route is canonical', async () => {
+            const db = testEnv.authenticatedContext('outsider-1', {
+                email: 'outsider@example.com',
+                email_verified: true
+            }).firestore();
+
+            await assertFails(setDoc(doc(db, 'socialPosts', 'cross-team-post'), socialPostPayload({
+                authorId: 'outsider-1'
+            })));
+        });
+
+        it.each([
+            ['external route', { route: 'https://example.invalid/source', snapshotRoute: 'https://example.invalid/source' }],
+            ['protocol-relative route', { route: '//example.invalid/source', snapshotRoute: '//example.invalid/source' }],
+            ['backslash route', { route: '/\\example.invalid/source', snapshotRoute: '/\\example.invalid/source' }],
+            ['control-character route', { route: '/teams/team-1\nnext', snapshotRoute: '/teams/team-1\nnext' }],
+            ['stored href', { href: 'mailto:team@example.invalid', snapshotHref: 'mailto:team@example.invalid' }],
+            ['mismatched snapshot route', { snapshotRoute: '/teams/team-2' }],
+            ['mismatched snapshot href', { snapshotHref: 'https://example.invalid/source' }]
+        ])('denies %s navigation values from an otherwise authorized author', async (_label, overrides) => {
+            const db = testEnv.authenticatedContext('owner-1', {
+                email: 'owner@example.com',
+                email_verified: true
+            }).firestore();
+
+            await assertFails(setDoc(doc(db, 'socialPosts', `invalid-${_label.replaceAll(' ', '-')}`), socialPostPayload(overrides)));
+        });
     });
 
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('social reaction and viewer hide rules engine coverage', () => {
@@ -260,6 +392,43 @@ describe('React app social Firestore rules', () => {
             }));
         });
 
+        it('allows legacy owner pages while bounding hidden-post list reads', async () => {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                const adminDb = context.firestore();
+                await Promise.all(Array.from({ length: 11 }, (_, index) => setDoc(
+                    doc(adminDb, 'users', 'viewer-1', 'hiddenSocialPosts', `post-${index}`),
+                    { postId: `post-${index}`, hiddenAt: Timestamp.now() }
+                )));
+            });
+            const ownerDb = viewerDb();
+            const otherDb = viewerDb('other-user');
+            const unauthenticatedDb = testEnv.unauthenticatedContext().firestore();
+            const ownerHides = collection(ownerDb, 'users', 'viewer-1', 'hiddenSocialPosts');
+            const otherUserHides = collection(otherDb, 'users', 'viewer-1', 'hiddenSocialPosts');
+            const candidateIds = Array.from({ length: 10 }, (_, index) => `post-${index}`);
+
+            await assertSucceeds(getDoc(doc(ownerDb, 'users', 'viewer-1', 'hiddenSocialPosts', 'post-0')));
+            await assertFails(getDoc(doc(otherDb, 'users', 'viewer-1', 'hiddenSocialPosts', 'post-0')));
+            expect((await assertSucceeds(getDocs(query(
+                ownerHides,
+                where(documentId(), 'in', candidateIds),
+                limit(10)
+            )))).size).toBe(10);
+            expect((await assertSucceeds(getDocs(query(ownerHides, limit(200))))).size).toBe(11);
+            await assertFails(getDocs(ownerHides));
+            await assertFails(getDocs(query(ownerHides, limit(201))));
+            await assertFails(getDocs(query(
+                collection(unauthenticatedDb, 'users', 'viewer-1', 'hiddenSocialPosts'),
+                where(documentId(), 'in', candidateIds),
+                limit(10)
+            )));
+            await assertFails(getDocs(query(
+                otherUserHides,
+                where(documentId(), 'in', candidateIds),
+                limit(10)
+            )));
+        });
+
         it('allows bounded visible-user and team feed queries that exclude globally hidden posts', async () => {
             await testEnv.withSecurityRulesDisabled(async (context) => {
                 const adminDb = context.firestore();
@@ -310,37 +479,20 @@ describe('React app social Firestore rules', () => {
         });
     });
 
-    it('permits accepted friendship creation only during atomic friend invite redemption', () => {
+    it('denies direct friend invite friendship creation and update paths', () => {
         const source = rulesSource();
 
-        expect(source).toContain('function isFriendInviteAcceptedFriendshipCreateValid(friendshipId, data)');
-        expect(source).toContain('function isFriendInviteAcceptedFriendshipUpdateValid(friendshipId)');
-        expect(source).toContain('let codePath = /databases/$(database)/documents/accessCodes/$(codeId);');
-        expect(source).toContain('let codeBefore = get(codePath).data;');
-        expect(source).toContain('exists(codePath)');
-        expect(source).toContain('existsAfter(codePath)');
-        expect(source).toContain('function buildFriendshipId(firstUserId, secondUserId)');
-        expect(source).toContain('data.get(\'memberIds\', []).size() == 2');
-        expect(source).toContain("friendshipId == buildFriendshipId(data.get('requesterId', ''), request.auth.uid)");
-        expect(source).toContain("codeBefore.get('used', false) == false");
-        expect(source).toContain("codeBefore.get('usedBy', null) == null");
-        expect(source).toContain("codeBefore.get('usedAt', null) == null");
-        expect(source).toContain("codeAfter.get('type', null) == 'friend_invite'");
-        expect(source).toContain("codeAfter.get('generatedBy', '') == data.get('requesterId', '')");
-        expect(source).toContain("codeAfter.get('usedBy', '') == request.auth.uid");
+        expect(source).not.toContain('function isFriendInviteAcceptedFriendshipCreateValid');
+        expect(source).not.toContain('function isFriendInviteAcceptedFriendshipUpdateValid');
         expect(source).toContain(
-            'allow create: if (isVerifiedForSensitiveWrite() &&\n' +
-            '                        isFriendshipCreatePayloadValid(friendshipId, request.resource.data)) ||\n' +
-            '                       isFriendInviteAcceptedFriendshipCreateValid(friendshipId, request.resource.data);'
+            'allow create: if isVerifiedForSensitiveWrite() &&\n' +
+            '                       isFriendshipCreatePayloadValid(friendshipId, request.resource.data);'
         );
         expect(source).toContain(
             'allow update: if (isVerifiedForSensitiveWrite() &&\n' +
             '                     (isFriendshipMemberUpdatePayloadValid() ||'
         );
-        expect(source).toContain("request.resource.data.get('status', '') in ['pending', 'accepted', 'declined', 'removed', 'blocked']))) ||\n                    isFriendInviteAcceptedFriendshipUpdateValid(friendshipId);");
-        expect(source).toContain("request.resource.data.get('source', '') == 'friend_invite'");
-        expect(source).toContain("request.resource.data.get('inviteCodeId', '') == codeId");
-        expect(source).toContain("friendshipId == buildFriendshipId(codeAfter.get('generatedBy', ''), request.auth.uid)");
+        expect(source).not.toContain('isFriendInviteAcceptedFriendshipUpdateValid(friendshipId)');
     });
 
     it('prevents member updates from reactivating blocked friendships', () => {
@@ -359,26 +511,22 @@ describe('React app social Firestore rules', () => {
             'allow update: if (isVerifiedForSensitiveWrite() &&\n' +
             '                     (isFriendshipMemberUpdatePayloadValid() ||'
         );
-        expect(source).toContain('))) ||\n                    isFriendInviteAcceptedFriendshipUpdateValid(friendshipId);');
+        expect(source).not.toContain('isFriendInviteAcceptedFriendshipUpdateValid(friendshipId)');
     });
 
-    it('excludes friend invites from the owner update fallback after redemption', () => {
+    it('excludes friend invites from every direct access-code redemption path', () => {
         const source = rulesSource();
 
-        expect(source).toContain("isFriendInviteRedemptionUpdate() ||");
+        expect(source).not.toContain('function isFriendInviteRedemptionUpdate()');
+        expect(source).not.toContain('isFriendInviteRedemptionUpdate() ||');
         expect(source).toContain("resource.data.get('type', null) != 'friend_invite' &&");
     });
 
-    it('allows only direct GET reads for phone-only friend invite code redemption', () => {
+    it('removes the broad phone-only friend invite document read exception', () => {
         const source = rulesSource();
 
-        expect(source).toContain('function canGetPhoneOnlyFriendInviteAccessCode(data)');
-        expect(source).toContain("data.get('type', null) == 'friend_invite'");
-        expect(source).toContain("data.get('email', null) == null");
-        expect(source).toContain("data.get('phone', null) is string");
-        expect(source).toContain("data.get('used', false) == false");
-        expect(source).toContain("data.get('expiresAt', null) > request.time");
-        expect(source).toContain('allow get: if resource == null || canReadAccessCode(resource.data) || canGetPhoneOnlyFriendInviteAccessCode(resource.data);');
+        expect(source).not.toContain('function canGetPhoneOnlyFriendInviteAccessCode');
+        expect(source).toContain('allow get: if resource == null || canReadAccessCode(resource.data);');
         expect(source).toContain('allow list: if canReadAccessCode(resource.data);');
     });
 
@@ -420,7 +568,7 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("data.email.lower() == request.auth.token.email.lower()");
         expect(source).toContain("(!request.resource.data.diff(resource.data).affectedKeys().hasAny(['email']) ||");
         expect(source).toContain('allow get: if isGlobalAdmin() || isOwner(userId);');
-        expect(source).toContain('allow list: if isBoundedGlobalAdminListQuery() || isOwner(userId);');
+        expect(source).toContain('allow list: if isBoundedGlobalAdminListQuery(100) || isOwner(userId);');
         expect(source).not.toContain('allow read: if true;  // Public profiles');
 
         expect(isOwnerUserEmailUpdateValid({
@@ -862,7 +1010,7 @@ describe('React app social Firestore rules', () => {
             });
         }
 
-        it('allows an exact path participant to read a missing doc and atomically create a friendship', async () => {
+        it('denies direct friend invite redemption even when the caller is the intended email recipient', async () => {
             const inviterId = 'inviter-first';
             const inviteeId = 'invitee-first';
             const codeId = 'FRIENDFIRST';
@@ -877,15 +1025,12 @@ describe('React app social Firestore rules', () => {
             await assertFails(getDoc(doc(authenticatedDb('unrelated-user'), 'friendships', friendshipId)));
             await assertFails(getDocs(collection(inviteeDb, 'friendships')));
 
-            await assertSucceeds(redeemInviteTransaction(inviteeDb, { codeId, inviterId, inviteeId }));
+            await assertFails(redeemInviteTransaction(inviteeDb, { codeId, inviterId, inviteeId }));
 
             const createdSnapshot = await assertSucceeds(getDoc(friendshipRef));
-            expect(createdSnapshot.data()).toMatchObject({
-                memberIds: [inviteeId, inviterId],
-                status: 'accepted',
-                source: 'friend_invite',
-                inviteCodeId: codeId
-            });
+            expect(createdSnapshot.exists()).toBe(false);
+            const inviteSnapshot = await assertSucceeds(getDoc(doc(inviteeDb, 'accessCodes', codeId)));
+            expect(inviteSnapshot.data()).toMatchObject({ used: false, usedBy: null, usedAt: null });
         });
 
         it('denies friendship creation from an already redeemed friend invite code', async () => {
@@ -915,7 +1060,7 @@ describe('React app social Firestore rules', () => {
             expect(missingSnapshot.exists()).toBe(false);
         });
 
-        it('allows direct code reads for phone-only friend invites without opening collection list reads', async () => {
+        it('denies an unrelated signed-in user raw phone-only invite reads and direct redemption', async () => {
             const inviterId = 'inviter-phone';
             const inviteeId = 'invitee-phone';
             const codeId = 'FRIENDPHONE';
@@ -929,18 +1074,24 @@ describe('React app social Firestore rules', () => {
                 phone: '+15555550123'
             });
 
-            const codeSnapshot = await assertSucceeds(getDoc(doc(inviteeDb, 'accessCodes', codeId)));
-            expect(codeSnapshot.data()).toMatchObject({
-                type: 'friend_invite',
-                email: null,
-                phone: '+15555550123',
-                used: false
-            });
+            await assertFails(getDoc(doc(inviteeDb, 'accessCodes', codeId)));
             await assertFails(getDocs(collection(inviteeDb, 'accessCodes')));
-            await assertSucceeds(redeemInviteTransaction(inviteeDb, { codeId, inviterId, inviteeId }));
+            await assertFails(redeemInviteTransaction(inviteeDb, { codeId, inviterId, inviteeId }));
+
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                const codeSnapshot = await getDoc(doc(context.firestore(), 'accessCodes', codeId));
+                expect(codeSnapshot.data()).toMatchObject({
+                    type: 'friend_invite',
+                    email: null,
+                    phone: '+15555550123',
+                    used: false,
+                    usedBy: null,
+                    usedAt: null
+                });
+            });
         });
 
-        it('allows a member to read and atomically accept an existing pending friendship', async () => {
+        it('denies direct invite-backed mutation of an existing pending friendship', async () => {
             const inviterId = 'inviter-pending';
             const inviteeId = 'invitee-pending';
             const codeId = 'FRIENDPENDING';
@@ -963,18 +1114,16 @@ describe('React app social Firestore rules', () => {
             await seedInvite({ codeId, inviterId, inviteeId, friendship: pendingFriendship });
 
             await assertSucceeds(getDoc(doc(inviteeDb, 'friendships', friendshipId)));
-            await assertSucceeds(redeemInviteTransaction(inviteeDb, { codeId, inviterId, inviteeId }));
+            await assertFails(redeemInviteTransaction(inviteeDb, { codeId, inviterId, inviteeId }));
 
             const updatedSnapshot = await assertSucceeds(getDoc(doc(inviteeDb, 'friendships', friendshipId)));
             expect(updatedSnapshot.data()).toMatchObject({
-                status: 'accepted',
-                source: 'friend_invite',
-                inviteCodeId: codeId,
+                status: 'pending',
                 createdAt
             });
         });
 
-        it('preserves unverified friend-invite bootstrap under enforce while gating arbitrary friendship writes', async () => {
+        it('keeps direct friend-invite redemption denied under verified-email enforcement', async () => {
             const createInviterId = 'enforce-create-inviter';
             const createInviteeId = 'enforce-create-invitee';
             const createCodeId = 'ENFORCECREATE';
@@ -992,7 +1141,7 @@ describe('React app social Firestore rules', () => {
                 });
             });
 
-            await assertSucceeds(redeemInviteTransaction(createInviteeDb, {
+            await assertFails(redeemInviteTransaction(createInviteeDb, {
                 codeId: createCodeId,
                 inviterId: createInviterId,
                 inviteeId: createInviteeId
@@ -1019,7 +1168,7 @@ describe('React app social Firestore rules', () => {
                     updatedAt: createdAt
                 }
             });
-            await assertSucceeds(redeemInviteTransaction(
+            await assertFails(redeemInviteTransaction(
                 authenticatedDb(updateInviteeId, { verified: false }),
                 {
                     codeId: updateCodeId,

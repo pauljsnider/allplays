@@ -3,7 +3,8 @@ import { useCallback, useState } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getHorizontalScrollTarget, ParentTools, type ParentToolId } from './ParentTools';
+import { getHorizontalScrollTarget, getParentToolAuthInvalidation, ParentTools, type ParentToolId } from './ParentTools';
+import { CalendarTool } from './parent-tools/CalendarTool';
 import type { AuthState } from '../lib/types';
 import { APP_BACK_DISMISS_EVENT, getNativeBackTarget } from '../lib/nativeBackButton';
 import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
@@ -17,9 +18,24 @@ const parentToolsServiceMocks = vi.hoisted(() => ({
     getCalendarEventShareText: vi.fn(),
     getGoogleCalendarFeedUrl: vi.fn(),
     getPrivateTeamCalendarFeedUrl: vi.fn(),
+    getTrustedStripeCheckoutUrl: vi.fn((value: unknown) => {
+        try {
+            const parsed = new URL(String(value || '').trim());
+            return parsed.protocol === 'https:'
+                && parsed.hostname === 'checkout.stripe.com'
+                && !parsed.username
+                && !parsed.password
+                && !parsed.port
+                ? String(value || '').trim()
+                : '';
+        } catch {
+            return '';
+        }
+    }),
     initiateParentTeamFeeCheckout: vi.fn(),
     loadFamilyShareModel: vi.fn(),
     loadParentCalendarTools: vi.fn(),
+    loadParentCertificate: vi.fn(),
     loadParentCertificates: vi.fn(),
     loadParentFeesForApp: vi.fn(),
     loadParentHouseholdInviteModel: vi.fn(),
@@ -41,6 +57,9 @@ const inviteRedemptionMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/parentToolsService', () => parentToolsServiceMocks);
+vi.mock('../lib/usePremiumFeatureAccess', () => ({
+    usePremiumFeatureAccess: () => ({ state: 'unlocked', reason: 'global-open' })
+}));
 vi.mock('../lib/parentCalendarService', () => ({
     buildParentScheduleIcs: parentToolsServiceMocks.buildParentScheduleIcs,
     getAppleCalendarFeedUrl: parentToolsServiceMocks.getAppleCalendarFeedUrl,
@@ -50,6 +69,7 @@ vi.mock('../lib/parentCalendarService', () => ({
     loadParentCalendarTools: parentToolsServiceMocks.loadParentCalendarTools
 }));
 vi.mock('../lib/parentFeesService', () => ({
+    getTrustedStripeCheckoutUrl: parentToolsServiceMocks.getTrustedStripeCheckoutUrl,
     initiateParentTeamFeeCheckout: parentToolsServiceMocks.initiateParentTeamFeeCheckout,
     loadParentFeesForApp: parentToolsServiceMocks.loadParentFeesForApp
 }));
@@ -67,6 +87,7 @@ vi.mock('../lib/parentRegistrationsService', () => ({
     loadParentRegistrations: parentToolsServiceMocks.loadParentRegistrations
 }));
 vi.mock('../lib/parentCertificatesService', () => ({
+    loadParentCertificate: parentToolsServiceMocks.loadParentCertificate,
     loadParentCertificates: parentToolsServiceMocks.loadParentCertificates
 }));
 vi.mock('../lib/parentToolsAccessService', () => parentToolsAccessServiceMocks);
@@ -90,6 +111,7 @@ vi.mock('lucide-react', () => {
         ExternalLink: Icon,
         KeyRound: Icon,
         Link2: Icon,
+        LockKeyhole: Icon,
         Loader2: Icon,
         RefreshCw: Icon,
         Search: Icon,
@@ -197,6 +219,15 @@ describe('getHorizontalScrollTarget', () => {
 
     it('scrolls right only enough to reveal a tab right of the visible window', () => {
         expect(getHorizontalScrollTarget(240, 0, 390, 380, 480)).toBe(330);
+    });
+});
+
+describe('getParentToolAuthInvalidation', () => {
+    it('updates the active and unvisited tools while deferring visited hidden tools', () => {
+        expect(getParentToolAuthInvalidation('access', ['access', 'fees', 'calendar'])).toEqual({
+            immediateToolIds: ['access', 'household', 'share', 'registrations', 'certificates'],
+            staleToolIds: ['fees', 'calendar']
+        });
     });
 });
 
@@ -390,7 +421,8 @@ describe('ParentTools access', () => {
         renderParentTools(['/parent-tools/access?teamId=team-1']);
 
         await screen.findByText('Request player access');
-        await waitFor(() => expect(parentToolsAccessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessTeam).toHaveBeenCalledWith('team-1'));
+        expect(parentToolsAccessServiceMocks.discoverParentAccessTeams).not.toHaveBeenCalled();
 
         const teamSelect = await screen.findByRole('combobox', { name: 'Team' }) as HTMLSelectElement;
         expect(screen.queryByRole('button', { name: 'Request access without a code' })).toBeNull();
@@ -410,15 +442,11 @@ describe('ParentTools access', () => {
         renderParentTools(['/parent-tools/access?teamId=missing-team']);
 
         await screen.findByText('Request player access');
-        // Wait for the manual-request panel to actually render (only true once
-        // teams have loaded and the deep-link reconciliation effect has run) before
-        // asserting on its contents — asserting synchronously right after only the
-        // load call was observed races the state update under full-suite load and
-        // was intermittently failing in CI while passing in isolation.
+        await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessTeam).toHaveBeenCalledWith('missing-team'));
         const teamSelect = await screen.findByRole('combobox', { name: 'Team' }) as HTMLSelectElement;
         expect(teamSelect.value).toBe('');
-        expect(await screen.findByRole('option', { name: 'Bears - Soccer' })).toBeTruthy();
-        expect(parentToolsAccessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1);
+        expect(await screen.findByRole('option', { name: 'No public teams found' })).toBeTruthy();
+        expect(parentToolsAccessServiceMocks.discoverParentAccessTeams).not.toHaveBeenCalled();
         expect(screen.queryByRole('button', { name: 'Request access without a code' })).toBeNull();
         expect(screen.getByRole('button', { name: 'Redeem code' })).toBeTruthy();
         expect(parentToolsAccessServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
@@ -755,7 +783,124 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Copy private link' }));
         await waitFor(() => expect(copyPublicText).toHaveBeenCalledWith(privateFeedUrl));
         expect(writeText).not.toHaveBeenCalled();
+        expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledTimes(1);
+    });
+
+    it('isolates cached private calendar feeds by team', async () => {
+        parentToolsServiceMocks.loadParentCalendarTools.mockResolvedValue({
+            events: [],
+            teams: [
+                { teamId: 'team-1', teamName: 'Bears', eventCount: 1 },
+                { teamId: 'team-2', teamName: 'Wolves', eventCount: 2 }
+            ]
+        });
+        parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl.mockImplementation(async (teamId: string) => `https://calendar.example.test/${teamId}.ics`);
+
+        renderParentTools(['/parent-tools/calendar'], false, linkedAuth);
+
+        const bearsCard = (await screen.findByText('Bears')).closest('.app-card');
+        const wolvesCard = screen.getByText('Wolves').closest('.app-card');
+        expect(bearsCard).not.toBeNull();
+        expect(wolvesCard).not.toBeNull();
+
+        fireEvent.click(within(bearsCard as HTMLElement).getByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledWith('https://calendar.example.test/team-1.ics'));
+        fireEvent.click(within(wolvesCard as HTMLElement).getByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledWith('https://calendar.example.test/team-2.ics'));
+        fireEvent.click(within(bearsCard as HTMLElement).getByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledTimes(3));
+
+        expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledTimes(2);
+        expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenNthCalledWith(1, 'team-1');
+        expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenNthCalledWith(2, 'team-2');
+    });
+
+    it('retries rejected and empty private calendar feed resolutions', async () => {
+        const privateFeedUrl = 'https://calendar.example.test/private/teams/team-1.ics';
+        parentToolsServiceMocks.loadParentCalendarTools.mockResolvedValue({
+            events: [],
+            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
+        });
+        parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl
+            .mockRejectedValueOnce(new Error('Feed unavailable.'))
+            .mockResolvedValueOnce('')
+            .mockResolvedValueOnce(privateFeedUrl);
+
+        renderParentTools(['/parent-tools/calendar'], false, linkedAuth);
+
+        const copyButton = await screen.findByRole('button', { name: 'Copy private link' });
+        fireEvent.click(copyButton);
+        expect(await screen.findByText('Feed unavailable.')).toBeTruthy();
+        fireEvent.click(copyButton);
+        expect(await screen.findByText('Unable to create private calendar feed. Sign in again and retry.')).toBeTruthy();
+        fireEvent.click(copyButton);
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledWith(privateFeedUrl));
+
         expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledTimes(3);
+    });
+
+    it('clears cached private calendar feeds on manual refresh', async () => {
+        const privateFeedUrl = 'https://calendar.example.test/private/teams/team-1.ics';
+        parentToolsServiceMocks.loadParentCalendarTools.mockResolvedValue({
+            events: [],
+            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
+        });
+        parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl.mockResolvedValue(privateFeedUrl);
+
+        renderParentTools(['/parent-tools/calendar'], false, linkedAuth);
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledTimes(1));
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenCalledTimes(2));
+        fireEvent.click(screen.getByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledTimes(2));
+
+        expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledTimes(2);
+    });
+
+    it('clears cached private calendar feeds when refreshVersion changes', async () => {
+        const privateFeedUrl = 'https://calendar.example.test/private/teams/team-1.ics';
+        parentToolsServiceMocks.loadParentCalendarTools.mockResolvedValue({
+            events: [],
+            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
+        });
+        parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl.mockResolvedValue(privateFeedUrl);
+
+        const view = render(<CalendarTool auth={linkedAuth} refreshVersion={0} />);
+        fireEvent.click(await screen.findByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledTimes(1));
+
+        view.rerender(<CalendarTool auth={linkedAuth} refreshVersion={1} />);
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenCalledTimes(2));
+        fireEvent.click(screen.getByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledTimes(2));
+
+        expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledTimes(2);
+    });
+
+    it('clears cached private calendar feeds when auth changes', async () => {
+        const privateFeedUrl = 'https://calendar.example.test/private/teams/team-1.ics';
+        const refreshedAuth: AuthState = {
+            ...linkedAuth,
+            user: linkedAuth.user ? { ...linkedAuth.user, email: 'updated-parent@example.com' } : null
+        };
+        parentToolsServiceMocks.loadParentCalendarTools.mockResolvedValue({
+            events: [],
+            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
+        });
+        parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl.mockResolvedValue(privateFeedUrl);
+
+        const view = render(<CalendarTool auth={linkedAuth} refreshVersion={0} />);
+        fireEvent.click(await screen.findByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledTimes(1));
+
+        view.rerender(<CalendarTool auth={refreshedAuth} refreshVersion={0} />);
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenCalledTimes(2));
+        fireEvent.click(screen.getByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledTimes(2));
+
+        expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledTimes(2);
     });
 
     it('reports a rejected Apple Calendar handoff and restores team actions', async () => {
@@ -815,7 +960,9 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('link', { name: 'Household' }));
         await screen.findByText('No pending household invites');
         expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(1);
-        fireEvent.change(screen.getByPlaceholderText('Recipient email'), { target: { value: 'guardian@example.com' } });
+        expect(screen.getByLabelText('Name')).toBeTruthy();
+        expect(screen.getByLabelText('Relation')).toBeTruthy();
+        fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'guardian@example.com' } });
         expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(1);
     });
 
@@ -893,6 +1040,72 @@ describe('ParentTools access', () => {
         expect(screen.getByText('Grandma')).toBeTruthy();
         expect(screen.getByText('https://allplays.ai/app/#/family/token-1')).toBeTruthy();
         expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
+    });
+
+    it('keeps existing family share actions responsive and preserves token-state workflows', async () => {
+        parentToolsServiceMocks.loadFamilyShareModel.mockResolvedValue({
+            children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Sam Player' }],
+            tokens: [
+                {
+                    id: 'token-active',
+                    label: 'Grandma',
+                    url: 'https://allplays.ai/app/#/family/token-active',
+                    childCount: 1,
+                    extraCalendarUrls: ['https://calendar.example.test/active.ics']
+                },
+                {
+                    id: 'token-expired',
+                    label: 'Expired caregiver',
+                    url: 'https://allplays.ai/app/#/family/token-expired',
+                    childCount: 1,
+                    extraCalendarUrls: [],
+                    expired: true
+                },
+                {
+                    id: 'token-revoked',
+                    label: 'Revoked caregiver',
+                    url: 'https://allplays.ai/app/#/family/token-revoked',
+                    childCount: 1,
+                    extraCalendarUrls: [],
+                    revoked: true
+                }
+            ]
+        });
+
+        renderParentTools(['/parent-tools/share'], false, linkedAuth);
+
+        const activeCard = (await screen.findByText('Grandma')).closest('section') as HTMLElement;
+        const expiredCard = screen.getByText('Expired caregiver').closest('section') as HTMLElement;
+        const revokedCard = screen.getByText('Revoked caregiver').closest('section') as HTMLElement;
+        const activeActions = within(activeCard).getByRole('button', { name: 'Copy' }).parentElement as HTMLElement;
+
+        expect(activeActions).toHaveClass('grid-cols-2', 'sm:grid-cols-4');
+        for (const action of within(activeActions).getAllByRole('button')) {
+            expect(action).toHaveClass('!min-h-11');
+            expect(action).toBeEnabled();
+        }
+
+        fireEvent.click(within(activeCard).getByRole('button', { name: 'Copy' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledWith('https://allplays.ai/app/#/family/token-active'));
+        fireEvent.click(within(activeCard).getByRole('button', { name: 'Share' }));
+        expect(sharePublicUrl).toHaveBeenCalledWith({
+            title: 'ALL PLAYS family page',
+            text: 'Grandma',
+            url: 'https://allplays.ai/app/#/family/token-active'
+        });
+        fireEvent.click(within(activeCard).getByRole('button', { name: 'Feeds' }));
+        expect(within(activeCard).getByDisplayValue('https://calendar.example.test/active.ics')).toBeTruthy();
+        fireEvent.click(within(expiredCard).getByRole('button', { name: 'Revoke' }));
+        expect(await screen.findByRole('dialog', { name: 'Revoke this share link?' })).toBeTruthy();
+
+        expect(within(expiredCard).getByRole('button', { name: 'Copy' })).toBeDisabled();
+        expect(within(expiredCard).getByRole('button', { name: 'Share' })).toBeDisabled();
+        expect(within(expiredCard).getByRole('button', { name: 'Feeds' })).toBeEnabled();
+        expect(within(expiredCard).getByRole('button', { name: 'Revoke' })).toBeEnabled();
+        expect(within(revokedCard).getByRole('button', { name: 'Copy' })).toBeDisabled();
+        expect(within(revokedCard).getByRole('button', { name: 'Share' })).toBeDisabled();
+        expect(within(revokedCard).getByRole('button', { name: 'Feeds' })).toBeEnabled();
+        expect(within(revokedCard).getByRole('button', { name: 'Revoke' })).toBeDisabled();
     });
 
     it('dismisses family share revocation on native Back without leaving Share', async () => {
@@ -1114,12 +1327,14 @@ describe('ParentTools access', () => {
         expect(screen.getByText('https://allplays.ai/app/#/family/token-9')).toBeTruthy();
     });
 
-    it('opens reusable team fee checkout links when legacy fee payloads omit paymentAction', async () => {
+    it('regenerates trusted stored team fee links through the same-payer callable', async () => {
         parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
             {
                 id: 'fee-1',
                 title: 'Team dues',
                 teamId: 'team-1',
+                batchId: 'batch-1',
+                recipientId: 'recipient-1',
                 teamName: 'Bears',
                 playerName: 'Sam Player',
                 status: 'open',
@@ -1127,7 +1342,7 @@ describe('ParentTools access', () => {
                 dueLabel: 'Today',
                 statusLabel: 'Open',
                 balanceDueCents: 10000,
-                checkoutUrl: 'https://pay.example.test/legacy',
+                checkoutUrl: 'https://checkout.stripe.com/c/pay/legacy',
                 canPay: true,
                 checkoutInitiatable: false,
                 paymentAction: '',
@@ -1136,6 +1351,10 @@ describe('ParentTools access', () => {
                 ledgerEntries: []
             }
         ]);
+        parentToolsServiceMocks.initiateParentTeamFeeCheckout.mockResolvedValue({
+            success: true,
+            checkoutUrl: 'https://checkout.stripe.com/c/pay/regenerated'
+        });
 
         renderParentTools(['/parent-tools/fees'], false, linkedAuth);
 
@@ -1143,9 +1362,53 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Pay fee' }));
 
         await waitFor(() => {
-            expect(openPublicUrl).toHaveBeenCalledWith('https://pay.example.test/legacy');
+            expect(parentToolsServiceMocks.initiateParentTeamFeeCheckout).toHaveBeenCalledWith('team-1', 'batch-1', 'recipient-1');
         });
-        expect(parentToolsServiceMocks.initiateParentTeamFeeCheckout).not.toHaveBeenCalled();
+        expect(openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/regenerated');
+        expect(openPublicUrl).not.toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/legacy');
+    });
+
+    it.each([
+        ['a non-Stripe host', 'https://attacker.example/checkout'],
+        ['a deceptive Stripe suffix', 'https://checkout.stripe.com.attacker.example/checkout'],
+        ['an executable scheme', 'javascript:alert(1)']
+    ])('regenerates %s instead of opening the stored parent fee destination', async (_caseName, checkoutUrl) => {
+        parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
+            {
+                id: 'fee-unsafe',
+                title: 'Team dues',
+                teamId: 'team-1',
+                batchId: 'batch-1',
+                recipientId: 'recipient-1',
+                status: 'open',
+                statusLabel: 'Open',
+                amountLabel: '$100',
+                dueLabel: 'Today',
+                balanceDueCents: 10000,
+                checkoutUrl,
+                canPay: true,
+                checkoutInitiatable: false,
+                paymentAction: 'checkoutUrl',
+                lineItems: [],
+                installments: [],
+                ledgerEntries: []
+            }
+        ]);
+        parentToolsServiceMocks.initiateParentTeamFeeCheckout.mockResolvedValue({
+            success: true,
+            checkoutUrl: 'https://checkout.stripe.com/c/pay/regenerated'
+        });
+
+        renderParentTools(['/parent-tools/fees'], false, linkedAuth);
+
+        await screen.findByText('Team dues');
+        fireEvent.click(screen.getByRole('button', { name: 'Pay fee' }));
+
+        await waitFor(() => {
+            expect(parentToolsServiceMocks.initiateParentTeamFeeCheckout).toHaveBeenCalledWith('team-1', 'batch-1', 'recipient-1');
+        });
+        expect(openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/regenerated');
+        expect(openPublicUrl).not.toHaveBeenCalledWith(checkoutUrl);
     });
 
     it('keeps online fee payment primary and reveals invoice details on demand', async () => {
@@ -1328,6 +1591,16 @@ describe('ParentTools access', () => {
     });
 
     it('shows deep-linked awards from notification query params', async () => {
+        parentToolsServiceMocks.loadParentCertificate.mockResolvedValue({
+            id: 'cert-1',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            playerId: 'player-1',
+            playerName: 'Sam Player',
+            title: 'Hustle Award',
+            narrative: 'Great effort.',
+            url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
+        });
         parentToolsServiceMocks.loadParentCertificates.mockResolvedValue([
             {
                 id: 'cert-2',
@@ -1356,6 +1629,7 @@ describe('ParentTools access', () => {
         expect(await screen.findByText('Hustle Award')).toBeTruthy();
         expect(screen.queryByText('Leadership Award')).toBeNull();
         expect(screen.getByText('Opened from a notification')).toBeTruthy();
+        expect(parentToolsServiceMocks.loadParentCertificates).not.toHaveBeenCalled();
         const requestedAwardCard = screen.getByText('Hustle Award').closest('section') as HTMLElement;
         expect(within(requestedAwardCard).getByRole('button', { name: 'View award' })).toBeTruthy();
         expect(within(requestedAwardCard).getByRole('button', { name: 'Share' })).toBeTruthy();
@@ -1428,7 +1702,7 @@ describe('ParentTools access', () => {
         expect(renderCounts.access).toBe(1);
     });
 
-    it('does not refetch visited panels for cloned same-user auth state', async () => {
+    it('ignores unchanged auth and defers changed auth for visited hidden panels', async () => {
         parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([]);
         parentToolsServiceMocks.loadParentRegistrations.mockResolvedValue([]);
         parentToolsServiceMocks.loadParentCertificates.mockResolvedValue([]);
@@ -1511,6 +1785,9 @@ describe('ParentTools access', () => {
             certificates: 1
         });
 
+        fireEvent.click(screen.getByRole('link', { name: 'Access' }));
+        await screen.findByText('Request player access');
+
         const changedParentLinksAuth: AuthState = {
             ...linkedAuth,
             user: linkedAuth.user ? {
@@ -1529,12 +1806,23 @@ describe('ParentTools access', () => {
             </MemoryRouter>
         );
 
+        await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(2));
+        expect(parentToolsServiceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.fees);
+        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.calendar);
+        expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.household);
+        expect(parentToolsServiceMocks.loadFamilyShareModel).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.share);
+        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.registrations);
+        expect(parentToolsServiceMocks.loadParentCertificates).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.certificates);
+
+        fireEvent.click(screen.getByRole('link', { name: 'Fees' }));
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.fees + 1));
+        expect(parentToolsServiceMocks.loadParentFeesForApp).toHaveBeenLastCalledWith(changedParentLinksAuth.user);
+        fireEvent.click(screen.getByRole('link', { name: 'Calendar' }));
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.calendar + 1));
+        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenLastCalledWith(changedParentLinksAuth.user, { force: true });
+        fireEvent.click(screen.getByRole('link', { name: 'Awards' }));
         await waitFor(() => expect(parentToolsServiceMocks.loadParentCertificates).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.certificates + 1));
-        expect(parentToolsServiceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.fees + 1);
-        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.calendar + 1);
-        expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.household + 1);
-        expect(parentToolsServiceMocks.loadFamilyShareModel).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.share + 1);
-        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.registrations + 1);
+        expect(parentToolsServiceMocks.loadParentCertificates).toHaveBeenLastCalledWith(changedParentLinksAuth.user);
 
         const registrationManagerAuth: AuthState = {
             ...changedParentLinksAuth,
@@ -1554,7 +1842,11 @@ describe('ParentTools access', () => {
             </MemoryRouter>
         );
 
-        await waitFor(() => expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.registrations + 2));
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentCertificates).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.certificates + 2));
+        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.registrations);
+
+        fireEvent.click(screen.getByRole('link', { name: 'Register' }));
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.registrations + 1));
         expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenLastCalledWith(expect.objectContaining({
             coachOf: ['team-3'],
             roles: ['parent', 'coach']

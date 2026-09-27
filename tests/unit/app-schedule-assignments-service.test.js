@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('@capacitor/core', () => ({
+    Capacitor: { isNativePlatform: () => false, getPlatform: () => 'ios' }
+}));
+
 const dbMocks = vi.hoisted(() => ({
     getAssignmentClaims: vi.fn(),
     getGames: vi.fn(),
@@ -225,8 +229,9 @@ describe('React app schedule assignment service integration', () => {
 
         const fetchMock = vi.fn(async (url, init = {}) => {
             const href = String(url);
+            const pathname = new URL(href).pathname;
             const method = init.method || 'GET';
-            if (method === 'GET' && href.endsWith('/teams/team-1/games/game-1/assignmentClaims')) {
+            if (method === 'GET' && pathname.endsWith('/teams/team-1/games/game-1/assignmentClaims')) {
                 return restOk({
                     documents: [
                         firestoreDoc('teams/team-1/games/game-1/assignmentClaims/Snacks', {
@@ -256,7 +261,7 @@ describe('React app schedule assignment service integration', () => {
         vi.stubGlobal('fetch', fetchMock);
 
         const loaded = await loadParentScheduleAssignments(event());
-        expect(authMocks.getNativeAuthIdToken).toHaveBeenCalledWith(true);
+        expect(authMocks.getNativeAuthIdToken).toHaveBeenCalledWith(false);
         expect(loaded[0]).toMatchObject({
             role: 'Snacks',
             claim: expect.objectContaining({ id: 'Snacks', claimedByName: 'Taylor' })

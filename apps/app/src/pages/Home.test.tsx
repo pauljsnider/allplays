@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Home } from './Home';
@@ -14,6 +14,7 @@ const socialServiceMocks = vi.hoisted(() => ({
   blockFriend: vi.fn(),
   commentOnSocialPost: vi.fn(),
   createSocialPost: vi.fn(),
+  discardSocialPostMediaUpload: vi.fn(),
   hideSocialPost: vi.fn(),
   loadSocialHome: vi.fn(),
   removeFriend: vi.fn(),
@@ -153,6 +154,7 @@ const baseSocial = {
   outgoingRequests: [],
   suggestions: [],
   friendshipsError: null,
+  feedError: null,
   metrics: {
     feedItems: 0,
     friends: 0,
@@ -171,6 +173,65 @@ const emptyHome = {
     teams: 0
   }
 };
+
+function buildSwitchableComposerHome() {
+  const secondPlayer = {
+    teamId: 'team-2',
+    teamName: 'Storm',
+    playerId: 'player-2',
+    playerName: 'Sam Player',
+    nextEvent: null,
+    rsvpNeeded: 0,
+    packetsReady: 0,
+    openAssignments: 0,
+    unreadCount: 0
+  };
+  const secondTeam = {
+    teamId: 'team-2',
+    teamName: 'Storm',
+    role: 'Parent',
+    sport: 'Soccer',
+    players: [{
+      teamId: 'team-2',
+      teamName: 'Storm',
+      playerId: 'player-2',
+      playerName: 'Sam Player'
+    }],
+    nextEvent: null,
+    eventCount: 1,
+    unreadCount: 0,
+    openActions: 0
+  };
+  const game = (id: string, opponent: string, date: string) => ({
+    eventKey: `team-1::${id}::player-1`,
+    id,
+    teamId: 'team-1',
+    teamName: 'Bears',
+    type: 'game',
+    date: new Date(date),
+    location: 'Main Gym',
+    opponent,
+    title: null,
+    childId: 'player-1',
+    childName: 'Pat Player',
+    isDbGame: true,
+    isCancelled: false,
+    status: id === 'game-3' ? 'scheduled' : 'completed',
+    myRsvp: 'going',
+    assignments: []
+  });
+  return {
+    ...baseHome,
+    players: [...baseHome.players, secondPlayer],
+    teams: [...baseHome.teams, secondTeam],
+    feedGames: [
+      game('game-1', 'Falcons', '2026-07-10T18:00:00Z'),
+      game('game-2', 'Rockets', '2026-07-11T18:00:00Z'),
+      game('game-3', 'Owls', '2026-08-09T18:00:00Z')
+    ],
+    metrics: { ...baseHome.metrics, players: 2, teams: 2 }
+  };
+}
 
 function buildLargeHomeModel() {
   return {
@@ -281,6 +342,25 @@ function buildLargeHomeModel() {
   };
 }
 
+function buildHomeWithRsvpNeeded(rsvpNeeded: number) {
+  const rsvpAction = {
+    id: 'rsvp:single',
+    kind: 'rsvp',
+    tone: 'amber',
+    title: 'Pat Player needs availability',
+    detail: 'Bears Game · Tue, Jun 1',
+    to: '/schedule/team-1/game-1',
+    priority: 10,
+    date: new Date('2100-06-01T18:00:00Z')
+  };
+  return {
+    ...baseHome,
+    players: baseHome.players.map((player) => ({ ...player, rsvpNeeded })),
+    actionItems: rsvpNeeded > 0 ? [rsvpAction] : [],
+    metrics: { ...baseHome.metrics, rsvpNeeded }
+  };
+}
+
 const signedInAuth: AuthState = {
   user: {
     uid: 'parent-1',
@@ -343,7 +423,15 @@ describe('Home', () => {
     homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValue({ home: baseHome, schedule: [] });
     homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(baseHome);
     socialServiceMocks.loadSocialHome.mockResolvedValue(baseSocial);
-    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValue({ hasAccess: false, teamCount: 0 });
+    socialServiceMocks.discardSocialPostMediaUpload.mockResolvedValue(undefined);
+    socialServiceMocks.uploadSocialPostMedia.mockResolvedValue({
+      type: 'image',
+      url: 'https://primary.example/social.jpg',
+      name: 'social.jpg',
+      thumbnailUrl: null,
+      storagePath: 'stat-sheets/team-chat/team-1/team/parent-1/social.jpg'
+    });
+    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValue({ hasAccess: false, teamCount: 0, isPartial: false });
     opportunityServiceMocks.listPublicOpportunities.mockResolvedValue({ items: [], nextCursor: null });
   });
 
@@ -505,6 +593,84 @@ describe('Home', () => {
     expect(screen.getByRole('link', { name: /Requests1/ }).getAttribute('href')).toBe('/home?section=friends');
   });
 
+  it('shows player-scoped Multi RSVP only for players with at least two due responses', async () => {
+    const scopedHome = buildLargeHomeModel();
+    scopedHome.players[0].rsvpNeeded = 2;
+    scopedHome.players[1].rsvpNeeded = 1;
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: scopedHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(scopedHome);
+
+    renderHome(signedInAuth, '/home?section=players');
+
+    expect(await screen.findByRole('heading', { name: 'My players' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Multi RSVP for Player 1' }).getAttribute('href'))
+      .toBe('/schedule?playerId=player-1&bulkRsvp=1');
+    expect(screen.queryByRole('link', { name: 'Multi RSVP for Player 2' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Multi RSVP for Player 3' })).toBeNull();
+  });
+
+  it('shows team-scoped Multi RSVP only for teams with at least two due responses', async () => {
+    const scopedHome = buildLargeHomeModel();
+    scopedHome.players[0].rsvpNeeded = 1;
+    scopedHome.players[1].rsvpNeeded = 1;
+    scopedHome.players[2].rsvpNeeded = 1;
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: scopedHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(scopedHome);
+
+    renderHome(signedInAuth, '/home?section=teams');
+
+    expect(await screen.findByRole('heading', { name: 'Teams' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Multi RSVP for Bears' }).getAttribute('href'))
+      .toBe('/schedule?teamId=team-1&bulkRsvp=1');
+    expect(screen.queryByRole('link', { name: 'Multi RSVP for Storm' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Multi RSVP for Falcons' })).toBeNull();
+  });
+
+  it('shows a section-level Multi RSVP action for two due responses with the bulk query contract', async () => {
+    const multiRsvpHome = buildHomeWithRsvpNeeded(2);
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: multiRsvpHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(multiRsvpHome);
+
+    renderHome(signedInAuth);
+
+    const summaryActions = await screen.findByRole('region', { name: 'Availability summary actions' });
+    expect(within(summaryActions).getByText('2 responses due')).toBeTruthy();
+    expect(within(summaryActions).getByRole('link', { name: 'Multi RSVP' }).getAttribute('href')).toBe('/schedule?bulkRsvp=1');
+  });
+
+  it.each([0, 1])('hides the section-level Multi RSVP action when %i responses are due', async (rsvpNeeded) => {
+    const home = buildHomeWithRsvpNeeded(rsvpNeeded);
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(home);
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Your day' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Availability summary actions' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Multi RSVP' })).toBeNull();
+  });
+
+  it('removes Multi RSVP after refresh leaves one eligible response', async () => {
+    const initialHome = buildHomeWithRsvpNeeded(2);
+    const refreshedHome = buildHomeWithRsvpNeeded(1);
+    homeServiceMocks.loadParentHomeSummaryBootstrap
+      .mockResolvedValueOnce({ home: initialHome, schedule: [] })
+      .mockResolvedValueOnce({ home: refreshedHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData
+      .mockResolvedValueOnce(initialHome)
+      .mockResolvedValueOnce(refreshedHome);
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('link', { name: 'Multi RSVP' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh Home' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('link', { name: 'Multi RSVP' })).toBeNull();
+      expect(screen.getByRole('link', { name: /Availability.*1.*Needs a response/i }).getAttribute('href')).toBe('/schedule/team-1/game-1');
+    });
+  });
+
   it.each([
     [{ ...signedInAuth, isParent: true, isCoach: false, isAdmin: false, isPlatformAdmin: false }, 'Family home'],
     [{ ...signedInAuth, roles: ['coach'], isParent: false, isCoach: true, isAdmin: false, isPlatformAdmin: false }, 'Coach home'],
@@ -516,7 +682,7 @@ describe('Home', () => {
   });
 
   it('uses official context when assignments are available', async () => {
-    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValueOnce({ hasAccess: true, teamCount: 1 });
+    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValueOnce({ hasAccess: true, teamCount: 1, isPartial: false });
     renderHome({ ...signedInAuth, roles: [], isParent: false } as AuthState);
 
     expect(await screen.findByText(/Official assignments/)).toBeTruthy();
@@ -583,14 +749,110 @@ describe('Home', () => {
     expect(screen.queryByText('To-do list')).toBeNull();
   });
 
+  it('settles an online timeout after a preview and recovers through Retry', async () => {
+    const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+    const failAfterPreview = async (_user: unknown, options: any) => {
+      options.onPartial({ home: baseHome, schedule: { children: [], events: [], isPartial: true } });
+      throw new Error('Team schedule timed out.');
+    };
+    homeServiceMocks.loadParentHomeSummaryBootstrap
+      .mockImplementationOnce(failAfterPreview)
+      .mockImplementationOnce(failAfterPreview);
+    try {
+      renderHome(signedInAuth);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        expect(await screen.findByRole('button', { name: 'Retry loading Home' })).toBeTruthy();
+        expect(screen.getByText('Needs refresh')).toBeTruthy();
+        expect(screen.queryByText('Loading')).toBeNull();
+        expect(screen.queryByText(/while offline/)).toBeNull();
+        expect(screen.queryByText(/Showing the last loaded Home/)).toBeNull();
+        expect(screen.queryByRole('heading', { name: 'Checking today’s actions…' })).toBeNull();
+        expect(screen.queryByRole('heading', { name: 'All caught up' })).toBeNull();
+        expect(screen.queryByText('No upcoming events')).toBeNull();
+        expect(homeServiceMocks.loadParentHomeWithSecondaryData).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole('button', { name: 'Retry loading Home' }));
+      }
+      expect(await screen.findByRole('heading', { name: 'All caught up' })).toBeTruthy();
+      expect(screen.queryByText('Needs refresh')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Retry loading Home' })).toBeNull();
+      expect(homeServiceMocks.loadParentHomeSummaryBootstrap).toHaveBeenLastCalledWith(signedInAuth.user, expect.objectContaining({ force: true }));
+    } finally {
+      online.mockRestore();
+    }
+  });
+
+  it.each(['players', 'teams', 'feed', 'friends'])('does not claim empty %s after an incomplete preview fails', async (section) => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementationOnce(async (_user: unknown, options: any) => {
+      options.onPartial({ home: emptyHome, schedule: { children: [], events: [], isPartial: true } });
+      throw new Error('Team schedule timed out.');
+    });
+    renderHome(signedInAuth, `/home?section=${section}`);
+    expect(await screen.findByRole('button', { name: 'Retry loading Home' })).toBeTruthy();
+    for (const emptyClaim of ['No players linked yet', 'No teams available', 'No posts for this filter', 'No friends yet', 'No suggestions yet']) {
+      expect(screen.queryByText(emptyClaim)).toBeNull();
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading Home' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry loading Home' })).toBeNull());
+    expect(homeServiceMocks.loadParentHomeWithSecondaryData).toHaveBeenCalled();
+  });
+
+  it('retains the last complete Home if a refresh emits an empty preview then fails', async () => {
+    renderHome(signedInAuth);
+    expect(await screen.findByRole('heading', { name: 'All caught up' })).toBeTruthy();
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementationOnce(async (_user: unknown, options: any) => {
+      options.onPartial({ home: emptyHome, schedule: { children: [], events: [], isPartial: true } });
+      throw new Error('Team schedule timed out.');
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh Home' }));
+    expect(await screen.findByText('Unable to refresh Home. The request failed or timed out. Showing the last loaded Home. Try again.')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'All caught up' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Get linked to your player' })).toBeNull();
+  });
+
+  it('preserves completed actions when a secondary refresh emits partial emptiness then fails', async () => {
+    const completeHome = buildLargeHomeModel();
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(completeHome);
+    renderHome(signedInAuth);
+    expect(await screen.findByRole('heading', { name: 'Player 1 needs availability' })).toBeTruthy();
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockImplementationOnce(async (_user: unknown, options: any) => {
+      options.onPartial(emptyHome);
+      throw new Error('Home details timed out.');
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh Home' }));
+    expect(await screen.findByText('Needs refresh')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Player 1 needs availability' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'All caught up' })).toBeNull();
+  });
+
+  it('settles failed secondary details even while social work is pending', async () => {
+    socialServiceMocks.loadSocialHome.mockImplementationOnce(() => new Promise(() => {}));
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockRejectedValueOnce(new Error('Team details timed out.'));
+    renderHome(signedInAuth);
+    expect(await screen.findByRole('button', { name: 'Retry loading Home' })).toBeTruthy();
+    expect(screen.queryByText('Loading')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'All caught up' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Checking today’s actions…' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading Home' }));
+    expect(await screen.findByRole('heading', { name: 'All caught up' })).toBeTruthy();
+  });
+
   it('shows network-specific Home retry copy after an initial load failure', async () => {
     homeServiceMocks.loadParentHomeSummaryBootstrap.mockRejectedValueOnce(new TypeError('Failed to fetch'));
 
     renderHome(signedInAuth);
 
-    expect(await screen.findByText('Unable to load Home while offline. Check your connection and try again.')).toBeTruthy();
+    expect(await screen.findByText('Unable to load Home. The request failed or timed out. Try again.')).toBeTruthy();
     expect(screen.getByText('Home could not connect')).toBeTruthy();
-    expect(screen.getByText('Check your connection and try loading Home again.')).toBeTruthy();
+    expect(screen.getByText('The request failed or timed out. Try loading Home again.')).toBeTruthy();
+  });
+
+  it('does not expose a raw internal backend code after an initial Home load failure', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockRejectedValueOnce(new Error('INTERNAL'));
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByText('Unable to load Home. Try again.')).toBeTruthy();
+    expect(screen.queryByText('INTERNAL')).toBeNull();
   });
 
   it('keeps the summary visible when the initial secondary load fails', async () => {
@@ -598,10 +860,104 @@ describe('Home', () => {
 
     renderHome(signedInAuth);
 
-    expect(await screen.findByText('Home details could not refresh while offline.')).toBeTruthy();
+    expect(await screen.findByText('Home details could not refresh. The request failed or timed out. Try again.')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Your day' })).toBeTruthy();
-    expect(screen.queryByText('Home could not connect')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Retry loading Home' })).toBeNull();
+    expect(screen.getByText('Home could not connect')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry loading Home' })).toBeTruthy();
+    expect(screen.getByText('Needs refresh')).toBeTruthy();
+    expect(screen.queryByText('Loading')).toBeNull();
+    expect(screen.queryByText('Checking actions')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Checking today’s actions…' })).toBeNull();
+  });
+
+  it('marks Home retryable when a stale summary background refresh fails', async () => {
+    let summaryOptions: any;
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementationOnce((_user: unknown, options: any) => {
+      summaryOptions = options;
+      return Promise.resolve({ home: baseHome, schedule: [] });
+    });
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'All caught up' })).toBeTruthy();
+    expect(summaryOptions?.onBackgroundError).toBeTypeOf('function');
+
+    act(() => {
+      summaryOptions.onBackgroundError(new TypeError('Failed to fetch'));
+    });
+
+    expect(await screen.findByText('Home details could not refresh. The request failed or timed out. Try again.')).toBeTruthy();
+    expect(screen.getByText('Needs refresh')).toBeTruthy();
+  });
+
+  it('does not expose a raw internal backend code when Home details fail', async () => {
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockRejectedValueOnce(new Error('INTERNAL'));
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByText('Unable to refresh Home details. Try again.')).toBeTruthy();
+    expect(screen.queryByText('INTERNAL')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Your day' })).toBeTruthy();
+    expect(screen.getByText('Needs refresh')).toBeTruthy();
+  });
+
+  it('keeps the concurrent social load when a failed secondary slice does not change team scope', async () => {
+    const partialHome = {
+      ...baseHome,
+      fees: [{ id: 'fee-1', teamId: 'team-1', teamName: 'Bears', title: 'Spring dues' }]
+    } as any;
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockImplementationOnce((_user: unknown, options: any) => {
+      options?.onPartial?.(partialHome);
+      return Promise.reject(new Error('fees unavailable'));
+    });
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [baseFeedItem],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByText('Needs refresh')).toBeTruthy();
+    await waitFor(() => {
+      expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledWith(signedInAuth.user, baseHome);
+    });
+    expect(await screen.findByText('Pat Player highlight')).toBeTruthy();
+    expect(screen.getByText('Needs refresh')).toBeTruthy();
+  });
+
+  it('renders a successful social load on Feed when Home details fail', async () => {
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockRejectedValueOnce(new Error('fees unavailable'));
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [baseFeedItem],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    expect(await screen.findByRole('button', { name: 'Retry loading Home' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Feed' })).toBeTruthy();
+    expect(screen.getByText('Pat Player highlight')).toBeTruthy();
+    expect(screen.queryByText('No posts for this filter')).toBeNull();
+    expect(screen.getByText('Needs refresh')).toBeTruthy();
+  });
+
+  it('keeps the Needs refresh badge when a secondary retry also fails', async () => {
+    homeServiceMocks.loadParentHomeWithSecondaryData
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockRejectedValueOnce(new Error('Permission denied for Home refresh'));
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByText('Home details could not refresh. The request failed or timed out. Try again.')).toBeTruthy();
+    expect(screen.getByText('Needs refresh')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh Home' }));
+
+    expect(await screen.findByText('Home details could not refresh because access was denied.')).toBeTruthy();
+    expect(screen.getByText('Needs refresh')).toBeTruthy();
+    expect(homeServiceMocks.loadParentHomeWithSecondaryData).toHaveBeenCalledTimes(2);
   });
 
   it('shows first-run access actions instead of an empty Today dashboard when no players or teams are linked', async () => {
@@ -680,7 +1036,7 @@ describe('Home', () => {
   it('makes officials access primary for first-run users with no linked players or teams', async () => {
     homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: emptyHome, schedule: [] });
     homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(emptyHome);
-    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValueOnce({ hasAccess: true, teamCount: 1 });
+    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValueOnce({ hasAccess: true, teamCount: 1, isPartial: false });
 
     renderHome(signedInAuth);
 
@@ -697,7 +1053,7 @@ describe('Home', () => {
     homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValue({ home: emptyHome, schedule: [] });
     homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(emptyHome);
     scheduleServiceMocks.loadOfficialAssignmentsAccess
-      .mockResolvedValueOnce({ hasAccess: true, teamCount: 1 })
+      .mockResolvedValueOnce({ hasAccess: true, teamCount: 1, isPartial: false })
       .mockImplementationOnce(() => new Promise(() => {}));
 
     const { rerender } = render(
@@ -730,6 +1086,34 @@ describe('Home', () => {
     expect(screen.queryByRole('link', { name: /Officials Manage assignments/i })).toBeNull();
   });
 
+  it('shows a retryable officials state instead of treating discovery failure as authoritative absence', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: emptyHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(emptyHome);
+    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockRejectedValueOnce(new Error('access unavailable'));
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Assignments could not refresh' })).toBeTruthy();
+    expect(screen.getByText('Open Officials to retry. Your linked teams were not treated as empty.')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Get linked to your player' })).toBeNull();
+  });
+
+  it('shows verified officials access without an error card when discovery is nonempty but partial', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: emptyHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(emptyHome);
+    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValueOnce({
+      hasAccess: true,
+      teamCount: 1,
+      isPartial: true
+    });
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Manage assignments' })).toBeTruthy();
+    expect(screen.getByText('1 verified linked team')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Assignments could not refresh' })).toBeNull();
+  });
+
   it('keeps the normal Today dashboard when at least one player or team is linked', async () => {
     renderHome(signedInAuth);
 
@@ -756,6 +1140,253 @@ describe('Home', () => {
 
     expect(await screen.findByText('Spring dues')).toBeTruthy();
     expect(capturedOnPartial).toBeTypeOf('function');
+  });
+
+  it('ignores pending Home refresh callbacks after the signed-in account changes', async () => {
+    const secondHome = {
+      ...baseHome,
+      players: [{
+        ...baseHome.players[0],
+        playerId: 'player-2',
+        playerName: 'Second Player'
+      }],
+      teams: [{
+        ...baseHome.teams[0],
+        teamId: 'team-2',
+        teamName: 'Storm',
+        players: [{
+          ...baseHome.teams[0].players[0],
+          teamId: 'team-2',
+          teamName: 'Storm',
+          playerId: 'player-2',
+          playerName: 'Second Player'
+        }]
+      }]
+    };
+    let oldSummaryOptions: any;
+    let oldSecondaryOptions: any;
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementation((user: any, options: any) => {
+      if (user.uid === signedInAuth.user?.uid) {
+        oldSummaryOptions = options;
+        return Promise.resolve({ home: baseHome, schedule: [] });
+      }
+      return Promise.resolve({ home: secondHome, schedule: [] });
+    });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockImplementation((user: any, options: any) => {
+      if (user.uid === signedInAuth.user?.uid) {
+        oldSecondaryOptions = options;
+        return new Promise(() => {});
+      }
+      return Promise.resolve(secondHome);
+    });
+
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/home?section=players']}>
+        <Routes>
+          <Route path="/home" element={<Home auth={signedInAuth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(oldSummaryOptions?.onPartial).toBeTypeOf('function');
+      expect(oldSecondaryOptions?.onPartial).toBeTypeOf('function');
+    });
+
+    rerender(
+      <MemoryRouter initialEntries={['/home?section=players']}>
+        <Routes>
+          <Route path="/home" element={<Home auth={secondSignedInAuth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Second Player')).toBeTruthy();
+
+    act(() => {
+      oldSummaryOptions.onPartial({ home: baseHome, schedule: { children: [], events: [], isPartial: true } });
+      oldSecondaryOptions.onPartial(baseHome);
+      oldSummaryOptions.onBackgroundError(new Error('old account refresh failed'));
+      oldSecondaryOptions.onBackgroundError(new Error('old account details failed'));
+    });
+
+    expect(screen.getByText('Second Player')).toBeTruthy();
+    expect(screen.queryByText('Pat Player')).toBeNull();
+    expect(screen.queryByText('Needs refresh')).toBeNull();
+  });
+
+  it('reloads social data when a stale secondary cache refresh changes team scope', async () => {
+    const refreshedHome = {
+      ...baseHome,
+      players: [{
+        ...baseHome.players[0],
+        teamId: 'team-2',
+        teamName: 'Storm',
+        playerId: 'player-2',
+        playerName: 'Second Player'
+      }],
+      teams: [{
+        ...baseHome.teams[0],
+        teamId: 'team-2',
+        teamName: 'Storm',
+        players: [{
+          ...baseHome.teams[0].players[0],
+          teamId: 'team-2',
+          teamName: 'Storm',
+          playerId: 'player-2',
+          playerName: 'Second Player'
+        }]
+      }]
+    };
+    const staleSocial = {
+      ...baseSocial,
+      feedItems: [baseFeedItem],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    };
+    const refreshedSocial = {
+      ...baseSocial,
+      feedItems: [{
+        ...baseFeedItem,
+        id: 'post-2',
+        teamId: 'team-2',
+        teamName: 'Storm',
+        playerIds: ['player-2'],
+        playerNames: ['Second Player'],
+        sourceId: 'player-2',
+        title: 'Second Player highlight',
+        detail: 'Player moment · Second Player · Storm',
+        route: '/players/team-2/player-2'
+      }],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    };
+    let secondaryOptions: any;
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockImplementationOnce((_user: unknown, options: any) => {
+      secondaryOptions = options;
+      return Promise.resolve(baseHome);
+    });
+    socialServiceMocks.loadSocialHome
+      .mockResolvedValueOnce(staleSocial)
+      .mockResolvedValueOnce(refreshedSocial);
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    expect(await screen.findByText('Pat Player highlight')).toBeTruthy();
+
+    await act(async () => {
+      secondaryOptions.onPartial(refreshedHome);
+    });
+
+    await waitFor(() => {
+      expect(socialServiceMocks.loadSocialHome).toHaveBeenLastCalledWith(signedInAuth.user, refreshedHome);
+    });
+    expect(await screen.findByText('Second Player highlight')).toBeTruthy();
+    expect(screen.queryByText('Pat Player highlight')).toBeNull();
+  });
+
+  it('restarts downstream Home work when a stale summary refresh changes team scope', async () => {
+    const refreshedHome = {
+      ...baseHome,
+      players: [{
+        ...baseHome.players[0],
+        teamId: 'team-2',
+        teamName: 'Storm',
+        playerId: 'player-2',
+        playerName: 'Second Player'
+      }],
+      teams: [{
+        ...baseHome.teams[0],
+        teamId: 'team-2',
+        teamName: 'Storm',
+        players: [{
+          ...baseHome.teams[0].players[0],
+          teamId: 'team-2',
+          teamName: 'Storm',
+          playerId: 'player-2',
+          playerName: 'Second Player'
+        }]
+      }]
+    };
+    const staleSchedule = { children: [], events: [], marker: 'stale' };
+    const refreshedSchedule = { children: [], events: [], marker: 'refreshed' };
+    const staleSocial = {
+      ...baseSocial,
+      feedItems: [baseFeedItem],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    };
+    const refreshedSocial = {
+      ...baseSocial,
+      feedItems: [{
+        ...baseFeedItem,
+        id: 'post-2',
+        teamId: 'team-2',
+        teamName: 'Storm',
+        playerIds: ['player-2'],
+        playerNames: ['Second Player'],
+        sourceId: 'player-2',
+        title: 'Fresh Storm highlight',
+        detail: 'Player moment · Second Player · Storm',
+        route: '/players/team-2/player-2'
+      }],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    };
+    let staleSummaryOptions: any;
+    let staleSecondaryOptions: any;
+    let resolveRefreshedSecondary!: (value: typeof refreshedHome) => void;
+    homeServiceMocks.loadParentHomeSummaryBootstrap
+      .mockImplementationOnce((_user: unknown, options: any) => {
+        staleSummaryOptions = options;
+        return Promise.resolve({ home: baseHome, schedule: staleSchedule });
+      })
+      .mockResolvedValueOnce({ home: refreshedHome, schedule: refreshedSchedule });
+    homeServiceMocks.loadParentHomeWithSecondaryData
+      .mockImplementationOnce((_user: unknown, options: any) => {
+        staleSecondaryOptions = options;
+        return Promise.resolve(baseHome);
+      })
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveRefreshedSecondary = resolve;
+      }));
+    socialServiceMocks.loadSocialHome
+      .mockResolvedValueOnce(staleSocial)
+      .mockResolvedValueOnce(refreshedSocial);
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    expect(await screen.findByText('Pat Player highlight')).toBeTruthy();
+    await waitFor(() => {
+      expect(staleSummaryOptions?.onRefresh).toBeTypeOf('function');
+      expect(staleSecondaryOptions?.onPartial).toBeTypeOf('function');
+    });
+
+    act(() => {
+      staleSummaryOptions.onRefresh({ home: refreshedHome, schedule: refreshedSchedule });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Pat Player highlight')).toBeNull();
+    });
+    expect(homeServiceMocks.loadParentHomeSummaryBootstrap).toHaveBeenCalledTimes(2);
+    expect(homeServiceMocks.loadParentHomeWithSecondaryData).toHaveBeenLastCalledWith(
+      signedInAuth.user,
+      expect.objectContaining({
+        force: true,
+        schedule: refreshedSchedule
+      })
+    );
+
+    act(() => {
+      staleSummaryOptions.onPartial({ home: baseHome, schedule: staleSchedule });
+      staleSecondaryOptions.onPartial(baseHome);
+    });
+
+    expect(screen.queryByText('Pat Player highlight')).toBeNull();
+
+    await act(async () => {
+      resolveRefreshedSecondary(refreshedHome);
+    });
+
+    expect(await screen.findByText('Fresh Storm highlight')).toBeTruthy();
+    expect(screen.queryByText('Pat Player highlight')).toBeNull();
   });
 
   it('records meaningful Home render without waiting for social data', async () => {
@@ -803,6 +1434,57 @@ describe('Home', () => {
     expect(screen.getByRole('button', { name: 'Create a post' })).toBeTruthy();
   });
 
+  it('keeps legacy posts visible but omits unsafe source actions in feed cards', async () => {
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [{
+        ...baseFeedItem,
+        id: 'unsafe-post',
+        title: 'Stored team update',
+        route: '//example.invalid/source',
+        href: 'mailto:team@example.invalid'
+      }],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    expect(await screen.findByText('Stored team update')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Open source' })).toBeNull();
+  });
+
+  it('keeps canonical app routes actionable in feed cards', async () => {
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [baseFeedItem],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    expect((await screen.findByRole('link', { name: 'Open source' })).getAttribute('href'))
+      .toBe('/players/team-1/player-1');
+  });
+
+  it('omits unsafe source actions from Home feed previews', async () => {
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [{
+        ...baseFeedItem,
+        id: 'unsafe-preview',
+        title: 'Stored preview update',
+        route: '/\\example.invalid/source',
+        href: null
+      }],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+
+    renderHome(signedInAuth);
+
+    const title = await screen.findByText('Stored preview update');
+    expect(title.closest('a')).toBeNull();
+  });
+
   it('optimistically updates likes and blocks rapid double taps from writing twice', async () => {
     let resolveLike: () => void = () => {};
     socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
@@ -830,6 +1512,23 @@ describe('Home', () => {
     await waitFor(() => {
       expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('surfaces incomplete feed state and disables Like when the viewer reaction is unknown', async () => {
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [{ ...baseFeedItem, viewerHasLiked: undefined, viewerReactionError: true }],
+      feedError: 'Some feed details could not load. Retry before relying on the complete post or Like state.',
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Some feed details could not load');
+    const likeButton = screen.getByRole('button', { name: 'Like status unavailable, 2 likes' });
+    expect(likeButton).toBeDisabled();
+    fireEvent.click(likeButton);
+    expect(socialServiceMocks.reactToSocialPost).not.toHaveBeenCalled();
   });
 
   it('optimistically removes an existing like', async () => {
@@ -996,6 +1695,144 @@ describe('Home', () => {
       expect(socialServiceMocks.createSocialPost).toHaveBeenCalledTimes(1);
       expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('switches player context with the selected team before creating a player post', async () => {
+    const switchableHome = buildSwitchableComposerHome();
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: switchableHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(switchableHome);
+    socialServiceMocks.createSocialPost.mockResolvedValueOnce('post-player-2');
+    renderHome(signedInAuth, '/home?section=feed&social=create&type=player_moment');
+
+    const dialog = await screen.findByRole('dialog', { name: 'Create social post' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Pat Player · Bears' }));
+    fireEvent.change(within(dialog).getByLabelText('Team'), { target: { value: 'team-2' } });
+
+    const playerSelect = within(dialog).getByLabelText('Player') as HTMLSelectElement;
+    expect(playerSelect.value).toBe('team-2::player-2');
+    expect(within(playerSelect).queryByRole('option', { name: 'Pat Player · Bears' })).toBeNull();
+    expect(within(playerSelect).getByRole('option', { name: 'Sam Player · Storm' })).toBeTruthy();
+
+    fireEvent.change(within(dialog).getByPlaceholderText('What stood out today?'), { target: { value: 'Great hustle.' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Post' }));
+
+    await waitFor(() => {
+      expect(socialServiceMocks.createSocialPost).toHaveBeenCalledWith(signedInAuth.user, expect.objectContaining({
+        teamId: 'team-2',
+        teamName: 'Storm',
+        playerIds: ['player-2'],
+        playerNames: ['Sam Player'],
+        sourceType: 'player',
+        sourceId: 'player-2',
+        route: '/players/team-2/player-2'
+      }));
+    });
+  });
+
+  it('does not create a player post after switching to a team with no selectable player', async () => {
+    const switchableHome = buildSwitchableComposerHome();
+    const noStormPlayerHome = {
+      ...switchableHome,
+      players: switchableHome.players.filter((player) => player.teamId !== 'team-2')
+    };
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: noStormPlayerHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(noStormPlayerHome);
+    renderHome(signedInAuth, '/home?section=feed&social=create&type=player_moment');
+
+    const dialog = await screen.findByRole('dialog', { name: 'Create social post' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Pat Player · Bears' }));
+    fireEvent.change(within(dialog).getByLabelText('Team'), { target: { value: 'team-2' } });
+    fireEvent.change(within(dialog).getByPlaceholderText('What stood out today?'), { target: { value: 'Great effort.' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Post' }));
+
+    expect(await within(dialog).findByText('Choose a player for this post.')).toBeTruthy();
+    expect(socialServiceMocks.createSocialPost).not.toHaveBeenCalled();
+  });
+
+  it('switches game context and stores a game source with a direct schedule route', async () => {
+    const switchableHome = buildSwitchableComposerHome();
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: switchableHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(switchableHome);
+    socialServiceMocks.createSocialPost.mockResolvedValueOnce('post-game-2');
+    renderHome(signedInAuth, '/home?section=feed&social=create&type=game_recap');
+
+    const dialog = await screen.findByRole('dialog', { name: 'Create social post' });
+    fireEvent.click(within(dialog).getByRole('button', { name: /Falcons/ }));
+    const gameSelect = within(dialog).getByLabelText('Game') as HTMLSelectElement;
+    fireEvent.change(gameSelect, {
+      target: { value: 'team-1::game-2::2026-07-11T18:00:00.000Z' }
+    });
+    expect(within(gameSelect).getByRole('option', { name: /Rockets/ })).toBeTruthy();
+    expect(within(gameSelect).queryByRole('option', { name: /Owls/ })).toBeNull();
+
+    fireEvent.change(within(dialog).getByPlaceholderText('How did the game go?'), { target: { value: 'Strong finish.' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Post' }));
+
+    await waitFor(() => {
+      expect(socialServiceMocks.createSocialPost).toHaveBeenCalledWith(signedInAuth.user, expect.objectContaining({
+        teamId: 'team-1',
+        teamName: 'Bears',
+        playerIds: [],
+        sourceType: 'game',
+        sourceId: 'game-2',
+        route: '/schedule/team-1/game-2?childId=player-1'
+      }));
+    });
+  });
+
+  it('requires a completed game before uploading media for a recap', async () => {
+    const switchableHome = buildSwitchableComposerHome();
+    const upcomingOnlyHome = { ...switchableHome, feedGames: switchableHome.feedGames.filter((game) => game.id === 'game-3') };
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: upcomingOnlyHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(upcomingOnlyHome);
+    renderHome(signedInAuth, '/home?section=feed&social=create&type=game_recap');
+
+    const dialog = await screen.findByRole('dialog', { name: 'Create social post' });
+    fireEvent.change(within(dialog).getByPlaceholderText('How did the game go?'), { target: { value: 'Recap note.' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Post' }));
+
+    expect(await within(dialog).findByText('Choose a completed game for this recap.')).toBeTruthy();
+    expect(socialServiceMocks.uploadSocialPostMedia).not.toHaveBeenCalled();
+    expect(socialServiceMocks.createSocialPost).not.toHaveBeenCalled();
+  });
+
+  it('does not offer an in-progress game as a recap after its kickoff time', async () => {
+    const switchableHome = buildSwitchableComposerHome();
+    const liveGame = {
+      ...switchableHome.feedGames[0],
+      id: 'game-live',
+      eventKey: 'team-1::game-live::player-1',
+      status: 'scheduled',
+      liveStatus: 'live'
+    };
+    const liveOnlyHome = { ...switchableHome, feedGames: [liveGame] };
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: liveOnlyHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(liveOnlyHome);
+    renderHome(signedInAuth, '/home?section=feed&social=create&type=game_recap');
+
+    const dialog = await screen.findByRole('dialog', { name: 'Create social post' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Bears' }));
+
+    expect(within(dialog).getByLabelText('Game')).toHaveValue('');
+    expect(within(dialog).getByRole('option', { name: 'No games on this team' })).toBeTruthy();
+  });
+
+  it('removes uploaded feed media when post creation fails', async () => {
+    socialServiceMocks.createSocialPost.mockRejectedValueOnce(new Error('Post write failed.'));
+    renderHome(signedInAuth, '/home?section=feed&social=create&type=team_media');
+
+    const dialog = await screen.findByRole('dialog', { name: 'Create social post' });
+    fireEvent.change(within(dialog).getByLabelText(/choose photo or video/i), {
+      target: { files: [new File(['image'], 'social.jpg', { type: 'image/jpeg' })] }
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Post' }));
+
+    await waitFor(() => {
+      expect(socialServiceMocks.discardSocialPostMediaUpload).toHaveBeenCalledWith(expect.objectContaining({
+        storagePath: 'stat-sheets/team-chat/team-1/team/parent-1/social.jpg'
+      }));
+    });
+    expect(await within(dialog).findByText('Post write failed.')).toBeTruthy();
   });
 
   it('shows a newly created post before background feed reconciliation completes', async () => {

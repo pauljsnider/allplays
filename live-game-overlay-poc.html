@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Opening Live Game Overlay - ALL PLAYS</title>
+  <script>
+    const destination = new URL('live-game-overlay.html', window.location.href);
+    destination.search = window.location.search;
+    destination.hash = window.location.hash;
+    window.location.replace(destination.href);
+  </script>
+</head>
+<body>
+  <p><a id="overlay-redirect" href="live-game-overlay.html">Open the ALL PLAYS live game overlay.</a></p>
+</body>
+</html>

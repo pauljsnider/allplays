@@ -1,4 +1,18 @@
 const PRODID = '-//ALL PLAYS//Public Games//EN';
+const PUBLIC_CALENDAR_TEAM_ID_MAX_LENGTH = 128;
+
+function normalizePublicCalendarTeamId(value) {
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim();
+  if (
+    !normalized
+    || normalized.length > PUBLIC_CALENDAR_TEAM_ID_MAX_LENGTH
+    || normalized.includes('/')
+  ) {
+    return '';
+  }
+  return normalized;
+}
 
 function toBooleanTrue(value) {
   return value === true || String(value || '').toLowerCase() === 'true';
@@ -102,6 +116,7 @@ function buildPublicGamesIcs({ teamId, team = {}, games = [], now = new Date() }
 }
 
 module.exports = {
+  PUBLIC_CALENDAR_TEAM_ID_MAX_LENGTH,
   buildPublicGamesIcs,
   canExposeEmptyPublicFeed,
   escapeIcsText,
@@ -109,5 +124,6 @@ module.exports = {
   isPublicFanGame,
   isPublicTeam,
   isShareableGame,
+  normalizePublicCalendarTeamId,
   stablePublicGameUid
 };

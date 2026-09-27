@@ -1,6 +1,11 @@
+import {
+    PREMIUM_FEATURES,
+    resolvePremiumAccess
+} from './premium-access-core.js?v=1';
+
 export const TEAM_PASS_TIER = 'team-pass';
 export const TEAM_PASS_FEATURES = Object.freeze({
-    RECORDED_REPLAY: 'recorded-replay'
+    RECORDED_REPLAY: PREMIUM_FEATURES.RECORDED_REPLAY
 });
 
 function firstBoolean(values) {
@@ -70,5 +75,14 @@ export function isTeamEntitlementActive(entitlement, { seasonId, tier = TEAM_PAS
 }
 
 export function canAccessPremiumFanFeature(featureKey, entitlementStatus = {}) {
-    return Boolean(featureKey && entitlementStatus.active);
+    if (entitlementStatus?.access?.state) {
+        return entitlementStatus.access.state === 'unlocked';
+    }
+    return resolvePremiumAccess({
+        feature: featureKey,
+        config: { state: 'ready', openToAll: false, reason: 'entitlement-required' },
+        entitlement: entitlementStatus?.active === true
+            ? { state: 'unlocked', reason: entitlementStatus.reason || 'valid-team-entitlement' }
+            : { state: 'locked', reason: entitlementStatus.reason || 'missing-valid-team-entitlement' }
+    }).state === 'unlocked';
 }

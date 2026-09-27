@@ -1,51 +1,6 @@
-import { auth } from './firebase.js?v=22';
-import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
-import { hasFullTeamAccess } from './team-access.js';
-
-function getFunctionsBaseUrl() {
-    const configured = window.__ALLPLAYS_CONFIG__?.functionsBaseUrl || window.__ALLPLAYS_CONFIG__?.functions?.baseUrl;
-    if (configured) return String(configured).replace(/\/$/, '');
-
-    const projectId = auth.app?.options?.projectId;
-    if (!projectId) {
-        throw new Error('Firebase project ID is not configured.');
-    }
-    return `https://us-central1-${projectId}.cloudfunctions.net`;
-}
-
-export async function createTeamPassCheckout({ teamId, seasonId, tier = 'team-pass' } = {}) {
-    const user = auth.currentUser;
-    if (!user) {
-        throw new Error('Sign in before purchasing a Team Pass.');
-    }
-
-    const token = await user.getIdToken();
-    const requestUrl = `${getFunctionsBaseUrl()}/createStripeTeamPassCheckout`;
-    const response = await fetch(requestUrl, {
-        method: 'POST',
-        headers: await getPrimaryAppCheckHeaders({
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-        }, requestUrl),
-        body: JSON.stringify({ data: { teamId, seasonId, tier } })
-    });
-
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || payload.error) {
-        throw new Error(payload.error?.message || 'Unable to start Team Pass checkout.');
-    }
-
-    return payload.result || payload.data || payload;
-}
-
-export async function redirectToTeamPassCheckout(options) {
-    const result = await createTeamPassCheckout(options);
-    if (!result.checkoutUrl) {
-        throw new Error('Checkout URL was not returned.');
-    }
-    window.location.href = result.checkoutUrl;
-    return result;
-}
+import { hasFullTeamAccess } from './team-access.js?v=44338';
+import { PREMIUM_FEATURES, resolvePremiumAccess } from './premium-access-core.js?v=1';
+import { readPremiumAccessConfig } from './premium-access.js?v=7';
 
 function escapeTeamPassHtml(value) {
     return String(value ?? '')
@@ -119,7 +74,7 @@ function arrayIncludesTeamId(values, teamId) {
 
 function loadFirebase(deps = {}) {
     if (deps.firebase) return deps.firebase;
-    return import('./firebase.js?v=22');
+    return import('./firebase.js?v=33');
 }
 
 function dataFromSnapshot(docSnap) {
@@ -134,15 +89,16 @@ function compareByUpdatedAtDesc(a, b) {
 
 export function getTeamPassAccess(user, team) {
     const teamId = team?.id;
-    const isStaff = hasFullTeamAccess(user, team) || arrayIncludesTeamId(user?.coachOf, teamId);
+    const hasFullAccess = hasFullTeamAccess(user, team);
     const isConfirmedParent = arrayIncludesTeamId(user?.parentOf, teamId) || arrayIncludesTeamId(user?.parentTeamIds, teamId);
+    const isStaff = hasFullAccess || arrayIncludesTeamId(user?.coachOf, teamId);
 
     if (isStaff) {
         return { isStaff: true, canReadStatus: true, label: 'Coach/Admin access', mode: 'staff' };
     }
 
     if (isConfirmedParent) {
-        return { isStaff: false, canReadStatus: false, label: 'Team member access', mode: 'readonly' };
+        return { isStaff: false, canReadStatus: true, label: 'Team member access', mode: 'readonly' };
     }
 
     return { isStaff: false, canReadStatus: false, label: 'Read-only preview', mode: 'readonly' };
@@ -198,7 +154,15 @@ export function selectTeamPassRecord(records = [], { team = {}, now = new Date()
     return normalized[0] || normalizeTeamPassStatus(null, { team, now });
 }
 
-export async function readTeamPassStatus({ team, access, deps = {} } = {}) {
+export async function readTeamPassStatus({ team, access, deps = {}, configReader = readPremiumAccessConfig } = {}) {
+    const config = await configReader({ deps });
+    const globalAccess = resolvePremiumAccess({ feature: PREMIUM_FEATURES.TEAM_ANALYTICS, config });
+    if (globalAccess.state === 'unlocked') {
+        return { status: 'open', label: 'Open to everyone', record: null, expiresAt: null, updatedAt: null };
+    }
+    if (globalAccess.state === 'unavailable' || globalAccess.state === 'loading') {
+        return { status: 'unavailable', label: 'Unavailable', record: null, expiresAt: null, updatedAt: null };
+    }
     if (!team?.id || !access?.canReadStatus) {
         return { status: 'readonly', label: 'Read-only', record: null, expiresAt: null, updatedAt: null };
     }
@@ -219,6 +183,7 @@ function formatDateForPanel(value) {
 }
 
 function getStatusClasses(status) {
+    if (status === 'open') return 'bg-indigo-50 text-indigo-700 border-indigo-200';
     if (status === 'active') return 'bg-green-50 text-green-700 border-green-200';
     if (status === 'expired') return 'bg-amber-50 text-amber-800 border-amber-200';
     if (status === 'revoked') return 'bg-red-50 text-red-700 border-red-200';
@@ -227,14 +192,17 @@ function getStatusClasses(status) {
 }
 
 function getPanelCopy(status, access) {
+    if (status === 'open') {
+        return 'Premium features are currently open to everyone.';
+    }
     if (!access?.isStaff) {
         return 'Team Pass access is managed by team staff. You can view team content normally when your team access allows it.';
     }
     if (status === 'missing') {
-        return 'No Team Pass is configured for this team yet. Checkout is not available, so staff will need to configure the pass later.';
+        return 'No premium entitlement is configured for this team. This panel is informational only.';
     }
     if (status === 'expired') {
-        return 'This Team Pass has expired. Checkout is not available, so renewal must be configured later.';
+        return 'This premium entitlement has expired. This panel is informational only.';
     }
     if (status === 'revoked') {
         return 'This Team Pass has been revoked. This panel is informational only and does not grant or revoke access.';
@@ -282,7 +250,8 @@ export function buildTeamPassMarkup({ team = {}, access = getTeamPassAccess(null
                             </div>
                             ` : ''}
                         </dl>
-                        ${showStaffMetadata && status === 'missing' ? '<div class="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">Checkout is not available yet. Configure this Team Pass later when entitlement setup is ready.</div>' : ''}
+                        ${showStaffMetadata && ['missing', 'expired', 'revoked'].includes(status) ? '<div class="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">Existing premium access remains visible here.</div>' : ''}
+                        ${status === 'open' ? '<div class="mt-4 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-xs font-semibold text-indigo-800">Global premium access is on. Existing entitlements stay saved for later enforcement.</div>' : ''}
                     </div>
                 </div>
             </div>

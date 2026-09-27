@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import { AlertCircle, ArrowLeft, Copy, Heart, Loader2, MessageCircle, Settings, Trophy, UserRound, UsersRound } from 'lucide-react';
 import { AvatarImage } from '../components/AvatarImage';
@@ -15,12 +15,15 @@ import type { AuthState } from '../lib/types';
 
 export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profileUserId?: string }) {
   const { userId: routeUserId = '' } = useParams();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
   const userId = profileUserId || routeUserId;
   const [profile, setProfile] = useState<FriendProfileModel | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
   const [busyPostId, setBusyPostId] = useState('');
+  const [reloadNonce, setReloadNonce] = useState(0);
 
   useEffect(() => {
     let disposed = false;
@@ -47,7 +50,7 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
     return () => {
       disposed = true;
     };
-  }, [auth.user, userId]);
+  }, [auth.user, reloadNonce, userId]);
 
   const updatePost = (postId: string, update: (post: SocialFeedItem) => SocialFeedItem) => {
     setProfile((current) => current ? {
@@ -57,7 +60,7 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
   };
 
   const toggleLike = async (post: SocialFeedItem) => {
-    if (!auth.user || busyPostId) return;
+    if (!auth.user || busyPostId || post.viewerReactionError) return;
     const previousLiked = post.viewerHasLiked;
     const previousCount = Number(post.reactionCounts.like || 0);
     setBusyPostId(post.id);
@@ -75,6 +78,7 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
       updatePost(post.id, (current) => ({
         ...current,
         viewerHasLiked: result.liked,
+        viewerReactionError: false,
         reactionCounts: { ...current.reactionCounts, like: result.count }
       }));
       setStatus(result.liked ? 'Post liked.' : 'Like removed.');
@@ -126,21 +130,26 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
   const initials = getInitials(profile.name);
   const publicTeams = profile.publicTeams || [];
   const publicChildren = profile.publicChildren || [];
+  const requestedSection = searchParams.get('section');
+  const activeSection = requestedSection === 'posts' || requestedSection === 'teams' || requestedSection === 'players'
+    ? requestedSection
+    : 'overview';
+  const profileSections = [
+    { id: 'overview', label: 'Overview', to: location.pathname },
+    { id: 'posts', label: 'Posts', to: `${location.pathname}?section=posts` },
+    { id: 'teams', label: 'Teams', to: `${location.pathname}?section=teams` },
+    { id: 'players', label: 'Players', to: `${location.pathname}?section=players` }
+  ] as const;
   return (
     <div className="mx-auto max-w-3xl px-4 py-5 sm:py-7">
-      {profile.isSelf ? (
-        <Link to="/profile/settings" className="ghost-button !inline-flex !min-h-11 !px-3 text-sm">
-          <Settings className="h-4 w-4" aria-hidden="true" />
-          Profile settings
-        </Link>
-      ) : (
+      {!profile.isSelf ? (
         <Link to="/home?section=friends" className="ghost-button !inline-flex !min-h-11 !px-3 text-sm">
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           Back to friends
         </Link>
-      )}
+      ) : null}
 
-      <header className="app-card mt-4 overflow-hidden">
+      <header className={`app-card overflow-hidden ${profile.isSelf ? '' : 'mt-4'}`}>
         <div className="h-24 bg-gradient-to-br from-primary-700 via-primary-600 to-sky-500 sm:h-32" />
         <div className="px-5 pb-5 sm:px-7">
           <div className="-mt-10 flex items-end justify-between gap-4">
@@ -179,12 +188,12 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
             {profile.isSelf ? (
               <Link to="/profile/settings" className="secondary-button !min-h-11 text-sm">
                 <Settings className="h-4 w-4" aria-hidden="true" />
-                Settings
+                Edit profile
               </Link>
             ) : null}
           </div>
           <div className="mt-4 flex gap-5 border-t border-gray-100 pt-4 text-sm">
-            <div><span className="font-black text-gray-950">{profile.posts.length}</span> <span className="font-semibold text-gray-500">shared posts</span></div>
+            <div><span className="font-black text-gray-950">{profile.postsError ? '—' : profile.posts.length}</span> <span className="font-semibold text-gray-500">shared posts</span></div>
             <div><span className="font-black text-gray-950">{publicTeams.length}</span> <span className="font-semibold text-gray-500">public teams</span></div>
             <div><span className="font-black text-gray-950">{publicChildren.length}</span> <span className="font-semibold text-gray-500">public players</span></div>
           </div>
@@ -193,26 +202,43 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
 
       {status ? <div className="mt-3 rounded-xl bg-gray-950 px-3 py-2 text-sm font-bold text-white" role="status">{status}</div> : null}
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-2">
-        <ProfileCollection title="Public teams" icon={Trophy} empty="No public teams shared.">
+      <nav className="sticky top-24 z-20 mt-3 overflow-x-auto rounded-2xl border border-gray-200 bg-white/95 p-1 shadow-sm backdrop-blur" aria-label="Profile sections">
+        <div className="grid min-w-max grid-cols-4 gap-1">
+          {profileSections.map((section) => (
+            <Link
+              key={section.id}
+              to={section.to}
+              aria-current={activeSection === section.id ? 'page' : undefined}
+              className={`inline-flex min-h-11 items-center justify-center rounded-xl px-4 text-sm font-black transition ${activeSection === section.id ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'}`}
+            >
+              {section.label}
+            </Link>
+          ))}
+        </div>
+      </nav>
+
+      {activeSection === 'overview' || activeSection === 'teams' || activeSection === 'players' ? (
+      <div className={`mt-6 grid gap-4 ${activeSection === 'overview' ? 'sm:grid-cols-2' : ''}`}>
+        {activeSection === 'overview' || activeSection === 'teams' ? <ProfileCollection title="Public teams" icon={Trophy} empty="No public teams shared.">
           {publicTeams.map((team) => (
             <Link key={team.id} to={`/teams/${encodeURIComponent(team.id)}/public`} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 hover:border-primary-200">
-              {team.photoUrl ? <img src={team.photoUrl} alt="" className="h-10 w-10 rounded-xl object-cover" /> : <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><Trophy className="h-5 w-5" /></span>}
+              {team.photoUrl ? <img src={team.photoUrl} alt="" loading="lazy" decoding="async" className="h-10 w-10 rounded-xl object-cover" /> : <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><Trophy className="h-5 w-5" /></span>}
               <span className="min-w-0"><span className="block truncate text-sm font-black text-gray-950">{team.name}</span><span className="block truncate text-xs font-semibold text-gray-500">{team.sport || 'Public team'}</span></span>
             </Link>
           ))}
-        </ProfileCollection>
-        <ProfileCollection title="Public players" icon={UserRound} empty="No public player profiles shared.">
+        </ProfileCollection> : null}
+        {activeSection === 'overview' || activeSection === 'players' ? <ProfileCollection title="Public players" icon={UserRound} empty="No public player profiles shared.">
           {publicChildren.map((child) => (
             <a key={child.id} href={child.shareUrl} target="_blank" rel="noreferrer" className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 hover:border-primary-200">
-              {child.photoUrl ? <img src={child.photoUrl} alt="" className="h-10 w-10 rounded-xl object-cover" /> : <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-950 text-white"><UserRound className="h-5 w-5" /></span>}
+              {child.photoUrl ? <img src={child.photoUrl} alt="" loading="lazy" decoding="async" className="h-10 w-10 rounded-xl object-cover" /> : <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-950 text-white"><UserRound className="h-5 w-5" /></span>}
               <span className="min-w-0"><span className="block truncate text-sm font-black text-gray-950">{child.name}</span><span className="block truncate text-xs font-semibold text-gray-500">{child.headline || 'View public profile'}</span></span>
             </a>
           ))}
-        </ProfileCollection>
+        </ProfileCollection> : null}
       </div>
+      ) : null}
 
-      <section className="mt-6" aria-labelledby="profile-posts-heading">
+      {activeSection === 'overview' || activeSection === 'posts' ? <section className="mt-6" aria-labelledby="profile-posts-heading">
         <div className="flex items-end justify-between gap-3">
           <div>
             <p className="text-xs font-black uppercase tracking-[0.12em] text-primary-700">Timeline</p>
@@ -221,7 +247,16 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
           <span className="text-xs font-bold text-gray-500">Newest first</span>
         </div>
         <div className="mt-3 space-y-3">
-          {profile.posts.length ? profile.posts.map((post) => (
+          {profile.postsError ? (
+            <div className="app-card p-6 text-center" role="alert">
+              <AlertCircle className="mx-auto h-7 w-7 text-amber-600" aria-hidden="true" />
+              <h3 className="mt-2 text-base font-black text-gray-950">Posts could not load</h3>
+              <p className="mt-1 text-sm font-semibold text-gray-500">{profile.postsError}</p>
+              <button type="button" className="secondary-button mt-4 !min-h-11 text-sm" onClick={() => setReloadNonce((value) => value + 1)}>
+                Retry posts
+              </button>
+            </div>
+          ) : profile.posts.length ? profile.posts.map((post) => (
             <article key={post.id} className="app-card overflow-hidden p-4 sm:p-5">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-gray-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-gray-700">{getSocialTypeLabel(post.type)}</span>
@@ -244,9 +279,11 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
                 <button
                   type="button"
                   className={`ghost-button !min-h-11 !px-3 text-xs ${post.viewerHasLiked ? '!border-rose-200 !bg-rose-50 !text-rose-700' : ''}`}
-                  disabled={Boolean(busyPostId)}
+                  disabled={Boolean(busyPostId) || post.viewerReactionError === true}
                   onClick={() => toggleLike(post)}
-                  aria-label={`${post.viewerHasLiked ? 'Unlike' : 'Like'} post, ${Number(post.reactionCounts.like || 0)} likes`}
+                  aria-label={post.viewerReactionError
+                    ? `Like status unavailable, ${Number(post.reactionCounts.like || 0)} likes`
+                    : `${post.viewerHasLiked ? 'Unlike' : 'Like'} post, ${Number(post.reactionCounts.like || 0)} likes`}
                 >
                   <Heart className={`h-4 w-4 ${post.viewerHasLiked ? 'fill-current' : ''}`} aria-hidden="true" />
                   {busyPostId === post.id ? 'Saving…' : Number(post.reactionCounts.like || 0)}
@@ -261,7 +298,7 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
             </div>
           )}
         </div>
-      </section>
+      </section> : null}
     </div>
   );
 }

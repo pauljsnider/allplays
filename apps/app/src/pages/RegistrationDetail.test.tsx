@@ -23,6 +23,16 @@ const parentRegistrationsServiceMocks = vi.hoisted(() => ({
 }));
 const openPublicUrlMock = vi.hoisted(() => vi.fn());
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 vi.mock('../lib/parentRegistrationsService', () => parentRegistrationsServiceMocks);
 vi.mock('../lib/publicActions', () => ({
   openPublicUrl: openPublicUrlMock
@@ -104,6 +114,31 @@ function renderStaffRegistrationReview() {
       <Routes>
         <Route path="/teams/:teamId/registrations/:formId/review" element={<TeamRegistrationReview auth={{ ...auth, user: { ...auth.user!, roles: ['coach'], coachOf: ['team-1'] } as any, roles: ['coach'], isParent: false, isCoach: true }} />} />
         <Route path="/teams/:teamId" element={<div>Team detail</div>} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
+function renderStaffRegistrationReviewWithRouteSwap() {
+  const staffAuth: AuthState = {
+    ...auth,
+    user: { ...auth.user!, roles: ['coach'], coachOf: ['team-1', 'team-2'] } as any,
+    roles: ['coach'],
+    isParent: false,
+    isCoach: true
+  };
+  return render(
+    <MemoryRouter initialEntries={['/teams/team-1/registrations/form-1/review']}>
+      <Routes>
+        <Route
+          path="/teams/:teamId/registrations/:formId/review"
+          element={(
+            <>
+              <RouteSwapButton to="/teams/team-2/registrations/form-2/review" />
+              <TeamRegistrationReview auth={staffAuth} />
+            </>
+          )}
+        />
       </Routes>
     </MemoryRouter>
   );
@@ -498,7 +533,7 @@ describe('RegistrationDetail payment notice', () => {
     expect(screen.getByText('Installment 3 · Due Aug 30, 2026')).toBeTruthy();
   });
 
-  it('loads the staff review workflow from the focused registration service and approves a pending registration', async () => {
+  it('approves a new player without refetching a large cached roster and adds the merge choice', async () => {
     parentRegistrationsServiceMocks.loadStaffRegistrationDetail.mockResolvedValue(buildDetail({
       form: {
         registrationOptionCounts: {
@@ -507,8 +542,10 @@ describe('RegistrationDetail payment notice', () => {
       },
       options: [{ id: 'opt-1', title: 'Full week', capacityLimit: 20, waitlistEnabled: true }]
     }));
-    parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage
-      .mockResolvedValueOnce({
+    parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage.mockImplementation(async (_teamId, _formId, options = {}) => (
+      options.status === 'waitlisted'
+        ? { reviews: [], lastDoc: null, hasMore: false }
+        : {
         reviews: [{
           id: 'review-1',
           status: 'pending',
@@ -525,12 +562,13 @@ describe('RegistrationDetail payment notice', () => {
         }],
         lastDoc: null,
         hasMore: false
-      })
-      .mockResolvedValueOnce({ reviews: [], lastDoc: null, hasMore: false });
+      }
+    ));
     parentRegistrationsServiceMocks.loadTeamRegistrationRosterPlayers.mockResolvedValue([
-      { id: 'player-1', name: 'Pat Star', number: '9' }
+      ...Array.from({ length: 1_000 }, (_, index) => ({ id: `player-${index}`, name: `Player ${index}` })),
+      { id: 'player-existing', name: 'Existing Player', number: '9' }
     ]);
-    parentRegistrationsServiceMocks.approveTeamRegistrationForApp.mockResolvedValue({ success: true });
+    parentRegistrationsServiceMocks.approveTeamRegistrationForApp.mockResolvedValue({ success: true, playerId: 'player-new' });
 
     renderStaffRegistrationReview();
 
@@ -546,6 +584,160 @@ describe('RegistrationDetail payment notice', () => {
       'review-1',
       { playerId: undefined }
     ));
+    await screen.findByText('Registration approved. Roster and parent links were updated using the legacy approval flow.');
+
+    expect(parentRegistrationsServiceMocks.loadTeamRegistrationRosterPlayers).toHaveBeenCalledTimes(1);
+    expect(parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenCalledTimes(4);
+    expect(screen.getByRole('option', { name: 'Pat Star' })).toHaveValue('player-new');
+  });
+
+  it('waits for deferred roster choices and preserves a locally added player from a stale roster response', async () => {
+    const initialRoster = createDeferred<Array<{ id: string; name: string }>>();
+    const staleRoster = createDeferred<Array<{ id: string; name: string }>>();
+    const approval = createDeferred<{ success: boolean; playerId: string }>();
+    parentRegistrationsServiceMocks.loadStaffRegistrationDetail.mockResolvedValue(buildDetail());
+    parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage.mockImplementation(async (_teamId, _formId, options = {}) => ({
+      reviews: options.status === 'waitlisted' ? [] : [buildReview()],
+      lastDoc: null,
+      hasMore: false
+    }));
+    parentRegistrationsServiceMocks.loadTeamRegistrationRosterPlayers
+      .mockReturnValueOnce(initialRoster.promise)
+      .mockReturnValueOnce(staleRoster.promise);
+    parentRegistrationsServiceMocks.approveTeamRegistrationForApp.mockReturnValue(approval.promise);
+
+    const view = renderStaffRegistrationReview();
+
+    const approveButton = await screen.findByRole('button', { name: 'Approve application' });
+    const mergeSelect = screen.getByRole('combobox', { name: 'Merge into existing roster player' });
+    expect(approveButton).toBeDisabled();
+    expect(mergeSelect).toBeDisabled();
+    expect(screen.getByRole('option', { name: 'Loading roster choices…' })).toBeTruthy();
+    fireEvent.click(approveButton);
+    expect(parentRegistrationsServiceMocks.approveTeamRegistrationForApp).not.toHaveBeenCalled();
+
+    initialRoster.resolve([{ id: 'player-existing', name: 'Existing Player' }]);
+    expect(await screen.findByRole('option', { name: 'Existing Player' })).toBeTruthy();
+    await waitFor(() => expect(approveButton).toBeEnabled());
+    fireEvent.click(approveButton);
+    await waitFor(() => expect(parentRegistrationsServiceMocks.approveTeamRegistrationForApp).toHaveBeenCalledTimes(1));
+
+    const refreshedStaffAuth: AuthState = {
+      ...auth,
+      user: { ...auth.user!, roles: ['coach'], coachOf: ['team-1'] } as any,
+      roles: ['coach'],
+      isParent: false,
+      isCoach: true
+    };
+    view.rerender(
+      <MemoryRouter initialEntries={['/teams/team-1/registrations/form-1/review']}>
+        <Routes>
+          <Route path="/teams/:teamId/registrations/:formId/review" element={<TeamRegistrationReview auth={refreshedStaffAuth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(parentRegistrationsServiceMocks.loadTeamRegistrationRosterPlayers).toHaveBeenCalledTimes(2));
+
+    approval.resolve({ success: true, playerId: 'player-new' });
+    expect(await screen.findByRole('option', { name: 'Pat Star' })).toHaveValue('player-new');
+    staleRoster.resolve([{ id: 'player-existing', name: 'Existing Player' }]);
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Merge into existing roster player' })).toBeEnabled());
+    expect(screen.getByRole('option', { name: 'Pat Star' })).toHaveValue('player-new');
+  });
+
+  it('reuses the roster while promoting, accepting, and declining registrations', async () => {
+    let status = 'waitlisted';
+    parentRegistrationsServiceMocks.loadStaffRegistrationDetail.mockResolvedValue(buildDetail({
+      form: { registrationOptionCounts: { 'opt-1': { enrolled: 4, waitlisted: 1 } } },
+      options: [{ id: 'opt-1', title: 'Full week', capacityLimit: 20, waitlistEnabled: true }]
+    }));
+    parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage.mockImplementation(async (_teamId, _formId, options = {}) => {
+      const review = buildReview({ status });
+      const belongsInWaitlistQuery = status === 'waitlisted';
+      const includeReview = options.status === 'waitlisted' ? belongsInWaitlistQuery : !belongsInWaitlistQuery && status !== 'rejected';
+      return { reviews: includeReview ? [review] : [], lastDoc: null, hasMore: false };
+    });
+    parentRegistrationsServiceMocks.loadTeamRegistrationRosterPlayers.mockResolvedValue([{ id: 'player-1', name: 'Existing Player' }]);
+    parentRegistrationsServiceMocks.extendTeamRegistrationOfferForApp.mockImplementation(async () => {
+      status = 'offer-extended';
+      return { success: true };
+    });
+    parentRegistrationsServiceMocks.acceptTeamRegistrationOfferForApp.mockImplementation(async () => {
+      status = 'offer-accepted';
+      return { success: true };
+    });
+    parentRegistrationsServiceMocks.rejectTeamRegistrationForApp.mockImplementation(async () => {
+      status = 'rejected';
+      return { success: true };
+    });
+
+    renderStaffRegistrationReview();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Promote from waitlist' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Mark accepted' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Decline application' }));
+
+    await waitFor(() => expect(parentRegistrationsServiceMocks.rejectTeamRegistrationForApp).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenCalledTimes(8));
+    expect(parentRegistrationsServiceMocks.loadTeamRegistrationRosterPlayers).toHaveBeenCalledTimes(1);
+  });
+
+  it('approves into an existing player without refetching the roster', async () => {
+    parentRegistrationsServiceMocks.loadStaffRegistrationDetail.mockResolvedValue(buildDetail());
+    parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage.mockImplementation(async (_teamId, _formId, options = {}) => ({
+      reviews: options.status === 'waitlisted' ? [] : [buildReview()],
+      lastDoc: null,
+      hasMore: false
+    }));
+    parentRegistrationsServiceMocks.loadTeamRegistrationRosterPlayers.mockResolvedValue([
+      { id: 'player-existing', name: 'Existing Player', number: '9' }
+    ]);
+    parentRegistrationsServiceMocks.approveTeamRegistrationForApp.mockResolvedValue({ success: true, playerId: 'player-existing' });
+
+    renderStaffRegistrationReview();
+
+    const mergeSelect = await screen.findByRole('combobox', { name: 'Merge into existing roster player' });
+    fireEvent.change(mergeSelect, { target: { value: 'player-existing' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Approve application' }));
+
+    await waitFor(() => expect(parentRegistrationsServiceMocks.approveTeamRegistrationForApp).toHaveBeenCalledWith(
+      expect.objectContaining({ uid: 'parent-1' }),
+      'team-1',
+      'form-1',
+      'review-1',
+      { playerId: 'player-existing' }
+    ));
+    await waitFor(() => expect(parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenCalledTimes(4));
+    expect(parentRegistrationsServiceMocks.loadTeamRegistrationRosterPlayers).toHaveBeenCalledTimes(1);
+  });
+
+  it('invalidates the roster cache when the team route changes', async () => {
+    parentRegistrationsServiceMocks.loadStaffRegistrationDetail.mockResolvedValue(buildDetail());
+    parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage.mockImplementation(async (_teamId, _formId, options = {}) => ({
+      reviews: options.status === 'waitlisted' ? [] : [buildReview()],
+      lastDoc: null,
+      hasMore: false
+    }));
+    parentRegistrationsServiceMocks.loadTeamRegistrationRosterPlayers.mockImplementation(async (_user, teamId) => (
+      [{ id: `${teamId}-player`, name: `${teamId} player` }]
+    ));
+
+    renderStaffRegistrationReviewWithRouteSwap();
+
+    await waitFor(() => expect(parentRegistrationsServiceMocks.loadTeamRegistrationRosterPlayers).toHaveBeenCalledWith(
+      expect.objectContaining({ uid: 'parent-1' }),
+      'team-1'
+    ));
+    expect(await screen.findByRole('option', { name: 'team-1 player' })).toHaveValue('team-1-player');
+    fireEvent.click(screen.getByRole('button', { name: 'Swap route' }));
+
+    await waitFor(() => expect(parentRegistrationsServiceMocks.loadTeamRegistrationRosterPlayers).toHaveBeenCalledTimes(2));
+    expect(parentRegistrationsServiceMocks.loadTeamRegistrationRosterPlayers).toHaveBeenLastCalledWith(
+      expect.objectContaining({ uid: 'parent-1' }),
+      'team-2'
+    );
+    expect(await screen.findByRole('option', { name: 'team-2 player' })).toHaveValue('team-2-player');
+    expect(screen.queryByRole('option', { name: 'team-1 player' })).toBeNull();
   });
 
   it('paginates applications and waitlisted applicants with separate cursors', async () => {

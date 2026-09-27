@@ -30,12 +30,28 @@ const parentHouseholdServiceMock = `
 `;
 
 const parentFeesServiceMock = `
+    export function getTrustedStripeCheckoutUrl(value) {
+        try {
+            const parsed = new URL(String(value || '').trim());
+            return parsed.protocol === 'https:'
+                && parsed.hostname === 'checkout.stripe.com'
+                && !parsed.username
+                && !parsed.password
+                && !parsed.port
+                ? String(value || '').trim()
+                : '';
+        } catch {
+            return '';
+        }
+    }
     export async function loadParentFeesForApp() {
         window.__parentToolLoadCounts.fees += 1;
         return [{
             id: 'fee-1',
             title: 'Team dues',
             teamId: 'team-1',
+            batchId: 'batch-1',
+            recipientId: 'recipient-1',
             teamName: 'Bears',
             playerName: 'Pat Star',
             status: 'open',
@@ -43,15 +59,16 @@ const parentFeesServiceMock = `
             dueLabel: 'Jun 1',
             statusLabel: 'Open',
             balanceDueCents: 12000,
-            checkoutUrl: 'https://pay.example.test/fee',
+            checkoutUrl: 'https://checkout.stripe.com/c/pay/fee',
             canPay: true,
             lineItems: [{ title: 'Season', amountCents: 12000 }],
             installments: [{ label: 'Deposit', amountCents: 6000 }],
             ledgerEntries: [{ label: 'Adjustment', amountCents: -1000 }]
         }];
     }
-    export async function initiateParentTeamFeeCheckout() {
-        return { success: true, checkoutUrl: 'https://pay.example.test/created-fee' };
+    export async function initiateParentTeamFeeCheckout(teamId, batchId, recipientId) {
+        window.__teamFeeCheckoutCalls.push({ teamId, batchId, recipientId });
+        return { success: true, checkoutUrl: 'https://checkout.stripe.com/c/pay/created-fee' };
     }
 `;
 
@@ -117,7 +134,7 @@ const parentRegistrationsServiceMock = `
         return { status: 'pending', registrationId: 'registration-1' };
     }
     export async function initiateRegistrationCheckout() {
-        return { success: true, checkoutUrl: 'https://pay.example.test/registration-checkout' };
+        return { success: true, checkoutUrl: 'https://checkout.stripe.com/c/pay/registration-checkout' };
     }
     export async function cancelRegistrationCheckout() {
         return { released: true };
@@ -174,18 +191,22 @@ const parentRegistrationsServiceMock = `
 `;
 
 const parentCertificatesServiceMock = `
+    const certificate = {
+        id: 'cert-1',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        playerId: 'player-1',
+        playerName: 'Pat Star',
+        title: 'Hustle Award',
+        narrative: 'Great effort.',
+        url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
+    };
+    export async function loadParentCertificate(_user, teamId, certificateId) {
+        return teamId === certificate.teamId && certificateId === certificate.id ? certificate : null;
+    }
     export async function loadParentCertificates() {
         window.__parentToolLoadCounts.certificates += 1;
-        return [{
-            id: 'cert-1',
-            teamId: 'team-1',
-            teamName: 'Bears',
-            playerId: 'player-1',
-            playerName: 'Pat Star',
-            title: 'Hustle Award',
-            narrative: 'Great effort.',
-            url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
-        }];
+        return [certificate];
     }
 `;
 
@@ -198,6 +219,7 @@ async function mockParentToolsModules(page, { paymentsEnabled = false } = {}) {
             };
         }
         window.__openedPublicUrls = [];
+        window.__teamFeeCheckoutCalls = [];
         window.__sharedUrls = [];
         window.__accessRequests = [];
         window.__publicTeamLoads = 0;
@@ -422,7 +444,7 @@ async function mockParentToolsModules(page, { paymentsEnabled = false } = {}) {
                         dueLabel: 'Jun 1',
                         statusLabel: 'Open',
                         balanceDueCents: 12000,
-                        checkoutUrl: 'https://pay.example.test/fee',
+                        checkoutUrl: 'https://checkout.stripe.com/c/pay/fee',
                         canPay: true,
                         lineItems: [{ title: 'Season', amountCents: 12000 }],
                         installments: [{ label: 'Deposit', amountCents: 6000 }],
@@ -430,7 +452,7 @@ async function mockParentToolsModules(page, { paymentsEnabled = false } = {}) {
                     }];
                 }
                 export async function initiateParentTeamFeeCheckout() {
-                    return { success: true, checkoutUrl: 'https://pay.example.test/created-fee' };
+                    return { success: true, checkoutUrl: 'https://checkout.stripe.com/c/pay/created-fee' };
                 }
                 export async function loadParentCalendarTools() {
                     window.__parentToolLoadCounts.calendar += 1;
@@ -569,7 +591,12 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await page.getByRole('button', { name: 'View details' }).click();
     await expect(page.getByText('Line items')).toBeVisible();
     await page.getByRole('button', { name: /Pay fee/ }).click();
-    await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://pay.example.test/fee');
+    await expect.poll(() => page.evaluate(() => window.__teamFeeCheckoutCalls)).toEqual([{
+        teamId: 'team-1',
+        batchId: 'batch-1',
+        recipientId: 'recipient-1'
+    }]);
+    await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://checkout.stripe.com/c/pay/created-fee');
 
     await page.getByRole('navigation', { name: 'Family tools' }).getByRole('link', { name: 'Calendar' }).click();
     await expect(page.getByText('Calendar tools')).toBeVisible();
@@ -609,7 +636,7 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     })).toBe(true);
     await expect(page.getByRole('button', { name: 'Pay registration with Stripe' })).toBeVisible();
     await page.getByRole('button', { name: 'Pay registration with Stripe' }).click();
-    await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://pay.example.test/registration-checkout');
+    await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://checkout.stripe.com/c/pay/registration-checkout');
 
     await page.goto(appUrl(baseURL, '/parent-tools/certificates'), { waitUntil: 'domcontentloaded' });
     await expect(page.getByText('Hustle Award')).toBeVisible();
@@ -617,6 +644,40 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await expect.poll(() => page.evaluate(() => window.__sharedUrls.at(-1)?.url)).toBe('https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1');
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 });
+
+for (const viewport of [{ width: 320, height: 720 }, { width: 390, height: 844 }]) {
+    test(`existing family share actions are thumb-friendly at ${viewport.width}px`, async ({ page, baseURL }) => {
+        await page.setViewportSize(viewport);
+        await mockParentToolsModules(page);
+        await page.goto(appUrl(baseURL, '/parent-tools/share'), { waitUntil: 'domcontentloaded' });
+
+        const tokenCard = page.locator('section.app-card').filter({ hasText: 'Grandma' });
+        await expect(tokenCard).toBeVisible({ timeout: 15000 });
+        const actions = tokenCard.getByRole('button').filter({ hasText: /^(Copy|Share|Feeds|Revoke)$/ });
+        await expect(actions).toHaveCount(4);
+
+        const geometry = await actions.evaluateAll((buttons) => buttons.map((button) => {
+            const rect = button.getBoundingClientRect();
+            return {
+                left: rect.left,
+                right: rect.right,
+                top: rect.top,
+                height: rect.height,
+                fullyVisible: button.scrollWidth <= button.clientWidth && button.scrollHeight <= button.clientHeight
+            };
+        }));
+        const cardRect = await tokenCard.evaluate((card) => {
+            const rect = card.getBoundingClientRect();
+            return { left: rect.left, right: rect.right };
+        });
+
+        expect(geometry.every(({ left, right, height, fullyVisible }) => left >= cardRect.left && right <= cardRect.right && height >= 44 && fullyVisible)).toBe(true);
+        expect(Math.abs(geometry[0].top - geometry[1].top)).toBeLessThan(1);
+        expect(Math.abs(geometry[2].top - geometry[3].top)).toBeLessThan(1);
+        expect(geometry[2].top).toBeGreaterThan(geometry[0].top);
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    });
+}
 
 test.describe('desktop Family navigation', () => {
     test.use({ viewport: { width: 1280, height: 900 }, hasTouch: false });
@@ -674,6 +735,20 @@ test('parent fees workflow renders payment states and blocks overlapping checkou
             status: 200,
             contentType: 'application/javascript',
             body: `
+                export function getTrustedStripeCheckoutUrl(value) {
+                    try {
+                        const parsed = new URL(String(value || '').trim());
+                        return parsed.protocol === 'https:'
+                            && parsed.hostname === 'checkout.stripe.com'
+                            && !parsed.username
+                            && !parsed.password
+                            && !parsed.port
+                            ? String(value || '').trim()
+                            : '';
+                    } catch {
+                        return '';
+                    }
+                }
                 export async function loadParentFeesForApp() {
                     window.__parentToolLoadCounts.fees += 1;
                     return [{
@@ -780,7 +855,7 @@ test('parent fees workflow renders payment states and blocks overlapping checkou
                 export async function initiateParentTeamFeeCheckout(teamId, batchId, recipientId) {
                     window.__teamFeeCheckoutCalls.push({ teamId, batchId, recipientId });
                     return new Promise((resolve) => {
-                        window.__resolveTeamFeeCheckout = () => resolve({ success: true, checkoutUrl: 'https://pay.example.test/online-registration' });
+                        window.__resolveTeamFeeCheckout = () => resolve({ success: true, checkoutUrl: 'https://checkout.stripe.com/c/pay/online-registration' });
                     });
                 }
             `
@@ -811,7 +886,7 @@ test('parent fees workflow renders payment states and blocks overlapping checkou
     }]);
 
     await page.evaluate(() => window.__resolveTeamFeeCheckout());
-    await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://pay.example.test/online-registration');
+    await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://checkout.stripe.com/c/pay/online-registration');
 
     await page.getByRole('button', { name: 'All' }).click();
     await expect(page.getByText('Paid registration')).toBeVisible();
@@ -844,26 +919,30 @@ test('awards deep links surface the requested certificate first on mobile', asyn
             status: 200,
             contentType: 'application/javascript',
             body: `
+                const certificates = [{
+                    id: 'cert-2',
+                    teamId: 'team-2',
+                    teamName: 'Falcons',
+                    playerId: 'player-2',
+                    playerName: 'Taylor Wings',
+                    title: 'Leadership Award',
+                    narrative: 'Great teammate.',
+                    url: 'https://allplays.ai/certificates.html#teamId=team-2&certificateId=cert-2'
+                }, {
+                    id: 'cert-1',
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    playerId: 'player-1',
+                    playerName: 'Pat Star',
+                    title: 'Hustle Award',
+                    narrative: 'Great effort.',
+                    url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
+                }];
+                export async function loadParentCertificate(_user, teamId, certificateId) {
+                    return certificates.find((certificate) => certificate.teamId === teamId && certificate.id === certificateId) || null;
+                }
                 export async function loadParentCertificates() {
-                    return [{
-                        id: 'cert-2',
-                        teamId: 'team-2',
-                        teamName: 'Falcons',
-                        playerId: 'player-2',
-                        playerName: 'Taylor Wings',
-                        title: 'Leadership Award',
-                        narrative: 'Great teammate.',
-                        url: 'https://allplays.ai/certificates.html#teamId=team-2&certificateId=cert-2'
-                    }, {
-                        id: 'cert-1',
-                        teamId: 'team-1',
-                        teamName: 'Bears',
-                        playerId: 'player-1',
-                        playerName: 'Pat Star',
-                        title: 'Hustle Award',
-                        narrative: 'Great effort.',
-                        url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
-                    }];
+                    return certificates;
                 }
             `
         });

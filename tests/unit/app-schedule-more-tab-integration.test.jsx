@@ -9,6 +9,7 @@ const scheduleMocks = vi.hoisted(() => ({
     cancelParentScheduleRideRequest: vi.fn(),
     claimParentScheduleAssignmentSlot: vi.fn(),
     createParentScheduleRideOffer: vi.fn(),
+    hydrateParentScheduleEventOptionalDetails: vi.fn((result) => Promise.resolve(result)),
     loadScheduleStatTrackerConfigsForApp: vi.fn(),
     loadParentPracticePacket: vi.fn(),
     loadStaffPracticePacket: vi.fn(),
@@ -141,6 +142,7 @@ vi.mock('@capacitor-firebase/performance', () => ({
     }
 }));
 vi.mock('../../apps/app/src/lib/performanceInstrumentation.ts', () => ({
+    getPerformancePlatform: vi.fn(() => 'web'),
     now: vi.fn(() => 0),
     startPerformanceSpan: vi.fn(() => ({ startedAt: 0, end: vi.fn() })),
     recordCompletedPerformanceSpan: vi.fn()
@@ -149,7 +151,8 @@ vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 vi.mock('../../apps/app/src/lib/gameReportService.ts', () => reportMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 
-import { ScheduleEventDetail, getAvailabilityNoteSaveState, parseEventDetailSection, setScheduleGameDayServiceImporterForTest } from '../../apps/app/src/pages/ScheduleEventDetail.tsx';
+import { ScheduleEventDetail, getAvailabilityNoteSaveState, parseEventDetailSection } from '../../apps/app/src/pages/ScheduleEventDetail.tsx';
+import { setScheduleGameDayServiceImporterForTest } from '../../apps/app/src/pages/schedule/ScheduleGameHubSection.tsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -164,7 +167,7 @@ const auth = {
 };
 
 function event(overrides = {}) {
-    return {
+    const value = {
         eventKey: overrides.eventKey || `${overrides.teamId || 'team-1'}::${overrides.id || 'game-1'}::${overrides.childId || 'player-1'}`,
         id: overrides.id || 'game-1',
         teamId: overrides.teamId || 'team-1',
@@ -185,6 +188,14 @@ function event(overrides = {}) {
         assignments: overrides.assignments || [],
         ...overrides
     };
+    if (!Object.prototype.hasOwnProperty.call(overrides, 'rawReplayLifecycle')) {
+        value.rawReplayLifecycle = {
+            type: value.type,
+            status: value.status,
+            liveStatus: value.liveStatus
+        };
+    }
+    return value;
 }
 
 function report(overrides = {}) {
@@ -633,11 +644,16 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         await clickButton(container, 'Watch replay');
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true');
 
+        await clickButton(container, 'Share replay');
+        expect(publicActionMocks.sharePublicUrl).toHaveBeenCalledWith(expect.objectContaining({
+            url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true'
+        }));
+
         await clickButton(container, 'Share match report');
-        const shareCall = publicActionMocks.sharePublicUrl.mock.calls[0]?.[0];
+        const shareCall = publicActionMocks.sharePublicUrl.mock.calls[1]?.[0];
         expect(shareCall.title).toBe('Bears vs. Falcons match report');
-        expect(shareCall.url).toBe('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
-        expect(shareCall.clipboardText).toContain('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
+        expect(shareCall.url).toBe('https://share.allplays.ai/report?teamId=team-1&gameId=game-1');
+        expect(shareCall.clipboardText).toContain('https://share.allplays.ai/report?teamId=team-1&gameId=game-1');
     });
 
     it('keeps the multi-child summary switcher inline with the event metadata row', async () => {
@@ -826,7 +842,7 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         });
         expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
         expect(reportMocks.loadGameReportPlays).toHaveBeenCalledTimes(1);
-        expect(reportMocks.loadGameReportPlays).toHaveBeenCalledWith('team-1', 'game-1');
+        expect(reportMocks.loadGameReportPlays).toHaveBeenCalledWith('team-1', 'game-1', { statVisibility: 'public' });
         await waitForText(container, 'Second bucket');
 
         await act(async () => {

@@ -24,6 +24,7 @@ import {
     getAppCheckStatus,
     getPrimaryAppCheckHeaders,
     getPrimaryAppCheckToken,
+    createNativeAppCheckTokenLoader,
     initializeNativeAppCheck,
     initializePrimaryAppCheck,
     isCapacitorNativeRuntime,
@@ -114,6 +115,7 @@ describe('Firebase App Check initialization', () => {
 
         expect(isCapacitorNativeRuntime()).toBe(true);
         const status = await initializePrimaryAppCheck(PRIMARY_APP);
+        await vi.waitFor(() => expect(appCheckSdk.initializeAppCheck).toHaveBeenCalledOnce());
         const provider = appCheckSdk.initializeAppCheck.mock.calls[0][1].provider;
         await expect(provider.getToken()).resolves.toMatchObject({ token: 'native-token' });
 
@@ -121,7 +123,123 @@ describe('Firebase App Check initialization', () => {
             debugToken: false,
             isTokenAutoRefreshEnabled: true
         });
+        expect(nativeAppCheck.getToken.mock.calls.map(([options]) => options)).toEqual([
+            { forceRefresh: false }
+        ]);
         expect(status).toMatchObject({ state: 'initialized', provider: 'native-attestation' });
+        expect(getAppCheckStatus()).toMatchObject({ state: 'token-ready', provider: 'native-attestation' });
+    });
+
+    it('reuses the startup token for initial bridge acquisition and force-refreshes renewal', async () => {
+        nativeAppCheck.getToken
+            .mockResolvedValueOnce({ token: 'startup-token', expireTimeMillis: Date.now() + 60_000 })
+            .mockResolvedValueOnce({ token: 'renewed-token', expireTimeMillis: Date.now() + 120_000 });
+
+        await initializeNativeAppCheck(PRIMARY_APP, {
+            nativeDebug: false,
+            isTokenAutoRefreshEnabled: true
+        });
+        await vi.waitFor(() => expect(appCheckSdk.initializeAppCheck).toHaveBeenCalledOnce());
+        const provider = appCheckSdk.initializeAppCheck.mock.calls[0][1].provider;
+
+        await expect(provider.getToken()).resolves.toMatchObject({ token: 'startup-token' });
+        await expect(provider.getToken()).resolves.toMatchObject({ token: 'renewed-token' });
+        expect(nativeAppCheck.getToken.mock.calls.map(([options]) => options)).toEqual([
+            { forceRefresh: false },
+            { forceRefresh: true }
+        ]);
+    });
+
+    it('does not register a blocking JavaScript provider while native attestation is unavailable', async () => {
+        vi.useFakeTimers();
+        try {
+            nativeAppCheck.getToken.mockImplementationOnce(() => new Promise(() => {}));
+
+            const status = await initializeNativeAppCheck(PRIMARY_APP, {
+                nativeDebug: false,
+                isTokenAutoRefreshEnabled: true
+            });
+            await vi.advanceTimersByTimeAsync(1500);
+
+            expect(status).toMatchObject({ state: 'initialized', provider: 'native-attestation' });
+            expect(appCheckSdk.initializeAppCheck).not.toHaveBeenCalled();
+            expect(getAppCheckStatus()).toMatchObject({ state: 'token-error', provider: 'native-attestation' });
+        } finally {
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
+    });
+
+    it('bounds and de-duplicates unavailable native attestation without blocking Firebase reads', async () => {
+        vi.useFakeTimers();
+        try {
+            nativeAppCheck.getToken.mockImplementationOnce(() => new Promise(() => {}));
+            const loadToken = createNativeAppCheckTokenLoader(nativeAppCheck);
+
+            const first = loadToken().catch((error) => error);
+            const concurrent = loadToken().catch((error) => error);
+            await vi.advanceTimersByTimeAsync(1500);
+
+            await expect(first).resolves.toMatchObject({ message: expect.stringContaining('temporarily unavailable') });
+            await expect(concurrent).resolves.toMatchObject({ message: expect.stringContaining('temporarily unavailable') });
+            expect(nativeAppCheck.getToken).toHaveBeenCalledTimes(1);
+
+            await expect(loadToken()).rejects.toThrow('temporarily unavailable');
+            expect(nativeAppCheck.getToken).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(30_000);
+            nativeAppCheck.getToken.mockResolvedValueOnce({
+                token: 'recovered-native-token',
+                expireTimeMillis: Date.now() + 60_000
+            });
+            await expect(loadToken()).resolves.toMatchObject({ token: 'recovered-native-token' });
+            expect(nativeAppCheck.getToken).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('retains a valid native token that arrives after the availability timeout', async () => {
+        vi.useFakeTimers();
+        try {
+            let resolveNativeToken;
+            nativeAppCheck.getToken.mockImplementationOnce(() => new Promise((resolve) => {
+                resolveNativeToken = resolve;
+            }));
+            const loadToken = createNativeAppCheckTokenLoader(nativeAppCheck);
+
+            const initial = loadToken().catch((error) => error);
+            await vi.advanceTimersByTimeAsync(1500);
+            await expect(initial).resolves.toMatchObject({ message: expect.stringContaining('temporarily unavailable') });
+
+            resolveNativeToken({
+                token: 'late-native-token',
+                expireTimeMillis: Date.now() + 60_000
+            });
+            await Promise.resolve();
+            await Promise.resolve();
+
+            await expect(loadToken()).resolves.toMatchObject({ token: 'late-native-token' });
+            expect(nativeAppCheck.getToken).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('bypasses its startup token cache when the JavaScript SDK requests renewal', async () => {
+        nativeAppCheck.getToken
+            .mockResolvedValueOnce({ token: 'startup-token', expireTimeMillis: Date.now() + 60_000 })
+            .mockResolvedValueOnce({ token: 'renewed-token', expireTimeMillis: Date.now() + 120_000 });
+        const loadToken = createNativeAppCheckTokenLoader(nativeAppCheck);
+
+        await expect(loadToken()).resolves.toMatchObject({ token: 'startup-token' });
+        await expect(loadToken()).resolves.toMatchObject({ token: 'startup-token' });
+        await expect(loadToken(true)).resolves.toMatchObject({ token: 'renewed-token' });
+
+        expect(nativeAppCheck.getToken.mock.calls.map(([options]) => options)).toEqual([
+            { forceRefresh: false },
+            { forceRefresh: true }
+        ]);
     });
 
     it('does not replace the iOS provider after native startup configures Firebase', async () => {

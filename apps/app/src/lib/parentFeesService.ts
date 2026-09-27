@@ -3,10 +3,12 @@ import {
     formatParentFeeDueDate,
     getParentFeeStatusMeta,
     initiateTeamFeeCheckout,
-    listParentTeamFeeRecipients,
     normalizeParentFeeRecord,
     sortParentFeeRecords
 } from './adapters/legacyParentTools';
+import { listParentTeamFeeRecipientsForApp } from './parentFeeRecipientsService';
+import { callNativeFirebaseFunction } from './nativeCallable';
+import { isNativeRuntime } from './nativeRuntime';
 import type { AuthUser } from './types';
 
 export type ParentFeeAppRecord = Record<string, any> & {
@@ -30,7 +32,7 @@ export type ParentFeeAppRecord = Record<string, any> & {
 
 export async function loadParentFeesForApp(user: AuthUser | null): Promise<ParentFeeAppRecord[]> {
     if (!user?.uid) return [];
-    const rawFees = await Promise.resolve(listParentTeamFeeRecipients(user.uid, user.parentOf || []));
+    const rawFees = await listParentTeamFeeRecipientsForApp(user.uid, user.parentOf || []);
     return sortParentFeeRecords(rawFees || []).map((fee: any) => toParentFeeAppRecord(fee));
 }
 
@@ -39,9 +41,20 @@ export async function initiateParentTeamFeeCheckout(teamId: string, batchId: str
         throw new Error('Missing required fields for team fee checkout.');
     }
 
-    const checkoutUrl = await initiateTeamFeeCheckout({ teamId, batchId, recipientId });
+    const input = { teamId, batchId, recipientId };
+    const nativeRuntime = isNativeRuntime();
+    const checkoutResult = nativeRuntime
+        ? await callNativeFirebaseFunction<{ checkoutUrl?: unknown }>(
+            'createStripeTeamFeeCheckout',
+            input,
+            { errorLabel: 'Team fee checkout' }
+        )
+        : await initiateTeamFeeCheckout(input);
+    const checkoutUrl = getTrustedStripeCheckoutUrl(
+        nativeRuntime ? checkoutResult?.checkoutUrl : checkoutResult
+    );
     if (!checkoutUrl) {
-        throw new Error('Failed to get checkout URL.');
+        throw new Error('Unable to get a trusted Stripe checkout link. Try again.');
     }
 
     return { success: true, checkoutUrl };
@@ -62,7 +75,6 @@ export function isParentTeamFeePayActionAllowed(fee: any) {
 export function canInitiateParentTeamFeeCheckout(fee: any) {
     return Boolean(
         isParentTeamFeePayActionAllowed(fee)
-        && !hasReusableParentTeamFeeCheckoutUrl(fee)
         && compactString(fee?.teamId)
         && compactString(fee?.batchId)
         && compactString(fee?.recipientId)
@@ -72,25 +84,27 @@ export function canInitiateParentTeamFeeCheckout(fee: any) {
 function toParentFeeAppRecord(fee: any): ParentFeeAppRecord {
     const normalized = normalizeParentFeeRecord(fee);
     const collectionMode = compactString(normalized.collectionMode);
-    const checkoutUrl = compactString(normalized.checkoutUrl);
     const checkoutStatus = compactString(normalized.checkoutStatus);
-    const parentFee = {
+    const storedParentFee = {
         ...normalized,
         collectionMode,
-        checkoutUrl,
+        checkoutUrl: '',
         checkoutStatus
     };
+    const parentFee: Record<string, any> = {
+        ...omitParentFeeCheckoutDestinationFields(storedParentFee),
+        checkoutUrl: ''
+    };
     const meta = getParentFeeStatusMeta(normalized.status);
-    const canOpenCheckoutUrl = isParentTeamFeePayActionAllowed(parentFee) && hasReusableParentTeamFeeCheckoutUrl(parentFee);
-    const checkoutInitiatable = canInitiateParentTeamFeeCheckout(parentFee);
+    const checkoutInitiatable = canInitiateParentTeamFeeCheckout(storedParentFee);
     return {
         ...parentFee,
         amountLabel: formatParentFeeAmount(parentFee),
         dueLabel: formatParentFeeDueDate(parentFee.dueDate),
         statusLabel: meta.label,
-        canPay: canOpenCheckoutUrl || checkoutInitiatable,
+        canPay: checkoutInitiatable,
         checkoutInitiatable,
-        paymentAction: canOpenCheckoutUrl ? 'checkoutUrl' : checkoutInitiatable ? 'createCheckout' : '',
+        paymentAction: checkoutInitiatable ? 'createCheckout' : '',
         lineItems: getArrayField(normalized, ['lineItems', 'invoiceLineItems', 'invoiceItems', 'items']),
         installments: getArrayField(normalized, ['installments', 'installmentSchedule', 'paymentSchedule', 'scheduledPayments']),
         ledgerEntries: getArrayField(normalized, ['ledgerEntries', 'paymentLedger', 'activity', 'receipts', 'payments', 'adjustments'])
@@ -106,11 +120,32 @@ function isOnlineParentTeamFeeCollection(fee: any) {
     return ['online_stripe', 'stripe', 'stripe_checkout', 'online'].includes(collectionMode);
 }
 
-function hasReusableParentTeamFeeCheckoutUrl(fee: any) {
-    if (!compactString(fee?.checkoutUrl)) return false;
+export function getTrustedStripeCheckoutUrl(value: unknown) {
+    const checkoutUrl = compactString(value);
+    try {
+        const parsed = new URL(checkoutUrl);
+        if (
+            parsed.protocol === 'https:'
+            && parsed.hostname === 'checkout.stripe.com'
+            && !parsed.username
+            && !parsed.password
+            && !parsed.port
+        ) {
+            return checkoutUrl;
+        }
+    } catch {
+        // Invalid destinations use the same fail-closed path as untrusted URLs.
+    }
 
-    const checkoutStatus = compactString(fee?.checkoutStatus).toLowerCase();
-    return !checkoutStatus || checkoutStatus === 'open';
+    return '';
+}
+
+function omitParentFeeCheckoutDestinationFields(fee: Record<string, any>) {
+    const safeFee = { ...fee };
+    ['checkoutUrl', 'checkoutURL', 'paymentLink', 'paymentLinkUrl', 'paymentUrl'].forEach((field) => {
+        delete safeFee[field];
+    });
+    return safeFee;
 }
 
 function getArrayField(source: any, keys: string[]) {

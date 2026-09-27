@@ -42,7 +42,7 @@ describe('React app auth/profile capability parity', () => {
         const appRoutes = readProjectFile('apps/app/src/App.tsx');
         const reloadRouting = readProjectFile('apps/app/src/lib/reloadRouting.ts');
 
-        expect(appRoutes).toContain('<Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />');
+        expect(appRoutes.replace(/\s/g, '')).toContain('<Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />'.replace(/\s/g, ''));
         expect(appRoutes).not.toContain("import { shouldReloadTeamsToHome } from './lib/reloadRouting';");
         expect(appRoutes).not.toContain('shouldDefaultReloadToHome');
         expect(appRoutes).not.toContain('isBrowserReload()');
@@ -109,9 +109,9 @@ describe('React app auth/profile capability parity', () => {
         expect(authPage).not.toContain('<Link to="/reset-password"');
         expect(authPage).not.toContain('Enter join code');
         expectContains(authService, [
-            'signInWithNativeRestSession',
             'signInWithNativeGoogleCredential',
-            'skipNativeAuth: true',
+            'skipNativeAuth: false',
+            'persistNativePluginAuthSession',
             'completeGoogleRedirect',
             'queuePasswordResetEmail'
         ]);
@@ -127,9 +127,10 @@ describe('React app auth/profile capability parity', () => {
             "Capacitor.getPlatform?.() === 'android'",
             'options.useCredentialManager = false',
             "FirebaseAuthentication.signInWithGoogle(getNativeGoogleSignInOptions())",
-            "'accounts:signInWithIdp'",
-            'Native Google: exchanging token with Firebase Auth REST.'
+            'persistNativePluginAuthSession',
+            'FirebaseAuthentication.getIdToken'
         ]);
+        expect(authService).not.toContain('Native Google: exchanging token with Firebase Auth REST.');
         expect(authService).not.toContain('signInWithCredential(auth');
         expect(authService).not.toContain('Native Google: signing into Firebase Web Auth.');
         expectContains(iosProject, [
@@ -284,7 +285,8 @@ describe('React app auth/profile capability parity', () => {
         ]);
         expectContains(nativeRuntime, [
             'Capacitor.isNativePlatform()',
-            "window.location.protocol === 'capacitor:'"
+            "protocol === 'capacitor:'",
+            "protocol === 'https:' && hostname === 'localhost'"
         ]);
         expectContains(profilePage, [
             "handleNativePhotoChoice('camera')",
@@ -332,7 +334,8 @@ describe('React app auth/profile capability parity', () => {
         expect(profilePage).toContain("const selectedTeamPreferencesHydrated = Boolean(selectedTeamId) && Object.prototype.hasOwnProperty.call(notificationPreferencesByTeamId, selectedTeamId);");
         expect(profilePage).toContain("disabled={busy === 'game-day-alerts' || !selectedTeamId || !selectedTeamPreferencesHydrated}");
         expect(turnOnGameDayAlerts).toContain('const teamId = selectedTeamId;');
-        expect(turnOnGameDayAlerts).toContain('const currentPreferences = notificationPreferencesByTeamId[teamId]');
+        expect(turnOnGameDayAlerts).toContain('const sourceDraft = notificationPreferenceDraftsByTeamIdRef.current[teamId];');
+        expect(turnOnGameDayAlerts).toContain('const currentPreferences = sourceDraft || notificationPreferencesByTeamId[teamId]');
         expect(turnOnGameDayAlerts).toContain('loadedNotificationTeamId === teamId');
         expect(turnOnGameDayAlerts).toContain('? notificationPreferences');
         expect(turnOnGameDayAlerts).toContain(': await loadNotificationPreferencesOnce(user.uid, teamId));');
@@ -456,7 +459,7 @@ describe('React app auth/profile capability parity', () => {
     it('routes the basketball sideline tracker capability to the native game hub lineup and sub flow', () => {
         const capabilities = readProjectFile('apps/app/src/data/capabilities.ts');
         const capabilityPage = readProjectFile('apps/app/src/pages/CapabilityPage.tsx');
-        const scheduleEventDetail = readProjectFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+        const scheduleGameHub = readProjectFile('apps/app/src/pages/schedule/ScheduleGameHubSection.tsx');
 
         expectContains(capabilities, [
             "capability('track-basketball', 'Basketball sideline tracker', 'track-basketball.html', 'Tracking', 'Starting five setup, published-lineup substitutions, on-court rotation, personal fouls, team foul bonus indicators, playing-time visibility, and shared live log handoff in the app game hub.', ['Starting five', 'Published lineup handoff', 'Substitutions', 'Personal fouls', 'Team foul bonus', 'On-court rotation', 'Playing-time visibility', 'Shared live log'], '/schedule', 'native-shell', staffRoles)",
@@ -466,7 +469,7 @@ describe('React app auth/profile capability parity', () => {
             "capability.status === 'native-shell'",
             'Open app route'
         ]);
-        expectContains(scheduleEventDetail, [
+        expectContains(scheduleGameHub, [
             'Lineup builder',
             'Substitution plan',
             'Projected playing time',
@@ -490,6 +493,7 @@ describe('React app auth/profile capability parity', () => {
         const legacyParentDashboard = readProjectFile('parent-dashboard.html');
         const schedulePage = readProjectFile('apps/app/src/pages/Schedule.tsx');
         const scheduleEventDetail = readProjectFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+        const scheduleGameHub = readProjectFile('apps/app/src/pages/schedule/ScheduleGameHubSection.tsx');
         const gameReportContent = readProjectFile('apps/app/src/components/schedule/GameReportSectionContent.tsx');
         const scheduleHub = readProjectFile('apps/app/src/lib/scheduleHub.ts');
         const scheduleService = readProjectFile('apps/app/src/lib/scheduleService.ts');
@@ -527,6 +531,9 @@ describe('React app auth/profile capability parity', () => {
             'Availability',
             'Rideshare',
             'Assignments',
+            'GameHubSection'
+        ]);
+        expectContains(scheduleGameHub, [
             'Game hub',
             'Practice hub',
             'PracticePacketSection'

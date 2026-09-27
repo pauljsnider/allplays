@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { mapChatConversationDocument, mapChatMessageDocument, mapChatMessageRecord, mapChatMessageRecords } from './firestore/mappers';
-import type { FirestoreDocument } from './firestore/types';
+import type { FirestoreDocument, NativeChatPageCursor } from './firestore/types';
 
 const legacyChatServiceMocks = vi.hoisted(() => ({
   GoogleAIBackend: class GoogleAIBackend {},
@@ -65,6 +65,15 @@ const friendMessageMocks = vi.hoisted(() => ({
   canMessageAcceptedFriend: vi.fn(),
   sendAuthorizedDirectMessage: vi.fn()
 }));
+const nativeStorageMocks = vi.hoisted(() => ({
+  deleteNativePrimaryStorageFile: vi.fn()
+}));
+const profileServiceMocks = vi.hoisted(() => ({
+  loadManagedTeamsFromNativeCallable: vi.fn()
+}));
+const nativeCallableMocks = vi.hoisted(() => ({
+  callNativeFirebaseFunction: vi.fn()
+}));
 
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
@@ -96,6 +105,9 @@ vi.mock('./uxTiming', () => ({
 }));
 
 vi.mock('./friendMessageService', () => friendMessageMocks);
+vi.mock('./nativeStorageUpload', () => nativeStorageMocks);
+vi.mock('./profileService', () => profileServiceMocks);
+vi.mock('./nativeCallable', () => nativeCallableMocks);
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -151,6 +163,7 @@ beforeEach(() => {
   vi.useRealTimers();
   vi.resetAllMocks();
   nativeRuntime.isNativePlatform = false;
+  nativeStorageMocks.deleteNativePrimaryStorageFile.mockResolvedValue(undefined);
   authServiceMocks.getNativeAuthIdToken.mockResolvedValue('main-user-id-token');
   authServiceMocks.getNativeAuthUserId.mockReturnValue('user-1');
   uxTimingMocks.startInteractionTimer.mockReturnValue({
@@ -158,6 +171,12 @@ beforeEach(() => {
   });
   legacyChatServiceMocks.resolveImageFirebaseConfig.mockReturnValue({ apiKey: 'test-api-key', storageBucket: 'test-bucket' });
   legacyChatServiceMocks.postChatMessage.mockResolvedValue({ id: 'message-1' });
+  legacyChatServiceMocks.upsertChatConversation.mockImplementation(async (_teamId, conversation) => ({
+    id: `group_${conversation.participantIds.join('__')}`,
+    type: 'group',
+    participantIds: conversation.participantIds,
+    participantRoles: []
+  }));
   legacyChatServiceMocks.repairLegacyDirectConversation.mockImplementation(async (_teamId, conversationId) => ({
     id: conversationId,
     type: 'group',
@@ -166,6 +185,9 @@ beforeEach(() => {
   }));
   friendMessageMocks.canMessageAcceptedFriend.mockResolvedValue(true);
   friendMessageMocks.sendAuthorizedDirectMessage.mockResolvedValue({ id: 'direct-message-1' });
+  profileServiceMocks.loadManagedTeamsFromNativeCallable.mockRejectedValue(new Error('Managed team callable is unavailable.'));
+  nativeCallableMocks.callNativeFirebaseFunction.mockRejectedValue(new Error('Native callable is unavailable.'));
+  vi.stubGlobal('crypto', { randomUUID: () => '11111111-1111-1111-1111-111111111111' });
 });
 
 afterEach(() => {
@@ -407,12 +429,646 @@ describe('chat Firestore mappers', () => {
   });
 });
 
-describe('sendTeamChatMessage attachment uploads', () => {
-  it('rechecks friend access at send time and stores server-verifiable direct metadata', async () => {
-    legacyChatServiceMocks.upsertChatConversation.mockImplementation(async (_teamId, conversation) => ({
-      id: 'direct_user-1__user%3Afriend-1',
-      ...conversation
+describe('native chat team discovery fallback', () => {
+  function jsonResponse(payload: unknown, status = 200) {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: vi.fn().mockResolvedValue(payload)
+    };
+  }
+
+  function firestoreDocument(path: string, fields: Record<string, unknown>) {
+    return {
+      name: `projects/demo-allplays/databases/(default)/documents/${path}`,
+      fields
+    };
+  }
+
+  function installNativeTeamFetch({ includeTeams }: { includeTeams: boolean }) {
+    const fetchMock = vi.fn(async (url: string, request: RequestInit = {}) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return jsonResponse(firestoreDocument('users/user-1', {
+          parentOf: {
+            arrayValue: {
+              values: includeTeams ? [{
+                mapValue: {
+                  fields: { teamId: { stringValue: 'team-parent' } }
+                }
+              }] : []
+            }
+          }
+        }));
+      }
+      if (String(url).endsWith('/documents:runQuery')) {
+        const body = JSON.parse(String(request.body || '{}'));
+        const fieldPath = body?.structuredQuery?.where?.fieldFilter?.field?.fieldPath;
+        if (fieldPath === 'adminEmails') {
+          return jsonResponse({ error: { message: 'Missing or insufficient permissions.' } }, 403);
+        }
+        return jsonResponse(includeTeams ? [{
+          document: firestoreDocument('teams/team-owned', {
+            name: { stringValue: 'Vipers' },
+            ownerId: { stringValue: 'user-1' },
+            active: { booleanValue: true }
+          })
+        }] : []);
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        return jsonResponse([{
+          result: {
+            aggregateFields: {
+              messageCount: { integerValue: '0' }
+            }
+          }
+        }]);
+      }
+      if (String(url).includes('/documents/teams/team-parent')) {
+        return jsonResponse(firestoreDocument('teams/team-parent', {
+          name: { stringValue: 'Jr KC Current' },
+          active: { booleanValue: true }
+        }));
+      }
+      throw new Error(`Unexpected native request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  beforeEach(() => {
+    nativeRuntime.isNativePlatform = true;
+    legacyChatServiceMocks.getUserProfile.mockRejectedValue(new Error('Web Firestore is not authenticated.'));
+    legacyChatServiceMocks.getUserTeamsWithAccess.mockRejectedValue(new Error('Managed team callable is unavailable.'));
+    legacyChatServiceMocks.getParentTeams.mockRejectedValue(new Error('Web Firestore is not authenticated.'));
+    legacyChatServiceMocks.canAccessTeamChat.mockReturnValue(true);
+    legacyChatServiceMocks.canModerateChat.mockReturnValue(false);
+    legacyChatServiceMocks.isTeamActive.mockReturnValue(true);
+    legacyChatServiceMocks.getUnreadChatCounts.mockResolvedValue({});
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockRejectedValue(new Error('Managed team callable is unavailable.'));
+  });
+
+  it('uses complete server-authoritative discovery for an admin-email-only native coach', async () => {
+    installNativeTeamFetch({ includeTeams: false });
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{ id: 'team-admin', name: 'Admin Bears', active: true, chatAccessVerified: true }],
+      isPartial: false
+    });
+    legacyChatServiceMocks.canAccessTeamChat.mockReturnValue(false);
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({ id: 'team-admin', name: 'Admin Bears' })
+    ]);
+    expect(result.isPartial).toBe(false);
+    expect(profileServiceMocks.loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns nonempty proven owner and parent teams when the legacy admin-email query is denied', async () => {
+    const fetchMock = installNativeTeamFetch({ includeTeams: true });
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({ id: 'team-parent', name: 'Jr KC Current' }),
+      expect.objectContaining({ id: 'team-owned', name: 'Vipers' })
+    ]);
+    expect(result.isPartial).toBe(true);
+    expect(legacyChatServiceMocks.getUserProfile).not.toHaveBeenCalled();
+    expect(legacyChatServiceMocks.getUserTeamsWithAccess).not.toHaveBeenCalled();
+    expect(legacyChatServiceMocks.getParentTeams).not.toHaveBeenCalled();
+    expect(legacyChatServiceMocks.getUnreadChatCounts).not.toHaveBeenCalled();
+    const requestedFields = fetchMock.mock.calls
+      .map(([, request]) => JSON.parse(String((request as RequestInit | undefined)?.body || '{}')))
+      .map((body) => body?.structuredQuery?.where?.fieldFilter?.field?.fieldPath)
+      .filter(Boolean);
+    expect(requestedFields).toEqual(['ownerId']);
+  });
+
+  it('uses complete native callable team discovery before the partial direct-read fallback', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{
+        id: 'team-admin',
+        name: 'Admin Email Team',
+        adminEmails: ['coach@example.test'],
+        active: true
+      }],
+      isPartial: false
+    });
+    const fetchMock = installNativeTeamFetch({ includeTeams: false });
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({ id: 'team-admin', name: 'Admin Email Team' })
+    ]);
+    expect(result.isPartial).toBe(false);
+    expect(profileServiceMocks.loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/documents:runQuery'))).toBe(false);
+  });
+
+  it('uses callable-proven parent teams and their non-default conversations without a direct team read', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{
+        id: 'team-parent',
+        name: 'Jr KC Current',
+        active: true,
+        chatAccessVerified: true,
+        chatConversations: [{
+          id: 'parent-group',
+          type: 'group',
+          lastMessageAt: new Date('2026-08-11T12:00:00.000Z')
+        }]
+      }],
+      isPartial: false
+    });
+    const fetchMock = installNativeTeamFetch({ includeTeams: true });
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'parent@example.test',
+      displayName: 'Pat Parent',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({
+        id: 'team-parent',
+        name: 'Jr KC Current',
+        role: 'Parent'
+      })
+    ]);
+    expect(profileServiceMocks.loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/documents/teams/team-parent'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => (
+      String(url).includes('/chatConversations/parent-group:runAggregationQuery')
+    ))).toBe(true);
+  });
+
+  it('hydrates the preferred native conversation through the authenticated server projection', async () => {
+    nativeCallableMocks.callNativeFirebaseFunction.mockResolvedValue({
+      items: [{
+        id: 'direct-1',
+        type: 'direct',
+        name: 'Coach Taylor',
+        participantIds: ['user-1', 'user:coach-1'],
+        directUserIds: ['user-1', 'coach-1'],
+        directAccess: 'team_admin'
+      }],
+      isPartial: false
+    });
+    legacyChatServiceMocks.getChatConversations.mockRejectedValue(new Error('Web Firestore is not authenticated.'));
+    const { loadChatConversations } = await import('./chatService');
+
+    const conversations = await loadChatConversations(
+      'team-parent',
+      { uid: 'user-1', email: 'parent@example.test', displayName: 'Pat Parent', roles: [] },
+      { id: 'team-parent', name: 'Jr KC Current' },
+      false,
+      { activeConversationId: 'direct-1' }
+    );
+
+    expect(nativeCallableMocks.callNativeFirebaseFunction).toHaveBeenCalledWith(
+      'listAuthorizedChatConversations',
+      { teamId: 'team-parent', activeConversationId: 'direct-1' },
+      { errorLabel: 'Chat conversations' }
+    );
+    expect(conversations).toEqual([
+      expect.objectContaining({ id: 'team', type: 'team' }),
+      expect.objectContaining({ id: 'direct-1', directUserIds: ['user-1', 'coach-1'] })
+    ]);
+    expect(legacyChatServiceMocks.getChatConversations).not.toHaveBeenCalled();
+  });
+
+  it('rejects a partial native conversation projection instead of resetting to default chat', async () => {
+    nativeCallableMocks.callNativeFirebaseFunction.mockResolvedValue({ items: [], isPartial: true });
+    const { loadChatConversations } = await import('./chatService');
+
+    await expect(loadChatConversations(
+      'team-parent',
+      { uid: 'user-1', email: 'parent@example.test', displayName: 'Pat Parent', roles: [] },
+      { id: 'team-parent', name: 'Jr KC Current' },
+      false,
+      { activeConversationId: 'direct-1' }
+    )).rejects.toThrow('completely verified');
+  });
+
+  it('uses the same native projection for exact conversation lookup', async () => {
+    nativeCallableMocks.callNativeFirebaseFunction.mockResolvedValue({
+      items: [{ id: 'group-1', type: 'group', participantIds: ['user-1'] }],
+      isPartial: false
+    });
+    const { loadChatConversationById } = await import('./chatService');
+
+    await expect(loadChatConversationById(
+      'team-parent',
+      { uid: 'user-1', email: 'parent@example.test', displayName: 'Pat Parent', roles: [] },
+      { id: 'team-parent', name: 'Jr KC Current' },
+      false,
+      'group-1'
+    )).resolves.toEqual(expect.objectContaining({ id: 'group-1' }));
+    expect(legacyChatServiceMocks.getChatConversations).not.toHaveBeenCalled();
+  });
+
+  it('does not bypass chat authorization for an unverified staff projection', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{ id: 'legacy-coach-team', name: 'Old Coach Team', active: true }],
+      isPartial: false
+    });
+    legacyChatServiceMocks.canAccessTeamChat.mockReturnValue(false);
+    installNativeTeamFetch({ includeTeams: false });
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([]);
+    expect(result.isPartial).toBe(false);
+  });
+
+  it('loads native unread counts through authenticated aggregation queries', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{
+        id: 'team-admin',
+        name: 'Admin Email Team',
+        adminEmails: ['coach@example.test'],
+        active: true,
+        lastMessageAt: new Date('2026-08-11T12:00:00.000Z')
+      }],
+      isPartial: false
+    });
+    const fetchMock = vi.fn(async (url: string, request?: RequestInit) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return jsonResponse(firestoreDocument('users/user-1', {
+          teamChatState: {
+            mapValue: {
+              fields: {
+                'team-admin': {
+                  mapValue: {
+                    fields: {
+                      lastReadAt: { timestampValue: '2026-08-11T11:00:00.000Z' }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }));
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        const body = JSON.parse(String(request?.body || '{}'));
+        const isOwnCount = JSON.stringify(body).includes('senderId');
+        return jsonResponse([{
+          result: {
+            aggregateFields: {
+              messageCount: { integerValue: isOwnCount ? '2' : '3' }
+            }
+          }
+        }]);
+      }
+      throw new Error(`Unexpected native request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({ id: 'team-admin', unreadCount: 1 })
+    ]);
+    expect(result.isPartial).toBe(false);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes(':runAggregationQuery'))).toHaveLength(2);
+    expect(authServiceMocks.getNativeAuthIdToken).toHaveBeenCalledWith(false);
+    expect(authServiceMocks.getNativeAuthIdToken).not.toHaveBeenCalledWith(true);
+    expect(legacyChatServiceMocks.getUnreadChatCounts).not.toHaveBeenCalled();
+  });
+
+  it('includes server-authorized managed-team threads in native unread counts and previews', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{
+        id: 'team-admin',
+        name: 'Admin Email Team',
+        active: true,
+        chatAccessVerified: true,
+        chatConversations: [{
+          id: 'direct-1',
+          type: 'direct',
+          lastMessageAt: {
+            _seconds: Date.parse('2026-08-11T12:00:00.000Z') / 1000,
+            _nanoseconds: 0
+          }
+        }, {
+          id: 'group-older',
+          type: 'group',
+          lastMessageAt: {
+            _seconds: Date.parse('2026-08-11T11:00:00.000Z') / 1000,
+            _nanoseconds: 0
+          }
+        }]
+      }],
+      isPartial: false
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return jsonResponse(firestoreDocument('users/user-1', {}));
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        return jsonResponse([{
+          result: { aggregateFields: { messageCount: { integerValue: '0' } } }
+        }]);
+      }
+      if (String(url).includes('/chatConversations/direct-1/chatMessages')) {
+        return jsonResponse({ documents: [firestoreDocument(
+          'teams/team-admin/chatConversations/direct-1/chatMessages/message-direct',
+          {
+            text: { stringValue: 'Direct update' },
+            senderId: { stringValue: 'user-2' },
+            createdAt: { timestampValue: '2026-08-11T12:00:00.000Z' }
+          }
+        )] });
+      }
+      if (String(url).includes('/teams/team-admin/chatMessages')) {
+        return jsonResponse({ documents: [] });
+      }
+      throw new Error(`Unexpected native request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: true });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({
+        id: 'team-admin',
+        preferredConversationId: 'direct-1',
+        lastMessage: expect.objectContaining({ id: 'message-direct', text: 'Direct update' })
+      })
+    ]);
+    expect(result.isPartial).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => (
+      String(url).includes('/chatConversations/direct-1:runAggregationQuery')
+    ))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => (
+      String(url).includes('/chatConversations/group-older/chatMessages')
+    ))).toBe(false);
+  });
+
+  it('marks failed native message previews partial and retries them instead of caching absence', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{
+        id: 'team-preview-failure',
+        name: 'Preview Retry Team',
+        active: true,
+        chatAccessVerified: true,
+        chatConversations: [{
+          id: 'direct-failure',
+          type: 'direct',
+          lastMessageAt: {
+            _seconds: Date.parse('2026-08-11T12:00:00.000Z') / 1000,
+            _nanoseconds: 0
+          }
+        }]
+      }],
+      isPartial: false
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return jsonResponse(firestoreDocument('users/user-1', {}));
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        return jsonResponse([{
+          result: { aggregateFields: { messageCount: { integerValue: '0' } } }
+        }]);
+      }
+      if (String(url).includes('/chatConversations/direct-failure/chatMessages')) {
+        return jsonResponse({ error: { message: 'Preview temporarily unavailable.' } }, 503);
+      }
+      if (String(url).includes('/teams/team-preview-failure/chatMessages')) {
+        return jsonResponse({ documents: [] });
+      }
+      throw new Error(`Unexpected native request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadChatInbox } = await import('./chatService');
+    const user = {
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    };
+
+    const firstResult = await loadChatInbox(user, { includeLastMessages: true });
+    const secondResult = await loadChatInbox(user, { includeLastMessages: true });
+
+    expect(firstResult).toEqual({
+      isPartial: true,
+      teams: [expect.objectContaining({
+        id: 'team-preview-failure',
+        lastMessage: null,
+        preferredConversationId: null
+      })]
+    });
+    expect(secondResult.isPartial).toBe(true);
+    expect(fetchMock.mock.calls.filter(([url]) => (
+      String(url).includes('/chatConversations/direct-failure/chatMessages')
+    ))).toHaveLength(2);
+  });
+
+  it('marks native unread counts partial when an authenticated aggregation fails', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{
+        id: 'team-admin',
+        name: 'Admin Email Team',
+        active: true,
+        lastMessageAt: new Date('2026-08-11T12:00:00.000Z')
+      }],
+      isPartial: false
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return jsonResponse(firestoreDocument('users/user-1', {}));
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        return jsonResponse({ error: { message: 'Unread count unavailable.' } }, 503);
+      }
+      throw new Error(`Unexpected native request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({ id: 'team-admin', unreadCount: 0 })
+    ]);
+    expect(result.isPartial).toBe(true);
+  });
+
+  it('bounds aggregate unread work across many teams and marks the inbox partial', async () => {
+    const teams = Array.from({ length: 130 }, (_, index) => ({
+      id: `team-${index}`,
+      name: `Team ${index}`,
+      active: true,
+      chatAccessVerified: true
     }));
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams,
+      isPartial: false
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return jsonResponse(firestoreDocument('users/user-1', {}));
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        return jsonResponse([{
+          result: { aggregateFields: { messageCount: { integerValue: '0' } } }
+        }]);
+      }
+      throw new Error(`Unexpected native request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toHaveLength(130);
+    expect(result.isPartial).toBe(true);
+    expect(fetchMock.mock.calls.filter(([url]) => (
+      String(url).includes(':runAggregationQuery')
+    ))).toHaveLength(240);
+  });
+
+  it('aborts timed-out aggregate unread requests before another worker job can start', async () => {
+    vi.useFakeTimers();
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: Array.from({ length: 12 }, (_, index) => ({
+        id: `slow-team-${index}`,
+        name: `Slow Team ${index}`,
+        active: true,
+        chatAccessVerified: true
+      })),
+      isPartial: false
+    });
+    let abortedRequestCount = 0;
+    const fetchMock = vi.fn((url: string, request?: RequestInit) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return Promise.resolve(jsonResponse(firestoreDocument('users/user-1', {})));
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        return new Promise((_, reject) => {
+          request?.signal?.addEventListener('abort', () => {
+            abortedRequestCount += 1;
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          }, { once: true });
+        });
+      }
+      return Promise.reject(new Error(`Unexpected native request: ${url}`));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadChatInbox } = await import('./chatService');
+
+    const inboxPromise = loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+    await vi.advanceTimersByTimeAsync(3000);
+    const result = await inboxPromise;
+    const aggregateRequests = fetchMock.mock.calls.filter(([url]) => (
+      String(url).includes(':runAggregationQuery')
+    ));
+
+    expect(result.teams).toHaveLength(12);
+    expect(result.isPartial).toBe(true);
+    expect(aggregateRequests).toHaveLength(12);
+    expect(abortedRequestCount).toBe(12);
+  });
+
+  it('does not turn a partial-empty native fallback into an authoritative empty inbox', async () => {
+    installNativeTeamFetch({ includeTeams: false });
+    const { loadChatInbox } = await import('./chatService');
+
+    await expect(loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false })).rejects.toThrow(/could not be completely verified/i);
+  });
+});
+
+describe('sendTeamChatMessage attachment uploads', () => {
+  it('uses authenticated native Storage cleanup instead of the signed-out web SDK', async () => {
+    nativeRuntime.isNativePlatform = true;
+    const { deleteTeamChatAttachments } = await import('./chatService');
+
+    await deleteTeamChatAttachments([{
+      ...createUploadedAttachment(new File(['photo'], 'photo.jpg', { type: 'image/jpeg' })),
+      type: 'image' as const,
+      path: 'stat-sheets/team-chat/team-1/team/user-1/photo.jpg'
+    }]);
+
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).toHaveBeenCalledWith(
+      'stat-sheets/team-chat/team-1/team/user-1/photo.jpg'
+    );
+    expect(legacyChatServiceMocks.deleteUploadedChatAttachments).not.toHaveBeenCalled();
+  });
+
+  it('rechecks friend access at send time and stores server-verifiable direct metadata', async () => {
+    legacyChatServiceMocks.upsertChatConversation.mockResolvedValue({
+      id: 'direct_user-1__user%3Afriend-1',
+      type: 'direct',
+      participantIds: ['friend-1', 'user-1'],
+      participantRoles: [],
+      directAccess: 'accepted_friend',
+      directUserIds: ['friend-1', 'user-1'],
+      friendshipId: 'friend-1__user-1',
+      initiatedBy: null
+    });
     const { sendTeamChatMessage } = await import('./chatService');
 
     await sendTeamChatMessage({
@@ -421,19 +1077,10 @@ describe('sendTeamChatMessage attachment uploads', () => {
       selectedRecipientIds: ['user:friend-1']
     });
 
-    expect(friendMessageMocks.canMessageAcceptedFriend).toHaveBeenCalledWith(
-      expect.objectContaining({ uid: 'user-1' }),
-      'friend-1',
-      'team-1'
-    );
-    expect(legacyChatServiceMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
-      type: 'direct',
-      createOnly: true,
-      directAccess: 'accepted_friend',
-      directUserIds: ['friend-1', 'user-1'],
-      friendshipId: 'friend-1__user-1',
-      initiatedBy: null
-    }));
+    expect(legacyChatServiceMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', {
+      participantIds: ['user-1', 'user:friend-1']
+    });
+    expect(friendMessageMocks.canMessageAcceptedFriend).not.toHaveBeenCalled();
     expect(friendMessageMocks.sendAuthorizedDirectMessage).toHaveBeenCalledWith(expect.objectContaining({
       teamId: 'team-1',
       conversationId: 'direct_user-1__user%3Afriend-1',
@@ -442,11 +1089,17 @@ describe('sendTeamChatMessage attachment uploads', () => {
     expect(legacyChatServiceMocks.postChatMessage).not.toHaveBeenCalled();
   });
 
-  it('keeps a selected email-only guardian on an authorized group thread', async () => {
-    legacyChatServiceMocks.upsertChatConversation.mockImplementation(async (_teamId, conversation) => ({
-      id: 'group_user-1__email%3Aguardian%40example.test',
-      ...conversation
-    }));
+  it('uses server classification for an email selector instead of choosing a group type', async () => {
+    legacyChatServiceMocks.upsertChatConversation.mockResolvedValue({
+      id: 'direct_guardian-1__user-1',
+      type: 'direct',
+      participantIds: ['guardian-1', 'user-1'],
+      participantRoles: [],
+      directAccess: 'accepted_friend',
+      directUserIds: ['guardian-1', 'user-1'],
+      friendshipId: 'guardian-1__user-1',
+      initiatedBy: null
+    });
     const { sendTeamChatMessage } = await import('./chatService');
 
     const result = await sendTeamChatMessage({
@@ -456,16 +1109,14 @@ describe('sendTeamChatMessage attachment uploads', () => {
       selectedRecipientIds: ['email:guardian@example.test']
     });
 
-    expect(legacyChatServiceMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
-      type: 'group',
+    expect(legacyChatServiceMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', {
       participantIds: ['user-1', 'email:guardian@example.test']
+    });
+    expect(friendMessageMocks.sendAuthorizedDirectMessage).toHaveBeenCalledWith(expect.objectContaining({
+      conversationId: 'direct_guardian-1__user-1'
     }));
-    expect(legacyChatServiceMocks.postChatMessage).toHaveBeenCalledWith('team-1', expect.objectContaining({
-      conversationId: 'group_user-1__email%3Aguardian%40example.test',
-      targetType: 'individuals'
-    }));
+    expect(legacyChatServiceMocks.postChatMessage).not.toHaveBeenCalled();
     expect(friendMessageMocks.canMessageAcceptedFriend).not.toHaveBeenCalled();
-    expect(friendMessageMocks.sendAuthorizedDirectMessage).not.toHaveBeenCalled();
     expect(result.wantsAi).toBe(true);
   });
 
@@ -535,11 +1186,17 @@ describe('sendTeamChatMessage attachment uploads', () => {
     }));
   });
 
-  it('keeps user and email aliases for one guardian on a group thread', async () => {
-    legacyChatServiceMocks.upsertChatConversation.mockImplementation(async (_teamId, conversation) => ({
-      id: 'group_user-1__guardian-aliases',
-      ...conversation
-    }));
+  it('does not let UID and email aliases force a server-classified direct audience into a group', async () => {
+    legacyChatServiceMocks.upsertChatConversation.mockResolvedValue({
+      id: 'direct_guardian-1__user-1',
+      type: 'direct',
+      participantIds: ['guardian-1', 'user-1'],
+      participantRoles: [],
+      directAccess: 'accepted_friend',
+      directUserIds: ['guardian-1', 'user-1'],
+      friendshipId: 'guardian-1__user-1',
+      initiatedBy: null
+    });
     const { sendTeamChatMessage } = await import('./chatService');
 
     await sendTeamChatMessage({
@@ -548,26 +1205,26 @@ describe('sendTeamChatMessage attachment uploads', () => {
       selectedRecipientIds: ['user:guardian-1', 'email:guardian@example.test']
     });
 
-    expect(legacyChatServiceMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
-      type: 'group',
-      participantIds: expect.arrayContaining(['user-1', 'user:guardian-1', 'email:guardian@example.test'])
-    }));
-    expect(legacyChatServiceMocks.upsertChatConversation.mock.calls[0][1].participantIds).toHaveLength(3);
-    expect(legacyChatServiceMocks.postChatMessage).toHaveBeenCalled();
-    expect(friendMessageMocks.sendAuthorizedDirectMessage).not.toHaveBeenCalled();
+    expect(legacyChatServiceMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', {
+      participantIds: ['user-1', 'email:guardian@example.test', 'user:guardian-1']
+    });
+    expect(legacyChatServiceMocks.postChatMessage).not.toHaveBeenCalled();
+    expect(friendMessageMocks.sendAuthorizedDirectMessage).toHaveBeenCalled();
   });
 
   it('fails a revoked friend send before creating a conversation or uploading attachments', async () => {
-    friendMessageMocks.canMessageAcceptedFriend.mockResolvedValue(false);
+    legacyChatServiceMocks.upsertChatConversation.mockRejectedValue(
+      new Error('This direct conversation is not authorized.')
+    );
     const { sendTeamChatMessage } = await import('./chatService');
 
     await expect(sendTeamChatMessage({
       ...buildSendInput([]),
       selectedRecipientTarget: 'individuals',
       selectedRecipientIds: ['user:friend-1']
-    })).rejects.toThrow(/accepted friend/i);
+    })).rejects.toThrow(/not authorized/i);
 
-    expect(legacyChatServiceMocks.upsertChatConversation).not.toHaveBeenCalled();
+    expect(legacyChatServiceMocks.upsertChatConversation).toHaveBeenCalled();
     expect(legacyChatServiceMocks.postChatMessage).not.toHaveBeenCalled();
     expect(legacyChatServiceMocks.uploadChatImage).not.toHaveBeenCalled();
   });
@@ -579,7 +1236,7 @@ describe('sendTeamChatMessage attachment uploads', () => {
       ok: true,
       status: 200,
       json: vi.fn().mockResolvedValue({
-        name: 'stat-sheets/team-chat/team-1/group_user%3Acoach-1/user-1/1700000000000_arrival_photo.jpg',
+        name: 'stat-sheets/team-chat/team-1/group_user%3Acoach-1/user-1/1700000000000_11111111111111111111111111111111_arrival_photo.jpg',
         downloadTokens: 'download-token'
       })
     });
@@ -593,13 +1250,13 @@ describe('sendTeamChatMessage attachment uploads', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, request] = fetchMock.mock.calls[0];
     expect(url).toContain('/v0/b/primary-allplays-bucket/o?uploadType=media');
-    expect(decodeURIComponent(url)).toContain('name=stat-sheets/team-chat/team-1/group_user%3Acoach-1/user-1/1700000000000_arrival_photo.jpg');
+    expect(decodeURIComponent(url)).toContain('name=stat-sheets/team-chat/team-1/group_user%3Acoach-1/user-1/1700000000000_11111111111111111111111111111111_arrival_photo.jpg');
     expect(request).toEqual(expect.objectContaining({
       method: 'POST',
       headers: expect.objectContaining({ Authorization: 'Bearer main-user-id-token' }),
       body: photo
     }));
-    expect(attachment.path).toBe('stat-sheets/team-chat/team-1/group_user%3Acoach-1/user-1/1700000000000_arrival_photo.jpg');
+    expect(attachment.path).toBe('stat-sheets/team-chat/team-1/group_user%3Acoach-1/user-1/1700000000000_11111111111111111111111111111111_arrival_photo.jpg');
     expect(fetchMock.mock.calls.flatMap((call) => call.map(String)).join(' ')).not.toContain('identitytoolkit.googleapis.com');
   });
 
@@ -611,7 +1268,7 @@ describe('sendTeamChatMessage attachment uploads', () => {
       ok: true,
       status: 200,
       json: vi.fn().mockResolvedValue({
-        name: 'stat-sheets/team-chat/team-1/team/rest-session-user/1700000000000_photo.jpg',
+        name: 'stat-sheets/team-chat/team-1/team/rest-session-user/1700000000000_11111111111111111111111111111111_photo.jpg',
         downloadTokens: 'download-token'
       })
     });
@@ -646,6 +1303,9 @@ describe('sendTeamChatMessage attachment uploads', () => {
     await vi.advanceTimersByTimeAsync(25000);
     await rejection;
     expect(uploadSignal?.aborted).toBe(true);
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).toHaveBeenCalledWith(
+      expect.stringMatching(/^stat-sheets\/team-chat\/team-1\/team\/user-1\/\d+_11111111111111111111111111111111_photo\.jpg$/)
+    );
   });
 
   it('starts multiple uploads before the first resolves and posts attachments in the original order', async () => {
@@ -746,7 +1406,342 @@ describe('sendTeamChatMessage attachment uploads', () => {
 });
 
 describe('subscribeToTeamChatMessages', () => {
-  it('forwards async Firestore listener errors to the caller', async () => {
+  function nativeMessageDocument(id: string, fields: Record<string, unknown> = {}) {
+    const encodeValue = (value: unknown): Record<string, unknown> => {
+      if (value === null) return { nullValue: 'NULL_VALUE' };
+      if (typeof value === 'string') return { stringValue: value };
+      if (typeof value === 'boolean') return { booleanValue: value };
+      if (typeof value === 'number') return { integerValue: String(value) };
+      if (Array.isArray(value)) return { arrayValue: { values: value.map(encodeValue) } };
+      return {
+        mapValue: {
+          fields: Object.entries(value as Record<string, unknown>).reduce<Record<string, Record<string, unknown>>>((encoded, [key, entry]) => {
+            encoded[key] = encodeValue(entry);
+            return encoded;
+          }, {})
+        }
+      };
+    };
+
+    return {
+      name: `projects/demo-allplays/databases/(default)/documents/teams/team-1/chatMessages/${id}`,
+      fields: Object.entries({
+        text: 'Original message',
+        createdAt: '2026-08-10T17:00:00.000Z',
+        ...fields
+      }).reduce<Record<string, Record<string, unknown>>>((encoded, [key, value]) => {
+        encoded[key] = key.endsWith('At') && typeof value === 'string'
+          ? { timestampValue: value }
+          : encodeValue(value);
+        return encoded;
+      }, {})
+    };
+  }
+
+  function mockNativePolls(payloads: Array<Array<ReturnType<typeof nativeMessageDocument>> | {
+    documents: Array<ReturnType<typeof nativeMessageDocument>>;
+    nextPageToken?: unknown;
+  }>) {
+    const fetchMock = vi.fn().mockImplementation(() => {
+      const payload = payloads[Math.min(fetchMock.mock.calls.length - 1, payloads.length - 1)];
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue(Array.isArray(payload) ? { documents: payload } : payload)
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  it('deduplicates equivalent native polls and emits each visible message revision once', async () => {
+    vi.useFakeTimers();
+    nativeRuntime.isNativePlatform = true;
+    const unsubscribe = vi.fn();
+    legacyChatServiceMocks.subscribeToChatMessages.mockReturnValue(unsubscribe);
+    const original = nativeMessageDocument('message-1', { _doc: { cursor: 'first-object' } });
+    const equivalent = nativeMessageDocument('message-1', { _doc: { cursor: 'regenerated-object' } });
+    const added = nativeMessageDocument('message-2', { text: 'Added message' });
+    const edited = nativeMessageDocument('message-1', {
+      text: 'Edited message',
+      editedAt: '2026-08-10T17:05:00.000Z'
+    });
+    const deleted = nativeMessageDocument('message-1', { deleted: true });
+    const reacted = nativeMessageDocument('message-1', { reactions: { heart: ['user-2'] } });
+    const attachmentChanged = nativeMessageDocument('message-1', {
+      attachments: [{
+        type: 'image',
+        url: 'https://example.test/photo.jpg',
+        name: 'photo.jpg',
+        mimeType: 'image/jpeg',
+        size: 2048
+      }]
+    });
+    const fetchMock = mockNativePolls([
+      [original],
+      [equivalent],
+      [equivalent, added],
+      [equivalent],
+      [edited],
+      [deleted],
+      [reacted],
+      [attachmentChanged]
+    ]);
+    const onMessages = vi.fn();
+
+    const { subscribeToTeamChatMessages } = await import('./chatService');
+    const subscription = subscribeToTeamChatMessages('team-1', 'team', onMessages);
+    const listenerError = legacyChatServiceMocks.subscribeToChatMessages.mock.calls[0][3];
+    listenerError(new Error('WebView listener permission denied'));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onMessages).toHaveBeenCalledTimes(1);
+    expect(onMessages.mock.calls[0][0]).toEqual([expect.objectContaining({ id: 'message-1', text: 'Original message' })]);
+
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(onMessages).toHaveBeenCalledTimes(1);
+
+    for (let expectedEmissions = 2; expectedEmissions <= 7; expectedEmissions += 1) {
+      await vi.advanceTimersByTimeAsync(8000);
+      expect(onMessages).toHaveBeenCalledTimes(expectedEmissions);
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(8);
+    expect(legacyChatServiceMocks.subscribeToChatMessages).toHaveBeenCalledTimes(1);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    expect(onMessages.mock.calls.map(([messages]) => messages)).toEqual([
+      [expect.objectContaining({ id: 'message-1', text: 'Original message' })],
+      [expect.objectContaining({ id: 'message-1' }), expect.objectContaining({ id: 'message-2' })],
+      [expect.objectContaining({ id: 'message-1' })],
+      [expect.objectContaining({ text: 'Edited message' })],
+      [expect.objectContaining({ deleted: true })],
+      [expect.objectContaining({ reactions: { heart: ['user-2'] } })],
+      [expect.objectContaining({ attachments: [expect.objectContaining({ url: 'https://example.test/photo.jpg' })] })]
+    ]);
+
+    subscription.unsubscribe();
+    await vi.advanceTimersByTimeAsync(16000);
+    expect(fetchMock).toHaveBeenCalledTimes(8);
+  });
+
+  it('propagates and replaces native REST page cursors through terminal history', async () => {
+    vi.useFakeTimers();
+    nativeRuntime.isNativePlatform = true;
+    legacyChatServiceMocks.subscribeToChatMessages.mockImplementation(() => {
+      throw new Error('Firestore listener unavailable');
+    });
+    const firstPage = Array.from({ length: 50 }, (_, index) => nativeMessageDocument(`latest-${index}`));
+    const secondPage = Array.from({ length: 50 }, (_, index) => nativeMessageDocument(`older-${index}`));
+    const terminalPage = Array.from({ length: 50 }, (_, index) => nativeMessageDocument(`oldest-${index}`));
+    const fetchMock = mockNativePolls([
+      { documents: firstPage, nextPageToken: 'token/one+=' },
+      { documents: secondPage, nextPageToken: 'token two' },
+      { documents: terminalPage }
+    ]);
+    const onMessages = vi.fn();
+
+    const { loadOlderTeamChatMessages, subscribeToTeamChatMessages } = await import('./chatService');
+    const subscription = subscribeToTeamChatMessages('team-1', 'team', onMessages);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const firstCursor = onMessages.mock.calls[0][1] as NativeChatPageCursor;
+    expect(firstCursor).toEqual({
+      kind: 'native-chat-rest',
+      collectionPath: 'teams/team-1/chatMessages',
+      orderBy: 'createdAt desc',
+      pageSize: 50,
+      nextPageToken: 'token/one+='
+    });
+    expect(new URL(fetchMock.mock.calls[0][0]).searchParams.get('pageToken')).toBeNull();
+
+    const second = await loadOlderTeamChatMessages('team-1', 'team', firstCursor);
+    expect(second.messages).toHaveLength(50);
+    expect(second.cursor).toEqual(expect.objectContaining({ nextPageToken: 'token two' }));
+    const secondUrl = new URL(fetchMock.mock.calls[1][0]);
+    expect(secondUrl.pathname).toContain('/documents/teams/team-1/chatMessages');
+    expect(Object.fromEntries(secondUrl.searchParams)).toEqual({
+      orderBy: 'createdAt desc',
+      pageSize: '50',
+      pageToken: 'token/one+='
+    });
+
+    const terminal = await loadOlderTeamChatMessages('team-1', 'team', second.cursor);
+    expect(terminal.messages).toHaveLength(50);
+    expect(terminal.cursor).toEqual(expect.objectContaining({ nextPageToken: null }));
+    expect(new URL(fetchMock.mock.calls[2][0]).searchParams.get('pageToken')).toBe('token two');
+
+    subscription.unsubscribe();
+  });
+
+  it('keeps nested native conversation paths scoped across pagination', async () => {
+    vi.useFakeTimers();
+    nativeRuntime.isNativePlatform = true;
+    legacyChatServiceMocks.subscribeToChatMessages.mockImplementation(() => {
+      throw new Error('Firestore listener unavailable');
+    });
+    const fetchMock = mockNativePolls([
+      { documents: [nativeMessageDocument('nested-latest')], nextPageToken: 'nested-token' },
+      { documents: [nativeMessageDocument('nested-older')] }
+    ]);
+    const onMessages = vi.fn();
+
+    const { loadOlderTeamChatMessages, subscribeToTeamChatMessages } = await import('./chatService');
+    const subscription = subscribeToTeamChatMessages('team-1', 'group_role%3Astaff', onMessages);
+    await vi.advanceTimersByTimeAsync(0);
+    const cursor = onMessages.mock.calls[0][1] as NativeChatPageCursor;
+
+    expect(cursor.collectionPath).toBe('teams/team-1/chatConversations/group_role%253Astaff/chatMessages');
+    await loadOlderTeamChatMessages('team-1', 'group_role%3Astaff', cursor);
+    const olderUrl = new URL(fetchMock.mock.calls[1][0]);
+    expect(olderUrl.pathname).toContain('/documents/teams/team-1/chatConversations/group_role%253Astaff/chatMessages');
+    expect(olderUrl.searchParams.get('orderBy')).toBe('createdAt desc');
+    expect(olderUrl.searchParams.get('pageSize')).toBe('50');
+    expect(olderUrl.searchParams.get('pageToken')).toBe('nested-token');
+
+    subscription.unsubscribe();
+  });
+
+  it('emits native cursor-only changes that affect pagination state', async () => {
+    vi.useFakeTimers();
+    nativeRuntime.isNativePlatform = true;
+    legacyChatServiceMocks.subscribeToChatMessages.mockImplementation(() => {
+      throw new Error('Firestore listener unavailable');
+    });
+    const document = nativeMessageDocument('message-1');
+    mockNativePolls([
+      { documents: [document], nextPageToken: 'token-1' },
+      { documents: [document], nextPageToken: 'token-2' },
+      { documents: [document] }
+    ]);
+    const onMessages = vi.fn();
+
+    const { subscribeToTeamChatMessages } = await import('./chatService');
+    const subscription = subscribeToTeamChatMessages('team-1', 'team', onMessages);
+    await vi.advanceTimersByTimeAsync(16000);
+
+    expect(onMessages).toHaveBeenCalledTimes(3);
+    expect(onMessages.mock.calls.map(([, cursor]) => cursor.nextPageToken)).toEqual(['token-1', 'token-2', null]);
+    subscription.unsubscribe();
+  });
+
+  it('rejects invalid native page metadata and REST pagination failures', async () => {
+    nativeRuntime.isNativePlatform = true;
+    legacyChatServiceMocks.subscribeToChatMessages.mockImplementation(() => {
+      throw new Error('Firestore listener unavailable');
+    });
+    const invalidFetch = mockNativePolls([{ documents: [nativeMessageDocument('message-1')], nextPageToken: 42 }]);
+    const onError = vi.fn();
+    const { loadOlderTeamChatMessages, subscribeToTeamChatMessages } = await import('./chatService');
+    const subscription = subscribeToTeamChatMessages('team-1', 'team', vi.fn(), onError);
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining('nextPageToken')
+    })));
+    subscription.unsubscribe();
+    expect(invalidFetch).toHaveBeenCalledTimes(1);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: vi.fn().mockResolvedValue({ error: { message: 'Firestore unavailable' } })
+    }));
+    const cursor: NativeChatPageCursor = {
+      kind: 'native-chat-rest',
+      collectionPath: 'teams/team-1/chatMessages',
+      orderBy: 'createdAt desc',
+      pageSize: 50,
+      nextPageToken: 'retry-token'
+    };
+    await expect(loadOlderTeamChatMessages('team-1', 'team', cursor)).rejects.toThrow('Firestore unavailable');
+  });
+
+  it('rejects a native cursor from another conversation before requesting it', async () => {
+    nativeRuntime.isNativePlatform = true;
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const cursor: NativeChatPageCursor = {
+      kind: 'native-chat-rest',
+      collectionPath: 'teams/team-2/chatMessages',
+      orderBy: 'createdAt desc',
+      pageSize: 50,
+      nextPageToken: 'wrong-scope-token'
+    };
+
+    const { loadOlderTeamChatMessages } = await import('./chatService');
+    await expect(loadOlderTeamChatMessages('team-1', 'team', cursor)).rejects.toThrow('active conversation');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves browser DocumentSnapshot pagination without making REST requests', async () => {
+    const webCursor = { id: 'snapshot-50' };
+    const nextWebCursor = { id: 'snapshot-100' };
+    legacyChatServiceMocks.getChatMessages.mockResolvedValue([
+      { id: 'older-message', text: 'Older', createdAt: { seconds: 1 }, _doc: nextWebCursor }
+    ]);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { loadOlderTeamChatMessages } = await import('./chatService');
+    const page = await loadOlderTeamChatMessages('team-1', 'team', webCursor);
+
+    expect(legacyChatServiceMocks.getChatMessages).toHaveBeenCalledWith('team-1', {
+      limit: 50,
+      startAfterDoc: webCursor,
+      conversationId: 'team'
+    });
+    expect(page).toEqual({
+      messages: [expect.objectContaining({ id: 'older-message', _doc: nextWebCursor })],
+      cursor: null
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not emit or report errors after an in-flight native poll is unsubscribed', async () => {
+    vi.useFakeTimers();
+    nativeRuntime.isNativePlatform = true;
+    legacyChatServiceMocks.subscribeToChatMessages.mockReturnValue(vi.fn());
+    const response = createDeferred<{ ok: boolean; status: number; json: () => Promise<{ documents: ReturnType<typeof nativeMessageDocument>[] }> }>();
+    const fetchMock = vi.fn(() => response.promise);
+    vi.stubGlobal('fetch', fetchMock);
+    const onMessages = vi.fn();
+    const onError = vi.fn();
+
+    const { subscribeToTeamChatMessages } = await import('./chatService');
+    const subscription = subscribeToTeamChatMessages('team-1', 'team', onMessages, onError);
+    const listenerError = legacyChatServiceMocks.subscribeToChatMessages.mock.calls[0][3];
+    listenerError(new Error('WebView listener permission denied'));
+    await vi.advanceTimersByTimeAsync(0);
+    subscription.unsubscribe();
+    response.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({ documents: [nativeMessageDocument('message-1')] })
+    });
+    await vi.advanceTimersByTimeAsync(24000);
+
+    expect(onMessages).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses the authenticated native poller when listener setup throws synchronously', async () => {
+    nativeRuntime.isNativePlatform = true;
+    legacyChatServiceMocks.subscribeToChatMessages.mockImplementation(() => {
+      throw new Error('WebView listener unavailable');
+    });
+    const fetchMock = mockNativePolls([[nativeMessageDocument('message-1')]]);
+    const onMessages = vi.fn();
+    const onError = vi.fn();
+
+    const { subscribeToTeamChatMessages } = await import('./chatService');
+    const subscription = subscribeToTeamChatMessages('team-1', 'team', onMessages, onError);
+    await vi.waitFor(() => expect(onMessages).toHaveBeenCalledTimes(1));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+    subscription.unsubscribe();
+  });
+
+  it('forwards async web Firestore listener errors to the caller', async () => {
     const unsubscribe = vi.fn();
     const onMessages = vi.fn();
     const onError = vi.fn();
@@ -759,7 +1754,7 @@ describe('subscribeToTeamChatMessages', () => {
       'team-1',
       { limit: 50, conversationId: 'team' },
       expect.any(Function),
-      onError
+      expect.any(Function)
     );
 
     const forwardedOnError = legacyChatServiceMocks.subscribeToChatMessages.mock.calls[0][3];

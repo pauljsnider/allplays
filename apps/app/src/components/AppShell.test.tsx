@@ -32,6 +32,29 @@ const { useShellLayoutMock, subscribeToNotificationInboxMock, subscribeToUnreadN
   updateAppIconBadgeMock: vi.fn(() => Promise.resolve()),
 }));
 
+const notificationSheetSuspension = vi.hoisted(() => {
+  let pending: Promise<void> | null = null;
+  let release: (() => void) | null = null;
+
+  return {
+    suspend() {
+      pending = new Promise<void>((resolve) => {
+        release = () => {
+          pending = null;
+          resolve();
+        };
+      });
+    },
+    current() {
+      return pending;
+    },
+    resolve() {
+      release?.();
+      release = null;
+    },
+  };
+});
+
 vi.mock('../lib/useShellLayout', () => ({
   useShellLayout: useShellLayoutMock,
 }));
@@ -79,16 +102,21 @@ vi.mock('./NotificationInboxSheet', () => ({
     inboxState: 'loading' | 'ready' | 'error';
     onClose: () => void;
     onRetry?: () => void;
-  }) => (
-    <div role="dialog" aria-label="Notifications">
-      <button type="button" aria-label="Close notifications" onClick={onClose}>Close</button>
-      {onRetry ? <button type="button" onClick={onRetry}>Retry notifications</button> : null}
-      <div data-testid="notification-inbox-sheet-state">{inboxState}</div>
-      {items.map((item) => (
-        <div key={item.id}>{item.text}</div>
-      ))}
-    </div>
-  ),
+  }) => {
+    const pending = notificationSheetSuspension.current();
+    if (pending) throw pending;
+
+    return (
+      <div role="dialog" aria-label="Notifications">
+        <button type="button" aria-label="Close notifications" onClick={onClose}>Close</button>
+        {onRetry ? <button type="button" onClick={onRetry}>Retry notifications</button> : null}
+        <div data-testid="notification-inbox-sheet-state">{inboxState}</div>
+        {items.map((item) => (
+          <div key={item.id}>{item.text}</div>
+        ))}
+      </div>
+    );
+  },
 }));
 
 function ReportDiscoveredScheduleAccess({
@@ -132,6 +160,14 @@ const signedInAuth: AuthState = {
     roles: ['parent'],
   },
 };
+
+function setDocumentVisibility(visibilityState: DocumentVisibilityState) {
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    value: visibilityState,
+  });
+  document.dispatchEvent(new Event('visibilitychange'));
+}
 
 function LocationDisplay() {
   const location = useLocation();
@@ -247,6 +283,11 @@ describe('AppShell', () => {
   });
 
   beforeEach(() => {
+    notificationSheetSuspension.resolve();
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      value: 'visible',
+    });
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
       callback(0);
       return 1;
@@ -263,6 +304,7 @@ describe('AppShell', () => {
 
   afterEach(() => {
     cleanup();
+    Reflect.deleteProperty(document, 'visibilityState');
   });
 
   it('measures route paint from navigation, not from the previous route paint', () => {
@@ -566,6 +608,50 @@ describe('AppShell', () => {
     expect(screen.getByTestId('app-shell-notification-status').textContent).toBe('Loading notifications…');
   });
 
+  it('shows and dismisses notification loading feedback while the lazy sheet is suspended', async () => {
+    useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
+    notificationSheetSuspension.suspend();
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+
+    expect(screen.getByRole('dialog', { name: 'Notifications' })).toBeTruthy();
+    expect(screen.getByRole('status', { name: 'Loading notifications' })).toBeTruthy();
+
+    await waitFor(() => {
+      expect(subscribeToNotificationInboxMock).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close notifications' }));
+    expect(screen.queryByRole('dialog', { name: 'Notifications' })).toBeNull();
+
+    act(() => notificationSheetSuspension.resolve());
+    await act(async () => Promise.resolve());
+    expect(screen.queryByRole('dialog', { name: 'Notifications' })).toBeNull();
+
+    notificationSheetSuspension.suspend();
+    fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+    expect(screen.getByRole('status', { name: 'Loading notifications' })).toBeTruthy();
+
+    await waitFor(() => {
+      expect(subscribeToNotificationInboxMock).toHaveBeenCalledTimes(2);
+    });
+
+    act(() => notificationSheetSuspension.resolve());
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-inbox-sheet-state').textContent).toBe('loading');
+    });
+    expect(subscribeToNotificationInboxMock).toHaveBeenCalledTimes(2);
+  });
+
   it('announces load failures without hydrating the full inbox behind the badge', async () => {
     subscribeToUnreadNotificationCountMock.mockImplementation((_uid, _onCount, onError) => {
       onError?.(new Error('offline'));
@@ -699,6 +785,114 @@ describe('AppShell', () => {
         expect.any(Function),
         expect.any(Function)
       );
+    });
+  });
+
+  it('pauses the unread listener while backgrounded with the inbox closed', async () => {
+    const firstUnsubscribe = vi.fn();
+    const secondUnsubscribe = vi.fn();
+    subscribeToUnreadNotificationCountMock
+      .mockReturnValueOnce(firstUnsubscribe)
+      .mockReturnValueOnce(secondUnsubscribe);
+
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(subscribeToUnreadNotificationCountMock).toHaveBeenCalledTimes(1));
+    act(() => setDocumentVisibility('hidden'));
+    expect(firstUnsubscribe).toHaveBeenCalledTimes(1);
+    expect(subscribeToNotificationInboxMock).not.toHaveBeenCalled();
+
+    act(() => setDocumentVisibility('visible'));
+    await waitFor(() => expect(subscribeToUnreadNotificationCountMock).toHaveBeenCalledTimes(2));
+    expect(subscribeToNotificationInboxMock).not.toHaveBeenCalled();
+
+    act(() => setDocumentVisibility('hidden'));
+    expect(secondUnsubscribe).toHaveBeenCalledTimes(1);
+    unmount();
+    expect(secondUnsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('pauses and replaces open-inbox listeners without clearing cached UI', async () => {
+    const unreadUnsubscribes = [vi.fn(), vi.fn()];
+    const inboxUnsubscribes = [vi.fn(), vi.fn()];
+    subscribeToUnreadNotificationCountMock
+      .mockImplementationOnce((_uid, onCount) => {
+        onCount(7);
+        return unreadUnsubscribes[0]!;
+      })
+      .mockImplementationOnce((_uid, onCount) => {
+        onCount(8);
+        return unreadUnsubscribes[1]!;
+      });
+    subscribeToNotificationInboxMock
+      .mockImplementationOnce((_uid, onItems) => {
+        onItems([{
+          id: 'cached-notification',
+          category: 'team_message',
+          type: 'team_message',
+          title: 'Team update',
+          body: '',
+          text: 'Cached while backgrounded',
+          appRoute: '/messages',
+          conversationId: '',
+          createdAt: null,
+          readAt: null,
+        }]);
+        return inboxUnsubscribes[0]!;
+      })
+      .mockImplementationOnce((_uid, onItems) => {
+        onItems([{
+          id: 'resumed-notification',
+          category: 'team_message',
+          type: 'team_message',
+          title: 'New team update',
+          body: '',
+          text: 'Refreshed after resume',
+          appRoute: '/messages',
+          conversationId: '',
+          createdAt: null,
+          readAt: null,
+        }]);
+        return inboxUnsubscribes[1]!;
+      });
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+    await waitFor(() => {
+      expect(screen.getByText('Cached while backgrounded')).toBeTruthy();
+      expect(screen.getByTestId('notification-unread-badge').textContent).toBe('7');
+    });
+
+    act(() => setDocumentVisibility('hidden'));
+    expect(unreadUnsubscribes[0]).toHaveBeenCalledTimes(1);
+    expect(inboxUnsubscribes[0]).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Cached while backgrounded')).toBeTruthy();
+    expect(screen.getByTestId('notification-unread-badge').textContent).toBe('7');
+
+    act(() => setDocumentVisibility('hidden'));
+    expect(unreadUnsubscribes[0]).toHaveBeenCalledTimes(1);
+    expect(inboxUnsubscribes[0]).toHaveBeenCalledTimes(1);
+
+    act(() => setDocumentVisibility('visible'));
+    await waitFor(() => {
+      expect(subscribeToUnreadNotificationCountMock).toHaveBeenCalledTimes(2);
+      expect(subscribeToNotificationInboxMock).toHaveBeenCalledTimes(2);
+      expect(screen.getByText('Refreshed after resume')).toBeTruthy();
+      expect(screen.getByTestId('notification-unread-badge').textContent).toBe('8');
+      expect(updateAppIconBadgeMock).toHaveBeenCalledWith(8);
     });
   });
 

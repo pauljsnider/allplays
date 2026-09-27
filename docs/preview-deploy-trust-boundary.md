@@ -2,13 +2,17 @@
 
 ## Required invariants
 
-The `pr-integration` pull-request workflow calls the reusable
-`deploy-preview` artifact builder, which executes untrusted PR code. Neither may
-receive a Firebase credential or a repository token with write permissions.
-The reusable builder may only build, stage public Hosting content, and upload
-the single `firebase-preview-hosting-bundle` artifact. The same consolidated
-run must also pass the reusable regression and preview-smoke workflows before
-its stable `preview-smoke` aggregate succeeds.
+The optional `pr-preview` workflow calls the reusable `deploy-preview`
+artifact builder only after an operator dispatches it with a ready
+same-repository PR number and its exact current head SHA. The builder fetches
+that PR ref and fails if it no longer matches the requested SHA. It executes
+untrusted PR code, so neither workflow may receive a Firebase credential or a
+repository token with write permissions. The reusable builder may only build,
+stage public Hosting content, and upload the single
+`firebase-preview-hosting-bundle` artifact. Required regression and local
+preview-smoke validation remain in `pr-integration`; a Firebase channel deploy
+requires a successful `pr-integration` run for the exact requested head, but is
+not a merge prerequisite and must not run on every pushed PR head.
 
 The `deploy-preview-trusted` workflow is the only preview deployer. GitHub runs
 its `workflow_run` definition from the default branch. It checks out only the
@@ -89,10 +93,11 @@ Before merging a change to either preview workflow:
 5. Review the exact PR head SHA after all requested automated reviews and CI
    complete. Any new commit invalidates prior review evidence.
 
-The first `workflow_run` preview cannot execute until `pr-integration` and its
+The first `workflow_run` preview cannot execute until `pr-preview` and its
 trusted verifier scripts are present on the default branch. The reusable
-artifact build remains testable before merge; the first post-merge PR run is
-the deployment canary.
+artifact build remains testable before merge; dispatch `pr-preview` with a
+ready same-repository canary PR number and exact head SHA after merge to
+exercise the deployment path.
 
 ## Workload Identity cutover and JSON-key retirement
 

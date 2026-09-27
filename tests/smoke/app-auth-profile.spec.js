@@ -24,13 +24,26 @@ async function waitForAuthRoute(page, readyLocator) {
     }).toPass({ timeout: 30000 });
 }
 
-async function mockAppModules(page, { user = null, emailLink = false } = {}) {
-    await page.addInitScript(({ mockUser, mockEmailLink }) => {
+async function mockAppModules(page, { user = null, signInUser = null, emailLink = false, friendInviteReplay = false } = {}) {
+    let friendInviteRedemptionAttempts = 0;
+    if (friendInviteReplay) {
+        await page.exposeFunction('mockFriendInviteRedemption', () => {
+            friendInviteRedemptionAttempts += 1;
+            return friendInviteRedemptionAttempts > 1
+                ? { error: 'Unable to redeem friend invite.' }
+                : { error: '' };
+        });
+    }
+
+    await page.addInitScript(({ mockUser, mockSignInUser, mockEmailLink, mockFriendInviteReplay }) => {
         window.__mockAuthState = {
             user: mockUser,
             profile: mockUser ? { fullName: mockUser.displayName || 'Pat Parent' } : null
         };
         window.__mockEmailLink = mockEmailLink;
+        window.__mockSignInUser = mockSignInUser;
+        window.__mockFriendInviteReplay = mockFriendInviteReplay;
+        window.__mockGoogleRedirectSettled = false;
         window.__appAuthCalls = {
             signInWithEmail: [],
             signUpWithEmail: [],
@@ -72,13 +85,49 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
             canOpenSettings: false
         }];
         window.__mockNotificationPreferenceResponses ??= [];
-    }, { mockUser: user, mockEmailLink: emailLink });
+    }, {
+        mockUser: user,
+        mockSignInUser: signInUser,
+        mockEmailLink: emailLink,
+        mockFriendInviteReplay: friendInviteReplay
+    });
+
+    // The app startup timer lazily initializes Firebase Performance. Keep this
+    // module mocked across reloads so auth-flow tests cannot contact Firebase
+    // Installations with the intentionally non-production preview config.
+    await page.route(/\/src\/lib\/performanceInstrumentation\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export function now() {
+                    return window.performance.now();
+                }
+
+                export function getPerformancePlatform() {
+                    return 'web';
+                }
+
+                export function startPerformanceSpan() {
+                    return {
+                        startedAt: now(),
+                        traceName: 'mock-performance-span',
+                        end() {}
+                    };
+                }
+
+                export function recordCompletedPerformanceSpan() {}
+            `
+        });
+    });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
             status: 200,
             contentType: 'application/javascript',
             body: `
+                const refresh = async () => { window.__appAuthCalls.refresh += 1; };
+
                 export function useAuth() {
                     const state = window.__mockAuthState || { user: null, profile: null };
                     const user = state.user || null;
@@ -93,7 +142,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                         isCoach: roles.includes('coach'),
                         isAdmin: roles.includes('admin') || user?.isAdmin === true,
                         isPlatformAdmin: roles.includes('platformAdmin'),
-                        refresh: async () => { window.__appAuthCalls.refresh += 1; },
+                        refresh,
                         signOut: async () => {
                             window.__appAuthCalls.signOut += 1;
                             window.__mockAuthState = { user: null, profile: null };
@@ -122,6 +171,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                 }
 
                 export async function completeGoogleRedirect() {
+                    window.__mockGoogleRedirectSettled = true;
                     return null;
                 }
 
@@ -168,7 +218,15 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
 
                 export async function signInWithEmail(email, password) {
                     window.__appAuthCalls.signInWithEmail.push({ email, password });
-                    return { user: mockUser() };
+                    window.sessionStorage.setItem('mock-last-sign-in-email', email);
+                    const user = window.__mockSignInUser || mockUser();
+                    if (window.__mockSignInUser) {
+                        window.__mockAuthState = {
+                            user,
+                            profile: { fullName: user.displayName || '' }
+                        };
+                    }
+                    return { user };
                 }
 
                 export async function signUpWithEmail(email, password, activationCode) {
@@ -200,11 +258,17 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
 
                 export async function redeemInviteForUser(userId, code, authEmail) {
                     window.__appAuthCalls.redeemInviteForUser.push({ userId, code, authEmail });
+                    if (window.__mockFriendInviteReplay) {
+                        const replayResult = await window.mockFriendInviteRedemption();
+                        if (replayResult?.error) {
+                            throw new Error(replayResult.error);
+                        }
+                    }
                     return { message: 'Invite accepted.', redirectUrl: 'parent-dashboard.html' };
                 }
 
                 export function mapLegacyRedirectToAppRoute() {
-                    return '/home';
+                    return window.__mockFriendInviteReplay ? '' : '/home';
                 }
 
                 export async function applyEmailActionCode(oobCode) {
@@ -264,8 +328,18 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                 export function normalizeNotificationPreferences(preferences) {
                     return {
                         liveChat: preferences?.liveChat !== false,
+                        mentions: preferences?.mentions !== false,
                         liveScore: preferences?.liveScore === true,
-                        schedule: preferences?.schedule !== false
+                        gameDay: preferences?.gameDay === true,
+                        schedule: preferences?.schedule !== false,
+                        rsvp: preferences?.rsvp !== false,
+                        fees: preferences?.fees !== false,
+                        practice: preferences?.practice === true,
+                        access: preferences?.access !== false,
+                        rideshare: preferences?.rideshare !== false,
+                        media: preferences?.media === true,
+                        awards: preferences?.awards === true,
+                        officiating: preferences?.officiating === true
                     };
                 }
 
@@ -381,8 +455,13 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
 
                 export async function uploadProfilePhoto(file) {
                     window.__appProfileCalls.uploads.push({ name: file.name, type: file.type });
-                    return '${mockAvatarUrl}';
+                    return {
+                        url: '${mockAvatarUrl}',
+                        path: 'profile-photos/users/user-1/profile/avatar.png'
+                    };
                 }
+
+                export async function deleteProfilePhoto() {}
             `
         });
     });
@@ -462,6 +541,10 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
 
                 export async function createScheduleImportPractice() {
                     return 'imported-practice';
+                }
+
+                export async function enableRsvpForImportedCalendarEvent() {
+                    return 'calendar-materialized-event';
                 }
 
                 export async function loadParentSchedule() {
@@ -622,6 +705,7 @@ test('@visual app auth screen exposes sign in, sign up, Google, activation code,
     expect(await page.evaluate(() => window.__appAuthCalls.sendResetEmail)).toEqual(['parent@example.com']);
 
     await page.getByRole('tab', { name: 'Sign up' }).click();
+    await page.getByRole('checkbox', { name: /I agree/ }).check();
     await page.getByRole('button', { name: 'Continue with Google' }).click();
     expect(await page.evaluate(() => window.__appAuthCalls.signInWithGoogleAccount)).toEqual([{ activationCode: 'AB12CD34' }]);
 });
@@ -635,6 +719,131 @@ test('signed-out manual invite code redirects through auth with the code preserv
 
     await expect(page).toHaveURL(/#\/auth\?code=ZXCV1234&type=parent&mode=login/);
     expect(await page.evaluate(() => window.localStorage.getItem('allplays-app-pending-invite-code'))).toBe('ZXCV1234');
+});
+
+test('Diamond viewer sign-in returns to the static viewer with its exact context', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await mockAppModules(page);
+
+    const viewerRoute = '/live-game-diamond-v2.html?teamId=team%2Fone&gameId=game+one&replay=true&clipStart=1200&clipEnd=5600';
+    const viewerUrl = new URL(viewerRoute, new URL('/', appBaseUrl || baseURL)).toString();
+    await page.route(/\/live-game-diamond-v2\.html(?:\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'text/html',
+            body: '<!doctype html><html><body><h1>Returned Diamond viewer</h1></body></html>'
+        });
+    });
+
+    await page.goto(appUrl(baseURL, `/auth?next=${encodeURIComponent(viewerRoute)}`), { waitUntil: 'domcontentloaded' });
+    await waitForAuthRoute(page, page.getByRole('heading', { name: 'Sign in' }));
+    expect(pageErrors).toEqual([]);
+
+    await page.getByLabel('Email').fill('viewer@example.com');
+    await page.getByLabel('Password', { exact: true }).fill('password123');
+    await page.getByRole('button', { name: 'Sign in' }).last().click();
+
+    await expect(page).toHaveURL(viewerUrl);
+    await expect(page.getByRole('heading', { name: 'Returned Diamond viewer' })).toBeVisible();
+    const landed = new URL(page.url());
+    expect(landed.pathname).toBe('/live-game-diamond-v2.html');
+    expect(landed.searchParams.get('teamId')).toBe('team/one');
+    expect(landed.searchParams.get('gameId')).toBe('game one');
+    expect(landed.searchParams.get('replay')).toBe('true');
+    expect(landed.searchParams.get('clipStart')).toBe('1200');
+    expect(landed.searchParams.get('clipEnd')).toBe('5600');
+    expect(landed.hash).toBe('');
+    expect(pageErrors).toEqual([]);
+});
+
+test('an unauthorized signed-in Diamond viewer can switch accounts and return to the exact game', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const wrongUser = {
+        uid: 'wrong-viewer',
+        email: 'wrong@example.com',
+        displayName: 'Wrong Viewer',
+        roles: ['parent']
+    };
+    const rightUser = {
+        uid: 'right-viewer',
+        email: 'right@example.com',
+        displayName: 'Right Viewer',
+        roles: ['parent']
+    };
+    await mockAppModules(page, { user: wrongUser, signInUser: rightUser });
+
+    await page.route(/\/js\/firebase\.js(?:\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export const auth = {
+                    currentUser: { uid: 'wrong-viewer', displayName: 'Wrong Viewer' },
+                    async authStateReady() {}
+                };
+                export const db = {};
+                export const functions = {};
+                export const collection = () => ({});
+                export const getDocs = async () => ({ docs: [] });
+                export const limit = (...args) => args;
+                export const onSnapshot = () => () => {};
+                export const orderBy = (...args) => args;
+                export const query = (...args) => args;
+                export function onAuthStateChanged(_auth, callback) {
+                    callback(auth.currentUser);
+                    return () => {};
+                }
+                export function httpsCallable() {
+                    return async () => {
+                        throw Object.assign(new Error('Viewer access is unavailable'), {
+                            code: 'functions/permission-denied'
+                        });
+                    };
+                }
+            `
+        });
+    });
+
+    const viewerRoute = '/live-game-diamond-v2.html?teamId=private-team&gameId=private-game&replay=1';
+    const switchRoute = `/auth?next=${encodeURIComponent(viewerRoute)}&switch=1`;
+    const appOrigin = new URL('/', appBaseUrl || baseURL).toString();
+    await page.route(new URL('/app/', baseURL).toString(), async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'text/html',
+            body: `<script>window.location.replace(${JSON.stringify(appOrigin)} + window.location.hash);</script>`
+        });
+    });
+    await page.route(new URL(viewerRoute, appOrigin).toString(), async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'text/html',
+            body: '<!doctype html><html><body><h1>Authorized Diamond viewer</h1></body></html>'
+        });
+    });
+
+    await page.goto(new URL(viewerRoute, baseURL).toString(), { waitUntil: 'domcontentloaded' });
+    const accountAction = page.locator('[data-diamond-error-sign-in]');
+    await expect(accountAction).toBeVisible();
+    await expect(accountAction).toHaveAttribute('href', `/app/#${switchRoute}`);
+    await accountAction.click();
+
+    await waitForAuthRoute(page, page.getByRole('heading', { name: 'Sign in' }));
+    await expect(page).toHaveURL(appUrl(baseURL, switchRoute));
+    await expect(page.getByLabel('Email')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__mockGoogleRedirectSettled)).toBe(true);
+    await expect(page).toHaveURL(appUrl(baseURL, switchRoute));
+
+    await page.getByLabel('Email').fill('right@example.com');
+    await page.getByLabel('Password', { exact: true }).fill('password123');
+    await page.getByRole('button', { name: 'Sign in' }).last().click();
+
+    await expect(page).toHaveURL(new URL(viewerRoute, appOrigin).toString());
+    await expect(page.getByRole('heading', { name: 'Authorized Diamond viewer' })).toBeVisible();
+    expect(await page.evaluate(() => window.sessionStorage.getItem('mock-last-sign-in-email'))).toBe('right@example.com');
+    expect(pageErrors).toEqual([]);
 });
 
 test('signed-in invite and account action routes process existing site flows', async ({ page, baseURL }) => {
@@ -675,6 +884,35 @@ test('signed-in invite and account action routes process existing site flows', a
     }))).toEqual({ resend: 1, refresh: 1 });
 });
 
+test('friend invite acceptance uses the signed-in route and rejects replay generically', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const user = {
+        uid: 'user-1',
+        email: 'friend@example.com',
+        displayName: 'Pat Parent',
+        emailVerified: true,
+        roles: ['parent']
+    };
+    await mockAppModules(page, { user, friendInviteReplay: true });
+
+    const inviteUrl = appUrl(baseURL, '/accept-invite?code=FRIEND12&type=friend');
+    await page.goto(inviteUrl, { waitUntil: 'domcontentloaded' });
+    expect(pageErrors).toEqual([]);
+    await expect.poll(async () => page.evaluate(() => window.__appAuthCalls.redeemInviteForUser.length)).toBe(1);
+    await expect(page.getByText('Invite accepted.')).toBeVisible();
+    expect(await page.evaluate(() => window.__appAuthCalls.redeemInviteForUser)).toEqual([
+        { userId: 'user-1', code: 'FRIEND12', authEmail: 'friend@example.com' }
+    ]);
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    expect(pageErrors).toEqual([]);
+    await expect(page.getByText('Unable to redeem friend invite.')).toBeVisible();
+    expect(await page.evaluate(() => window.__appAuthCalls.redeemInviteForUser)).toEqual([
+        { userId: 'user-1', code: 'FRIEND12', authEmail: 'friend@example.com' }
+    ]);
+});
+
 test('profile exposes account, notification, invite, verification, password, upload, and logout capabilities', async ({ page, baseURL }) => {
     const user = {
         uid: 'user-1',
@@ -700,9 +938,9 @@ test('profile exposes account, notification, invite, verification, password, upl
     await expect(page.locator('.profile-summary-card img')).toHaveAttribute('src', mockAvatarUrl);
     await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.profileLoads)).toBeGreaterThan(0);
 
-    const alertsTab = page.getByRole('button', { name: 'Alerts', exact: true });
+    const alertsTab = page.getByRole('link', { name: 'Notifications', exact: true });
     await alertsTab.click();
-    await expect(alertsTab).toHaveAttribute('aria-pressed', 'true');
+    await expect(alertsTab).toHaveAttribute('aria-current', 'page');
     await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.pushModuleLoads)).toBe(1);
     await expect(page.getByText('Per-team alerts for live chat, score updates, and schedule changes.')).toBeVisible();
     await expect(page.getByLabel('Team')).toHaveValue('team-1');
@@ -719,7 +957,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     await page.getByRole('button', { name: 'Save preferences' }).click();
     await expect(page.getByText('Notification preferences saved.')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Invites', exact: true }).click();
+    await page.getByRole('link', { name: 'Invites', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Create invite' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Show more codes' })).toBeVisible();
     await page.getByLabel('Recipient email').fill('friend@example.com');
@@ -751,7 +989,7 @@ test('profile exposes account, notification, invite, verification, password, upl
 
     await page.goto(appUrl(baseURL, '/profile/settings'), { waitUntil: 'domcontentloaded' });
 
-    await page.getByRole('button', { name: 'Security', exact: true }).click();
+    await page.getByRole('link', { name: 'Sign-in & security', exact: true }).click();
     await expect(page.getByText('Email not verified')).toBeVisible();
     await expect(page.getByText('Set a password')).toBeVisible();
     await page.locator('input[placeholder="New password"]').fill('new-password');
@@ -779,6 +1017,14 @@ test('profile exposes account, notification, invite, verification, password, upl
     expect(profileCalls.profileLoads).toBeGreaterThan(0);
     expect(profileCalls).toMatchObject({
         uploads: [{ name: 'avatar.png', type: 'image/png' }],
+        saves: [{
+            userId: 'user-1',
+            profile: {
+                fullName: 'Pat Parent Updated',
+                phone: '555-0100',
+                photoUrl: mockAvatarUrl
+            }
+        }],
         push: 1,
         notificationLoads: [
             { userId: 'user-1', teamId: 'team-1' }
@@ -835,7 +1081,7 @@ test('profile keeps destructive alert actions disabled until a failed team load 
     });
     await page.goto(appUrl(baseURL, '/profile/settings'), { waitUntil: 'domcontentloaded' });
 
-    await page.getByRole('button', { name: 'Alerts', exact: true }).click();
+    await page.getByRole('link', { name: 'Notifications', exact: true }).click();
     await expect(page.getByLabel('Team')).toHaveValue('team-1');
     await page.getByLabel('Team').selectOption('team-2');
 
@@ -892,7 +1138,7 @@ test('profile alerts recover from blocked native notification permissions', asyn
     });
     await page.goto(appUrl(baseURL, '/profile/settings'), { waitUntil: 'domcontentloaded' });
 
-    await page.getByRole('button', { name: 'Alerts', exact: true }).click();
+    await page.getByRole('link', { name: 'Notifications', exact: true }).click();
     await expect(page.getByText('Notifications are off in device settings')).toBeVisible();
     await page.getByRole('button', { name: 'Open device settings' }).first().click();
     await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.openPushSettings)).toBe(1);
@@ -900,4 +1146,36 @@ test('profile alerts recover from blocked native notification permissions', asyn
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await expect(page.getByText('Push is allowed on this device')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Refresh push registration' })).toBeVisible();
+});
+
+test('profile keeps dirty notification saves above mobile navigation while scrolling', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const user = {
+        uid: 'user-1',
+        email: 'parent@example.com',
+        displayName: 'Pat Parent',
+        emailVerified: true,
+        roles: ['parent']
+    };
+    await mockAppModules(page, { user });
+    await page.goto(appUrl(baseURL, '/profile/settings'), { waitUntil: 'domcontentloaded' });
+    await page.getByRole('link', { name: 'Notifications', exact: true }).click();
+
+    await page.getByLabel('Schedule Changes').uncheck();
+    const tray = page.getByRole('region', { name: 'Blue Team notification preferences with unsaved changes' });
+    const bottomNavigation = page.getByRole('navigation', { name: 'Primary navigation' });
+    await expect(tray).toBeVisible();
+
+    await page.getByLabel('Media').scrollIntoViewIfNeeded();
+    await page.getByLabel('Media').check();
+    await expect(tray).toBeVisible();
+
+    const trayBox = await tray.boundingBox();
+    const navigationBox = await bottomNavigation.boundingBox();
+    expect(trayBox).not.toBeNull();
+    expect(navigationBox).not.toBeNull();
+    expect(trayBox.y + trayBox.height).toBeLessThanOrEqual(navigationBox.y);
+
+    await tray.getByRole('button', { name: 'Save preferences' }).click();
+    await expect(tray).toHaveCount(0);
 });

@@ -1,7 +1,7 @@
 import type { ErrorEvent as SentryErrorEvent } from '@sentry/browser';
 import type { ReactErrorBoundaryReport } from '../components/ErrorBoundary';
 import { createLogger, isSensitiveLogKey, normalizeErrorForLogging, redactedValue, sanitizeForLogging } from './logger';
-import { recordCompletedPerformanceSpan, startPerformanceSpan } from './performanceInstrumentation';
+import { getPerformancePlatform, recordCompletedPerformanceSpan, startPerformanceSpan } from './performanceInstrumentation';
 
 const logger = createLogger('error-tracking');
 
@@ -92,14 +92,29 @@ export function startAppInitialLoadTimer(loadName: string, baseMeta: TelemetryPr
       ...baseMeta
     }
   });
+  let settled = false;
   return {
     end(meta: TelemetryProperties = {}) {
+      if (settled) return;
+      settled = true;
       const mergedMeta = { ...baseMeta, ...meta };
       recordAppInitialLoadTiming(loadName, performanceSpan.startedAt, mergedMeta, { recordPerformance: false });
       performanceSpan.end({
         category: 'initial_load',
         loadName,
         ...mergedMeta
+      });
+    },
+    cancel(meta: TelemetryProperties = {}) {
+      if (settled) return;
+      settled = true;
+      performanceSpan.end({
+        category: 'initial_load',
+        loadName,
+        ...baseMeta,
+        ...meta,
+        abandoned: true,
+        outcome: 'abandoned'
       });
     }
   };
@@ -110,8 +125,11 @@ export function createAppTimer(label: string, baseMeta: TelemetryProperties = {}
     kind: 'ux',
     meta: baseMeta
   });
+  let ended = false;
   return {
     end(meta: TelemetryProperties = {}) {
+      if (ended) return;
+      ended = true;
       const mergedMeta = { ...baseMeta, ...meta };
       recordAppUxTiming(label, performanceSpan.startedAt, mergedMeta);
       performanceSpan.end(mergedMeta);
@@ -128,19 +146,20 @@ export function recordAppInitialLoadTiming(
   const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const durationMs = Math.max(0, Math.round(now - startedAt));
   const { error, ...context } = meta;
+  const performanceContext = getPerformanceTelemetryContext(context);
   const outcome = error ? 'failure' : 'success';
 
   captureAppTelemetryEvent('app_initial_load', {
     loadName,
     durationMs,
     outcome,
-    ...context
+    ...performanceContext
   });
 
   if (error) {
     captureHandledAppError(`${loadName} initial load`, error, {
       durationMs,
-      ...context
+      ...performanceContext
     });
   }
 
@@ -151,7 +170,7 @@ export function recordAppInitialLoadTiming(
         category: 'initial_load',
         loadName,
         outcome,
-        ...context
+        ...performanceContext
       }
     });
   }
@@ -161,19 +180,20 @@ export function recordAppUxTiming(label: string, startedAt: number, meta: Teleme
   const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const durationMs = Math.max(0, Math.round(now - startedAt));
   const { error, ...context } = meta;
+  const performanceContext = getPerformanceTelemetryContext(context);
   const outcome = error ? 'error' : 'success';
 
   captureAppTelemetryEvent('app_ux_timing', {
     label,
     durationMs,
     outcome,
-    ...context
+    ...performanceContext
   });
 
   if (error) {
     captureHandledAppError(label, error, {
       durationMs,
-      ...context
+      ...performanceContext
     });
   }
 }
@@ -182,19 +202,20 @@ export function recordAppWorkflowTiming(workflowName: string, startedAt: number,
   const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const durationMs = Math.max(0, Math.round(now - startedAt));
   const { error, ...context } = meta;
+  const performanceContext = getPerformanceTelemetryContext(context);
   const outcome = error ? 'error' : 'success';
 
   captureAppTelemetryEvent('app_workflow_timing', {
     workflowName,
     durationMs,
     outcome,
-    ...context
+    ...performanceContext
   });
 
   if (error) {
     captureHandledAppError(`${workflowName} workflow`, error, {
       durationMs,
-      ...context
+      ...performanceContext
     });
   }
 }
@@ -204,6 +225,17 @@ export function captureAppStartupFailure(error: unknown, context: TelemetryPrope
     stage: 'startup',
     ...context
   }, { handled: false });
+}
+
+function getPerformanceTelemetryContext(context: TelemetryProperties) {
+  const runtimeRelease = typeof window !== 'undefined'
+    ? firstNonEmptyString(window.__ALLPLAYS_CONFIG__?.release, window.ALLPLAYS_RELEASE)
+    : undefined;
+  return {
+    platform: getPerformancePlatform(),
+    ...(runtimeRelease ? { release: runtimeRelease } : {}),
+    ...context
+  };
 }
 
 export function captureHandledAppError(label: string, error: unknown, context: TelemetryProperties = {}) {

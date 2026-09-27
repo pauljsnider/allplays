@@ -46,6 +46,7 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 const profileMocks = vi.hoisted(() => ({
+    loadManagedTeamsFromNativeCallable: vi.fn(),
     loadProfileDocument: vi.fn(),
     saveProfileDocument: vi.fn()
 }));
@@ -61,6 +62,10 @@ const authMocks = vi.hoisted(() => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
+const managedTeamMocks = vi.hoisted(() => ({
+    listManagedTeams: vi.fn()
+}));
+
 const firebaseMocks = vi.hoisted(() => {
     const makeMissingSnapshot = (id = '') => ({
         id,
@@ -70,6 +75,14 @@ const firebaseMocks = vi.hoisted(() => {
 
     return {
         db: {},
+        functions: { name: 'functions' },
+        httpsCallable: vi.fn((_functions, name) => async () => ({
+            data: name === 'listManagedTeams'
+                ? { items: await managedTeamMocks.listManagedTeams(), isPartial: false }
+                : (name === 'listOfficialLinkedTeamIds'
+                    ? { teamIds: [], isPartial: false }
+                    : {})
+        })),
         doc: vi.fn((...parts) => ({
             path: parts.filter((part) => typeof part === 'string').join('/')
         })),
@@ -134,13 +147,15 @@ const rsvpMocks = vi.hoisted(() => ({
 
 vi.mock('@capacitor/core', () => ({
     Capacitor: {
-        isNativePlatform: () => false
+        isNativePlatform: () => false,
+        getPlatform: () => 'ios'
     }
 }));
 
 vi.mock('../../apps/app/node_modules/@capacitor/core/dist/index.cjs.js', () => ({
     Capacitor: {
-        isNativePlatform: () => false
+        isNativePlatform: () => false,
+        getPlatform: () => 'ios'
     }
 }));
 
@@ -240,7 +255,7 @@ vi.mock('../../js/snack-helpers.js', () => ({
     }))
 }));
 
-import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduledGameForApp, createScheduleImportGame, createScheduleImportPractice, createStaffRsvpReminderPreviewLoader, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleEventDetail, loadScheduleStatTrackerConfigsForApp, loadScorekeeperStatTrackerConfigsForApp, loadTeamOverviewSchedule, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl, updateScheduledGameForApp } from '../../apps/app/src/lib/scheduleService.ts';
+import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduledGameForApp, createScheduleImportGame, createScheduleImportPractice, createStaffRsvpReminderPreviewLoader, hydrateParentScheduleEventOptionalDetails, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleEventDetail, loadScheduleStatTrackerConfigsForApp, loadScorekeeperStatTrackerConfigsForApp, loadTeamOverviewSchedule, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl, updateScheduledGameForApp } from '../../apps/app/src/lib/scheduleService.ts';
 import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 import { getScheduleForecastHref, getScheduleMapHref } from '../../apps/app/src/lib/scheduleLogic.ts';
 
@@ -270,6 +285,8 @@ beforeEach(() => {
     dbMocks.getMyRsvps.mockImplementation((teamId, gameId) => dbMocks.getRsvps(teamId, gameId));
     vi.unstubAllGlobals();
     installWindow();
+    managedTeamMocks.listManagedTeams.mockResolvedValue([]);
+    profileMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({ teams: [], isPartial: false });
     profileMocks.loadProfileDocument.mockResolvedValue({
         parentOf: [
             { teamId: 'team-1', playerId: 'player-1', playerName: 'Pat', teamName: 'Bears' },
@@ -534,15 +551,44 @@ describe('React app schedule service contract integration', () => {
 
         expect(staffTeamSource).toContain('getStaffTeams({');
         expect(staffTeamSource).not.toContain('getTeams(');
-        expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerId', 'EQUAL', user.uid)");
-        expect(staffTeamSource).toContain("nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', normalizedEmail)");
-        expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail)");
-        expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail)");
-        expect(scheduleServiceSource).toContain('normalizeEmail(team.ownerEmailLower) === email || normalizeEmail(team.ownerEmail) === email');
-        expect(legacyScheduleDbSource).toContain("legacyFirebaseWhere('ownerEmailLower', '==', normalizedEmail)");
-        expect(legacyScheduleDbSource).toContain("legacyFirebaseWhere('ownerEmail', '==', ownerEmail)");
-        expect(legacyScheduleDbSource).toContain('Promise.allSettled([');
-        expect(legacyScheduleDbSource).toContain('legacyOwnerSnapshots.flatMap((snapshot) => snapshot.docs)');
+        expect(staffTeamSource).toContain('loadManagedTeamsFromNativeCallable({ timeoutMs: staffTeamDiscoveryTimeoutMs })');
+        expect(scheduleServiceSource).toContain('const staffTeamDiscoveryTimeoutMs = 15000;');
+        expect(staffTeamSource).not.toContain("nativeRunQuery('teams', 'ownerEmail'");
+        expect(scheduleServiceSource).toContain('const hasCanonicalOwner = Boolean(compactString(team.ownerId));');
+        expect(scheduleServiceSource).toContain('if (!hasCanonicalOwner && ownerEmails.length === 1 && email === ownerEmails[0])');
+        expect(scheduleServiceSource).toContain('ownerEmails.length === 1 && email === ownerEmails[0]');
+        expect(legacyScheduleDbSource).toContain("legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'listManagedTeams')");
+        expect(legacyScheduleDbSource).not.toContain("legacyFirebaseWhere('ownerEmailLower', '==', normalizedEmail)");
+        expect(scheduleServiceSource).toContain('const shouldVerifyStaffResultWithHttp = nativeRuntime');
+        expect(scheduleServiceSource).toContain(': staffTeamResult.verifiedByHttp !== true && staffTeamResult.httpAttempted !== true;');
+    });
+
+    it('discovers official teams and native assignments through one authenticated bounded callable', () => {
+        const officialDiscoverySource = getScheduleServiceSlice(
+            'function normalizeOfficialLinkedTeamIdsResponse',
+            'export async function loadOfficialAssignmentsAccess'
+        );
+        const officialAssignmentsSource = getScheduleServiceSlice(
+            'export async function loadOfficialAssignments(user',
+            'export async function respondToOfficialAssignmentItem'
+        );
+
+        expect(legacyScheduleDbSource).toContain("legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'listOfficialLinkedTeamIds')");
+        expect(officialDiscoverySource).toContain('source.isPartial !== false');
+        expect(officialDiscoverySource).toContain('if (isNativeRuntime())');
+        expect(officialDiscoverySource).toContain('includeAssignments: options.includeAssignments === true');
+        expect(officialDiscoverySource).toContain('requireAssignments: options.includeAssignments === true');
+        expect(officialDiscoverySource).not.toContain("collectionGroup(db, 'officials')");
+        expect(officialDiscoverySource).not.toContain('Promise.allSettled');
+        expect(officialAssignmentsSource).toContain('linkedAssignmentsComplete');
+        expect(officialAssignmentsSource).toContain('includeAssignments: true');
+        expect(officialAssignmentsSource).toContain('if (linkedAssignmentsComplete)');
+        expect(officialAssignmentsSource).toContain('requestedTeamId');
+        expect(officialAssignmentsSource).toContain('Promise.allSettled');
+        expect(officialAssignmentsSource).toContain("teamResult.status === 'rejected' || gamesResult.status === 'rejected'");
+        expect(officialAssignmentsSource).toContain('teamResults.some((result) => result.hasAccess && result.isPartial)');
+        expect(scheduleServiceSource).toContain("callNativeFirebaseFunction('respondToOfficiatingAssignment'");
+        expect(scheduleServiceSource).toContain("callNativeFirebaseFunction('claimOpenOfficiatingSlot'");
     });
 
     it('routes parent schedule event detail reads through typed schedule mappers', () => {
@@ -554,15 +600,23 @@ describe('React app schedule service contract integration', () => {
 
         expect(importSource).toContain("mapScheduleEventDocument, mapScheduleEventDocuments, mapScheduleEventRecord, mapScheduleEventRecords } from './firestore/mappers'");
         expect(nativeMapperSource).toContain('return mapScheduleEventDocument(await nativeFirestoreRequest');
-        expect(nativeMapperSource).toContain('return mapScheduleEventDocuments((payload.documents || [])');
+        expect(nativeMapperSource).toContain('listNativeFirestoreCollectionPages<NativeFirestoreDocument>(');
+        expect(nativeMapperSource).toContain('return mapScheduleEventDocuments(documents);');
+        expect(nativeMapperSource).not.toContain('return mapScheduleEventDocuments((payload.documents || [])');
         expect(readMapperSource).toContain('async () => mapScheduleEventRecords(await getGames(teamId, range))');
         expect(readMapperSource).toContain('async () => mapScheduleEventRecord(await getGame(teamId, gameId), gameId)');
         expect(readMapperSource).toContain('() => nativeGetScheduleEventDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`)');
-        expect(targetedSource).toContain('loadGameById(teamId, eventId)');
+        expect(targetedSource).toContain('loadGameById(teamId, eventId, sharedGamePath)');
         expect(targetedSource).toContain('loadGameById(teamId, occurrenceMatch[1])');
         expect(targetedSource).toContain('createScheduleEvent({');
-        expect(detailSource).toContain('let events = await buildTargetedTeamScheduleEvent(requestedTeamId, requestedEventId, teamChildren, user);');
-        expect(detailSource).toContain('const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user, { includePastGames: true });');
+        expect(detailSource).toContain('const delegatedTeamContext = delegatedTeamContexts.get(requestedTeamId) || null;');
+        expect(detailSource).toContain('let events = await buildTargetedTeamScheduleEvent(');
+        expect(detailSource).toContain('delegatedTeamContext');
+        expect(detailSource).toContain('if (!events.length && !delegatedTeamContext)');
+        expect(detailSource).toContain('const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user, {');
+        expect(detailSource).toContain('includePastGames: true,');
+        expect(detailSource).toContain('onSourcePartial: () => {');
+        expect(detailSource).toContain('return { children, events, isPartial: sourcePartial };');
         expect(detailSource).toContain('events = teamEvents.filter((event) => event.id === requestedEventId);');
         expect(scheduleServiceSource).toContain('const breakdown = buildGameDayRsvpBreakdown({');
         expect(scheduleServiceSource).toContain('(breakdown.grouped.going || [])');
@@ -590,7 +644,12 @@ describe('React app schedule service contract integration', () => {
         expect(dbMocks.getRsvps).toHaveBeenCalledWith('team-1', 'practice-1');
         expect(dbMocks.getRsvps).toHaveBeenCalledWith('team-1', 'final-1');
         expect(dbMocks.getRsvps).toHaveBeenCalledTimes(3);
-        expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledWith('team-1', 'game-1', { fallbackGameIds: [] });
+        expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledWith('team-1', 'game-1', {
+            fallbackGameIds: [],
+            requesterUserId: 'user-1',
+            childIds: ['player-1', 'player-2'],
+            canManageTeamRequests: false
+        });
         expect(dbMocks.getAssignmentClaims).toHaveBeenCalledWith('team-1', 'game-1');
 
         expect(result.children).toEqual([
@@ -722,6 +781,7 @@ describe('React app schedule service contract integration', () => {
             { id: 'player-1', name: 'Pat', active: true },
             { id: 'player-2', name: 'Sam', active: true }
         ]);
+        managedTeamMocks.listManagedTeams.mockImplementation(async () => [await dbMocks.getTeam('team-1')]);
 
         const result = await loadParentPlayerSchedule({
             ...user(),
@@ -742,7 +802,7 @@ describe('React app schedule service contract integration', () => {
         expect(result.events.every((event) => event.teamId === 'team-1')).toBe(true);
     });
 
-    it('loads schedule event detail without expanding the full team schedule', async () => {
+    it('loads critical schedule event detail without expanding the full team schedule or optional reads', async () => {
         dbMocks.getGame.mockResolvedValue({
             id: 'game-1',
             type: 'game',
@@ -787,10 +847,8 @@ describe('React app schedule service contract integration', () => {
         expect(dbMocks.getRsvpSummaries).not.toHaveBeenCalled();
         expect(dbMocks.getRsvps).toHaveBeenCalledTimes(1);
         expect(dbMocks.getRsvps).toHaveBeenCalledWith('team-1', 'game-1');
-        expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledTimes(1);
-        expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledWith('team-1', 'game-1', { fallbackGameIds: [] });
-        expect(dbMocks.getAssignmentClaims).toHaveBeenCalledTimes(1);
-        expect(dbMocks.getAssignmentClaims).toHaveBeenCalledWith('team-1', 'game-1');
+        expect(dbMocks.listRideOffersForEvent).not.toHaveBeenCalled();
+        expect(dbMocks.getAssignmentClaims).not.toHaveBeenCalled();
 
         expect(result.events).toHaveLength(2);
         expect(result.events.every((event) => event.id === 'game-1')).toBe(true);
@@ -809,11 +867,29 @@ describe('React app schedule service contract integration', () => {
             myRsvpNote: 'Needs a ride home',
             teamNotificationEmail: 'team-notify@example.com',
             rsvpSummary: { going: 1, maybe: 1, notGoing: 0, notResponded: 0, total: 2 },
-            rideshareSummary: { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false }
+            rideshareSummary: null
         });
         expect(result.events.find((event) => event.childId === 'player-2')).toMatchObject({
             myRsvp: 'maybe',
             myRsvpNote: 'Late arrival'
+        });
+
+        const hydratedResult = await hydrateParentScheduleEventOptionalDetails(result);
+
+        expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledTimes(1);
+        expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledWith('team-1', 'game-1', {
+            fallbackGameIds: [],
+            requesterUserId: '',
+            childIds: ['player-1', 'player-2'],
+            canManageTeamRequests: false
+        });
+        expect(dbMocks.getAssignmentClaims).toHaveBeenCalledTimes(1);
+        expect(dbMocks.getAssignmentClaims).toHaveBeenCalledWith('team-1', 'game-1');
+        expect(hydratedResult.events.find((event) => event.childId === 'player-1')).toMatchObject({
+            rideshareSummary: { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false }
+        });
+        expect(result.events.find((event) => event.childId === 'player-1')).toMatchObject({
+            rideshareSummary: null
         });
     });
 
@@ -827,6 +903,7 @@ describe('React app schedule service contract integration', () => {
             opponent: 'Falcons',
             status: 'scheduled'
         });
+        managedTeamMocks.listManagedTeams.mockImplementation(async () => [await dbMocks.getTeam('team-1')]);
 
         const result = await loadParentScheduleEventDetail({
             ...user(),
@@ -1253,6 +1330,37 @@ describe('React app schedule service contract integration', () => {
         expect(updatePayload.awayScore).toBeUndefined();
         expect(updatePayload.assignments).toBeUndefined();
         expect(updatePayload.createdBy).toBeUndefined();
+    });
+
+    it('omits Diamond-pinned schedule fields while updating unrelated game details', async () => {
+        dbMocks.getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: []
+        });
+        dbMocks.updateGame.mockResolvedValue(undefined);
+        const coach = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach' };
+
+        await expect(updateScheduledGameForApp('team-1', 'game-1', {
+            opponent: 'Hawks',
+            startDate: new Date('2026-04-09T18:30:00Z'),
+            location: 'Diamond Field',
+            isHome: null,
+            statTrackerConfigId: null
+        }, coach, { preservePinnedDiamondFields: true }))
+            .resolves.toEqual({ updated: true, eventId: 'game-1' });
+
+        const updatePayload = dbMocks.updateGame.mock.calls[0][2];
+        expect(updatePayload).toEqual(expect.objectContaining({
+            type: 'game',
+            opponent: 'Hawks',
+            location: 'Diamond Field',
+            updatedBy: 'coach-1'
+        }));
+        expect(updatePayload).not.toHaveProperty('isHome');
+        expect(updatePayload).not.toHaveProperty('statTrackerConfigId');
+        expect(updatePayload).not.toHaveProperty('opponentTeamId');
     });
 
     it('loads schedule tracker configs for staff game forms', async () => {

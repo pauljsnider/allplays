@@ -10,20 +10,21 @@ describe('game auth reload', () => {
         const source = readGameHtml();
 
         expect(source).toContain('let gameLoadedForAuthenticatedUser = false;');
-        expect(source).toContain('const shouldRefreshPermissions = gameLoaded && !gameLoadedForAuthenticatedUser && !!user;');
-        expect(source).toContain('loadGame({ forceAuthenticatedReload: shouldRefreshPermissions });');
+        expect(source).toContain('const shouldRefreshPermissions = identityChanged || (gameLoaded && !gameLoadedForAuthenticatedUser && !!user);');
+        expect(source).toContain('loadGame({ forceAuthenticatedReload: shouldRefreshPermissions, generation: gameLoadGeneration, expectedUid: nextUid });');
+        expect(source).toContain('clearManagerGameReportOnAuthChange();');
     });
 
     it('keeps the normal single-load guard after authenticated state has rendered', () => {
         const source = readGameHtml();
 
-        expect(source).toContain('async function loadGame({ forceAuthenticatedReload = false } = {})');
+        expect(source).toContain("async function loadGame({ forceAuthenticatedReload = false, generation = gameLoadGeneration, expectedUid = currentUser?.uid || '' } = {})");
         expect(source).toContain('let gameLoadPromise = null;');
         expect(source).toContain('if (gameLoadPromise) {');
         expect(source).toContain('await gameLoadPromise;');
         expect(source).toContain('if (gameLoaded && (!forceAuthenticatedReload || gameLoadedForAuthenticatedUser)) return;');
         expect(source).toContain('gameLoadedForAuthenticatedUser = !!currentUser;');
-        expect(source).toContain('gameLoadPromise = null;');
+        expect(source).toContain('if (gameLoadPromise === pendingLoad) gameLoadPromise = null;');
     });
 
     it('resets opponent stat headers before an authenticated reload re-renders the report', () => {
@@ -53,11 +54,12 @@ describe('game auth reload', () => {
         expect(source).toContain("const teamPromise = getTeam(teamId, { includeInactive: true }).catch((error) => {");
         expect(source).toContain("console.warn('Failed to load team document for public game report viewer:', error);");
         expect(source).toContain('return null;');
-        expect(source).toContain('const resolvedTeam = team || {');
+        expect(source).toContain('let resolvedTeam = team || {');
         expect(source).toContain("name: game.teamName || game.homeTeamName || 'Team'");
         expect(source).toContain("photoUrl: game.teamPhotoUrl || game.homeTeamPhoto || ''");
         expect(source).toContain("sport: game.sport || 'Basketball'");
-        expect(source).toContain('if (currentUser && team) {');
-        expect(source).toContain('setupSummaryControls(teamId, gameId, game, resolvedTeam, players, statsMap, statKeys, statLabels);');
+        expect(source).toContain('if (currentUser) {');
+        expect(source).toContain('await getDelegatedTeamContext(teamId, gameId, { includeInactive: true })');
+        expect(source).toContain('setupSummaryControls(teamId, gameId, game, resolvedTeam, reportPlayers, diamondGame ? publicCompleteStatsMap : statsMap, statKeys, statLabels);');
     });
 });

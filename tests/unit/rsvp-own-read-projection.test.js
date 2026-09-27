@@ -23,7 +23,7 @@ describe('RSVP own-read projection', () => {
     expect(ownRead).not.toContain('getDocs(');
     expect(parentDashboardSource).toContain('getMyRsvps(teamId, gameId, userId, linkedPlayerIds)');
     expect(parentDashboardSource).not.toContain('getRsvps(teamId, gameId)');
-    expect(scheduleServiceSource).toContain('loadCachedOwnEventHydrationDetails(matchingEvents, user.uid)');
+    expect(scheduleServiceSource).toContain('loadCachedOwnEventHydrationDetails(matchingEvents, user.uid, includeOptionalDetails)');
   });
 
   it('never derives persisted RSVP display names from email addresses', () => {

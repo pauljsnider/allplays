@@ -64,7 +64,7 @@ function createAutoAcceptParentInviteHandler({
     }
     const team = teamSnap.data() || {};
     const actor = actorSnap.exists ? actorSnap.data() || {} : {};
-    const actorEmail = context.auth.token?.email || actor.email || '';
+    const actorEmail = String(context.auth.token?.email || '').trim().toLowerCase();
     if (!hasTeamAdminAccess({ team, user: actor, uid: context.auth.uid, email: actorEmail })) {
       throw new HttpsError('permission-denied', 'Only team owners and admins can auto-link parent invites.');
     }

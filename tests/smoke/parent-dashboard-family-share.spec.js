@@ -13,13 +13,23 @@ function clone(value) {
 }
 
 export async function getParentDashboardData() {
+    window.__registrationWorkflow.bootstrapCalls += 1;
     return { children: clone(children), dashboardState: null, registrationApplications: [] };
+}
+export async function listParentRegistrationApplicationsPage(_user, options = {}) {
+    const cursor = options.cursor || null;
+    window.__registrationWorkflow.pageCalls.push(cursor);
+    const result = window.__registrationWorkflow.results.shift();
+    if (result instanceof Error) throw result;
+    return clone(result || { applications: [], errors: [], nextCursor: null, retryCursor: null });
 }
 export async function redeemParentInvite() {}
 export async function getTeam(teamId) { return { id: teamId, name: teamId }; }
 export async function getTeams() { return []; }
 export async function getPlayers() { return []; }
-export async function getGames() { return []; }
+export async function getGames(teamId) {
+    return clone((window.__PARENT_GAMES__ || []).filter((game) => !game.teamId || game.teamId === teamId));
+}
 export async function getTrackedCalendarEventUids() { return []; }
 export async function getUnreadChatCounts() { return {}; }
 export async function getPracticeSessions() { return []; }
@@ -119,6 +129,7 @@ export async function saveCapSetting() {}
 async function mockParentDashboardModules(page) {
     await page.addInitScript(() => {
         window.__familyShareWorkflow = { creates: [], listCalls: [], alerts: [], copied: [], createdToken: null };
+        window.__registrationWorkflow = { bootstrapCalls: 0, pageCalls: [], results: [] };
         window.alert = (message) => window.__familyShareWorkflow.alerts.push(String(message));
         Object.defineProperty(navigator, 'clipboard', {
             configurable: true,
@@ -129,12 +140,41 @@ async function mockParentDashboardModules(page) {
     });
 
     await page.route(/https:\/\/www\.googletagmanager\.com\/.*/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
-    await page.route(/https:\/\/cdn\.tailwindcss\.com\/.*/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
+    await page.route(/https:\/\/cdn\.tailwindcss\.com\/.*/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: 'window.tailwind = window.tailwind || { config: {} };'
+    }));
+    await page.route(/\/js\/telemetry\.js(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
     await page.route(/\/js\/db\.js(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: dbStub }));
     await page.route(/\/js\/utils\.js(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: utilsStub }));
     await page.route(/\/js\/auth\.js(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: authStub }));
+    await page.route(/\/js\/firebase\.js(\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: 'export const functions = {}; export function httpsCallable() { return async () => ({ data: {} }); }'
+    }));
     await page.route(/\/js\/parent-incentives\.js(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: parentIncentivesStub }));
-    await page.route(/\/js\/schedule-watch-cta\.js(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: 'export function resolveScheduleWatchCta() { return null; }' }));
+    await page.route(/\/js\/schedule-watch-cta\.js(\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `
+export function hasReplayVideoEvidence(game = {}) {
+    return Boolean(game.replayVideo?.publicUrl || game.recordedVideo?.url || game.replayVideoUrl);
+}
+export function resolveScheduleWatchCta(game = {}) {
+    const hasStatsheetReplay = game.status === 'completed' && game.liveStatus === 'scheduled' && game.hasReplayVideo === true;
+    const hasTimelineReplay = !game.status && game.liveStatus === 'completed';
+    if (hasStatsheetReplay || hasTimelineReplay) {
+        return {
+            kind: 'replay',
+            label: 'Watch Replay',
+            href: 'live-game.html?teamId=' + game.teamId + '&gameId=' + game.id + '&replay=true'
+        };
+    }
+    return null;
+}`
+    }));
     await page.route(/\/js\/parent-dashboard-packets\.js(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: 'export function resolvePracticePacketSessionIdForEvent() { return ""; } export function resolvePracticePacketContextForEvent() { return null; } export function getScopedPracticePacketRow(row) { return row; } export function buildPracticePacketCompletionPayload() { return {}; }' }));
     await page.route(/\/js\/parent-dashboard-practice-sessions\.js(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: 'export function filterVisiblePracticeSessions(sessions = []) { return sessions; }' }));
     await page.route(/\/js\/parent-dashboard-rsvp\.js(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: 'export function resolveRsvpPlayerIdsForSubmission() { return []; } export function resolveMyRsvpByChildForGame() { return {}; }' }));
@@ -149,10 +189,73 @@ async function mockParentDashboardModules(page) {
     await page.route(/\/js\/availability-preferences\.js(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: 'export function buildAvailabilityNoteRows() { return []; } export function formatAvailabilityCutoff() { return ""; } export function isAvailabilityLocked() { return false; } export function normalizeAvailabilityPreferences(value = {}) { return value; }' }));
 }
 
+test('parent dashboard appends and retries registration pages without rerunning bootstrap', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await mockParentDashboardModules(page);
+    await page.addInitScript(() => {
+        window.__registrationWorkflow.results = [
+            {
+                applications: [
+                    { id: 'newest', registrationKey: 'registrations/newest', playerName: 'Newest Player', programName: 'Fall', teamName: 'Bears', status: 'pending', statusLabel: 'Pending Review', submittedAt: '2026-07-03T00:00:00Z' },
+                    { id: 'duplicate', registrationKey: 'registrations/duplicate', playerName: 'Duplicate Player', programName: 'Fall', teamName: 'Bears', status: 'pending', statusLabel: 'Pending Review', submittedAt: '2026-07-02T00:00:00Z' }
+                ],
+                errors: [],
+                nextCursor: { guardianEmail: 'page-1' },
+                retryCursor: null
+            },
+            {
+                applications: [
+                    { id: 'duplicate', registrationKey: 'registrations/duplicate', playerName: 'Duplicate Player', programName: 'Fall', teamName: 'Bears', status: 'pending', statusLabel: 'Pending Review', submittedAt: '2026-07-02T00:00:00Z' }
+                ],
+                errors: [{ message: 'Some registration applications could not be loaded.' }],
+                nextCursor: { guardianEmail: 'page-1' },
+                retryCursor: { guardianEmail: 'page-1' }
+            },
+            {
+                applications: [
+                    { id: 'oldest', registrationKey: 'registrations/oldest', playerName: 'Oldest Player', programName: 'Spring', teamName: 'Hawks', status: 'enrolled', statusLabel: 'Enrolled', submittedAt: '2026-07-01T00:00:00Z' }
+                ],
+                errors: [],
+                nextCursor: null,
+                retryCursor: null
+            }
+        ];
+    });
+
+    await page.goto(`${baseURL}/parent-dashboard.html`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => pageErrors).toEqual([]);
+    await expect(page.locator('#registration-load-more-btn')).toBeVisible();
+    await page.locator('#registration-load-more-btn').click();
+
+    await expect(page.locator('#registration-retry-btn')).toBeVisible();
+    await expect(page.locator('#registration-applications-list')).toContainText('Newest Player');
+    await expect(page.locator('#registration-applications-list').getByText('Duplicate Player')).toHaveCount(1);
+    await page.locator('#registration-retry-btn').click();
+
+    await expect(page.locator('#registration-applications-list')).toContainText('Oldest Player');
+    await expect(page.locator('#registration-load-more-btn')).toHaveCount(0);
+    await expect(page.locator('#registration-applications-list > div .font-semibold').filter({ hasText: /Player/ })).toHaveText([
+        'Newest Player',
+        'Duplicate Player',
+        'Oldest Player'
+    ]);
+    await expect.poll(() => page.evaluate(() => ({
+        bootstrapCalls: window.__registrationWorkflow.bootstrapCalls,
+        pageCalls: window.__registrationWorkflow.pageCalls
+    }))).toEqual({
+        bootstrapCalls: 1,
+        pageCalls: [null, { guardianEmail: 'page-1' }, { guardianEmail: 'page-1' }]
+    });
+});
+
 test('parent dashboard creates family share links with hydrated children and extra calendars', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
     await mockParentDashboardModules(page);
 
     await page.goto(`${baseURL}/parent-dashboard.html`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => pageErrors).toEqual([]);
     await expect(page.locator('#new-share-link-btn')).toBeEnabled();
     await expect(page.locator('#share-links-list')).toContainText('No active share links yet');
 
@@ -194,4 +297,38 @@ test('parent dashboard creates family share links with hydrated children and ext
         `${baseURL}/app/#/family/token-created`
     ]);
     await expect.poll(() => page.evaluate(() => window.__familyShareWorkflow.listCalls.length)).toBeGreaterThanOrEqual(2);
+});
+
+test('parent dashboard preserves linked replay evidence while mapping a statsheet-completed game', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await mockParentDashboardModules(page);
+    await page.addInitScript(() => {
+        window.__PARENT_GAMES__ = [
+            {
+                id: 'game-replay-1',
+                teamId: 'team-1',
+                date: '2030-09-10T19:00:00Z',
+                opponent: 'Tigers',
+                status: 'completed',
+                liveStatus: 'scheduled',
+                replayVideo: { publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }
+            },
+            {
+                id: 'game-timeline-1',
+                teamId: 'team-1',
+                date: '2030-09-11T19:00:00Z',
+                opponent: 'Bears',
+                liveStatus: 'completed'
+            }
+        ];
+    });
+
+    await page.goto(`${baseURL}/parent-dashboard.html`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => pageErrors).toEqual([]);
+    await expect(page.locator('#schedule-list').getByRole('link', { name: 'Watch Replay' }).first()).toHaveAttribute(
+        'href',
+        /live-game\.html\?teamId=team-1&gameId=(game-replay-1|game-timeline-1)&replay=true/
+    );
+    await expect(page.locator('#schedule-list').getByRole('link', { name: 'Watch Replay' })).toHaveCount(2);
 });

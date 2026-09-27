@@ -23,8 +23,39 @@ describe('team access helpers', () => {
     )).toBe(true);
   });
 
-  it('grants full access when profile email matches admin list', () => {
-    expect(hasFullTeamAccess({ uid: 'u1', profileEmail: 'ADMIN@EXAMPLE.COM' }, TEAM)).toBe(true);
+  it('does not grant full access from a stale profile email', () => {
+    expect(hasFullTeamAccess({ uid: 'u1', profileEmail: 'ADMIN@EXAMPLE.COM' }, TEAM)).toBe(false);
+  });
+
+  it('does not let a stale legacy owner email override the canonical owner', () => {
+    expect(hasFullTeamAccess(
+      { uid: 'legacy-owner', email: 'OWNER@EXAMPLE.COM' },
+      { ...TEAM, ownerId: 'different-owner', ownerEmail: 'owner@example.com' }
+    )).toBe(false);
+  });
+
+  it('fails closed when legacy owner email aliases conflict', () => {
+    const legacyTeam = {
+      id: TEAM.id,
+      ownerEmailLower: 'stale@example.com',
+      ownerEmail: 'owner@example.com',
+      adminEmails: []
+    };
+    expect(hasFullTeamAccess(
+      { uid: 'legacy-owner', email: 'OWNER@EXAMPLE.COM' },
+      legacyTeam
+    )).toBe(false);
+    expect(hasFullTeamAccess(
+      { uid: 'stale-owner', email: 'STALE@EXAMPLE.COM' },
+      legacyTeam
+    )).toBe(false);
+  });
+
+  it('accepts equivalent normalized aliases on a legacy team document', () => {
+    expect(hasFullTeamAccess(
+      { uid: 'legacy-owner', email: 'OWNER@EXAMPLE.COM' },
+      { id: TEAM.id, ownerEmailLower: 'owner@example.com', ownerEmail: ' Owner@Example.com ' }
+    )).toBe(true);
   });
 
   it('grants full access to platform admin', () => {

@@ -14,7 +14,7 @@ export function Officials({ auth }: { auth: AuthState }) {
   const [items, setItems] = useState<OfficialAssignmentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyKey, setBusyKey] = useState('');
-  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [status, setStatus] = useState<{ tone: 'success' | 'warning' | 'error'; message: string } | null>(null);
   const [hasAccess, setHasAccess] = useState(true);
 
   const refresh = async ({ preserveStatus = false }: { preserveStatus?: boolean } = {}) => {
@@ -32,6 +32,12 @@ export function Officials({ auth }: { auth: AuthState }) {
       }
       setHasAccess(true);
       setItems(result.assignments);
+      if (result.isPartial) {
+        setStatus({
+          tone: 'warning',
+          message: `Showing assignments for ${result.teamCount} verified linked team${result.teamCount === 1 ? '' : 's'}. Some linked-team data could not refresh; retry later for a complete list.`
+        });
+      }
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to load officials assignments.' });
       setItems([]);
@@ -175,7 +181,13 @@ function AssignmentCard({
   onDecline?: () => void;
   onClaim?: () => void;
 }) {
-  const detailPath = getEventDetailPath({ teamId: item.teamId, id: item.gameId, childId: '' }, 'game');
+  const baseDetailPath = getEventDetailPath({ teamId: item.teamId, id: item.gameId, childId: '' }, 'game');
+  const detailPath = item.sharedGamePath
+    ? `${baseDetailPath}${baseDetailPath.includes('?') ? '&' : '?'}${new URLSearchParams({
+      teamId: item.teamId,
+      sharedGamePath: item.sharedGamePath
+    }).toString()}`
+    : baseDetailPath;
   const showResponseActions = item.kind === 'assigned' && (item.status === 'pending' || item.status === 'needs_review');
 
   return (
@@ -232,9 +244,14 @@ function EmptyState({ title, detail }: { title: string; detail: string }) {
   );
 }
 
-function StatusBanner({ tone, message }: { tone: 'success' | 'error'; message: string }) {
+function StatusBanner({ tone, message }: { tone: 'success' | 'warning' | 'error'; message: string }) {
+  const toneClass = tone === 'success'
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+    : tone === 'warning'
+      ? 'border-amber-200 bg-amber-50 text-amber-800'
+      : 'border-rose-200 bg-rose-50 text-rose-800';
   return (
-    <div className={`flex items-start gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold ${tone === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-800'}`}>
+    <div className={`flex items-start gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold ${toneClass}`}>
       {tone === 'success' ? <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" /> : <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />}
       <span>{message}</span>
     </div>

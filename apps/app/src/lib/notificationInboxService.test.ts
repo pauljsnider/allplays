@@ -15,7 +15,27 @@ const adapterMocks = vi.hoisted(() => ({
     where: vi.fn()
 }));
 
+const nativeRuntimeMocks = vi.hoisted(() => ({
+    isNativePlatform: vi.fn(() => false)
+}));
+
+const authMocks = vi.hoisted(() => ({
+    getNativeAuthIdToken: vi.fn()
+}));
+
+const appCheckMocks = vi.hoisted(() => ({
+    getPrimaryAppCheckHeaders: vi.fn(async (headers) => headers)
+}));
+
 vi.mock('./adapters/legacyNotificationInboxDb', () => adapterMocks);
+vi.mock('@capacitor/core', () => ({
+    Capacitor: { isNativePlatform: nativeRuntimeMocks.isNativePlatform }
+}));
+vi.mock('./authService', () => ({
+    firebaseAuth: { app: { options: { projectId: 'demo-allplays' } } },
+    getNativeAuthIdToken: authMocks.getNativeAuthIdToken
+}));
+vi.mock('./adapters/legacyFirebaseAppCheck', () => appCheckMocks);
 
 import {
     collection,
@@ -26,11 +46,19 @@ import {
     query,
     where
 } from './adapters/legacyNotificationInboxDb';
-import { subscribeToNotificationInbox, subscribeToUnreadNotificationCount } from './notificationInboxService';
+import {
+    markNotificationRead,
+    subscribeToNotificationInbox,
+    subscribeToUnreadNotificationCount
+} from './notificationInboxService';
 
 describe('notificationInboxService', () => {
     beforeEach(() => {
+        vi.unstubAllGlobals();
         vi.clearAllMocks();
+        nativeRuntimeMocks.isNativePlatform.mockReturnValue(false);
+        authMocks.getNativeAuthIdToken.mockResolvedValue('native-token');
+        appCheckMocks.getPrimaryAppCheckHeaders.mockImplementation(async (headers) => headers);
         vi.mocked(collection).mockReturnValue({ kind: 'collection' } as never);
         vi.mocked(where).mockReturnValue({ kind: 'where' } as never);
         vi.mocked(orderBy).mockReturnValue({ kind: 'orderBy' } as never);
@@ -209,5 +237,167 @@ describe('notificationInboxService', () => {
         }
         expect(callback).not.toHaveBeenCalled();
         expect(onError).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([0, 1, 42, 99, 100])('polls the bounded native aggregation unread count (%s)', async (count) => {
+        nativeRuntimeMocks.isNativePlatform.mockReturnValue(true);
+        const callback = vi.fn();
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: vi.fn().mockResolvedValue([{ result: { aggregateFields: {
+                notificationCount: { integerValue: String(count) }
+            } } }])
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        const unsubscribe = subscribeToUnreadNotificationCount('user-123', callback);
+        await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(count));
+
+        expect(onSnapshot).not.toHaveBeenCalled();
+        expect(authMocks.getNativeAuthIdToken).toHaveBeenCalledWith(true);
+        expect(fetchMock.mock.calls[0][0]).toContain(':runAggregationQuery');
+        const [, request] = fetchMock.mock.calls[0];
+        const body = JSON.parse(String(request.body));
+        expect(body.structuredAggregationQuery.structuredQuery.where.fieldFilter).toEqual({
+            field: { fieldPath: 'readAt' },
+            op: 'EQUAL',
+            value: { nullValue: 'NULL_VALUE' }
+        });
+        expect(body.structuredAggregationQuery.structuredQuery.limit).toBe(100);
+        expect(body.structuredAggregationQuery.aggregations).toEqual([
+            { alias: 'notificationCount', count: {} }
+        ]);
+        unsubscribe();
+    });
+
+    it('reports malformed native aggregation responses', async () => {
+        nativeRuntimeMocks.isNativePlatform.mockReturnValue(true);
+        const onError = vi.fn();
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: vi.fn().mockResolvedValue([{ result: { aggregateFields: {} } }])
+        }));
+
+        const unsubscribe = subscribeToUnreadNotificationCount('user-123', vi.fn(), onError);
+        await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(
+            expect.objectContaining({ message: 'Native notification unread count response was invalid.' })
+        ));
+        unsubscribe();
+    });
+
+    it('reports native aggregation HTTP failures', async () => {
+        nativeRuntimeMocks.isNativePlatform.mockReturnValue(true);
+        const onError = vi.fn();
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+            ok: false,
+            status: 503,
+            json: vi.fn().mockResolvedValue({ error: { message: 'Firestore unavailable' } })
+        }));
+
+        const unsubscribe = subscribeToUnreadNotificationCount('user-123', vi.fn(), onError);
+        await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(
+            expect.objectContaining({ message: 'Firestore unavailable' })
+        ));
+        unsubscribe();
+    });
+
+    it('aborts a native aggregation request at the existing timeout', async () => {
+        nativeRuntimeMocks.isNativePlatform.mockReturnValue(true);
+        vi.useFakeTimers();
+        const onError = vi.fn();
+        const fetchMock = vi.fn().mockImplementation((_url, request: RequestInit) => new Promise((_resolve, reject) => {
+            request.signal?.addEventListener('abort', () => reject(new Error('request aborted')));
+        }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const unsubscribe = subscribeToUnreadNotificationCount('user-123', vi.fn(), onError);
+        await vi.advanceTimersByTimeAsync(8_000);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+        expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'request aborted' }));
+        unsubscribe();
+        vi.useRealTimers();
+    });
+
+    it('does not emit a native aggregation result after unsubscribe', async () => {
+        nativeRuntimeMocks.isNativePlatform.mockReturnValue(true);
+        let resolveResponse!: (response: Response) => void;
+        vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise((resolve) => {
+            resolveResponse = resolve;
+        })));
+
+        const callback = vi.fn();
+        const onError = vi.fn();
+        const unsubscribe = subscribeToUnreadNotificationCount('user-123', callback, onError);
+        unsubscribe();
+        resolveResponse({
+            ok: true,
+            status: 200,
+            json: vi.fn().mockResolvedValue([{ result: { aggregateFields: {
+                notificationCount: { integerValue: '7' }
+            } } }])
+        } as never);
+
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(callback).not.toHaveBeenCalled();
+        expect(onError).not.toHaveBeenCalled();
+    });
+
+    it('loads and maps the ordered native inbox without emitting an empty result on permission failure', async () => {
+        nativeRuntimeMocks.isNativePlatform.mockReturnValue(true);
+        const callback = vi.fn();
+        const onError = vi.fn();
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: vi.fn().mockResolvedValue([{
+                    document: {
+                        name: 'projects/demo-allplays/databases/(default)/documents/users/user-123/notificationInbox/newest',
+                        fields: {
+                            category: { stringValue: 'schedule' },
+                            title: { stringValue: 'Game updated' },
+                            body: { stringValue: 'Field changed' },
+                            readAt: { nullValue: 'NULL_VALUE' },
+                            createdAt: { timestampValue: '2026-08-11T12:00:00.000Z' }
+                        }
+                    }
+                }])
+            })
+            .mockResolvedValueOnce({
+                ok: false,
+                status: 403,
+                json: vi.fn().mockResolvedValue({ error: { message: 'Missing or insufficient permissions.' } })
+            });
+        vi.stubGlobal('fetch', fetchMock);
+
+        const firstUnsubscribe = subscribeToNotificationInbox('user-123', callback, onError);
+        await vi.waitFor(() => expect(callback).toHaveBeenCalledWith([
+            expect.objectContaining({ id: 'newest', text: 'Game updated: Field changed', readAt: null })
+        ]));
+        firstUnsubscribe();
+
+        const failedCallback = vi.fn();
+        const failedUnsubscribe = subscribeToNotificationInbox('user-123', failedCallback, onError);
+        await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Missing or insufficient permissions.' })));
+        expect(failedCallback).not.toHaveBeenCalled();
+        failedUnsubscribe();
+    });
+
+    it('marks one notification read through the existing server callable', async () => {
+        const callable = vi.fn().mockResolvedValue({ data: { status: 'success', updatedCount: 1 } });
+        adapterMocks.httpsCallable.mockReturnValue(callable);
+
+        await markNotificationRead('user-123', 'item-1');
+
+        expect(adapterMocks.httpsCallable).toHaveBeenCalledWith(
+            adapterMocks.functions,
+            'markNotificationInboxItemRead'
+        );
+        expect(callable).toHaveBeenCalledWith({ itemId: 'item-1' });
+        expect(adapterMocks.updateDoc).not.toHaveBeenCalled();
     });
 });

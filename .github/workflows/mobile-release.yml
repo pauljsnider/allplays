@@ -7,12 +7,21 @@ on:
         description: Store version, for example 1.0.0
         required: true
         default: 1.0.0
+      android_version_code:
+        description: Optional Play version code override (defaults to the workflow run number)
+        required: false
+        type: string
+        default: ''
       upload_android:
         description: Upload Android bundle to the Play internal track
         type: boolean
         default: false
       upload_ios:
         description: Upload iOS archive to TestFlight
+        type: boolean
+        default: false
+      sync_android_listing:
+        description: Sync Google Play listing text and graphics
         type: boolean
         default: false
 
@@ -24,6 +33,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  play-listing:
+    if: inputs.sync_android_listing
+    needs: android-release
+    runs-on: ubuntu-latest
+    environment: mobile-release
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+      - name: Validate Google Play listing
+        run: npm run store:play:validate
+      - name: Sync Google Play listing
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          ANDROID_PACKAGE_NAME: ai.allplays.lite
+        run: npm run store:play:sync
+
   android-release:
     runs-on: ubuntu-latest
     environment: mobile-release
@@ -57,40 +84,103 @@ jobs:
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/allplays-upload.jks"
-      - name: Build signed Android App Bundle
+      - name: Build signed Android release artifacts
+        env:
+          VITE_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
+          ALLPLAYS_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/allplays-upload.jks
+          ALLPLAYS_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ALLPLAYS_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ALLPLAYS_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ALLPLAYS_ANDROID_VERSION_CODE: ${{ inputs.android_version_code || github.run_number }}
+          ALLPLAYS_VERSION_NAME: ${{ inputs.version_name }}
+        run: |
+          npm run mobile:sync
+          cd android
+          ./gradlew :app:bundleRelease :app:assembleRelease
+      - name: Upload signed Android artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: allplays-android-${{ inputs.version_name }}-${{ github.run_number }}
+          path: |
+            android/app/build/outputs/bundle/release/app-release.aab
+            android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+      - name: Install Android release emulator image
+        run: sdkmanager "emulator" "system-images;android-35;google_apis;x86_64"
+      - name: Enable KVM access
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Start Android release emulator
+        run: |
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          avdmanager create avd \
+            --force \
+            --name allplays-release \
+            --package "system-images;android-35;google_apis;x86_64" \
+            --device "pixel_2"
+          test -f "$ANDROID_AVD_HOME/allplays-release.ini"
+          "$ANDROID_SDK_ROOT/emulator/emulator" \
+            -avd allplays-release \
+            -no-window \
+            -no-audio \
+            -no-boot-anim \
+            -no-snapshot \
+            -gpu swiftshader_indirect &
+          emulator_pid=$!
+          boot_deadline=$((SECONDS + 180))
+          until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              echo "Android emulator exited before completing startup." >&2
+              exit 1
+            fi
+            if [ "$SECONDS" -ge "$boot_deadline" ]; then
+              echo "Android emulator did not finish booting within 180 seconds." >&2
+              adb devices >&2 || true
+              exit 1
+            fi
+            sleep 2
+          done
+          adb shell input keyevent 82
+      - name: Verify signed release APK in emulator
         env:
           ALLPLAYS_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/allplays-upload.jks
           ALLPLAYS_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ALLPLAYS_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ALLPLAYS_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          ALLPLAYS_ANDROID_VERSION_CODE: ${{ github.run_number }}
+          ALLPLAYS_ANDROID_VERSION_CODE: ${{ inputs.android_version_code || github.run_number }}
           ALLPLAYS_VERSION_NAME: ${{ inputs.version_name }}
-        run: npm run mobile:bundle:android
-      - name: Upload signed AAB artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: allplays-android-${{ inputs.version_name }}-${{ github.run_number }}
-          path: android/app/build/outputs/bundle/release/app-release.aab
-          if-no-files-found: error
-          retention-days: 30
+        working-directory: android
+        run: ./gradlew :app:connectedReleaseAndroidTest
       - name: Upload to Play internal testing
         if: inputs.upload_android
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
           ANDROID_BUNDLE_PATH: android/app/build/outputs/bundle/release/app-release.aab
           ANDROID_PACKAGE_NAME: ai.allplays.lite
-          ALLPLAYS_RELEASE_NAME: ALL PLAYS ${{ inputs.version_name }} (${{ github.run_number }})
+          ALLPLAYS_RELEASE_NAME: ALL PLAYS ${{ inputs.version_name }} (${{ inputs.android_version_code || github.run_number }})
         run: node scripts/upload-play-internal.mjs
 
   ios-release:
     runs-on: macos-15
     environment: mobile-release
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
+      - name: Validate App Store Xcode toolchain
+        run: |
+          xcodebuild -version
+          SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+          [[ "$SDK_VERSION" == 26.* ]]
       - name: Install dependencies
         run: |
           npm ci
@@ -131,6 +221,8 @@ jobs:
           cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
           echo "IOS_PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
       - name: Build web assets and sync iOS
+        env:
+          VITE_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
         run: npm run mobile:sync
       - name: Archive signed iOS app
         env:
@@ -148,6 +240,8 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             PROVISIONING_PROFILE_SPECIFIER="$IOS_PROFILE_NAME" \
             archive
+      - name: Verify iOS release privacy dependencies
+        run: node scripts/verify-ios-release-privacy.mjs "$RUNNER_TEMP/ALLPLAYS.xcarchive"
       - name: Export IPA
         env:
           TEAM_ID: ${{ secrets.IOS_TEAM_ID }}

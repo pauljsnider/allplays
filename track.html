@@ -274,17 +274,19 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './js/db.js?v=127';
-        import { db } from './js/firebase.js?v=22';
-        import { writeBatch, doc, setDoc, addDoc } from './js/firebase.js?v=22';
-        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=18';
-        import { checkAuth } from './js/auth.js?v=135';
+        import { getGameDayTeamContext, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './js/db.js?v=4433199';
+        import { db } from './js/firebase.js?v=33';
+        import { writeBatch, doc, setDoc, addDoc } from './js/firebase.js?v=33';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443375';
+        import { checkAuth } from './js/auth.js?v=4433203';
         import { isAISummaryEnabled, applyAISummaryAvailability } from './js/track-ai-summary.js';
         import { resolveSummaryRecipient } from './js/live-tracker-email.js?v=1';
-        import { hasScorekeepingTeamAccess } from './js/team-access.js?v=2';
-        import { commitStandardTrackerFinishData } from './js/track-finish.js?v=2';
+        import { hasScorekeepingTeamAccess } from './js/team-access.js?v=44338';
+        import { commitStandardTrackerFinishData } from './js/track-finish.js?v=3';
         import { getApp } from './js/vendor/firebase-app.js';
         import { getDefaultLivePeriod, getSportPeriodLabels } from './js/live-sport-config.js?v=1';
+        import { DIAMOND_ENGINE, buildDiamondTrackerUrl } from './js/diamond-scorebook-routing.js?v=2';
+        import { isLegacyTrackingEngine } from './js/tracking-engine.js?v=1';
         // Note: firebase-ai will be lazy-loaded when AI summary is requested
 
         renderFooter(document.getElementById('footer-container'));
@@ -347,7 +349,7 @@
 
             try {
                 const [team, game, playersList] = await Promise.all([
-                    getTeam(teamId),
+                    getGameDayTeamContext(teamId, gameId),
                     getGame(teamId, gameId),
                     getPlayers(teamId)
                 ]);
@@ -358,6 +360,16 @@
                     console.error('Game not found for teamId:', teamId, 'gameId:', gameId);
                     alert("Game not found");
                     window.location.href = 'dashboard.html';
+                    return;
+                }
+
+                if (game.trackingEngine === DIAMOND_ENGINE) {
+                    window.location.replace(buildDiamondTrackerUrl(teamId, gameId));
+                    return;
+                }
+                if (!isLegacyTrackingEngine(game.trackingEngine)) {
+                    alert('This game uses a newer scoring engine that this tracker cannot edit.');
+                    window.location.href = `edit-schedule.html#teamId=${encodeURIComponent(teamId)}`;
                     return;
                 }
 
@@ -561,7 +573,7 @@
                     <td class="player-name text-left p-1 font-medium">
                         <div class="flex items-center gap-2">
                             <span class="inline-flex h-8 w-8 rounded-full bg-gray-100 overflow-hidden border border-gray-200">
-                                ${player.photoUrl ? `<img src="${escapeHtml(player.photoUrl)}" alt="${escapeHtml(player.name)}" class="w-full h-full object-cover">` : `
+                                ${player.photoUrl ? `<img loading="lazy" decoding="async" src="${escapeHtml(player.photoUrl)}" alt="${escapeHtml(player.name)}" class="w-full h-full object-cover">` : `
                                     <svg class="w-full h-full text-gray-400 p-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A9 9 0 1119 12.999M15 21v-2a3 3 0 00-3-3H6a3 3 0 00-3 3v2"></path>
                                     </svg>

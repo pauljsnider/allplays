@@ -108,7 +108,8 @@ export async function getUserProfile() {
 export async function updateUserProfile() {}
 export async function createAccessCode() { return { code: 'CODE123' }; }
 export async function createAccountMergeRequest() {}
-export async function uploadUserPhoto() { return 'https://example.test/photo.png'; }
+export async function uploadUserPhoto() { return { url: 'https://example.test/photo.png', path: 'profile-photos/users/user-1/photo.png' }; }
+export async function deleteLegacyImageUpload() {}
 export async function upsertNotificationDeviceToken() {}
 
 export async function getUserAccessCodes() {
@@ -197,6 +198,8 @@ async function mockProfileDependencies(page, scenario) {
 }
 
 test('legacy profile team alerts load, switch, and save per-team preferences', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
     await mockProfileDependencies(page, {
         memberTeams: [
             { id: 'team-2', name: 'Bravo' },
@@ -214,6 +217,7 @@ test('legacy profile team alerts load, switch, and save per-team preferences', a
 
     await page.goto(`${baseURL}/profile.html`, { waitUntil: 'domcontentloaded' });
 
+    expect(pageErrors).toEqual([]);
     await expect(page.locator('#fullName')).toHaveValue('Pat Parent');
     await expect(page.locator('#notification-team-select')).toHaveValue('team-1');
     await expect(page.locator('#notification-team-select option')).toHaveCount(4);
@@ -247,6 +251,8 @@ test('legacy profile team alerts load, switch, and save per-team preferences', a
 });
 
 test('legacy profile preserves the rest of the page when notification bootstrap fails', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
     await mockProfileDependencies(page, {
         memberTeams: [
             { id: 'team-2', name: 'Bravo' },
@@ -263,6 +269,7 @@ test('legacy profile preserves the rest of the page when notification bootstrap 
 
     await page.goto(`${baseURL}/profile.html`, { waitUntil: 'domcontentloaded' });
 
+    expect(pageErrors).toEqual([]);
     await expect.poll(() => page.evaluate(() => window.__profileSmoke.preferenceLoads)).toEqual(['team-1']);
     await expect(page.locator('#notification-team-select')).toHaveValue('team-1');
     await expect(page.locator('#save-notification-prefs-btn')).toBeDisabled();

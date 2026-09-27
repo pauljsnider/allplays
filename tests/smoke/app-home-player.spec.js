@@ -104,7 +104,7 @@ async function waitForTeamsRoute(page, readyLocator) {
     }).toPass({ timeout: 45000 });
 }
 
-async function mockHomePlayerModules(page) {
+async function mockHomePlayerModules(page, { switchableSocialTargets = false, failSocialPost = false, unsafeSocialTarget = false, failHomeAfterPreview = false } = {}) {
     await page.route('https://img.example.test/**', async (route) => {
         await route.fulfill({
             status: 200,
@@ -113,16 +113,31 @@ async function mockHomePlayerModules(page) {
         });
     });
 
-    await page.addInitScript(() => {
+    await page.addInitScript(({ switchableSocialTargets: enableSwitching, failSocialPost: failPost, unsafeSocialTarget: includeUnsafeTarget }) => {
+        window.__ALLPLAYS_CONFIG__ = {
+            ...(window.__ALLPLAYS_CONFIG__ || {}),
+            performanceMonitoringEnabled: false,
+            firebase: {
+                apiKey: 'preview-smoke-key',
+                authDomain: 'allplays-preview-smoke.firebaseapp.com',
+                projectId: 'allplays-preview-smoke',
+                messagingSenderId: '123456789',
+                appId: '1:123456789:web:previewsmoke'
+            }
+        };
         window.__playerLoads = [];
         window.__socialPosts = [];
         window.__socialUploads = [];
+        window.__socialDiscards = [];
+        window.__switchableSocialTargets = enableSwitching;
+        window.__failSocialPost = failPost;
+        window.__unsafeSocialTarget = includeUnsafeTarget;
         window.__parentToolPanelLoads = [];
         window.__parentToolRenders = [];
         window.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__ = (toolId) => {
             window.__parentToolRenders.push(toolId);
         };
-    });
+    }, { switchableSocialTargets, failSocialPost, unsafeSocialTarget });
 
     await page.route(/\/src\/lib\/friendMessageService\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
@@ -357,10 +372,11 @@ async function mockHomePlayerModules(page) {
                         location: overrides.location || 'Main Gym',
                         opponent: overrides.opponent || 'Falcons',
                         title: overrides.title || null,
-                        childId: 'player-1',
-                        childName: 'Pat Star',
+                        childId: overrides.childId || 'player-1',
+                        childName: overrides.childName || 'Pat Star',
                         isDbGame: true,
                         isCancelled: false,
+                        status: overrides.status || 'scheduled',
                         myRsvp: overrides.myRsvp || 'not_responded',
                         assignments: [],
                         practiceHomePacketSummary: overrides.practiceHomePacketSummary || null
@@ -373,6 +389,10 @@ async function mockHomePlayerModules(page) {
 
                 export async function loadParentHomeSummaryBootstrap(...args) {
                     const home = await loadParentHome(...args);
+                    if (${failHomeAfterPreview} && !args[1]?.force) {
+                        args[1]?.onPartial?.({ home, schedule: { children: [], events: [], isPartial: true } });
+                        throw new Error('Team schedule timed out.');
+                    }
                     return { home, schedule: [] };
                 }
 
@@ -401,6 +421,21 @@ async function mockHomePlayerModules(page) {
 
                 export async function loadParentHome() {
                     const nextEvent = event();
+                    const completedGame = event({
+                        eventKey: 'team-1::game-final::player-1',
+                        id: 'game-final',
+                        date: new Date('2000-06-01T18:00:00Z'),
+                        status: 'completed'
+                    });
+                    const secondCompletedGame = event({
+                        eventKey: 'team-1::game-final-2::player-2',
+                        id: 'game-final-2',
+                        date: new Date('2000-06-02T18:00:00Z'),
+                        opponent: 'Tigers',
+                        childId: 'player-2',
+                        childName: 'Sam Swift',
+                        status: 'completed'
+                    });
                     const practice = event({
                         eventKey: 'team-1::practice-1::player-1',
                         id: 'practice-1',
@@ -421,19 +456,35 @@ async function mockHomePlayerModules(page) {
                             packetsReady: 1,
                             openAssignments: 0,
                             unreadCount: 2
-                        }],
+                        }, ...(window.__switchableSocialTargets ? [{
+                            teamId: 'team-1',
+                            teamName: 'Bears',
+                            playerId: 'player-2',
+                            playerName: 'Sam Swift',
+                            nextEvent,
+                            rsvpNeeded: 0,
+                            packetsReady: 0,
+                            openAssignments: 0,
+                            unreadCount: 0
+                        }] : [])],
                         teams: [{
                             teamId: 'team-1',
                             teamName: 'Bears',
                             role: 'Parent',
                             sport: 'Basketball',
                             photoUrl: 'https://img.example.test/bears.png',
-                            players: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star' }],
+                            players: [
+                                { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star' },
+                                ...(window.__switchableSocialTargets
+                                    ? [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam Swift' }]
+                                    : [])
+                            ],
                             nextEvent,
                             eventCount: 2,
                             unreadCount: 2,
                             openActions: 2
                         }],
+                        feedGames: [completedGame, ...(window.__switchableSocialTargets ? [secondCompletedGame] : []), nextEvent],
                         upcomingEvents: [nextEvent, practice],
                         actionItems: [{
                             id: 'rsvp:game-next',
@@ -458,7 +509,7 @@ async function mockHomePlayerModules(page) {
                             dueDate: new Date('2100-06-10T12:00:00Z')
                         }],
                         metrics: {
-                            players: 1,
+                            players: window.__switchableSocialTargets ? 2 : 1,
                             teams: 1,
                             rsvpNeeded: 1,
                             unreadMessages: 2,
@@ -550,6 +601,10 @@ async function mockHomePlayerModules(page) {
                     return schedule;
                 }
 
+                export async function hydrateParentScheduleEventOptionalDetails(schedule) {
+                    return schedule;
+                }
+
                 export async function loadParentScheduleEventDetail(_user, options = {}) {
                     return {
                         children,
@@ -566,7 +621,7 @@ async function mockHomePlayerModules(page) {
                 }
 
                 export async function loadOfficialAssignmentsAccess() {
-                    return { hasAccess: true, teamIds: ['team-1'], teamCount: 1 };
+                    return { hasAccess: true, teamIds: ['team-1'], teamCount: 1, isPartial: false };
                 }
 
                 export async function loadOfficialAssignments() {
@@ -574,6 +629,7 @@ async function mockHomePlayerModules(page) {
                         hasAccess: true,
                         teamIds: ['team-1'],
                         teamCount: 1,
+                        isPartial: false,
                         assignments: [{
                             kind: 'assigned',
                             teamId: 'team-1',
@@ -628,6 +684,7 @@ async function mockHomePlayerModules(page) {
                 export async function createScheduledTournamentBlockForApp() { return { batchId: 'batch-new', gameIds: [] }; }
                 export async function createScheduleImportGame() { return 'import-game'; }
                 export async function createScheduleImportPractice() { return 'import-practice'; }
+                export async function enableRsvpForImportedCalendarEvent() { return 'calendar-materialized-event'; }
                 export async function finalizeScheduleImportBatch() { return { success: true }; }
                 export async function cancelPracticeOccurrenceForApp() { return { cancelled: true }; }
                 export async function cancelScheduledGameForApp() { return { cancelled: true }; }
@@ -749,6 +806,20 @@ async function mockHomePlayerModules(page) {
             status: 200,
             contentType: 'application/javascript',
             body: `
+                export function getTrustedStripeCheckoutUrl(value) {
+                    try {
+                        const parsed = new URL(String(value || '').trim());
+                        return parsed.protocol === 'https:'
+                            && parsed.hostname === 'checkout.stripe.com'
+                            && !parsed.username
+                            && !parsed.password
+                            && !parsed.port
+                            ? String(value || '').trim()
+                            : '';
+                    } catch {
+                        return '';
+                    }
+                }
                 const fee = {
                     id: 'fee-1',
                     teamId: 'team-1',
@@ -779,7 +850,7 @@ async function mockHomePlayerModules(page) {
                 }
 
                 export async function initiateParentTeamFeeCheckout() {
-                    return { success: true, checkoutUrl: 'https://checkout.example.test/session' };
+                    return { success: true, checkoutUrl: 'https://checkout.stripe.com/c/pay/session' };
                 }
 
                 export function isParentTeamFeePayActionAllowed() { return false; }
@@ -854,7 +925,29 @@ async function mockHomePlayerModules(page) {
                             createdAt: new Date('2100-06-01T18:00:00Z'),
                             reactionCounts: { like: 2 },
                             commentCount: 1
-                        }],
+                        }, ...(window.__unsafeSocialTarget ? [{
+                            id: 'post-unsafe',
+                            type: 'team_media',
+                            visibility: 'team',
+                            authorId: 'friend-1',
+                            authorName: 'Jamie Friend',
+                            authorPhotoUrl: null,
+                            teamId: 'team-1',
+                            teamName: 'Bears',
+                            playerIds: [],
+                            playerNames: [],
+                            sourceType: 'team',
+                            sourceId: 'team-1',
+                            title: 'Stored unsafe destination',
+                            detail: 'Legacy team update',
+                            caption: null,
+                            media: [],
+                            route: '//example.invalid/source',
+                            href: 'mailto:team@example.invalid',
+                            createdAt: new Date('2100-06-01T17:00:00Z'),
+                            reactionCounts: {},
+                            commentCount: 0
+                        }] : [])],
                         friends: [{
                             id: 'friendship-1',
                             userId: 'friend-1',
@@ -901,6 +994,7 @@ async function mockHomePlayerModules(page) {
                     };
                 }
                 export async function createSocialPost(user, input) {
+                    if (window.__failSocialPost) throw new Error('Post write failed.');
                     window.__socialPosts.push({ user, input });
                     return {
                         id: 'post-new',
@@ -936,7 +1030,16 @@ async function mockHomePlayerModules(page) {
                 export async function blockFriend() {}
                 export async function uploadSocialPostMedia(teamId, file) {
                     window.__socialUploads.push({ teamId, name: file?.name || null, type: file?.type || null });
-                    return { type: 'image', url: 'https://img.example.test/social.png', name: file?.name || 'social.png', thumbnailUrl: null };
+                    return {
+                        type: 'image',
+                        url: 'https://img.example.test/social.png',
+                        name: file?.name || 'social.png',
+                        thumbnailUrl: null,
+                        storagePath: 'chat-attachments/team-1/team/user-1/social.png'
+                    };
+                }
+                export async function discardSocialPostMediaUpload(media) {
+                    window.__socialDiscards.push(media);
                 }
             `
         });
@@ -1031,6 +1134,17 @@ async function mockHomePlayerModules(page) {
                 }
 
                 export async function loadParentPlayerStatsDetail() {
+                    if (window.__diamondPendingStatsSmoke) {
+                        return {
+                            summary: {
+                                gamesPlayed: 1, gamesWithTime: 0, totalTimeMs: 0,
+                                totals: {}, averages: {}, topStats: [], trends: [], gameLimit: 20, hasMoreGames: false,
+                                diamond: { hasDiamond: true, pending: true, statVisibility: 'public',
+                                    requestedStatVisibility: 'manager-internal', publicStatsStatus: 'partial', sourceRevisions: [] }
+                            },
+                            statRows: [], gameEventRows: []
+                        };
+                    }
                     const statEvent = event({
                         eventKey: 'team-1::game-final::player-1',
                         id: 'game-final',
@@ -1251,6 +1365,27 @@ async function mockHomePlayerModules(page) {
     });
 }
 
+test('home recovers from an online timeout after a partial preview', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await mockHomePlayerModules(page, { failHomeAfterPreview: true });
+    await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'networkidle' });
+    expect(pageErrors).toEqual([]);
+    expect(await page.evaluate(() => navigator.onLine)).toBe(true);
+    await expect(page.getByRole('button', { name: 'Retry loading Home' })).toBeVisible();
+    await expect(page.getByText('Needs refresh')).toBeVisible();
+    await expect(page.getByText(/while offline/)).toHaveCount(0);
+    await expect(page.getByText('Loading', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Checking today’s actions…' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'All caught up' })).toHaveCount(0);
+    await page.screenshot({ path: 'test-results/home-timeout-recovery.png' });
+    await page.getByRole('button', { name: 'Retry loading Home' }).click();
+    await expect(page.getByRole('heading', { name: 'Pat Star needs availability' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Retry loading Home' })).toHaveCount(0);
+    await expect(page.getByText('Needs refresh')).toHaveCount(0);
+    expect(pageErrors).toEqual([]);
+});
+
 test('home dashboard drills into player detail with section submenus', async ({ page, baseURL }) => {
     await mockHomePlayerModules(page);
     await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
@@ -1355,6 +1490,28 @@ test('home dashboard drills into player detail with section submenus', async ({ 
     await page.getByRole('button', { name: 'Rules', exact: true }).click();
     await expect(page.getByText('Rules and limits')).toBeVisible();
     await expect(page.getByText('PTS: +$1.00 per pts')).toBeVisible();
+});
+
+test('player reports expose pending Diamond evidence without inventing zero statistics', async ({ page, baseURL }) => {
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.addInitScript(() => {
+        window.__diamondPendingStatsSmoke = true;
+        window.ALLPLAYS_PERFORMANCE_ENABLED = false;
+        window.ALLPLAYS_TELEMETRY_ENABLED = false;
+    });
+    await mockHomePlayerModules(page);
+    await page.goto(appUrl(baseURL, '/players/team-1/player-1'), { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => errors).toEqual([]);
+    await expect(page.getByRole('heading', { name: 'Pat Star' })).toBeVisible();
+    await page.getByRole('button', { name: 'Reports' }).click();
+    const status = page.getByRole('status', { name: 'Diamond player statistics status' });
+    await expect(status).toContainText('Missing values stay unavailable instead of becoming zero.');
+    await expect(status).toContainText('Internal stats are unavailable. Public projection status: Partial. Refresh to retry.');
+    await expect(status).toContainText('Public · Read only');
+    await expect(page.getByText('0.000', { exact: true })).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    expect(errors).toEqual([]);
 });
 
 test('parent core player drill-in sends workflow timer to telemetry storage payload', async ({ page, baseURL }) => {
@@ -1819,6 +1976,58 @@ test('social quick share defers changing the selected post type', async ({ page,
     await expect(dialog.getByText('Add a photo or video for this share.')).toBeVisible();
 });
 
+test('social feed keeps canonical sources in-app and fails unsafe stored destinations closed', async ({ page, baseURL }) => {
+    await mockHomePlayerModules(page, { unsafeSocialTarget: true });
+
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+        await page.setViewportSize(viewport);
+        await page.goto(appUrl(baseURL, '/home?section=feed'), { waitUntil: 'domcontentloaded' });
+        await waitForHomeRoute(page, page.getByText('Quick shares'));
+
+        const canonicalCard = page.locator('.social-feed-card').filter({ hasText: 'Pat Star highlight' });
+        await expect(canonicalCard.getByRole('link', { name: 'Open source' }))
+            .toHaveAttribute('href', '#/players/team-1/player-1');
+
+        const unsafeCard = page.locator('.social-feed-card').filter({ hasText: 'Stored unsafe destination' });
+        await expect(unsafeCard).toBeVisible();
+        await expect(unsafeCard.getByRole('link', { name: 'Open source' })).toHaveCount(0);
+    }
+});
+
+test('social game recap switches between completed games and linked players', async ({ page, baseURL }) => {
+    await mockHomePlayerModules(page, { switchableSocialTargets: true });
+    await page.goto(appUrl(baseURL, '/home?section=feed&social=create&type=game_recap'), { waitUntil: 'domcontentloaded' });
+
+    const dialog = page.getByRole('dialog', { name: 'Create social post' });
+    await expect(dialog.getByRole('heading', { name: 'What happened?' })).toBeVisible();
+    await dialog.locator('button').filter({ hasText: 'vs. Falcons' }).click();
+
+    const gameSelect = dialog.getByLabel('Game');
+    const tigersOption = gameSelect.getByRole('option', { name: /vs\. Tigers/ });
+    await expect(tigersOption).toBeAttached();
+    await gameSelect.selectOption(await tigersOption.evaluate((option) => option.value));
+
+    await dialog.getByRole('button', { name: 'Tag a player' }).click();
+    const playerSelect = dialog.getByLabel('Player');
+    await expect(playerSelect.getByRole('option', { name: 'Sam Swift · Bears' })).toBeAttached();
+    await playerSelect.selectOption({ label: 'Sam Swift · Bears' });
+
+    await dialog.getByPlaceholder('How did the game go?').fill('Sam closed out a strong team win.');
+    await dialog.getByRole('button', { name: 'Post', exact: true }).click();
+
+    await expect(page.getByText('Posted to your ALL PLAYS feed.')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__socialPosts[0]?.input)).toEqual(expect.objectContaining({
+        type: 'game_recap',
+        title: 'Bears vs. Tigers recap',
+        caption: 'Sam closed out a strong team win.',
+        teamId: 'team-1',
+        playerIds: ['player-2'],
+        playerNames: ['Sam Swift'],
+        sourceType: 'game',
+        sourceId: 'game-final-2'
+    }));
+});
+
 test('social photo quick share requires media and posts uploaded media payload', async ({ page, baseURL }) => {
     await mockHomePlayerModules(page);
     await page.goto(appUrl(baseURL, '/home?section=feed&social=create&type=team_media'), { waitUntil: 'domcontentloaded' });
@@ -1855,6 +2064,26 @@ test('social photo quick share requires media and posts uploaded media payload',
         teamId: 'team-1',
         playerIds: [],
         media: [{ type: 'image', url: 'https://img.example.test/social.png', name: 'team-photo.png', thumbnailUrl: null }]
+    }));
+});
+
+test('social photo quick share discards uploaded media when the post write fails', async ({ page, baseURL }) => {
+    await mockHomePlayerModules(page, { failSocialPost: true });
+    await page.goto(appUrl(baseURL, '/home?section=feed&social=create&type=team_media'), { waitUntil: 'domcontentloaded' });
+
+    const dialog = page.getByRole('dialog', { name: 'Create social post' });
+    await dialog.locator('input[type="file"]').setInputFiles({
+        name: 'failed-team-photo.png',
+        mimeType: 'image/png',
+        buffer: Buffer.from('image-bytes')
+    });
+    await dialog.getByRole('button', { name: 'Post', exact: true }).click();
+
+    await expect(dialog.getByText('Post write failed.')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__socialPosts.length)).toBe(0);
+    await expect.poll(() => page.evaluate(() => window.__socialDiscards[0])).toEqual(expect.objectContaining({
+        url: 'https://img.example.test/social.png',
+        storagePath: 'chat-attachments/team-1/team/user-1/social.png'
     }));
 });
 

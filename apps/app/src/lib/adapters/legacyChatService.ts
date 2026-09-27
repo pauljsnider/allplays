@@ -1,6 +1,7 @@
 /* Auto-generated typed adapter boundary for legacy js/ chat-service imports (#2066).
  * Bindings re-exported as-is so existing js/* test mocks apply via the @legacy alias. */
 import * as legacyDb from '@legacy/db.js';
+import { functions as legacyFunctions, httpsCallable as legacyHttpsCallable } from '@legacy/firebase.js';
 import { getApp as legacy_getApp } from '@legacy/vendor/firebase-app.js';
 import { isTeamActive as legacy_isTeamActive } from '@legacy/team-visibility.js';
 
@@ -37,7 +38,33 @@ export const postChatMessage = (...args: any[]) => callLegacyDb('postChatMessage
 export const repairLegacyDirectConversation = (...args: any[]) => callLegacyDb('repairLegacyDirectConversation', args);
 export const saveStoredTeamEmailDraft = (...args: any[]) => callLegacyDb('saveTeamEmailDraft', args);
 export const saveStoredTeamEmailTemplate = (...args: any[]) => callLegacyDb('saveTeamEmailTemplate', args);
-export const sendTeamEmail = (...args: any[]) => callLegacyDb('sendTeamEmail', args);
+export async function sendTeamEmail(teamId: string, {
+  subject,
+  body,
+  targetType,
+  recipientIds = [],
+  draftId = null,
+  attachments = [],
+  postToTeamChat
+}: Record<string, any> = {}) {
+  const callable = legacyHttpsCallable(legacyFunctions, 'sendTeamEmail');
+  const payload: Record<string, any> = {
+    teamId,
+    subject,
+    body,
+    recipientIds,
+    draftId,
+    attachments
+  };
+  if (targetType !== undefined && targetType !== null && targetType !== '') {
+    payload.targetType = targetType;
+  }
+  if (typeof postToTeamChat === 'boolean') {
+    payload.postToTeamChat = postToTeamChat;
+  }
+  const result = await callable(payload);
+  return result.data;
+}
 export const subscribeToChatMessages = (...args: any[]) => callLegacyDb('subscribeToChatMessages', args);
 export const toggleChatReaction = (...args: any[]) => callLegacyDb('toggleChatReaction', args);
 export const updateChatLastRead = (...args: any[]) => callLegacyDb('updateChatLastRead', args);

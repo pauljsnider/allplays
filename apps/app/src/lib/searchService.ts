@@ -13,8 +13,7 @@ import {
   query,
   where
 } from './adapters/legacySearchDb';
-import { loadParentHomeSummary } from './homeService';
-import { searchHelpKnowledge } from './helpKnowledgeService';
+import { loadParentSearchTeamsSummary } from './homeService';
 import { getPublicTeamsPage } from './publicTeamsService';
 import type { AuthState, AuthUser, UserRole } from './types';
 
@@ -106,6 +105,14 @@ export type AppSearchHelp = AppSearchItem & {
 
 export type AppSearchHelpRoleFilter = 'All' | UserRole | 'member' | string;
 export type AppSearchHelpRole = UserRole | 'member';
+
+type AppSearchHelpModule = Pick<typeof import('./helpKnowledgeService'), 'searchHelpKnowledge'>;
+type AppSearchHelpModuleLoader = () => Promise<AppSearchHelpModule>;
+type AppSearchHelpInput = {
+  queryText: string;
+  auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>;
+  helpRoleFilter?: AppSearchHelpRoleFilter;
+};
 
 const allSearchHelpRoles: AppSearchHelpRole[] = ['parent', 'coach', 'admin', 'platformAdmin', 'member'];
 
@@ -286,13 +293,13 @@ export function computeAppSearchResults({
   auth,
   teams,
   players,
-  helpRoleFilter
+  helpResults = []
 }: {
   queryText: string;
   auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>;
   teams: AppSearchTeam[];
   players: AppSearchPlayer[];
-  helpRoleFilter?: AppSearchHelpRoleFilter;
+  helpResults?: AppSearchHelp[];
 }) {
   const tokens = splitSearchTokens(queryText);
   const actions = buildAppSearchActions(auth);
@@ -305,15 +312,14 @@ export function computeAppSearchResults({
   const matchedTeams = tokens.length === 0
     ? teamItems.slice(0, 20)
     : rankSearchItems(teamItems, tokens).slice(0, 20);
-  const matchedHelp = buildAppSearchHelpResults(queryText, auth, helpRoleFilter);
   const matchedPlayers = players.slice(0, 20);
 
   return {
     actions: matchedActions,
     teams: matchedTeams,
-    help: matchedHelp,
+    help: helpResults,
     players: matchedPlayers,
-    flat: [...matchedActions, ...matchedTeams, ...matchedHelp, ...matchedPlayers]
+    flat: [...matchedActions, ...matchedTeams, ...helpResults, ...matchedPlayers]
   };
 }
 
@@ -339,7 +345,7 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
   cachedTeamsPromise = (async () => {
     const [directAccessTeamsResult, homeTeamsResult, streamVolunteerTeamsResult] = await Promise.allSettled([
       loadDirectAccessSearchTeams(user),
-      user ? loadParentHomeSummary(user) : Promise.resolve(null),
+      user ? loadParentSearchTeamsSummary(user) : Promise.resolve(null),
       user ? loadStreamVolunteerSearchTeams(user) : Promise.resolve([])
     ]);
 
@@ -372,11 +378,17 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
       if (firstError) throw firstError;
     }
 
-    cachedTeams = Array.from(teamsById.values())
+    const teams = Array.from(teamsById.values())
       .sort((a, b) => a.name.localeCompare(b.name));
-    cachedTeamsLoadedAt = Date.now();
-    cachedTeamsUserKey = userCacheKey;
-    return cachedTeams;
+    const accessDiscoveryComplete = directAccessTeamsResult.status === 'fulfilled'
+      && homeTeamsResult.status === 'fulfilled'
+      && streamVolunteerTeamsResult.status === 'fulfilled';
+    if (accessDiscoveryComplete) {
+      cachedTeams = teams;
+      cachedTeamsLoadedAt = Date.now();
+      cachedTeamsUserKey = userCacheKey;
+    }
+    return teams;
   })();
 
   try {
@@ -515,14 +527,34 @@ export function getCachedAppPlayerSearchResults(queryText: string, teamsById: Ma
   return players;
 }
 
+export function createAppSearchHelpLoader(
+  loadModule: AppSearchHelpModuleLoader = () => import('./helpKnowledgeService')
+) {
+  let modulePromise: Promise<AppSearchHelpModule> | null = null;
+
+  return async ({ queryText, auth, helpRoleFilter = 'all' }: AppSearchHelpInput): Promise<AppSearchHelp[]> => {
+    if (normalizeSearchQuery(queryText).length < 2) return [];
+
+    if (!modulePromise) {
+      modulePromise = loadModule().catch((error) => {
+        modulePromise = null;
+        throw error;
+      });
+    }
+
+    const { searchHelpKnowledge } = await modulePromise;
+    return buildAppSearchHelpResults(queryText, auth, helpRoleFilter, searchHelpKnowledge);
+  };
+}
+
+export const loadAppSearchHelpResults = createAppSearchHelpLoader();
+
 function buildAppSearchHelpResults(
   queryText: string,
   auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>,
-  helpRoleFilter: AppSearchHelpRoleFilter = 'all'
+  helpRoleFilter: AppSearchHelpRoleFilter,
+  searchHelpKnowledge: AppSearchHelpModule['searchHelpKnowledge']
 ): AppSearchHelp[] {
-  const normalized = normalizeSearchQuery(queryText);
-  if (normalized.length < 2) return [];
-
   const rawHelpRoleFilter = cleanString(helpRoleFilter);
   const usesDisplayHelpRoleFilter = rawHelpRoleFilter !== '' && rawHelpRoleFilter[0] !== rawHelpRoleFilter[0].toLowerCase();
   const normalizedRoleFilter = normalizeAppSearchHelpRoleFilter(helpRoleFilter);

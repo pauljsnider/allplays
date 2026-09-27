@@ -22,6 +22,7 @@ import {
 import {
     getFirestore,
     initializeFirestore,
+    memoryLocalCache,
     persistentLocalCache,
     persistentMultipleTabManager,
     collection,
@@ -52,8 +53,8 @@ import {
 } from "./vendor/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "./vendor/firebase-storage.js";
 import { getFunctions, httpsCallable } from "./vendor/firebase-functions.js";
-import { initializePrimaryAppCheck } from "./firebase-app-check.js?v=2";
-import { resolvePrimaryFirebaseConfig } from "./firebase-runtime-config.js?v=16";
+import { initializePrimaryAppCheck } from "./firebase-app-check.js?v=12";
+import { resolvePrimaryFirebaseConfig } from "./firebase-runtime-config.js?v=23";
 
 const firebaseConfig = await resolvePrimaryFirebaseConfig();
 
@@ -74,6 +75,26 @@ function isCapacitorNativeRuntime() {
         return capacitor.isNativePlatform();
     }
     return capacitor.getPlatform?.() === 'ios' || capacitor.getPlatform?.() === 'android';
+}
+
+function isCapacitorNativeFirestoreRuntime() {
+    if (isCapacitorNativeRuntime()) {
+        return true;
+    }
+    const protocol = typeof window !== 'undefined' ? window.location?.protocol : '';
+    const hostname = typeof window !== 'undefined' ? window.location?.hostname : '';
+    // Capacitor serves the Android bundle from https://localhost. The native
+    // bridge may not be injected yet when this shared module initializes.
+    return protocol === 'https:' && hostname === 'localhost';
+}
+
+function createFirestoreLocalCache() {
+    if (isCapacitorNativeFirestoreRuntime()) {
+        return persistentLocalCache({ tabManager: persistentMultipleTabManager() });
+    }
+    // Browser tabs must not coordinate through a shared IndexedDB primary
+    // lease. Each tab keeps an isolated in-memory cache instead.
+    return memoryLocalCache();
 }
 
 function initializeFirebaseAuth(appInstance) {
@@ -100,12 +121,14 @@ function initializeFirebaseDb(appInstance) {
 
     try {
         const firestore = initializeFirestore(appInstance, {
-            localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+            localCache: createFirestoreLocalCache()
         });
         globalThis[globalDbKey] = firestore;
         return firestore;
     } catch (error) {
-        if (error?.code === 'failed-precondition' || String(error?.message || '').includes('initializeFirestore() has already been called')) {
+        const alreadyInitialized = error?.code === 'failed-precondition'
+            && String(error?.message || '').includes('initializeFirestore() has already been called');
+        if (alreadyInitialized) {
             const firestore = getFirestore(appInstance);
             globalThis[globalDbKey] = firestore;
             return firestore;

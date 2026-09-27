@@ -16,7 +16,16 @@ describe('parent dashboard rideshare access sync', () => {
         const html = readRepoFile('parent-dashboard.html');
 
         expect(html).toMatch(/function\s+getLegacyRideEventId\(event\)\s*\{[\s\S]*event\?\.calendarEventUid[\s\S]*legacyEventId === eventId[\s\S]*return legacyEventId;/);
-        expect(html).toMatch(/async\s+function\s+refreshRideshareForEvent\(teamId,\s*gameId,\s*legacyGameId\s*=\s*''\)\s*\{[\s\S]*await\s+listRideOffersForEvent\(teamId,\s*gameId,\s*\{\s*fallbackGameIds:\s*legacyGameId\s*\?\s*\[legacyGameId\]\s*:\s*\[\]\s*\}\);/);
+        expect(html).toMatch(/async\s+function\s+refreshRideshareForEvent\(teamId,\s*gameId,\s*legacyGameId\s*=\s*''\)\s*\{[\s\S]*await\s+listRideOffersForEvent\(teamId,\s*gameId,\s*\{\s*fallbackGameIds:\s*legacyGameId\s*\?\s*\[legacyGameId\]\s*:\s*\[\],[\s\S]*requesterUserId:\s*currentUserId,[\s\S]*childIds:\s*resolveChildChoices\(teamId\)\.map\(\(child\)\s*=>\s*child\.childId\),[\s\S]*canManageTeamRequests:/);
+    });
+
+    it('passes only deterministic household request scope while retaining manager request lists', () => {
+        const html = readRepoFile('parent-dashboard.html');
+
+        expect(html).toContain('requesterUserId: currentUserId');
+        expect(html).toContain('childIds: resolveChildChoices(teamId).map((child) => child.childId)');
+        expect(html).toContain('canManageTeamRequests: currentUser?.isAdmin === true || matchingEvents.some((event) => event.isTeamAdmin === true)');
+        expect(html).toContain("offer.driverUserId === currentUserId || event.isTeamAdmin === true || currentUser?.isAdmin === true");
     });
 
     it('supports strict mode so access sync errors can be propagated', () => {

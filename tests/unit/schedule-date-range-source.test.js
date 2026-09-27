@@ -14,7 +14,7 @@ function extractSource(source, startMarker, endMarker) {
 
 function buildGetSharedGamesForTeam(deps) {
     const normalizeSource = extractSource(dbSource, 'function normalizeSharedGameSnapshot', 'async function getSharedGamesForTeam');
-    const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'async function hasSharedGameUsingConfig');
+    const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'function daysAgoDate');
     return new Function(
         'db',
         'collectionGroup',
@@ -43,7 +43,8 @@ describe('schedule date range source contracts', () => {
         const appLoadGamesSource = extractSource(appSource, 'async function loadGames', 'async function loadGameById');
 
         expect(dbSource).toContain('function recurringPracticeMasterMayOverlapDateRange');
-        expect(getGamesSource).toContain('getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate)');
+        expect(getGamesSource).toContain('getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate, {');
+        expect(getGamesSource).toContain('requireServerSnapshot: requireCompleteSharedGames');
         expect(getGamesSource).toContain('teamGames = mergeGamesById(teamGames, recurringMasters);');
         expect(appLoadGamesSource).toContain('mapScheduleEventRecords(await getGames(teamId, range))');
         expect(appLoadGamesSource).not.toContain('loadRecurringPracticeMasters');
@@ -65,7 +66,7 @@ describe('schedule date range source contracts', () => {
 
     it('loads all visible tournament groups together and fetches shared history once', () => {
         const getGamesSource = extractSource(dbSource, 'export async function getGames', 'export async function getAggregatedStatsForGames');
-        const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'async function hasSharedGameUsingConfig');
+        const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'function daysAgoDate');
         const groupedLoadSource = extractSource(appSource, 'async function loadTournamentScheduleStandingsGames', 'async function loadRawTeam');
         const nativeSharedGamesSource = extractSource(
             appSource,
@@ -85,12 +86,12 @@ describe('schedule date range source contracts', () => {
         expect(nativeSharedGamesSource).not.toContain("fieldPath: 'date'");
         expect(nativeSharedGamesSource).not.toContain('orderBy:');
         expect((getGamesSource.match(/getSharedGamesForTeam\(teamId/g) || [])).toHaveLength(1);
-        expect(getGamesSource).toContain('getSharedGamesForTeam(teamId, { startDate, endDate, requireComplete: hasTournamentGroup })');
-        expect(getGamesSource).toContain('if (hasTournamentGroup) throw error;');
+        expect(getGamesSource).toContain('requireComplete: hasTournamentGroup || requireCompleteSharedGames');
+        expect(getGamesSource).toContain('if (hasTournamentGroup || requireCompleteSharedGames) throw error;');
     });
 
     it('applies the requested date window to scoped shared-game queries without unscoped fallback reads', () => {
-        const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'async function hasSharedGameUsingConfig');
+        const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'function daysAgoDate');
         const getGamesSource = extractSource(dbSource, 'export async function getGames', 'export async function getAggregatedStatsForGames');
 
         expect(sharedGamesSource).toContain("where('date', '>=', Timestamp.fromDate(startDate))");
@@ -103,7 +104,7 @@ describe('schedule date range source contracts', () => {
         expect(sharedGamesSource).not.toContain('getDocs(query(sharedGamesRef, ...orderedDateConstraints))');
         expect(sharedGamesSource).not.toContain("getDocs(query(sharedGamesRef, where('date', '==', null)))");
         expect(sharedGamesSource).toContain('.filter((game) => isGameWithinDateRange(game, startDate, endDate))');
-        expect(getGamesSource).toContain('getSharedGamesForTeam(teamId, { startDate, endDate, requireComplete: hasTournamentGroup })');
+        expect(getGamesSource).toContain('requireComplete: hasTournamentGroup || requireCompleteSharedGames');
     });
 
     it('does not fall back to unscoped shared-game collection-group date scans when compound queries reject', async () => {

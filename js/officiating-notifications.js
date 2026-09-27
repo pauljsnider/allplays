@@ -1,4 +1,4 @@
-import { hasOfficiatingScheduleChange, normalizeOfficiatingSlots } from './officiating-utils.js?v=3';
+import { hasOfficiatingScheduleChange, normalizeOfficiatingSlots } from './officiating-utils.js?v=4';
 
 function normalizeId(value) {
     return String(value || '').trim();

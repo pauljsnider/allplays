@@ -7,7 +7,8 @@ const dbMocks = vi.hoisted(() => ({
 
 const homeMocks = vi.hoisted(() => ({
     loadParentHome: vi.fn(),
-    loadParentHomeSummary: vi.fn()
+    loadParentHomeSummary: vi.fn(),
+    loadParentSearchTeamsSummary: vi.fn()
 }));
 
 const firebaseMocks = vi.hoisted(() => ({
@@ -39,6 +40,7 @@ import {
     getImmediateAppTeamSearchResults,
     getKnownAppSearchTeams,
     getSearchHelpRoles,
+    loadAppSearchHelpResults,
     loadAppSearchTeams,
     resetAppSearchCache,
     scoreSearchText,
@@ -95,6 +97,7 @@ beforeEach(() => {
     resetAppSearchCache();
     helpMocks.searchHelpKnowledge.mockReturnValue([]);
     homeMocks.loadParentHomeSummary.mockImplementation((...args) => homeMocks.loadParentHome(...args));
+    homeMocks.loadParentSearchTeamsSummary.mockImplementation((...args) => homeMocks.loadParentHome(...args));
 });
 
 describe('React app search service', () => {
@@ -225,7 +228,7 @@ describe('React app search service', () => {
         ]);
     });
 
-    it('translates help role filters without affecting non-help search results', () => {
+    it('translates help role filters without affecting non-help search results', async () => {
         expect(getSearchHelpRoles(auth, 'All')).toEqual(['parent', 'coach', 'admin', 'platformAdmin', 'member']);
         expect(getSearchHelpRoles(auth, 'Coach')).toEqual(['coach']);
         expect(getSearchHelpRoles(auth, 'Member')).toEqual(['member']);
@@ -252,18 +255,28 @@ describe('React app search service', () => {
             teamId: 'team-1',
             playerId: 'player-1'
         }];
+        const withoutFilterHelp = await loadAppSearchHelpResults({
+            queryText: 'schedule',
+            auth
+        });
+        const withCoachFilterHelp = await loadAppSearchHelpResults({
+            queryText: 'schedule',
+            auth,
+            helpRoleFilter: 'Coach'
+        });
         const withoutFilter = computeAppSearchResults({
             queryText: 'schedule',
             auth,
             teams,
-            players
+            players,
+            helpResults: withoutFilterHelp
         });
         const withCoachFilter = computeAppSearchResults({
             queryText: 'schedule',
             auth,
             teams,
             players,
-            helpRoleFilter: 'Coach'
+            helpResults: withCoachFilterHelp
         });
 
         expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
@@ -280,7 +293,7 @@ describe('React app search service', () => {
         });
     });
 
-    it('adds limited help results for meaningful queries without changing app result ordering', () => {
+    it('adds limited help results for meaningful queries without changing app result ordering', async () => {
         helpMocks.searchHelpKnowledge.mockReturnValue([{
             id: 'account-password-reset',
             title: 'Reset a password',
@@ -292,15 +305,18 @@ describe('React app search service', () => {
             score: 42
         }]);
 
+        const shortHelpResults = await loadAppSearchHelpResults({ queryText: 'p', auth });
         const shortResults = computeAppSearchResults({
             queryText: 'p',
             auth,
             teams: [{ id: 'team-1', name: 'Panthers', sport: 'Basketball', isPublic: true }],
-            players: []
+            players: [],
+            helpResults: shortHelpResults
         });
         expect(shortResults.help).toEqual([]);
         expect(helpMocks.searchHelpKnowledge).not.toHaveBeenCalled();
 
+        const helpResults = await loadAppSearchHelpResults({ queryText: 'password reset', auth });
         const results = computeAppSearchResults({
             queryText: 'password reset',
             auth,
@@ -313,7 +329,8 @@ describe('React app search service', () => {
                 route: '/players/team-1/player-1',
                 teamId: 'team-1',
                 playerId: 'player-1'
-            }]
+            }],
+            helpResults
         });
 
         expect(helpMocks.searchHelpKnowledge).toHaveBeenCalledWith({
@@ -356,7 +373,7 @@ describe('React app search service', () => {
         expect(homeMocks.loadParentHomeSummary).not.toHaveBeenCalled();
     });
 
-    it('passes the optional help role filter only to help search results', () => {
+    it('passes the optional help role filter only to help search results', async () => {
         const helpDocs = [{
             id: 'parent-guide',
             title: 'Parent guide',
@@ -395,8 +412,10 @@ describe('React app search service', () => {
             }]
         };
 
-        const allResults = computeAppSearchResults({ ...baseSearchInput, helpRoleFilter: 'all' });
-        const coachResults = computeAppSearchResults({ ...baseSearchInput, helpRoleFilter: 'coach' });
+        const allHelpResults = await loadAppSearchHelpResults({ queryText: 'guide', auth, helpRoleFilter: 'all' });
+        const coachHelpResults = await loadAppSearchHelpResults({ queryText: 'guide', auth, helpRoleFilter: 'coach' });
+        const allResults = computeAppSearchResults({ ...baseSearchInput, helpResults: allHelpResults });
+        const coachResults = computeAppSearchResults({ ...baseSearchInput, helpResults: coachHelpResults });
         const nonHelpByKind = (results) => ({
             action: results.flat.filter((item) => item.kind === 'action'),
             team: results.flat.filter((item) => item.kind === 'team'),
@@ -418,7 +437,7 @@ describe('React app search service', () => {
 
     });
 
-    it('maps platform admin help searches to admin help docs', () => {
+    it('maps platform admin help searches to admin help docs', async () => {
         const adminDoc = {
             id: 'admin-guide',
             title: 'Admin guide',
@@ -433,16 +452,22 @@ describe('React app search service', () => {
             roleFilter === 'admin' ? [adminDoc] : []
         ));
 
+        const platformAdminAuth = {
+            ...auth,
+            user: { ...auth.user, roles: ['platformAdmin'] },
+            isPlatformAdmin: true
+        };
+        const helpResults = await loadAppSearchHelpResults({
+            queryText: 'guide',
+            auth: platformAdminAuth,
+            helpRoleFilter: 'platformAdmin'
+        });
         const results = computeAppSearchResults({
             queryText: 'guide',
-            auth: {
-                ...auth,
-                user: { ...auth.user, roles: ['platformAdmin'] },
-                isPlatformAdmin: true
-            },
+            auth: platformAdminAuth,
             teams: [],
             players: [],
-            helpRoleFilter: 'platformAdmin'
+            helpResults
         });
 
         expect(helpMocks.searchHelpKnowledge).toHaveBeenCalledWith({
@@ -454,7 +479,7 @@ describe('React app search service', () => {
         expect(results.help.map((item) => item.title)).toEqual(['Admin guide']);
     });
 
-    it('passes selected help roles and excludes nonmatching help results', () => {
+    it('passes selected help roles and excludes nonmatching help results', async () => {
         helpMocks.searchHelpKnowledge.mockReturnValue([
             {
                 id: 'live-tracker-coach-guide',
@@ -478,12 +503,17 @@ describe('React app search service', () => {
             }
         ]);
 
+        const helpResults = await loadAppSearchHelpResults({
+            queryText: 'live tracker',
+            auth,
+            helpRoleFilter: 'member'
+        });
         const results = computeAppSearchResults({
             queryText: 'live tracker',
             auth,
             teams: [],
             players: [],
-            helpRoleFilter: 'member'
+            helpResults
         });
 
         expect(helpMocks.searchHelpKnowledge).toHaveBeenCalledWith({
@@ -495,13 +525,24 @@ describe('React app search service', () => {
         expect(results.help.map((item) => item.title)).toEqual(['Watch Live Games and Replays']);
     });
 
-    it('loads app-access teams without bootstrapping the public catalog', async () => {
+    it('loads multi-team app access without hydrating parent schedules', async () => {
         homeMocks.loadParentHome.mockResolvedValue({
             teams: [{
                 teamId: 'team-home',
                 teamName: 'Home Rockets',
                 sport: 'Basketball',
                 photoUrl: 'https://img.example.test/home.png',
+                players: [],
+                nextEvent: null,
+                eventCount: 0,
+                unreadCount: 0,
+                openActions: 0
+            }, {
+                teamId: 'team-staff-empty',
+                teamName: 'Staff Empty Events',
+                sport: 'Volleyball',
+                isPublic: false,
+                active: true,
                 players: [],
                 nextEvent: null,
                 eventCount: 0,
@@ -546,7 +587,9 @@ describe('React app search service', () => {
             .mockResolvedValueOnce({ docs: [] });
         const teams = await loadAppSearchTeams(auth.user);
 
-        expect(teams.map((team) => team.id)).toEqual(['team-admin', 'team-home', 'team-owner']);
+        expect(teams.map((team) => team.id)).toEqual(['team-admin', 'team-home', 'team-owner', 'team-staff-empty']);
+        expect(homeMocks.loadParentSearchTeamsSummary).toHaveBeenCalledTimes(1);
+        expect(homeMocks.loadParentHomeSummary).not.toHaveBeenCalled();
         expect(teams.find((team) => team.id === 'team-home')).toMatchObject({
             name: 'Home Rockets',
             fromAppAccess: true,
@@ -780,7 +823,8 @@ describe('React app search service', () => {
         const second = await loadAppSearchTeams(auth.user);
 
         expect(second).toBe(first);
-        expect(homeMocks.loadParentHomeSummary).toHaveBeenCalledTimes(1);
+        expect(homeMocks.loadParentSearchTeamsSummary).toHaveBeenCalledTimes(1);
+        expect(homeMocks.loadParentHomeSummary).not.toHaveBeenCalled();
         expect(first.map((team) => team.id)).toEqual(['team-home']);
 
         resetAppSearchCache();
@@ -796,6 +840,28 @@ describe('React app search service', () => {
         await expect(loadAppSearchTeams(auth.user)).resolves.toMatchObject([
             { id: 'team-private-access', name: 'Private Access', fromAppAccess: true }
         ]);
+    });
+
+    it('coalesces concurrent lightweight team hydration for the same user', async () => {
+        let resolveTeams;
+        homeMocks.loadParentHome.mockReturnValue(new Promise((resolve) => {
+            resolveTeams = resolve;
+        }));
+        firebaseMocks.getDocs.mockResolvedValue({ docs: [] });
+
+        const firstPromise = loadAppSearchTeams(auth.user);
+        const secondPromise = loadAppSearchTeams(auth.user);
+
+        expect(homeMocks.loadParentSearchTeamsSummary).toHaveBeenCalledTimes(1);
+        resolveTeams({
+            teams: [{ teamId: 'team-home', teamName: 'Home Rockets', isPublic: false, active: true }]
+        });
+        const [first, second] = await Promise.all([firstPromise, secondPromise]);
+        const cached = await loadAppSearchTeams(auth.user);
+
+        expect(second).toBe(first);
+        expect(cached).toBe(first);
+        expect(homeMocks.loadParentSearchTeamsSummary).toHaveBeenCalledTimes(1);
     });
 
     it('throws the first team loading error when no searchable team source succeeds', async () => {

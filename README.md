@@ -53,14 +53,14 @@ Notes:
 - Do not add `localhost` to the reCAPTCHA Enterprise production allowlist. Local web development automatically uses the App Check debug provider after a site key is configured; register the generated debug token in Firebase Console.
 - `VITE_APP_CHECK_DEBUG_TOKEN=true` is for explicit local development only; production app builds reject enabled or token-shaped values.
 
-### 1.1 Stripe Team Pass configuration
+### 1.1 Legacy Stripe Team Pass fulfillment
 
-Team Pass checkout is handled by Firebase Functions and Stripe. Do not commit Stripe secrets.
+New Team Pass sales are disabled. The Stripe webhook and entitlement records remain in place so purchases that completed before sales were removed continue to unlock the features they paid for. Do not commit Stripe secrets.
 
 Required function configuration or environment variables:
 - `STRIPE_SECRET_KEY` or `stripe.secret_key` — Stripe restricted/secret API key used by Cloud Functions.
 - `STRIPE_WEBHOOK_SECRET` or `stripe.webhook_secret` — signing secret for the Stripe webhook endpoint.
-- `STRIPE_TEAM_PASS_PRICE_ID` or `stripe.team_pass_price_id` — Stripe Price ID for the season Team Pass tier.
+- `STRIPE_TEAM_PASS_PRICE_ID` or `stripe.team_pass_price_id` — retained only for legacy checkout reconciliation tests and records; the production checkout callable rejects new sales.
 - `ALLPLAYS_APP_URL` or `stripe.app_url` — public app URL used for checkout success/cancel redirects. Defaults to `https://allplays.ai`.
 
 Firebase config example:
@@ -85,7 +85,7 @@ To deploy manually:
 
 ```bash
 npm run app:build
-node scripts/stage-pages-bundle.mjs /tmp/allplays-site
+ALLPLAYS_PUBLISH_MOBILE_ASSOCIATIONS=true node scripts/stage-pages-bundle.mjs /tmp/allplays-site
 node scripts/write-firebase-hosting-config.mjs /tmp/allplays-site /tmp/firebase-prod.json
 npx firebase-tools deploy --only hosting --project game-flow-c6311 --config /tmp/firebase-prod.json
 ```
@@ -94,7 +94,30 @@ See `FIREBASE-HOSTING-MIGRATION.md` for the GitHub Pages → Firebase Hosting cu
 
 ### 3. Local Development
 
-Since this is a static site, you can run it with any static file server.
+Use the Firebase Hosting emulator for pages that load Firebase. It serves the
+allowlisted `http://localhost:8000` origin and supplies the project's Firebase
+configuration through `/__/firebase/init.json`.
+
+Production-backed local development for real games, events, and chat:
+
+```bash
+npm run serve:firebase:live
+```
+
+This command reads and writes production data. The Firebase Hosting emulator
+supplies the project configuration. If the Firebase CLI session is expired or
+that Hosting response is empty, startup fails closed. Reauthenticate the CLI
+and restart the server rather than bypassing project validation.
+
+Safe isolated development (also the default `serve:firebase` command):
+
+```bash
+npm run serve:firebase:safe
+```
+
+Use the explicit `:live` command only when the local page needs production data.
+
+For pages that do not use Firebase, any static file server is sufficient.
 
 Python:
 ```bash
@@ -106,7 +129,8 @@ Node (http-server):
 npx http-server .
 ```
 
-Open `http://localhost:8000` (or port shown) in your browser.
+Open `http://localhost:8000` in your browser. Firebase-backed pages fail closed
+on that origin when they are not served through Firebase Hosting.
 
 ## Admin Setup
 

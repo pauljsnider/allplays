@@ -1,24 +1,17 @@
-import {
-  Camera,
-  CameraResultType,
-  CameraSource,
-  type CameraPhoto
-} from '@capacitor/camera';
+import { Camera, CameraResultType, CameraSource, type CameraPhoto } from '@capacitor/camera';
 import { Capacitor } from '@capacitor/core';
-import { resolveImageFirebaseConfig } from './adapters/legacyProfilePhotoDb';
-import { createLogger } from './logger';
 import { isNativeRuntime } from './nativeRuntime';
-import { uploadUserPhoto } from './adapters/legacyProfilePhotoDb';
+import { deleteUserPhoto, uploadUserPhoto, type ProfilePhotoUploadResult } from './adapters/legacyProfilePhotoDb';
+import { deleteNativePrimaryStorageFile, uploadNativeUserProfilePhoto } from './nativeStorageUpload';
 
 const profileTimeoutMs = 8000;
-const nativeImageUploadTimeoutMs = 20000;
-const imageUploadSessionKey = 'allplays-image-upload-session';
 const profilePhotoMaxDimensionPx = 1024;
 const profilePhotoMaxBytes = 512 * 1024;
+const profilePhotoUploadMaxBytes = 10 * 1024 * 1024;
 const profilePhotoQuality = 0.82;
-const logger = createLogger('profile-photo-service');
 
 export type ProfilePhotoSource = 'camera' | 'photos';
+export type { ProfilePhotoUploadResult };
 
 export class ProfilePhotoAcquireError extends Error {
   code: 'permission-denied' | 'cancelled' | 'unavailable' | 'failed';
@@ -30,12 +23,17 @@ export class ProfilePhotoAcquireError extends Error {
   }
 }
 
-type ImageUploadSession = {
-  apiKey: string;
-  idToken: string;
-  refreshToken: string;
-  expirationTime: number;
-};
+export function validateProfilePhotoFile(file: File) {
+  if (!(file instanceof File) || !String(file.type || '').startsWith('image/')) {
+    throw new Error('Choose an image file.');
+  }
+  if (!Number.isFinite(file.size) || file.size <= 0) {
+    throw new Error('Choose a valid profile photo.');
+  }
+  if (file.size > profilePhotoUploadMaxBytes) {
+    throw new Error('Profile photos must be 10 MB or smaller.');
+  }
+}
 
 function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = profileTimeoutMs): Promise<T> {
   let timeoutId: number | undefined;
@@ -57,7 +55,9 @@ function isNativeCameraAvailable() {
 }
 
 function inferPhotoMimeType(photo: CameraPhoto, fallbackBlob?: Blob) {
-  const format = String(photo.format || '').trim().toLowerCase();
+  const format = String(photo.format || '')
+    .trim()
+    .toLowerCase();
   if (format) {
     return format === 'jpg' ? 'image/jpeg' : `image/${format}`;
   }
@@ -92,7 +92,8 @@ function getNormalizedProfilePhotoType(file: File) {
 }
 
 function loadProfilePhotoImage(file: File): Promise<{ image: CanvasImageSource; width: number; height: number; cleanup: () => void }> {
-  const imageBitmapFactory = (globalThis as typeof globalThis & { createImageBitmap?: (image: Blob) => Promise<ImageBitmap> }).createImageBitmap;
+  const imageBitmapFactory = (globalThis as typeof globalThis & { createImageBitmap?: (image: Blob) => Promise<ImageBitmap> })
+    .createImageBitmap;
   if (typeof imageBitmapFactory === 'function') {
     return imageBitmapFactory(file).then((bitmap) => ({
       image: bitmap,
@@ -123,18 +124,23 @@ function loadProfilePhotoImage(file: File): Promise<{ image: CanvasImageSource; 
 
 function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) {
-        resolve(blob);
-        return;
-      }
-      reject(new Error('Profile photo could not be normalized.'));
-    }, type, quality);
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          resolve(blob);
+          return;
+        }
+        reject(new Error('Profile photo could not be normalized.'));
+      },
+      type,
+      quality
+    );
   });
 }
 
 export async function normalizeProfilePhoto(file: File): Promise<File> {
-  if (!(file instanceof File) || !file.type.startsWith('image/') || typeof document === 'undefined') {
+  validateProfilePhotoFile(file);
+  if (typeof document === 'undefined') {
     return file;
   }
 
@@ -206,10 +212,12 @@ export async function acquireProfilePhoto(source: ProfilePhotoSource): Promise<F
 
     const blob = await response.blob();
     const mimeType = inferPhotoMimeType(photo, blob);
-    return normalizeProfilePhoto(new File([blob], buildPhotoFileName(source, photo, mimeType), {
-      type: mimeType,
-      lastModified: Date.now()
-    }));
+    return normalizeProfilePhoto(
+      new File([blob], buildPhotoFileName(source, photo, mimeType), {
+        type: mimeType,
+        lastModified: Date.now()
+      })
+    );
   } catch (error) {
     if (error instanceof ProfilePhotoAcquireError) {
       throw error;
@@ -224,137 +232,24 @@ export async function acquireProfilePhoto(source: ProfilePhotoSource): Promise<F
   }
 }
 
-function readImageUploadSession(): ImageUploadSession | null {
-  try {
-    const raw = window.localStorage?.getItem(imageUploadSessionKey);
-    return raw ? JSON.parse(raw) as ImageUploadSession : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeImageUploadSession(session: ImageUploadSession) {
-  try {
-    window.localStorage?.setItem(imageUploadSessionKey, JSON.stringify(session));
-  } catch (error) {
-    logger.warn('Unable to persist image upload auth session.', { error });
-  }
-}
-
-// Firebase web API keys are public project identifiers. Security is enforced by Firebase Auth and Storage rules.
-async function getImageUploadSession(apiKey: string): Promise<ImageUploadSession> {
-  const current = readImageUploadSession();
-  if (current?.apiKey === apiKey && current.idToken && current.refreshToken) {
-    if (Number(current.expirationTime || 0) > Date.now() + 60000) {
-      return current;
-    }
-    try {
-      return await refreshImageUploadSession(current);
-    } catch (error) {
-      logger.warn('Image upload auth refresh failed, creating a new anonymous session.', { error });
-    }
-  }
-
-  return createImageUploadSession(apiKey);
-}
-
-async function refreshImageUploadSession(session: ImageUploadSession): Promise<ImageUploadSession> {
-  const response = await withTimeout(fetch(`https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(session.apiKey)}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded'
-    },
-    body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: session.refreshToken
-    })
-  }), 'Image upload auth refresh', profileTimeoutMs);
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload?.error?.message || 'Image upload auth refresh failed.');
-  }
-
-  const nextSession = {
-    apiKey: session.apiKey,
-    idToken: payload.id_token || session.idToken,
-    refreshToken: payload.refresh_token || session.refreshToken,
-    expirationTime: Date.now() + Math.max(Number.parseInt(payload.expires_in || '3600', 10) - 30, 60) * 1000
-  };
-  writeImageUploadSession(nextSession);
-  return nextSession;
-}
-
-async function createImageUploadSession(apiKey: string): Promise<ImageUploadSession> {
-  const response = await withTimeout(fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${encodeURIComponent(apiKey)}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ returnSecureToken: true })
-  }), 'Image upload auth', profileTimeoutMs);
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload?.error?.message || 'Image upload auth failed.');
-  }
-
-  const session = {
-    apiKey,
-    idToken: payload.idToken,
-    refreshToken: payload.refreshToken,
-    expirationTime: Date.now() + Math.max(Number.parseInt(payload.expiresIn || '3600', 10) - 30, 60) * 1000
-  };
-  if (!session.idToken || !session.refreshToken) {
-    throw new Error('Image upload auth did not return a usable token.');
-  }
-  writeImageUploadSession(session);
-  return session;
-}
-
 export async function nativeUploadProfilePhoto(file: File, uid = '') {
-  const imageConfig = resolveImageFirebaseConfig();
-  const bucket = imageConfig.storageBucket;
-  if (!imageConfig.apiKey || !bucket) {
-    throw new Error('Image upload Firebase config is missing.');
-  }
-
-  const session = await getImageUploadSession(imageConfig.apiKey);
-  const safeName = String(file.name || 'profile-photo').replace(/[^\w.-]+/g, '_');
-  const safeUid = String(uid || '').trim().replace(/[^\w.-]+/g, '_');
-  const path = `user-photos/${safeUid ? `${safeUid}/` : ''}${Date.now()}_${safeName}`;
-  const response = await withTimeout(fetch(`https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${session.idToken}`,
-      'Content-Type': file.type || 'application/octet-stream'
-    },
-    body: file
-  }), 'Profile photo upload', nativeImageUploadTimeoutMs);
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload?.error?.message || `Profile photo upload failed (${response.status}).`);
-  }
-
-  const token = payload.downloadTokens || payload.metadata?.firebaseStorageDownloadTokens;
-  if (token) {
-    return `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media&token=${encodeURIComponent(String(token).split(',')[0])}`;
-  }
-
-  return `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media`;
+  return uploadNativeUserProfilePhoto(file, uid);
 }
 
 export async function uploadProfilePhoto(file: File, uid = '') {
+  validateProfilePhotoFile(file);
   if (isNativeRuntime()) {
-    try {
-      return await nativeUploadProfilePhoto(file, uid);
-    } catch (error) {
-      logger.warn('Native profile photo upload failed, falling back to SDK upload.', { error });
-    }
-  }
-
-  try {
-    return await withTimeout(uploadUserPhoto(file, uid) as Promise<string>, 'Profile photo upload', nativeImageUploadTimeoutMs);
-  } catch (error) {
-    logger.warn('Falling back to REST profile photo upload.', { error });
     return nativeUploadProfilePhoto(file, uid);
   }
+  return uploadUserPhoto(file, uid);
+}
+
+export async function deleteProfilePhoto(path: string) {
+  const normalizedPath = String(path || '').trim();
+  if (!normalizedPath) return;
+  if (isNativeRuntime()) {
+    await deleteNativePrimaryStorageFile(normalizedPath);
+    return;
+  }
+  await deleteUserPhoto(normalizedPath);
 }

@@ -62,6 +62,7 @@ const mockChatTeamState: {
   setSelectedConversationId: ReturnType<typeof vi.fn>;
   loadingContext: boolean;
   error: string | null;
+  retryContext: ReturnType<typeof vi.fn>;
   reloadConversations: ReturnType<typeof vi.fn>;
   switchConversation: ReturnType<typeof vi.fn>;
 } = {
@@ -74,6 +75,7 @@ const mockChatTeamState: {
   setSelectedConversationId: vi.fn(),
   loadingContext: false,
   error: null,
+  retryContext: vi.fn(),
   reloadConversations: vi.fn(),
   switchConversation: vi.fn(() => true)
 };
@@ -386,6 +388,7 @@ beforeEach(() => {
   mockChatTeamState.error = null;
   mockChatTeamState.setConversations.mockReset();
   mockChatTeamState.setSelectedConversationId.mockReset();
+  mockChatTeamState.retryContext.mockReset();
   mockChatTeamState.reloadConversations.mockReset();
   mockChatTeamState.switchConversation.mockReset();
   mockChatTeamState.switchConversation.mockReturnValue(true);
@@ -681,6 +684,28 @@ describe('ChatWindow virtualization', () => {
     expect(bubbleCount).toBeLessThan(liveMessages.length);
   });
 
+  it('keeps reactions and message management behind one compact action trigger', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    const firstBubble = container.querySelector('.message-bubble') as HTMLElement;
+    expect(firstBubble).toBeTruthy();
+    expect(within(firstBubble).queryByRole('button', { name: 'Add reaction' })).not.toBeInTheDocument();
+    expect(within(firstBubble).getAllByRole('button')).toHaveLength(1);
+
+    fireEvent.click(within(firstBubble).getByRole('button', { name: /Open message actions for/i }));
+
+    expect(within(firstBubble).getByRole('group', { name: /Message actions for/i })).toBeVisible();
+    expect(within(firstBubble).getByRole('button', { name: 'Like' })).toBeVisible();
+    expect(within(firstBubble).getByRole('button', { name: 'Delete' })).toBeVisible();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(within(firstBubble).queryByRole('group', { name: /Message actions for/i })).not.toBeInTheDocument();
+  });
+
   it('clears pending older-history layout state when switching teams on the default conversation', async () => {
     let releaseOlderLoad = () => {};
     olderLoadGate = {
@@ -735,6 +760,20 @@ describe('ChatWindow virtualization', () => {
     await waitFor(() => expect(screen.getByText('Message recovered-message')).toBeVisible());
     expect(screen.getByText('Composer')).toBeVisible();
     expect(mockRouter.navigate).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers in-place retry when conversation metadata cannot be hydrated completely', () => {
+    mockChatTeamState.error = 'Chat conversations could not be completely verified. Try again.';
+    render(
+      <MemoryRouter initialEntries={['/messages/team-1']}>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('Chat conversations could not be completely verified. Try again.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(mockChatTeamState.retryContext).toHaveBeenCalledTimes(1);
   });
 
   it('returns an errored staff conversation to the team thread in place', () => {

@@ -251,11 +251,11 @@ function FamilyTokenCard({ token, editing, saving, onEdit, onCancel, onCopy, onS
                     </div>
                 </div>
             ) : (
-                <div className="mt-3 grid grid-cols-4 gap-2">
-                    <button type="button" className="secondary-button !min-h-9 justify-center text-xs" onClick={() => onCopy(token.url)} disabled={shareDisabled}><Copy className="h-4 w-4" aria-hidden="true" />Copy</button>
-                    <button type="button" className="secondary-button !min-h-9 justify-center text-xs" onClick={onShare} disabled={shareDisabled}><Share2 className="h-4 w-4" aria-hidden="true" />Share</button>
-                    <button type="button" className="secondary-button !min-h-9 justify-center text-xs" onClick={onEdit}>Feeds</button>
-                    <button type="button" className="ghost-button !min-h-9 justify-center text-xs text-rose-700" onClick={onRevoke} disabled={saving || revoked}>Revoke</button>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <button type="button" className="secondary-button !min-h-11 justify-center text-xs" onClick={() => onCopy(token.url)} disabled={shareDisabled}><Copy className="h-4 w-4" aria-hidden="true" />Copy</button>
+                    <button type="button" className="secondary-button !min-h-11 justify-center text-xs" onClick={onShare} disabled={shareDisabled}><Share2 className="h-4 w-4" aria-hidden="true" />Share</button>
+                    <button type="button" className="secondary-button !min-h-11 justify-center text-xs" onClick={onEdit}>Feeds</button>
+                    <button type="button" className="ghost-button !min-h-11 justify-center text-xs text-rose-700" onClick={onRevoke} disabled={saving || revoked}>Revoke</button>
                 </div>
             )}
         </section>

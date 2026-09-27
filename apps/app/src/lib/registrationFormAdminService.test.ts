@@ -18,6 +18,11 @@ const firebaseMocks = vi.hoisted(() => {
     }),
     getDoc: vi.fn(),
     getDocs: vi.fn(),
+    query: vi.fn((reference: unknown, ...constraints: unknown[]) => ({ reference, constraints })),
+    orderBy: vi.fn((...args: unknown[]) => ({ type: 'orderBy', args })),
+    documentId: vi.fn(() => 'documentId'),
+    limit: vi.fn((value: number) => ({ type: 'limit', value })),
+    startAfter: vi.fn((value: unknown) => ({ type: 'startAfter', value })),
     runTransaction: vi.fn(),
     serverTimestamp: vi.fn(() => 'server-timestamp'),
     setDoc: vi.fn(),
@@ -113,21 +118,41 @@ describe('registrationFormAdminService', () => {
     ]);
   });
 
-  it('lists web and app-created forms as sorted editor drafts', async () => {
+  it('loads a bounded sorted editor page with cursor metadata', async () => {
     firebaseMocks.getDocs.mockResolvedValue({
       docs: [
         { id: 'form-z', data: () => ({ ...webCreatedFixture, programName: 'Winter League', title: 'Winter League' }) },
-        { id: 'form-a', data: () => ({ ...webCreatedFixture, programName: 'Autumn Camp', title: 'Autumn Camp', status: 'closed' }) }
+        { id: 'form-a', data: () => ({ ...webCreatedFixture, programName: 'Autumn Camp', title: 'Autumn Camp', status: 'closed' }) },
+        { id: 'form-next', data: () => ({ ...webCreatedFixture, title: 'Next page' }) },
+        ...Array.from({ length: 23 }, (_, index) => ({
+          id: `generated-${index + 1}`,
+          data: () => ({ ...webCreatedFixture, title: `Generated ${index + 1}` })
+        }))
       ]
     });
 
-    const drafts = await listRegistrationFormEditorsForApp(coachUser, 'team-1');
+    const page = await listRegistrationFormEditorsForApp(coachUser, 'team-1');
 
-    expect(firebaseMocks.getDocs).toHaveBeenCalledWith({ path: 'db/teams/team-1/registrationForms' });
-    expect(drafts.map((draft) => ({ formId: draft.formId, title: draft.title, status: draft.status }))).toEqual([
-      { formId: 'form-a', title: 'Autumn Camp', status: 'closed' },
-      { formId: 'form-z', title: 'Winter League', status: 'published' }
-    ]);
+    expect(firebaseMocks.query).toHaveBeenCalledWith(
+      { path: 'db/teams/team-1/registrationForms' },
+      { type: 'orderBy', args: ['documentId'] },
+      { type: 'limit', value: 26 }
+    );
+    expect(page.forms).toHaveLength(25);
+    expect(page.forms.map((draft) => draft.formId)).toEqual(expect.arrayContaining(['form-a', 'form-next', 'form-z']));
+    expect(page.lastDoc).toEqual(expect.objectContaining({ id: 'generated-22' }));
+    expect(page.hasMore).toBe(true);
+
+    firebaseMocks.getDocs.mockResolvedValue({ docs: [{ id: 'form-final', data: () => ({ ...webCreatedFixture, title: 'Final page' }) }] });
+    const nextPage = await listRegistrationFormEditorsForApp(coachUser, 'team-1', page.lastDoc);
+    expect(firebaseMocks.query).toHaveBeenLastCalledWith(
+      { path: 'db/teams/team-1/registrationForms' },
+      { type: 'orderBy', args: ['documentId'] },
+      { type: 'startAfter', value: page.lastDoc },
+      { type: 'limit', value: 26 }
+    );
+    expect(nextPage.forms.map((draft) => draft.formId)).toEqual(['form-final']);
+    expect(nextPage.hasMore).toBe(false);
   });
 
   it('creates published registration forms with legacy-compatible payload metadata', async () => {

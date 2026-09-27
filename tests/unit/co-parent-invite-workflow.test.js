@@ -6,19 +6,23 @@ describe('co-parent invite workflow regression', () => {
     it('surfaces a shareable co-parent invite link on the parent dashboard', () => {
         const dashboardSource = readFileSync(resolve(process.cwd(), 'parent-dashboard.html'), 'utf8');
 
-        expect(dashboardSource).toContain('const invite = await inviteCoParentToAthlete');
+        expect(dashboardSource).toContain("import { functions, httpsCallable } from './js/firebase.js?v=33';");
+        expect(dashboardSource).toContain("const createCoParentInvite = httpsCallable(functions, 'createCoParentInvite');");
+        expect(dashboardSource).toContain('const response = await createCoParentInvite({');
+        expect(dashboardSource).toContain('const invite = response?.data || {};');
+        expect(dashboardSource).not.toContain('inviteCoParentToAthlete(currentUserId');
         expect(dashboardSource).toContain("buildAppJoinUrl(inviteCode, 'coparent'");
         expect(dashboardSource).toContain("import { buildAppJoinUrl } from './js/join-code.js?v=2'");
         expect(dashboardSource).toContain('Co-parent invite created and queued');
-        expect(dashboardSource).not.toContain("await inviteCoParentToAthlete(currentUserId, teamId, playerId, coParentEmail, playerName);\n\n                if (statusEl) {\n                    statusEl.textContent = 'Invitation sent successfully!';");
+        expect(dashboardSource).not.toContain("if (statusEl) {\n                    statusEl.textContent = 'Invitation sent successfully!';");
     });
 
     it('wires co-parent invite redemption through the accept-invite page', () => {
         const acceptInviteSource = readFileSync(resolve(process.cwd(), 'accept-invite.html'), 'utf8');
 
         expect(acceptInviteSource).toContain('redeemCoParentInvite');
-        expect(acceptInviteSource).toContain("./js/db.js?v=127");
-        expect(acceptInviteSource).toContain("./js/accept-invite-flow.js?v=11");
+        expect(acceptInviteSource).toContain("./js/db.js?v=4433199");
+        expect(acceptInviteSource).toContain("./js/accept-invite-flow.js?v=443314");
     });
 
     it('routes co-parent membership grants through a callable instead of browser membership writes', () => {
@@ -50,7 +54,7 @@ describe('co-parent invite workflow regression', () => {
         expect(handlerSource).toContain('const publicProfileRef = firestore.doc(`publicUserProfiles/${userId}`);');
         expect(handlerSource).toContain('const nextUserData = {');
         expect(handlerSource).toContain('transaction.set(publicProfileRef, buildTrustedPublicUserProfileProjectionPayload(nextUserData, {');
-        expect(handlerSource).toContain('trustedEmail: context.auth.token?.email || userData.email || null');
+        expect(handlerSource).toContain('trustedEmail: signedInEmail || null');
         expect(handlerSource).toContain("status: 'accepted'");
     });
 });

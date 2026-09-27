@@ -56,7 +56,7 @@ function extractHtmlText(html) {
     .replace(/<footer[\s\S]*?<\/footer>/gi, ' ')
     .replace(/<svg[\s\S]*?<\/svg>/gi, ' ')
     .replace(/<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/gi, '\n$1\n')
-    .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '\n- $1\n')
+    .replace(/<li\b[^>]*>([\s\S]*?)<\/li>/gi, '\n- $1\n')
     .replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, '\n$1\n')
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<[^>]+>/g, ' ')

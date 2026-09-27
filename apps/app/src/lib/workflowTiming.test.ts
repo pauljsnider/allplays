@@ -6,6 +6,7 @@ const telemetryMocks = vi.hoisted(() => ({
 
 const performanceMocks = vi.hoisted(() => ({
   end: vi.fn(),
+  getPerformancePlatform: vi.fn(() => 'web'),
   startPerformanceSpan: vi.fn((_label: string) => ({
     startedAt: 250,
     traceName: 'ap_workflow_test',
@@ -69,5 +70,15 @@ describe('workflowTiming', () => {
         error: failure
       })
     );
+  });
+
+  it('records a workflow only once when completion is repeated', () => {
+    const timer = startWorkflowTimer('schedule import');
+
+    timer.end({ importedCount: 2 });
+    timer.end({ importedCount: 3 });
+
+    expect(telemetryMocks.recordAppWorkflowTiming).toHaveBeenCalledTimes(1);
+    expect(performanceMocks.end).toHaveBeenCalledTimes(1);
   });
 });

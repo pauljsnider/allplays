@@ -7,9 +7,11 @@ import {
 
 export const maxBulkRsvpEvents = 50;
 export const maxGroupedRsvpPlayerIds = 10;
+/** Keep each bulk RSVP persistence workflow small enough to avoid client-side write bursts. */
+export const bulkRsvpSubmissionConcurrency = 4;
 const recentlyStartedEventWindowMs = 3 * 60 * 60 * 1000;
 
-export function getBulkRsvpCandidates(
+function getEligibleBulkRsvpCandidates(
   events: ParentScheduleEvent[],
   now = new Date()
 ) {
@@ -27,8 +29,54 @@ export function getBulkRsvpCandidates(
       if (seenEventKeys.has(event.eventKey)) return false;
       seenEventKeys.add(event.eventKey);
       return true;
-    })
+    });
+}
+
+export async function runBulkRsvpSubmissionQueue<T, R>(
+  items: T[],
+  worker: (item: T) => Promise<R>,
+  concurrency = bulkRsvpSubmissionConcurrency
+) {
+  const results = new Array<R>(items.length);
+  const maxConcurrency = Math.max(1, Math.floor(concurrency) || 1);
+  let nextIndex = 0;
+
+  const runWorker = async () => {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      if (currentIndex >= items.length) return;
+      results[currentIndex] = await worker(items[currentIndex]);
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(maxConcurrency, items.length) }, runWorker)
+  );
+  return results;
+}
+
+export function getBulkRsvpCandidates(
+  events: ParentScheduleEvent[],
+  now = new Date()
+) {
+  return getEligibleBulkRsvpCandidates(events, now)
     .slice(0, maxBulkRsvpEvents);
+}
+
+export function getInitialBulkRsvpCandidates(
+  events: ParentScheduleEvent[],
+  visibleGroupLimit: number,
+  now = new Date()
+) {
+  const candidates = getEligibleBulkRsvpCandidates(events, now);
+  const normalizedLimit = Math.max(0, Math.floor(visibleGroupLimit));
+  const visibleGroupKeys = new Set(
+    groupBulkRsvpEvents(candidates)
+      .slice(0, normalizedLimit)
+      .map((group) => `${group[0]?.teamId}::${group[0]?.id}`)
+  );
+  return candidates.filter((event) => visibleGroupKeys.has(`${event.teamId}::${event.id}`));
 }
 
 export function getNeededBulkRsvpEventKeys(events: ParentScheduleEvent[]) {

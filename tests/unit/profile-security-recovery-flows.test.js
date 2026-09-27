@@ -59,7 +59,10 @@ function createHarness({ user, profile, resendVerificationEmailImpl, setUserPass
         createAccessCode: vi.fn().mockResolvedValue({ code: 'CODE123' }),
         createAccountMergeRequest: vi.fn().mockResolvedValue(undefined),
         getUserAccessCodes: vi.fn().mockResolvedValue([]),
-        uploadUserPhoto: vi.fn().mockResolvedValue('https://example.test/photo.png'),
+        uploadUserPhoto: vi.fn().mockResolvedValue({
+            url: 'https://example.test/photo.png',
+            path: 'profile-photos/users/user-1/photo.png'
+        }),
         getUserTeamsWithAccess: vi.fn().mockResolvedValue([]),
         getParentTeams: vi.fn().mockResolvedValue([]),
         getNotificationPreferencesForTeam: vi.fn().mockResolvedValue({}),

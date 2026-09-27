@@ -5,6 +5,7 @@ Goal: serve `allplays.ai` from Firebase Hosting so the GitHub repo can be made p
 ## Current state
 
 - `deploy-prod.yml` already deploys the full site (legacy root + `/app/` + Functions + Firestore rules/indexes) to Firebase Hosting on `game-flow-c6311` on every push to `master`. The Firebase copy at <https://game-flow-c6311.web.app> stays current automatically.
+- `share.allplays.ai` is a branded custom domain on that Firebase Hosting site for crawler-friendly `/watch` and `/player-card` share previews. It does not move the canonical apex or `www` site away from GitHub Pages.
 - `allplays.ai` DNS still points at GitHub Pages (A records `185.199.108-111.153`, `www` CNAME to `pauljsnider.github.io`).
 - GitHub Pages deploys are gated by the repo Actions variable `APP_GITHUB_PAGES_DEPLOY_ENABLED` (in `app-github-pages.yml`).
 - A `firebase=game-flow-c6311` TXT record already exists on the domain for Firebase domain verification.

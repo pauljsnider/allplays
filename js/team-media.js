@@ -1,6 +1,6 @@
-import { checkAuth } from './auth.js?v=135';
+import { checkAuth } from './auth.js?v=4433203';
 import {
-    getTeam,
+    getDelegatedTeamContext,
     getTeamMediaFolders,
     getTeamMediaItemsPage,
     createTeamMediaFolder,
@@ -16,7 +16,7 @@ import {
     bulkDeleteTeamMediaItems,
     setTeamMediaAlbumCover,
     updateTeamMediaItem
-} from './db.js?v=127';
+} from './db.js?v=4433199';
 import {
     canContributeTeamMedia,
     canDeleteTeamMediaItem,
@@ -31,7 +31,8 @@ import {
     isTeamMediaDocument,
     normalizeTeamMediaVideoDraft,
     sortByMediaOrder
-} from './team-media-utils.js?v=5';
+} from './team-media-utils.js?v=44339';
+import { validateTeamMediaUploadBatch } from './team-media-upload-limits.js?v=44531';
 
 const state = {
     teamId: '',
@@ -729,6 +730,11 @@ els.uploadForm.addEventListener('submit', async (event) => {
         showAlert('Choose at least one image to upload.', 'error');
         return;
     }
+    const batchValidation = validateTeamMediaUploadBatch(files);
+    if (!batchValidation.valid) {
+        showAlert(batchValidation.message, 'error');
+        return;
+    }
 
     const { uploadedCount } = await uploadSelectedFiles({
         files,
@@ -754,6 +760,11 @@ els.fileUploadForm.addEventListener('submit', async (event) => {
     }
     if (files.length === 0) {
         showAlert('Choose at least one file to upload.', 'error');
+        return;
+    }
+    const batchValidation = validateTeamMediaUploadBatch(files);
+    if (!batchValidation.valid) {
+        showAlert(batchValidation.message, 'error');
         return;
     }
 
@@ -797,7 +808,7 @@ checkAuth(async (user) => {
     }
 
     try {
-        state.team = await getTeam(state.teamId, { includeInactive: true });
+        state.team = await getDelegatedTeamContext(state.teamId, null, { includeInactive: true });
         state.team.id = state.team.id || state.teamId;
         state.canManage = canManageTeamMedia(user, state.team);
         state.canContribute = canContributeTeamMedia(user, state.team);

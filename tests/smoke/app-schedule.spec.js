@@ -15,6 +15,15 @@ function appUrl(baseURL, hashPath) {
     return url.toString();
 }
 
+function captureUnexpectedPageErrors(page) {
+    const pageErrors = [];
+    page.on('pageerror', (error) => {
+        if (/Installations:.*API key not valid/i.test(error.message)) return;
+        pageErrors.push(error.message);
+    });
+    return pageErrors;
+}
+
 async function waitForScheduleRoute(page, readyLocator) {
     await expect(async () => {
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
@@ -50,6 +59,11 @@ async function mockScheduleModules(page, options = {}) {
     const gameTournament = options.gameTournament || null;
     const gameMyRsvp = options.gameMyRsvp || 'not_responded';
     const gameMyRsvpNote = options.gameMyRsvpNote || '';
+    const gameTrackingEngine = options.gameTrackingEngine || null;
+    const gameIsHome = Object.prototype.hasOwnProperty.call(options, 'gameIsHome') ? options.gameIsHome : true;
+    const gameStatTrackerConfigId = Object.prototype.hasOwnProperty.call(options, 'gameStatTrackerConfigId')
+        ? options.gameStatTrackerConfigId
+        : 'tracker-config-1';
     const extraUpcomingEvents = Array.from({ length: options.extraUpcomingEvents || 0 }, (_, index) => {
         const day = String(index + 1).padStart(2, '0');
         return `baseEvent({ eventKey: 'bulk-upcoming-${index}', id: 'bulk-upcoming-${index}', childId: 'player-1', childName: 'Pat', date: new Date('2030-06-${day}T18:00:00Z'), opponent: 'Team ${index + 1}', location: 'Field ${index + 1}' })`;
@@ -165,6 +179,7 @@ async function mockScheduleModules(page, options = {}) {
                         id: overrides.id,
                         teamId: 'team-1',
                         teamName: 'Bears',
+                        gamePlan: ${JSON.stringify(options.gamePlan || null)},
                         type: overrides.type || 'game',
                         date: overrides.date,
                         endDate: overrides.endDate || new Date(overrides.date.getTime() + 60 * 60 * 1000),
@@ -180,12 +195,18 @@ async function mockScheduleModules(page, options = {}) {
                         isDbGame: overrides.isDbGame !== false,
                         isCancelled: false,
                         canUpdateScore: overrides.canUpdateScore !== false,
-                        statTrackerConfigId: overrides.statTrackerConfigId || 'tracker-config-1',
+                        statTrackerConfigId: overrides.statTrackerConfigId ?? ${JSON.stringify(gameStatTrackerConfigId)},
+                        trackingEngine: overrides.trackingEngine ?? ${JSON.stringify(gameTrackingEngine)},
                         status: overrides.status || 'scheduled',
                         liveStatus: overrides.liveStatus || null,
+                        rawReplayLifecycle: overrides.rawReplayLifecycle ?? {
+                            type: overrides.type ?? 'game',
+                            status: overrides.status ?? 'scheduled',
+                            liveStatus: overrides.liveStatus ?? null
+                        },
                         homeScore: overrides.homeScore ?? null,
                         awayScore: overrides.awayScore ?? null,
-                        isHome: true,
+                        isHome: overrides.isHome !== undefined ? overrides.isHome : ${JSON.stringify(gameIsHome)},
                         kitColor: 'Blue',
                         arrivalTime: null,
                         notes: overrides.notes || null,
@@ -217,7 +238,12 @@ async function mockScheduleModules(page, options = {}) {
                         practiceHomePacketSummary: overrides.practiceHomePacketSummary || null,
                         practiceSessionId: overrides.practiceSessionId || null,
                         practiceHomePacket: overrides.practiceHomePacket || null,
-                        practicePacketCompletions: []
+                        practicePacketCompletions: [],
+                        replayVideo: overrides.replayVideo ?? window.__mockReplayVideo ?? null,
+                        rawReplayState: overrides.rawReplayState ?? ((overrides.replayVideo ?? window.__mockReplayVideo)
+                            ? { replayVideo: overrides.replayVideo ?? window.__mockReplayVideo }
+                            : {}),
+                        canManageReplayVideo: overrides.canManageReplayVideo === true || overrides.isTeamStaff === true
                     };
                 }
 
@@ -372,9 +398,46 @@ async function mockScheduleModules(page, options = {}) {
                     };
                 }
 
-                export async function updateScheduledGameForApp(teamId, gameId, input, user) {
-                    window.__scheduleCalls.gameUpdates = (window.__scheduleCalls.gameUpdates || []).concat({ teamId, gameId, input, userId: user?.uid || null });
+                export async function updateScheduledGameForApp(teamId, gameId, input, user, updateOptions) {
+                    window.__scheduleCalls.gameUpdates = (window.__scheduleCalls.gameUpdates || []).concat({ teamId, gameId, input, userId: user?.uid || null, updateOptions: updateOptions || null });
                     return { success: true };
+                }
+
+                export async function linkGameYouTubeReplayForApp(teamId, gameId, replayUrl, user, options = {}) {
+                    const parsed = new URL(replayUrl);
+                    const videoId = parsed.searchParams.get('v');
+                    const replayVideo = {
+                        provider: 'youtube',
+                        videoId,
+                        embedUrl: 'https://www.youtube.com/embed/' + videoId,
+                        publicUrl: 'https://www.youtube.com/watch?v=' + videoId,
+                        status: 'ready',
+                        linkedBy: user?.uid || null,
+                        linkedAt: new Date()
+                    };
+                    window.__mockReplayVideo = replayVideo;
+                    window.__scheduleCalls.replayUpdates = (window.__scheduleCalls.replayUpdates || []).concat({
+                        action: 'link',
+                        teamId,
+                        gameId,
+                        replayUrl,
+                        userId: user?.uid || null,
+                        expectedReplayState: options.expectedReplayState ?? {},
+                        replayVideo
+                    });
+                    return replayVideo;
+                }
+
+                export async function removeGameReplayForApp(teamId, gameId, user, expectedReplayState = {}) {
+                    window.__mockReplayVideo = null;
+                    window.__scheduleCalls.replayUpdates = (window.__scheduleCalls.replayUpdates || []).concat({
+                        action: 'remove',
+                        teamId,
+                        gameId,
+                        userId: user?.uid || null,
+                        expectedReplayState
+                    });
+                    return { removed: true, updatedAt: new Date() };
                 }
 
                 export async function updateScheduledPracticeForApp(teamId, input, user, options) {
@@ -540,6 +603,10 @@ async function mockScheduleModules(page, options = {}) {
                     return schedule;
                 }
 
+                export async function hydrateParentScheduleEventOptionalDetails(schedule) {
+                    return schedule;
+                }
+
                 export async function hydrateParentScheduleRsvps(schedule, user, options = {}) {
                     schedule.events.forEach((event) => {
                         event.myRsvpNoteHydrated = true;
@@ -570,6 +637,12 @@ async function mockScheduleModules(page, options = {}) {
                         window.__scheduleCalls.rsvps.push({ eventKey: event.eventKey, childId: event.childId, userId: user.uid, response, note });
                     });
                     return { going: events.length, maybe: 0, notGoing: 0, notResponded: 0 };
+                }
+
+                export async function enableRsvpForImportedCalendarEvent(event) {
+                    const trackedEventId = 'calendar-materialized-event';
+                    window.__scheduleCalls.materializedEvent = { eventId: event.id, trackedEventId };
+                    return trackedEventId;
                 }
 
                 export async function updateGameScore(teamId, gameId, score, user) {
@@ -679,7 +752,7 @@ async function mockScheduleModules(page, options = {}) {
 
                 export async function loadGameDayLiveEventsForApp(teamId, gameId) {
                     window.__scheduleCalls.liveEvents = (window.__scheduleCalls.liveEvents || []).concat({ action: 'load', teamId, gameId });
-                    return [];
+                    return ${JSON.stringify(options.liveEvents || [])};
                 }
 
                 export async function saveGameDaySubstitutionForApp(teamId, gameId, user, payload) {
@@ -1230,7 +1303,7 @@ test('@visual app schedule loads agenda filters, player select, calendar, export
     await expect(page.getByText('vs. Falcons').first()).toBeVisible();
 
     await page.getByRole('button', { name: '.ics' }).click();
-    await expect(page.getByText('Calendar export started.')).toBeVisible();
+    await expect(page.getByText('Calendar download started.')).toBeVisible();
 
     await page.getByLabel('Player', { exact: true }).selectOption('');
     await page.getByRole('button', { name: 'Copy agenda' }).click();
@@ -1546,6 +1619,48 @@ test('mobile game-day score tray stays above the bottom nav while deeper panels 
     expect(await page.evaluate(() => window.__scheduleCalls.liveScoreEvents)).toHaveLength(1);
 });
 
+test('substitution live logs survive delayed helper initialization', async ({ page, baseURL }) => {
+    const errors = captureUnexpectedPageErrors(page);
+    await page.addInitScript(() => {
+        window.__ALLPLAYS_CONFIG__ = {
+            firebase: { apiKey: 'demo-api-key', authDomain: 'demo-allplays.firebaseapp.com', projectId: 'demo-allplays', messagingSenderId: '1234567890', appId: '1:1234567890:web:allplayssmoke' },
+            appCheck: { enabled: false },
+            diamondScorebookUiEnabled: false
+        };
+    });
+    await mockScheduleModules(page, {
+        isCoach: true,
+        staffManageable: true,
+        gamePlan: { formationId: 'basketball-5v5', numPeriods: 4, periodDuration: 8, lineups: { 'Q1-pg': 'player-1' }, isPublished: true },
+        liveEvents: [{ eventId: 'score-1', type: 'score_update', description: 'Bears 2 - Wolves 0', createdAt: '2026-05-20T11:00:00Z' }]
+    });
+    let releaseHelper;
+    const helperGate = new Promise((resolve) => { releaseHelper = resolve; });
+    let helperRequested = false;
+    await page.route(/\/src\/lib\/adapters\/legacyScheduleHelpers\.ts(\?.*)?$/, async (route) => {
+        helperRequested = true;
+        await helperGate;
+        await route.continue();
+    });
+    try {
+        await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=game'), { waitUntil: 'domcontentloaded' });
+        await expect(async () => {
+            expect(errors).toEqual([]);
+            await expect(page.getByRole('button', { name: 'Live substitutions', exact: true })).toBeVisible({ timeout: 1000 });
+        }).toPass({ timeout: 10000 });
+        await page.getByRole('button', { name: 'Live substitutions', exact: true }).click({ timeout: 3000 });
+        await expect.poll(() => helperRequested).toBe(true);
+        expect(errors).toEqual([]);
+        await expect(page.getByText('Bears 2 - Wolves 0', { exact: true })).toBeVisible();
+        releaseHelper();
+        await expect(page.getByRole('combobox', { name: 'Out', exact: true })).toBeEnabled();
+        expect(errors).toEqual([]);
+        await expect(page.getByText('Bears 2 - Wolves 0', { exact: true })).toBeVisible();
+    } finally {
+        releaseHelper();
+    }
+});
+
 test('landscape mobile shell keeps the game-day score tray fixed above navigation', async ({ page, baseURL }) => {
     await page.setViewportSize({ width: 844, height: 390 });
     await mockScheduleModules(page, {
@@ -1742,12 +1857,12 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
     await page.getByRole('button', { name: 'Watch replay' }).click();
     expect(await page.evaluate(() => window.__openedPublicUrls)).toContain('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true');
     await page.getByRole('button', { name: 'Share replay' }).click();
-    expect(await page.evaluate(() => window.__sharedPayloads[0]?.url)).toBe('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true');
-    expect(await page.evaluate(() => window.__sharedPayloads[0]?.text)).toContain('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true');
+    expect(await page.evaluate(() => window.__sharedPayloads[0]?.url)).toBe('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true');
+    expect(await page.evaluate(() => window.__sharedPayloads[0]?.text)).toContain('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true');
     await expect(page.getByRole('button', { name: 'Open report', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Share match report' }).click();
-    expect(await page.evaluate(() => window.__sharedPayloads[1]?.url)).toBe('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
-    expect(await page.evaluate(() => window.__sharedPayloads[1]?.text)).toContain('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
+    expect(await page.evaluate(() => window.__sharedPayloads[1]?.url)).toBe('https://share.allplays.ai/report?teamId=team-1&gameId=game-1');
+    expect(await page.evaluate(() => window.__sharedPayloads[1]?.text)).toContain('https://share.allplays.ai/report?teamId=team-1&gameId=game-1');
     expect(await page.evaluate(() => window.__scheduleCalls.gameReport)).toEqual({ teamId: 'team-1', gameId: 'game-1' });
     await page.getByRole('button', { name: 'Players' }).click();
     const playerLink = page.getByRole('link', { name: /#7 Pat/ });
@@ -1778,6 +1893,121 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
         { eventKey: 'game-1-player-2', childId: 'player-2', userId: 'user-1', response: 'going', note: 'Arriving after school pickup.' }
     ]);
     await expect(page.getByText('2 children marked going.')).toBeVisible();
+});
+
+test('app Diamond schedule editor locks pinned fields across authenticated reloads and saves other edits', async ({ page, baseURL }) => {
+    const pageErrors = captureUnexpectedPageErrors(page);
+    await page.addInitScript(() => {
+        window.__ALLPLAYS_CONFIG__ = {
+            firebase: {
+                apiKey: 'demo-api-key',
+                authDomain: 'demo-allplays.firebaseapp.com',
+                projectId: 'demo-allplays',
+                messagingSenderId: '1234567890',
+                appId: '1:1234567890:web:allplayssmoke'
+            },
+            appCheck: { enabled: false }
+        };
+    });
+    await mockScheduleModules(page, {
+        staffManageable: true,
+        gameTrackingEngine: 'diamond-v2',
+        gameIsHome: true,
+        gameStatTrackerConfigId: 'tracker-config-1'
+    });
+    const url = appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=game');
+
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await waitForScheduleRoute(page, page.getByRole('heading', { name: 'Game hub' }));
+    await page.getByRole('button', { name: 'Edit game' }).click();
+
+    await expect(page.getByLabel('Home / away')).toBeDisabled();
+    await expect(page.getByLabel('Tracker config')).toBeDisabled();
+    await expect(page.getByText('Home/away and tracker config are locked after Diamond activation.')).toBeVisible();
+
+    await page.getByLabel('Location').fill('Diamond Field');
+    await page.getByRole('button', { name: 'Save game' }).click();
+    await expect(page.getByText('Game schedule was updated.')).toBeVisible();
+
+    expect(await page.evaluate(() => window.__scheduleCalls.gameUpdates[0])).toMatchObject({
+        teamId: 'team-1',
+        gameId: 'game-1',
+        input: { location: 'Diamond Field' },
+        userId: 'user-1',
+        updateOptions: { preservePinnedDiamondFields: true }
+    });
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await waitForScheduleRoute(page, page.getByRole('heading', { name: 'Game hub' }));
+    await page.getByRole('button', { name: 'Edit game' }).click();
+    await expect(page.getByLabel('Home / away')).toBeDisabled();
+    await expect(page.getByLabel('Tracker config')).toBeDisabled();
+    expect(pageErrors).toEqual([]);
+});
+
+test('app completed-game manager links, replaces, and removes a YouTube replay', async ({ page, baseURL }) => {
+    const pageErrors = captureUnexpectedPageErrors(page);
+    page.on('dialog', async (dialog) => dialog.accept());
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page, {
+        isCoach: true,
+        staffManageable: true,
+        gameStatus: 'completed',
+        gameLiveStatus: 'completed',
+        gameHomeScore: 4,
+        gameAwayScore: 2
+    });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=availability'), { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(500);
+    expect(pageErrors).toEqual([]);
+
+    await waitForScheduleRoute(page, page.locator('.event-summary-card'));
+    await page.getByRole('button', { name: 'Game', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Game hub' })).toBeVisible();
+
+    const replaySection = page.getByRole('region', { name: 'YouTube replay' });
+    await expect(replaySection).toBeVisible();
+    await replaySection.getByRole('button', { name: 'Link YouTube replay' }).click();
+    await replaySection.getByLabel('YouTube video URL').fill('https://youtu.be/0IuY8Oryi1k?si=share');
+    await replaySection.getByRole('button', { name: 'Save replay' }).click();
+    await expect(replaySection.getByText('Linked', { exact: true })).toBeVisible();
+
+    await expect.poll(() => page.evaluate(() => window.__scheduleCalls.replayUpdates?.[0])).toMatchObject({
+        action: 'link',
+        teamId: 'team-1',
+        gameId: 'game-1',
+        replayUrl: 'https://www.youtube.com/watch?v=0IuY8Oryi1k',
+        userId: 'user-1',
+        expectedReplayState: {},
+        replayVideo: {
+            provider: 'youtube',
+            videoId: '0IuY8Oryi1k',
+            publicUrl: 'https://www.youtube.com/watch?v=0IuY8Oryi1k',
+            status: 'ready'
+        }
+    });
+
+    await replaySection.getByRole('button', { name: 'Replace link' }).click();
+    await replaySection.getByLabel('YouTube video URL').fill('https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30');
+    await replaySection.getByRole('button', { name: 'Replace replay' }).click();
+    await expect.poll(() => page.evaluate(() => window.__scheduleCalls.replayUpdates?.[1]?.replayVideo?.videoId)).toBe('dQw4w9WgXcQ');
+    await expect.poll(() => page.evaluate(() => window.__scheduleCalls.replayUpdates?.[1]?.expectedReplayState?.replayVideo?.videoId)).toBe('0IuY8Oryi1k');
+
+    await replaySection.getByRole('button', { name: 'Remove' }).click();
+    await expect(replaySection.getByRole('button', { name: 'Link YouTube replay' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__scheduleCalls.replayUpdates?.[2])).toMatchObject({
+        action: 'remove',
+        teamId: 'team-1',
+        gameId: 'game-1',
+        userId: 'user-1',
+        expectedReplayState: {
+            replayVideo: {
+                videoId: 'dQw4w9WgXcQ'
+            }
+        }
+    });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+    expect(pageErrors).toEqual([]);
 });
 
 test('app schedule saves edited availability notes without re-tapping RSVP', async ({ page, baseURL }) => {

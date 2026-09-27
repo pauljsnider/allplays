@@ -1,16 +1,16 @@
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getGame, getPlayers, getConfigs, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './db.js?v=127';
-import { db } from './firebase.js?v=22';
-import { getUrlParams, escapeHtml } from './utils.js?v=18';
-import { checkAuth } from './auth.js?v=135';
-import { writeBatch, doc, setDoc, addDoc } from './firebase.js?v=22';
+import { getGameDayTeamContext, getGame, getPlayers, getConfigs, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './db.js?v=4433199';
+import { db } from './firebase.js?v=33';
+import { getUrlParams, escapeHtml } from './utils.js?v=443375';
+import { checkAuth } from './auth.js?v=4433203';
+import { writeBatch, doc, setDoc, addDoc } from './firebase.js?v=33';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { canApplySubstitution, applySubstitution, canApplySubstitutionQueue, canApplyQueuedSubstitution, resolveFinalScoreForCompletion } from './live-tracker-integrity.js?v=4';
 import { resolveFinalScore, resolveSummaryRecipient } from './live-tracker-email.js?v=2';
-import { commitStandardTrackerFinishData } from './track-finish.js?v=2';
-import { getPrivatePlayerStatIds } from './stat-leaderboards.js?v=2';
-import { hasScorekeepingTeamAccess } from './team-access.js?v=2';
+import { commitStandardTrackerFinishData } from './track-finish.js?v=3';
+import { getPrivatePlayerStatIds } from './stat-leaderboards.js?v=4';
+import { hasScorekeepingTeamAccess } from './team-access.js?v=44338';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -1425,7 +1425,7 @@ async function init() {
 
   try {
     const [team, game, playersList] = await Promise.all([
-      getTeam(teamId),
+      getGameDayTeamContext(teamId, gameId),
       getGame(teamId, gameId),
       getPlayers(teamId)
     ]);

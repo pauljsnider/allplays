@@ -6,7 +6,11 @@ function normalizePublicProfileCleanupTeamId(value) {
 }
 
 async function removePublicProfileForIneligibleAuth(publicProfileRef, authIdentity = {}) {
-  if (authIdentity.userMissing !== true && authIdentity.emailVerified === true) {
+  if (
+    authIdentity.userMissing !== true &&
+    authIdentity.userDisabled !== true &&
+    authIdentity.emailVerified === true
+  ) {
     return false;
   }
   await publicProfileRef.delete();
@@ -359,7 +363,8 @@ function createPublicProfileEligibilitySweepHandler({
               email: authRecord.email || null,
               displayName: authRecord.displayName || null,
               photoUrl: authRecord.photoURL || null,
-              emailVerified: authRecord.emailVerified === true
+              emailVerified: authRecord.emailVerified === true,
+              userDisabled: authRecord.disabled === true
             };
           } catch (error) {
             if (!isAuthUserNotFound(error)) throw error;

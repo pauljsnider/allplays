@@ -18,10 +18,45 @@ function writeFile(filePath, contents = '') {
     fs.writeFileSync(filePath, contents);
 }
 
-function writeRuntimeConfig(artifactDir, appCheck) {
+function writeRuntimeConfig(artifactDir, appCheck, diamondScorebookUiEnabled = false) {
     writeFile(
         path.join(artifactDir, '.well-known', 'allplays-runtime-config.json'),
-        JSON.stringify({ appCheck })
+        JSON.stringify({ appCheck, diamondScorebookUiEnabled })
+    );
+    const metaValue = diamondScorebookUiEnabled === true ? 'true' : 'false';
+    for (const page of ['edit-team.html', 'edit-schedule.html']) {
+        writeFile(
+            path.join(artifactDir, page),
+            `<!doctype html><html><head><meta name="allplays-diamond-scorebook-ui-enabled" content="${metaValue}"></head><body></body></html>`
+        );
+    }
+}
+
+function writeValidMobileAssociations(artifactDir) {
+    writeFile(
+        path.join(artifactDir, '.well-known', 'apple-app-site-association'),
+        JSON.stringify({
+            applinks: {
+                apps: [],
+                details: [{
+                    appIDs: ['4CSFFZLL37.ai.allplays.lite'],
+                    components: [{ '/': '/app' }, { '/': '/app/*' }]
+                }]
+            }
+        })
+    );
+    writeFile(
+        path.join(artifactDir, '.well-known', 'assetlinks.json'),
+        JSON.stringify([{
+            relation: ['delegate_permission/common.handle_all_urls'],
+            target: {
+                namespace: 'android_app',
+                package_name: 'ai.allplays.lite',
+                sha256_cert_fingerprints: [
+                    '5A:C2:50:E0:78:32:24:D7:96:12:63:9C:73:AF:93:C7:59:C3:98:86:46:4C:CD:63:FB:5F:29:53:39:D6:C4:94'
+                ]
+            }
+        }])
     );
 }
 
@@ -96,6 +131,55 @@ describe('Pages deployment artifact verification', () => {
             .toThrow(/must be paused without a site key or debug token/);
     });
 
+    it('requires the exact staged Diamond UI value and defaults it dark', () => {
+        const artifactDir = makeArtifact();
+        writeFile(path.join(artifactDir, '.nojekyll'));
+        const pausedAppCheck = {
+            enabled: false,
+            isTokenAutoRefreshEnabled: true
+        };
+
+        writeRuntimeConfig(artifactDir, pausedAppCheck, true);
+        expect(() => verifyPagesDeployArtifact(artifactDir))
+            .toThrow(/Diamond scorebook UI flag does not match/);
+
+        expect(verifyPagesDeployArtifact(artifactDir, {
+            expectedDiamondScorebookUiEnabled: true
+        })).toBeUndefined();
+
+        writeRuntimeConfig(artifactDir, pausedAppCheck, false);
+        expect(() => verifyPagesDeployArtifact(artifactDir, {
+            expectedDiamondScorebookUiEnabled: 'TRUE'
+        })).not.toThrow();
+    });
+
+    it('requires both legacy launch pages to contain exactly one matching staged meta', () => {
+        const artifactDir = makeArtifact();
+        writeFile(path.join(artifactDir, '.nojekyll'));
+        const pausedAppCheck = {
+            enabled: false,
+            isTokenAutoRefreshEnabled: true
+        };
+
+        writeRuntimeConfig(artifactDir, pausedAppCheck, true);
+        writeFile(
+            path.join(artifactDir, 'edit-team.html'),
+            '<!doctype html><html><head></head><body></body></html>'
+        );
+        expect(() => verifyPagesDeployArtifact(artifactDir, {
+            expectedDiamondScorebookUiEnabled: true
+        })).toThrow(/edit-team\.html Diamond launch meta must appear exactly once/);
+
+        writeRuntimeConfig(artifactDir, pausedAppCheck, true);
+        writeFile(
+            path.join(artifactDir, 'edit-schedule.html'),
+            '<!doctype html><html><head><meta name="allplays-diamond-scorebook-ui-enabled" content="false"></head><body></body></html>'
+        );
+        expect(() => verifyPagesDeployArtifact(artifactDir, {
+            expectedDiamondScorebookUiEnabled: true
+        })).toThrow(/edit-schedule\.html Diamond launch meta must appear exactly once with content="true"/);
+    });
+
     it('requires an enabled runtime config matching the expected public site key when rollout-ready', () => {
         const artifactDir = makeArtifact();
         writeFile(path.join(artifactDir, '.nojekyll'));
@@ -132,7 +216,7 @@ describe('Pages deployment artifact verification', () => {
         })).toThrow(/not enabled with the expected public site key/);
     });
 
-    it('rejects unpublished mobile association claims even when hidden files are preserved', () => {
+    it('rejects mobile association claims without explicit production opt-in', () => {
         const artifactDir = makeArtifact();
         writeFile(path.join(artifactDir, '.nojekyll'));
         writeFile(
@@ -141,7 +225,25 @@ describe('Pages deployment artifact verification', () => {
         );
 
         expect(() => verifyPagesDeployArtifact(artifactDir))
-            .toThrow(/must not publish \.well-known.assetlinks\.json until real mobile app association identifiers are configured/);
+            .toThrow(/must not publish \.well-known.assetlinks\.json without explicit production mobile-association opt-in/);
+    });
+
+    it('requires and accepts the verified association identities when production opts in', () => {
+        const artifactDir = makeArtifact();
+        writeFile(path.join(artifactDir, '.nojekyll'));
+        writeRuntimeConfig(artifactDir, {
+            enabled: false,
+            isTokenAutoRefreshEnabled: true
+        });
+
+        expect(() => verifyPagesDeployArtifact(artifactDir, {
+            expectedMobileAssociations: true
+        })).toThrow(/Apple app-site association must be present and valid JSON/);
+
+        writeValidMobileAssociations(artifactDir);
+        expect(verifyPagesDeployArtifact(artifactDir, {
+            expectedMobileAssociations: true
+        })).toBeUndefined();
     });
 
     it('rejects local development artifacts from a downloaded Pages bundle', () => {

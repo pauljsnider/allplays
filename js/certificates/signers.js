@@ -20,7 +20,8 @@ function normalizeSigner(signer = {}, index = 0) {
         name: String(signer.name || '').trim() || (index === 0 ? 'Head Coach' : 'Assistant Coach'),
         role: String(signer.role || '').trim() || (index === 0 ? 'Head Coach' : 'Assistant Coach'),
         signatureStyle: ['script', 'typed', 'image'].includes(signer.signatureStyle) ? signer.signatureStyle : 'script',
-        signatureImageUrl: signer.signatureImageUrl || null
+        signatureImageUrl: signer.signatureImageUrl || null,
+        signatureImagePath: signer.signatureImagePath || null
     };
 }
 

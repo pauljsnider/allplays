@@ -7,11 +7,17 @@ const primaryRestCallers = [
     '../../apps/app/src/lib/accountDeletionService.ts',
     '../../apps/app/src/lib/authService.ts',
     '../../apps/app/src/lib/chatService.ts',
+    '../../apps/app/src/lib/nativeCallable.ts',
+    '../../apps/app/src/lib/nativeFirestoreMutation.ts',
+    '../../apps/app/src/lib/nativeStorageUpload.ts',
+    '../../apps/app/src/lib/notificationInboxService.ts',
     '../../apps/app/src/lib/profileService.ts',
     '../../apps/app/src/lib/scheduleService.ts',
+    '../../apps/app/src/lib/socialService.ts',
     '../../apps/app/src/lib/teamDetailService.ts',
+    '../../js/dashboard-team-load.js',
+    '../../js/db.js',
     '../../js/schedule-notifications.js',
-    '../../js/team-pass.js',
     '../../js/telemetry.js',
     '../../js/utils.js'
 ];
@@ -49,12 +55,16 @@ describe('raw Firebase REST App Check coverage', () => {
             'apps/app/src/lib/accountDeletionService.ts',
             'apps/app/src/lib/authService.ts',
             'apps/app/src/lib/chatService.ts',
-            'apps/app/src/lib/profilePhotoService.ts',
+            'apps/app/src/lib/nativeFirestoreMutation.ts',
+            'apps/app/src/lib/nativeStorageUpload.ts',
+            'apps/app/src/lib/notificationInboxService.ts',
             'apps/app/src/lib/profileService.ts',
             'apps/app/src/lib/scheduleService.ts',
+            'apps/app/src/lib/socialService.ts',
             'apps/app/src/lib/teamDetailService.ts',
+            'js/dashboard-team-load.js',
+            'js/db.js',
             'js/schedule-notifications.js',
-            'js/team-pass.js',
             'js/telemetry.js',
             'js/utils.js'
         ]);
@@ -67,16 +77,17 @@ describe('raw Firebase REST App Check coverage', () => {
         expect(source).toMatch(/getPrimaryAppCheckHeaders\([\s\S]*?(requestUrl|endpoint)/);
     });
 
-    it('keeps the independent game-flow-img auth and storage client isolated', () => {
+    it('keeps web profile uploads on the independent image client without using it for native REST', () => {
         const source = readFileSync(
             new URL('../../apps/app/src/lib/profilePhotoService.ts', import.meta.url),
             'utf8'
         );
 
-        expect(source).toContain('resolveImageFirebaseConfig');
         expect(source).not.toContain('getPrimaryAppCheckHeaders');
-        expect(source).toContain('identitytoolkit.googleapis.com');
-        expect(source).toContain('firebasestorage.googleapis.com');
+        expect(source).toContain('uploadUserPhoto');
+        expect(source).toContain('uploadNativeUserProfilePhoto');
+        expect(source).not.toContain('window.localStorage');
+        expect(source).not.toContain('refresh_token');
     });
 
     it('allows App Check through CORS on raw functions that receive attested browser requests', () => {

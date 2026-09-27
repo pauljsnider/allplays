@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CalendarDays, Copy, Download, Loader2, RefreshCw } from 'lucide-react';
 import { exportCalendarIcsFile, openPublicUrl } from '../../lib/publicActions';
 import { buildParentScheduleIcs, getAppleCalendarFeedUrl, getCalendarEventShareText, getGoogleCalendarFeedUrl, getPrivateTeamCalendarFeedUrl, loadParentCalendarTools, type ParentCalendarTeam } from '../../lib/parentCalendarService';
@@ -11,6 +11,8 @@ export function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refres
     const [teams, setTeams] = useState<ParentCalendarTeam[]>([]);
     const [busyTeamId, setBusyTeamId] = useState('');
     const [message, setMessage] = useState('');
+    const privateFeedUrlCache = useRef(new Map<string, Promise<string>>());
+    const cachedAuthUser = useRef(auth.user);
     const loadOperation = useParentToolAsyncOperation();
     const exportOperation = useParentToolAsyncOperation();
     const feedOperation = useParentToolAsyncOperation();
@@ -25,7 +27,33 @@ export function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refres
     const loadError = loadOperation.error;
     const error = loadError ?? exportOperation.error ?? feedOperation.error;
 
+    const clearPrivateFeedUrlCache = useCallback(() => {
+        privateFeedUrlCache.current.clear();
+    }, []);
+
+    const resolvePrivateFeedUrl = useCallback((teamId: string) => {
+        const cached = privateFeedUrlCache.current.get(teamId);
+        if (cached) return cached;
+
+        const resolution = getPrivateTeamCalendarFeedUrl(teamId)
+            .then((feedUrl) => {
+                if (!feedUrl && privateFeedUrlCache.current.get(teamId) === resolution) {
+                    privateFeedUrlCache.current.delete(teamId);
+                }
+                return feedUrl;
+            })
+            .catch((resolutionError: unknown) => {
+                if (privateFeedUrlCache.current.get(teamId) === resolution) {
+                    privateFeedUrlCache.current.delete(teamId);
+                }
+                throw resolutionError;
+            });
+        privateFeedUrlCache.current.set(teamId, resolution);
+        return resolution;
+    }, []);
+
     const refresh = useCallback(async (options: { force?: boolean } = {}) => {
+        if (options.force) clearPrivateFeedUrlCache();
         clearLoadError();
         clearExportError();
         clearFeedError();
@@ -40,7 +68,14 @@ export function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refres
                 }
             }
         );
-    }, [auth.user, clearExportError, clearFeedError, clearLoadError, runLoad]);
+    }, [auth.user, clearExportError, clearFeedError, clearLoadError, clearPrivateFeedUrlCache, runLoad]);
+
+    useEffect(() => {
+        if (cachedAuthUser.current !== auth.user) {
+            clearPrivateFeedUrlCache();
+            cachedAuthUser.current = auth.user;
+        }
+    }, [auth.user, clearPrivateFeedUrlCache]);
 
     useEffect(() => {
         void refresh(refreshVersion > 0 ? { force: true } : {});
@@ -81,7 +116,7 @@ export function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refres
         setMessage('');
         await runFeed(
             async () => {
-                const feedUrl = await getPrivateTeamCalendarFeedUrl(team.teamId);
+                const feedUrl = await resolvePrivateFeedUrl(team.teamId);
                 if (!feedUrl) throw new Error('Unable to create private calendar feed. Sign in again and retry.');
                 if (target === 'copy') {
                     await copyText(feedUrl, setMessage);

@@ -14,10 +14,11 @@ function appUrl(baseURL, hashPath) {
     return url.toString();
 }
 
-async function waitForTeamsRoute(page, readyLocator, { requireSearchInput = true } = {}) {
+async function waitForTeamsRoute(page, readyLocator, { requireSearchInput = true, pageErrors = [] } = {}) {
     const searchInput = page.getByPlaceholder('Search teams or players');
     const teamsLoadingState = page.getByText(/^Loading teams$/);
     await expect(async () => {
+        expect(pageErrors).toEqual([]);
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
         await expect(teamsLoadingState).toHaveCount(0, { timeout: 3000 });
         if (requireSearchInput) {
@@ -29,22 +30,38 @@ async function waitForTeamsRoute(page, readyLocator, { requireSearchInput = true
     }).toPass({ timeout: 45000 });
 }
 
-async function waitForTeamDetailRoute(page, teamName) {
+async function waitForTeamDetailRoute(page, teamName, { pageErrors = [] } = {}) {
     await expect(async () => {
+        expect(pageErrors).toEqual([]);
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
         await expect(page.getByText('Loading team')).toHaveCount(0, { timeout: 3000 });
         await expect(page.getByRole('heading', { name: teamName })).toBeVisible({ timeout: 3000 });
     }).toPass({ timeout: 45000 });
 }
 
-async function mockTeamsModules(page, { scenario = '', managedTeam = false, rosterPlayerCount = 2 } = {}) {
-    await page.addInitScript(({ scenarioName, shouldManageTeam, teamRosterPlayerCount }) => {
+async function mockTeamsModules(page, { scenario = '', managedTeam = false, rosterPlayerCount = 2, privateCalendarEligible = true } = {}) {
+    await page.addInitScript(({ scenarioName, shouldManageTeam, teamRosterPlayerCount, canUsePrivateCalendarSync }) => {
+        window.__ALLPLAYS_CONFIG__ = {
+            firebase: {
+                apiKey: 'demo-api-key',
+                authDomain: 'demo-allplays.firebaseapp.com',
+                projectId: 'demo-allplays',
+                messagingSenderId: '1234567890',
+                appId: '1:1234567890:web:allplayssmoke'
+            },
+            appCheck: { enabled: false },
+            diamondScorebookUiEnabled: false
+        };
         window.__openedPublicUrls = [];
+        window.__copiedPublicTexts = [];
+        window.__sharedPublicUrls = [];
+        window.__privateCalendarTeamIds = [];
         window.__homeLoads = 0;
         window.__teamsScenario = scenarioName;
         window.__managedTeam = shouldManageTeam;
         window.__teamRosterPlayerCount = teamRosterPlayerCount;
-    }, { scenarioName: scenario, shouldManageTeam: managedTeam, teamRosterPlayerCount: rosterPlayerCount });
+        window.__canUsePrivateCalendarSync = canUsePrivateCalendarSync;
+    }, { scenarioName: scenario, shouldManageTeam: managedTeam, teamRosterPlayerCount: rosterPlayerCount, canUsePrivateCalendarSync: privateCalendarEligible });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
@@ -56,7 +73,9 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                         uid: 'user-1',
                         email: 'parent@example.com',
                         displayName: 'Pat Parent',
+                        emailVerified: true,
                         roles: ['parent', 'coach'],
+                        parentTeamIds: ['team-1'],
                         parentOf: [
                             { teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star', teamName: 'Bears' },
                             { teamId: 'team-1', playerId: 'player-2', playerName: 'Sam Wing', teamName: 'Bears' },
@@ -89,11 +108,49 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                 export async function openPublicUrl(url) {
                     window.__openedPublicUrls.push(String(url));
                 }
-                export async function copyPublicText() {
+                export async function copyPublicText(text) {
+                    window.__copiedPublicTexts.push(String(text));
                     return 'copied';
                 }
-                export async function sharePublicUrl() {
+                export async function sharePublicUrl(payload) {
+                    window.__sharedPublicUrls.push(String(payload?.url || ''));
                     return 'shared';
+                }
+                export async function exportCsvFile() {
+                    return 'downloaded';
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/parentToolsService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function getPrivateTeamCalendarFeedUrl(teamId) {
+                    window.__privateCalendarTeamIds.push(String(teamId));
+                    return 'https://us-central1-game-flow-c6311.cloudfunctions.net/teamCalendarFeed?teamId=' + encodeURIComponent(teamId) + '&token=stored-token';
+                }
+
+                export function getAppleCalendarFeedUrl(feedUrl) {
+                    return String(feedUrl || '').replace(/^https?:\\/\\//i, 'webcal://');
+                }
+
+                export function getGoogleCalendarFeedUrl(feedUrl) {
+                    return 'https://calendar.google.com/calendar/render?cid=' + encodeURIComponent(feedUrl);
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/usePremiumFeatureAccess\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export function usePremiumFeatureAccess() {
+                    return { state: 'unlocked', reason: 'global-open' };
                 }
             `
         });
@@ -193,6 +250,7 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                                 ],
                                 nextEvent: bearsNext,
                                 eventCount: 5,
+                                upcomingEventCount: 1,
                                 unreadCount: 12,
                                 openActions: 2
                             },
@@ -205,6 +263,7 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                                 players: [],
                                 nextEvent: null,
                                 eventCount: 0,
+                                upcomingEventCount: 0,
                                 unreadCount: 3,
                                 openActions: 0
                             },
@@ -217,6 +276,7 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                                 players: [{ teamId: 'team-single', teamName: 'Rockets', playerId: 'player-9', playerName: 'Riley Guard' }],
                                 nextEvent: rocketsNext,
                                 eventCount: 1,
+                                upcomingEventCount: 1,
                                 unreadCount: 0,
                                 openActions: 0
                             }
@@ -348,7 +408,7 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                 }
 
                 export function buildPublicTeamGamesIcsUrl(teamId) {
-                    return teamId ? 'https://calendar.example.test/publicTeamGamesIcs?teamId=' + encodeURIComponent(teamId) : '';
+                    return teamId ? 'https://us-central1-game-flow-c6311.cloudfunctions.net/publicTeamGamesIcs?teamId=' + encodeURIComponent(teamId) : '';
                 }
 
                 export function canExposePublicFanFeed(team = {}, events = []) {
@@ -376,6 +436,7 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                         return {
                             team: {
                                 id: 'team-empty',
+                                currentSeasonId: 'summer-2100',
                                 ownerId: 'owner-empty',
                                 name: 'Empty Team',
                                 sport: 'Soccer',
@@ -413,6 +474,7 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                             statTrackerConfigs: [],
                             canManageTeam: false,
                             canManageAdmins: false,
+                            canUsePrivateCalendarSync: false,
                             staffPermissions: null,
                             counts: { games: 0, practices: 0, completedGames: 0 }
                         };
@@ -422,6 +484,7 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                     return {
                         team: {
                             id: 'team-1',
+                            currentSeasonId: 'summer-2100',
                             ownerId: 'owner-1',
                             name: 'Bears',
                             sport: 'Basketball',
@@ -454,13 +517,15 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                         linkedPlayers: [
                             { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png', position: 'Guard', isLinked: true, active: true }
                         ],
-                        upcomingEvents: [
+                        upcomingEvents: window.__teamsScenario === 'stale-team-detail' ? [] : [
                             { id: 'game-next', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', homeScore: null, awayScore: null, isCancelled: false }
                         ],
                         recentResults: [
                             { id: 'game-final', type: 'game', title: 'vs. Wolves', date: resultDate, location: 'Main Gym', opponent: 'Wolves', status: 'completed', homeScore: 42, awayScore: 35, isCancelled: false }
                         ],
-                        nextEvent: { id: 'game-next', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', homeScore: null, awayScore: null, isCancelled: false },
+                        nextEvent: window.__teamsScenario === 'stale-team-detail'
+                            ? null
+                            : { id: 'game-next', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', homeScore: null, awayScore: null, isCancelled: false },
                         record: { label: '2100', wins: 4, losses: 2, ties: 0, gamesPlayed: 6, winPercentage: 66.7 },
                         standings: { enabled: true, label: 'Points table', rows: [{ team: 'Bears', rank: 1, record: '4-2', pf: 180, pa: 150 }], currentRow: { team: 'Bears', rank: 1, record: '4-2', pf: 180, pa: 150 } },
                         leaderboards: [{ id: 'pts', label: 'Points', leaders: [{ playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9', photoUrl: 'https://img.example.test/player.png', rank: 1, formattedValue: '88' }] }],
@@ -472,6 +537,7 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                         statTrackerConfigs: [],
                         canManageTeam: window.__managedTeam,
                         canManageAdmins: window.__managedTeam,
+                        canUsePrivateCalendarSync: window.__canUsePrivateCalendarSync,
                         staffPermissions: null,
                         counts: { games: 8, practices: 3, completedGames: 6 }
                     };
@@ -497,7 +563,81 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                 }
 
                 export async function loadParentSchedule() {
-                    return { events: [] };
+                    if (window.__teamsScenario === 'stale-team-detail') {
+                        return {
+                            children: [],
+                            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+                            events: [{
+                                eventKey: 'team-1::game-schedule-only',
+                                id: 'game-schedule-only',
+                                teamId: 'team-1',
+                                teamName: 'Bears',
+                                title: 'Bears vs Tigers',
+                                type: 'game',
+                                date: new Date('2100-08-23T22:15:00Z'),
+                                location: 'Main Gym',
+                                opponent: 'Tigers',
+                                childId: 'player-1',
+                                childName: 'Pat Star',
+                                isDbGame: false,
+                                status: 'scheduled',
+                                homeScore: null,
+                                awayScore: null,
+                                isCancelled: false,
+                                assignments: [],
+                                openAssignmentCount: 0
+                            }],
+                            isPartial: false
+                        };
+                    }
+                    return {
+                        children: [],
+                        staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+                        events: [{
+                            eventKey: 'team-1::game-next',
+                            id: 'game-next',
+                            teamId: 'team-1',
+                            teamName: 'Bears',
+                            title: 'vs. Falcons',
+                            type: 'game',
+                            date: new Date('2100-06-01T18:00:00Z'),
+                            location: 'Main Gym',
+                            opponent: 'Falcons',
+                            childId: 'player-1',
+                            childName: 'Pat Star',
+                            isDbGame: true,
+                            status: 'scheduled',
+                            homeScore: null,
+                            awayScore: null,
+                            isCancelled: false,
+                            assignments: [],
+                            openAssignmentCount: 0
+                        }, {
+                            eventKey: 'team-1::game-final',
+                            id: 'game-final',
+                            teamId: 'team-1',
+                            teamName: 'Bears',
+                            title: 'vs. Wolves',
+                            type: 'game',
+                            date: new Date('2026-05-01T18:00:00Z'),
+                            location: 'Main Gym',
+                            opponent: 'Wolves',
+                            childId: 'player-1',
+                            childName: 'Pat Star',
+                            isDbGame: true,
+                            status: 'completed',
+                            homeScore: 42,
+                            awayScore: 35,
+                            isCancelled: false,
+                            assignments: [],
+                            openAssignmentCount: 0
+                        }],
+                        isPartial: false
+                    };
+                }
+
+                export async function enableRsvpForImportedCalendarEvent() {
+                    return 'calendar-materialized-event';
                 }
 
                 export async function sendStaffRsvpReminder() {
@@ -529,6 +669,7 @@ async function mockPublicTeamsBrowseModule(page, { slowSearch = false } = {}) {
                         location: 'Atlanta, GA',
                         players: [],
                         eventCount: 0,
+                        upcomingEventCount: 0,
                         unreadCount: 0,
                         openActions: 0,
                         nextEvent: null,
@@ -547,6 +688,7 @@ async function mockPublicTeamsBrowseModule(page, { slowSearch = false } = {}) {
                         location: 'Atlanta, GA',
                         players: [],
                         eventCount: 0,
+                        upcomingEventCount: 0,
                         unreadCount: 0,
                         openActions: 0,
                         nextEvent: null,
@@ -563,6 +705,7 @@ async function mockPublicTeamsBrowseModule(page, { slowSearch = false } = {}) {
                         location: 'Kansas City, MO',
                         players: [],
                         eventCount: 0,
+                        upcomingEventCount: 0,
                         unreadCount: 0,
                         openActions: 0,
                         nextEvent: null,
@@ -603,6 +746,19 @@ async function mockPublicTeamsBrowseModule(page, { slowSearch = false } = {}) {
                         location: 'Atlanta, GA'
                     };
                 }
+
+                export async function getPublicTeamRecentResults() {
+                    return [
+                        {
+                            id: 'result-1',
+                            date: new Date('2026-08-06T18:00:00.000Z'),
+                            opponent: 'North Atlanta Community Soccer Academy Owls',
+                            teamScore: 4,
+                            opponentScore: 1,
+                            result: 'win'
+                        }
+                    ];
+                }
             `
         });
     });
@@ -620,6 +776,14 @@ async function mockTeamCreationModule(page) {
             body: `
                 export function getCreateTeamSportOptions() {
                     return ['Basketball', 'Soccer', 'Baseball', 'Softball'];
+                }
+
+                export function getCreateTeamDiamondProfileOptions() {
+                    return [];
+                }
+
+                export async function configureCreatedTeamDiamondForApp() {
+                    return { configured: true };
                 }
 
                 export async function createTeamForApp(user, input) {
@@ -707,11 +871,13 @@ test.describe('mobile My Teams', () => {
     });
 
     test('creates a team from the native app flow', async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => pageErrors.push(error.message));
         await mockTeamsModules(page, { scenario: 'empty' });
         await mockTeamCreationModule(page);
         await page.goto(appUrl(baseURL, '/teams?scenario=empty'), { waitUntil: 'domcontentloaded' });
 
-        await waitForTeamsRoute(page, page.getByRole('heading', { name: 'No teams linked yet' }), { requireSearchInput: false });
+        await waitForTeamsRoute(page, page.getByRole('heading', { name: 'No teams linked yet' }), { requireSearchInput: false, pageErrors });
         await page.getByRole('link', { name: 'Create team' }).click();
 
         await expect(page).toHaveURL(/#\/teams\/new$/);
@@ -736,6 +902,12 @@ test.describe('mobile My Teams', () => {
     });
 
     test('browse teams paginates searched results on mobile without clearing the query', async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => {
+            if (!error.message.startsWith('Installations: Create Installation request failed')) {
+                pageErrors.push(error.message);
+            }
+        });
         await mockTeamsModules(page, { scenario: 'empty' });
         await mockPublicTeamsBrowseModule(page, { slowSearch: true });
         await page.goto(appUrl(baseURL, '/teams/browse'), { waitUntil: 'domcontentloaded' });
@@ -768,7 +940,18 @@ test.describe('mobile My Teams', () => {
         await expect.poll(async () => atlantaFireLink.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
         await atlantaFireLink.click();
 
+        expect(pageErrors).toEqual([]);
         await expect(page.getByRole('heading', { name: 'Atlanta Fire' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Recent results' })).toBeVisible();
+        const recentResult = page.getByTestId('public-recent-result');
+        await expect(recentResult).toContainText('North Atlanta Community Soccer Academy Owls');
+        await expect(recentResult).toContainText('4');
+        await expect(recentResult).toContainText('1');
+        await expect(recentResult).toContainText('Win');
+        await expect.poll(async () => recentResult.evaluate((node) => {
+            const bounds = node.getBoundingClientRect();
+            return bounds.left >= 0 && bounds.right <= window.innerWidth + 1;
+        })).toBe(true);
         await expect(page.getByRole('link', { name: 'Back to team search' })).toHaveAttribute('href', '#/teams/browse');
         await expect(page.getByRole('link', { name: 'Enter a join code' })).toHaveAttribute('href', '#/accept-invite');
         await expect(page.getByRole('link', { name: 'Sign in' })).toHaveCount(0);
@@ -788,13 +971,29 @@ test.describe('mobile My Teams', () => {
     });
 
     test('keeps team detail tabs reachable while managing a long mobile roster', async ({ page, baseURL }) => {
-        await mockTeamsModules(page, { managedTeam: true });
+        await mockTeamsModules(page, { managedTeam: true, rosterPlayerCount: 12 });
         await page.goto(appUrl(baseURL, '/teams/team-1?tab=roster'), { waitUntil: 'domcontentloaded' });
 
         await waitForTeamDetailRoute(page, 'Bears');
         const tabNav = page.getByTestId('team-detail-tab-nav');
         await expect(tabNav).toBeVisible();
         await expect(page.getByText('Add player').first()).toBeVisible();
+        await expect(page.getByTestId('roster-player-row')).toHaveCount(12);
+        await expect(page.getByLabel(/^Recipient email for /)).toHaveCount(0);
+        const rosterRows = page.getByTestId('roster-player-row');
+        const manageInviteButtons = page.getByRole('button', { name: 'Manage invite' });
+        await expect(manageInviteButtons).toHaveCount(12);
+        const firstManageInvite = rosterRows.nth(0).getByRole('button', { name: 'Manage invite' });
+        await expect.poll(async () => firstManageInvite.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+        await firstManageInvite.click();
+        await expect(page.getByLabel('Recipient email for Pat Star')).toBeVisible();
+        await rosterRows.nth(1).getByRole('button', { name: 'Manage invite' }).click();
+        await expect(page.getByLabel('Recipient email for Pat Star')).toHaveCount(0);
+        await expect(page.getByLabel('Recipient email for Sam Wing')).toBeVisible();
+        await expect(page.getByTestId('parent-invite-editor')).toHaveCount(1);
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+        await rosterRows.nth(1).getByRole('button', { name: 'Close invite' }).click();
+        await expect(page.getByTestId('parent-invite-editor')).toHaveCount(0);
         await expect(tabNav.getByRole('button', { name: /Roster/ })).toHaveAttribute('aria-pressed', 'true');
         expect(await tabNav.evaluate((node) => window.getComputedStyle(node).position)).toBe('sticky');
 
@@ -859,10 +1058,16 @@ test.describe('mobile My Teams', () => {
     });
 
     test('team detail tabs expose parent-facing team page features', async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => {
+            if (!error.message.startsWith('Installations: Create Installation request failed')) {
+                pageErrors.push(error.message);
+            }
+        });
         await mockTeamsModules(page);
         await page.goto(appUrl(baseURL, '/teams/team-1'), { waitUntil: 'domcontentloaded' });
 
-        await waitForTeamDetailRoute(page, 'Bears');
+        await waitForTeamDetailRoute(page, 'Bears', { pageErrors });
         await expect(page.getByText('4-2').first()).toBeVisible();
         await expect(page.getByText('Parent actions')).toBeVisible();
         await expect(page.locator('a[href="#/schedule?teamId=team-1&filter=availability"]')).toBeVisible();
@@ -889,6 +1094,22 @@ test.describe('mobile My Teams', () => {
         await expect(page.getByText('88')).toBeVisible();
 
         await page.getByTestId('team-detail-tab-nav').getByRole('button', { name: /More/ }).click();
+        await expect(async () => {
+            expect(pageErrors).toEqual([]);
+            await expect(page.getByText('Private calendar sync')).toBeVisible({ timeout: 3000 });
+        }).toPass({ timeout: 10000 });
+        await page.getByRole('button', { name: 'Copy Link' }).click();
+        await expect(page.getByText('Private calendar link copied.')).toBeVisible();
+        await expect.poll(() => page.evaluate(() => window.__privateCalendarTeamIds)).toEqual(['team-1']);
+        await expect.poll(() => page.evaluate(() => window.__copiedPublicTexts.at(-1))).toBe(
+            'https://us-central1-game-flow-c6311.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=stored-token'
+        );
+        await expect(page.getByText('Fan Feed', { exact: true })).toBeVisible();
+        await page.getByRole('button', { name: 'Copy or Share Fan Feed' }).click();
+        await expect(page.getByText('Fan feed share sheet opened.')).toBeVisible();
+        await expect.poll(() => page.evaluate(() => window.__sharedPublicUrls.at(-1))).toBe(
+            'https://us-central1-game-flow-c6311.cloudfunctions.net/publicTeamGamesIcs?teamId=team-1'
+        );
         await expect(page.getByText('Website team page')).toBeVisible();
         await expect(page.getByText('Media albums')).toBeVisible();
         await expect(page.getByText('Watch stream')).toBeVisible();
@@ -904,6 +1125,55 @@ test.describe('mobile My Teams', () => {
         await page.getByRole('link', { name: /Pizza Place/ }).click();
         await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://pizza.example.test');
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+        expect(pageErrors).toEqual([]);
+    });
+
+    test('keeps private calendar sync hidden for an authenticated but ineligible viewer', async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => {
+            if (!error.message.startsWith('Installations: Create Installation request failed')) {
+                pageErrors.push(error.message);
+            }
+        });
+        await mockTeamsModules(page, { privateCalendarEligible: false });
+        await page.goto(appUrl(baseURL, '/teams/team-1'), { waitUntil: 'domcontentloaded' });
+
+        await waitForTeamDetailRoute(page, 'Bears', { pageErrors });
+        await page.getByTestId('team-detail-tab-nav').getByRole('button', { name: /More/ }).click();
+        expect(pageErrors).toEqual([]);
+        await expect(page.getByText('Private calendar sync')).toHaveCount(0);
+        await expect(page.getByText('Fan Feed', { exact: true })).toBeVisible();
+        await expect(page.getByText('Website team page')).toBeVisible();
+        expect(await page.evaluate(() => window.__privateCalendarTeamIds)).toEqual([]);
+    });
+
+    test('keeps a complete schedule event on the team overview across tab changes when the bootstrap is stale', async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => {
+            if (!error.message.startsWith('Installations: Create Installation request failed')) {
+                pageErrors.push(error.message);
+            }
+        });
+        await mockTeamsModules(page, { scenario: 'stale-team-detail' });
+        await page.goto(appUrl(baseURL, '/teams/team-1?scenario=stale-team-detail'), { waitUntil: 'domcontentloaded' });
+
+        expect(pageErrors).toEqual([]);
+        await waitForTeamDetailRoute(page, 'Bears');
+        const tabNav = page.getByTestId('team-detail-tab-nav');
+        await expect(tabNav.getByRole('button', { name: /Overview/ })).toHaveAttribute('aria-pressed', 'true');
+        await expect(page.getByRole('link', { name: /Next event/ })).toContainText('Bears vs Tigers');
+        await expect(page.getByRole('link', { name: /Next event/ })).toContainText('Main Gym');
+        await expect(page.getByText('Schedule is clear for now')).toHaveCount(0);
+
+        await tabNav.getByRole('button', { name: /Schedule/ }).click();
+        await expect(page.getByText('Bears vs Tigers', { exact: true })).toBeVisible();
+        await expect(page.getByText('No team events found.')).toHaveCount(0);
+
+        await tabNav.getByRole('button', { name: /Overview/ }).click();
+        await expect(page.getByRole('link', { name: /Next event/ })).toContainText('Bears vs Tigers');
+        await expect(page.getByRole('link', { name: /Next event/ })).toContainText('Main Gym');
+        await expect(page.getByText('Schedule is clear for now')).toHaveCount(0);
+        expect(pageErrors).toEqual([]);
     });
 
     test('team detail tab routes preserve back navigation inside the team page', async ({ page, baseURL }) => {

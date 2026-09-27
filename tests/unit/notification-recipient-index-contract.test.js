@@ -38,10 +38,12 @@ describe('notification recipient index foundation', () => {
     });
 
     it('repairs partial recipient indexes and falls back after empty indexed lookups', () => {
-        expect(functionsSource).toContain('async function getTargetsForCategory(teamId, category');
+        expect(functionsSource).toMatch(/async function getTargetsForCategory\(\s*teamId,\s*category,/);
         expect(functionsSource).toContain('async function resolveMixedNotificationRecipientIndex({');
         expect(functionsSource).toContain('function isAggregateNotificationRecipientDoc(docSnap) {');
-        expect(functionsSource).toContain('const categoryRecipientDocs = targetSnap.docs || [];');
+        expect(functionsSource).toContain('const rawCategoryRecipientDocs = targetSnap.docs || [];');
+        expect(functionsSource).toContain('const enabledAuthUserIds = await getEnabledNotificationAuthUserIds([');
+        expect(functionsSource).toContain('const categoryRecipientDocs = rawCategoryRecipientDocs.filter((docSnap) => (');
         expect(functionsSource).toContain('const indexedRecipientDocs = categoryRecipientDocs.filter(isAggregateNotificationRecipientDoc);');
         expect(functionsSource).toContain('const candidateUsers = await getCandidateUsersForTeam(teamId);');
         expect(functionsSource).toContain('const coverageUserIds = Array.from(eligibleUsers.keys())');

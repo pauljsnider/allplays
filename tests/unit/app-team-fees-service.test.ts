@@ -9,12 +9,7 @@ const dbMocks = vi.hoisted(() => ({
     updateTeamFeeRecipient: vi.fn()
 }));
 
-const stripeServiceMocks = vi.hoisted(() => ({
-    initiateTeamFeeCheckout: vi.fn()
-}));
-
 vi.mock('../../js/db.js', () => dbMocks);
-vi.mock('../../js/stripe-service.js', () => stripeServiceMocks);
 vi.mock('../../js/team-access.js', () => ({
     hasFullTeamAccess: (user: any, team: any) => Boolean(user?.isAdmin || user?.uid === team?.ownerId)
 }));
@@ -26,7 +21,7 @@ import {
     buildOfflineTeamFeeRefundUpdate,
     buildTeamFeeInstallmentSchedule,
     buildManualPaymentUpdate,
-    initiateStaffTeamFeeCheckout,
+    buildTeamFeeFamilyPaymentUrl,
     loadTeamFeeManagementModel,
     recordOfflineTeamFeePayment,
     recordOfflineTeamFeeRefund,
@@ -36,7 +31,6 @@ import {
 describe('React app team fee offline payment service', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        stripeServiceMocks.initiateTeamFeeCheckout.mockReset();
     });
 
     it('builds a partial offline payment update with the legacy ledger shape', () => {
@@ -375,7 +369,8 @@ describe('React app team fee offline payment service', () => {
     it('loads batches and recipients only for fee managers', async () => {
         dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
         dbMocks.listTeamFeeBatches.mockResolvedValue([{ id: 'batch-1', title: 'Dues', amountCents: 10000 }]);
-        dbMocks.listTeamFeeRecipients.mockResolvedValue([{ id: 'recipient-1', playerName: 'Pat Star', amountDueCents: 10000, amountPaidCents: 2500, collectionMode: 'online_stripe', checkoutUrl: 'https://pay.example.test/team-fee', checkoutStatus: 'open' }]);
+        const paymentLedger = [{ type: 'offline_payment', amountCents: 2500, paymentDate: '2026-07-20' }];
+        dbMocks.listTeamFeeRecipients.mockResolvedValue([{ id: 'recipient-1', playerName: 'Pat Star', status: 'partial', amountDueCents: 10000, amountPaidCents: 2500, remainingBalanceCents: 7000, collectionMode: 'online_stripe', checkoutUrl: 'https://pay.example.test/team-fee', checkoutStatus: 'open', paymentLedger }]);
         dbMocks.getPlayers.mockResolvedValue([
             { id: 'player-1', name: 'Pat Star', number: '12', active: true },
             { id: 'player-2', name: 'Inactive Player', active: false }
@@ -385,40 +380,35 @@ describe('React app team fee offline payment service', () => {
 
         expect(model.canManageFees).toBe(true);
         expect(model.selectedBatch?.id).toBe('batch-1');
+        expect(dbMocks.listTeamFeeRecipients).toHaveBeenCalledWith('team-1', 'batch-1', { hydrateAdminBilling: false });
         expect(model.rosterPlayers).toEqual([{ id: 'player-1', name: 'Pat Star', number: '12', parentName: '', parentEmail: '' }]);
         expect(model.recipients[0]).toMatchObject({
             id: 'recipient-1',
             playerName: 'Pat Star',
-            remainingBalanceCents: 7500,
+            status: 'partial',
+            amountDueCents: 10000,
+            amountPaidCents: 2500,
+            remainingBalanceCents: 7000,
             collectionMode: 'online_stripe',
-            checkoutUrl: 'https://pay.example.test/team-fee',
-            checkoutStatus: 'open'
+            checkoutUrl: '',
+            checkoutStatus: 'open',
+            paymentLedger
         });
     });
 
-    it('initiates a staff team fee checkout only for fee managers', async () => {
-        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
-        stripeServiceMocks.initiateTeamFeeCheckout.mockResolvedValue('https://checkout.stripe.test/team-fee');
-
-        await expect(initiateStaffTeamFeeCheckout({
+    it('builds a family sign-in link without creating a staff-owned provider checkout', () => {
+        expect(buildTeamFeeFamilyPaymentUrl({
             teamId: 'team-1',
             batchId: 'batch-1',
             recipientId: 'recipient-1',
-            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: [] }
-        })).resolves.toEqual({ success: true, checkoutUrl: 'https://checkout.stripe.test/team-fee' });
+            origin: 'https://preview.example/path'
+        })).toBe('https://preview.example/app/#/auth?next=%2Fparent-tools%2Ffees%3FteamId%3Dteam-1%26batchId%3Dbatch-1%26recipientId%3Drecipient-1');
 
-        expect(stripeServiceMocks.initiateTeamFeeCheckout).toHaveBeenCalledWith({
+        expect(() => buildTeamFeeFamilyPaymentUrl({
             teamId: 'team-1',
-            batchId: 'batch-1',
+            batchId: '',
             recipientId: 'recipient-1'
-        });
-
-        await expect(initiateStaffTeamFeeCheckout({
-            teamId: 'team-1',
-            batchId: 'batch-1',
-            recipientId: 'recipient-1',
-            user: { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: [] }
-        })).rejects.toThrow('do not have access');
+        })).toThrow('Missing required fields for the family payment link.');
     });
 
     it('creates a simple fee batch using the legacy document shape', async () => {
@@ -565,6 +555,48 @@ describe('React app team fee offline payment service', () => {
             expect.objectContaining({ playerId: 'player-1', parentName: 'Pat Parent', parentEmail: 'pat.parent@example.com' }),
             expect.objectContaining({ playerId: 'player-2', parentName: '', parentEmail: '' })
         ], expect.any(Object));
+    });
+
+    it('preserves the 499-recipient limit for whole-roster creation after deduplication', async () => {
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
+        const activePlayers = Array.from({ length: 499 }, (_, index) => ({
+            id: `player-${index + 1}`,
+            name: `Player ${index + 1}`,
+            active: true
+        }));
+        dbMocks.getPlayers.mockResolvedValue([...activePlayers, { ...activePlayers[0], id: '  player-1  ' }]);
+        dbMocks.createTeamFeeBatch.mockResolvedValue({ id: 'batch-limit' });
+
+        await expect(createTeamFeeBatchForApp({
+            teamId: 'team-1',
+            title: 'Program fee',
+            amount: '10.00',
+            dueDate: '2026-07-01',
+            applyToWholeRoster: true,
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: [] }
+        })).resolves.toEqual({ id: 'batch-limit' });
+
+        expect(dbMocks.createTeamFeeBatch.mock.calls[0][2]).toHaveLength(499);
+    });
+
+    it('rejects an oversized whole roster before delegating to Firestore creation', async () => {
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
+        dbMocks.getPlayers.mockResolvedValue(Array.from({ length: 500 }, (_, index) => ({
+            id: `player-${index + 1}`,
+            name: `Player ${index + 1}`,
+            active: true
+        })));
+
+        await expect(createTeamFeeBatchForApp({
+            teamId: 'team-1',
+            title: 'Program fee',
+            amount: '10.00',
+            dueDate: '2026-07-01',
+            applyToWholeRoster: true,
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: [] }
+        })).rejects.toThrow('A fee batch can include at most 499 recipients. Split the roster into smaller fee batches and try again.');
+
+        expect(dbMocks.createTeamFeeBatch).not.toHaveBeenCalled();
     });
 
     it('writes manualPayment and paymentLedger updates to the existing recipient document', async () => {

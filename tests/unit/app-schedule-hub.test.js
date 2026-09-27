@@ -4,15 +4,18 @@ import {
     buildPracticeHubDestinations,
     getPracticeShareText,
     getPublicGameReportHref,
+    getPublicGameReportShareHref,
     getPublicLiveHref,
+    getPublicLiveShareHref,
     getPublicPlayerHref,
     getPublicPracticeHref,
     getPublicReplayHref,
+    getPublicReplayShareHref,
     getPublicTeamHref
 } from '../../apps/app/src/lib/scheduleHub';
 
 function event(overrides = {}) {
-    return {
+    const value = {
         eventKey: overrides.eventKey || `${overrides.teamId || 'team-1'}::${overrides.id || 'game-1'}::${overrides.childId || 'player-1'}`,
         id: overrides.id || 'game-1',
         teamId: overrides.teamId || 'team-1',
@@ -29,6 +32,14 @@ function event(overrides = {}) {
         assignments: overrides.assignments || [],
         ...overrides
     };
+    if (!Object.prototype.hasOwnProperty.call(overrides, 'rawReplayLifecycle')) {
+        value.rawReplayLifecycle = {
+            type: value.type,
+            status: value.status,
+            liveStatus: value.liveStatus
+        };
+    }
+    return value;
 }
 
 describe('React app schedule More tab hub helpers', () => {
@@ -43,7 +54,8 @@ describe('React app schedule More tab hub helpers', () => {
             badge: 'Replay',
             actionLabel: 'Watch replay',
             shareLabel: 'Replay',
-            url: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true'
+            url: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true',
+            shareUrl: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true'
         });
         expect(destinations[0].shareText).toContain('Bears vs. Falcons replay');
         expect(destinations[1]).toMatchObject({
@@ -51,7 +63,8 @@ describe('React app schedule More tab hub helpers', () => {
             icon: 'file-text',
             actionLabel: 'Open report',
             shareLabel: 'Match report',
-            url: 'https://allplays.ai/game.html#teamId=team-1&gameId=game-1'
+            url: 'https://allplays.ai/game.html#teamId=team-1&gameId=game-1',
+            shareUrl: 'https://share.allplays.ai/report?teamId=team-1&gameId=game-1'
         });
         expect(destinations[1].shareText).toContain('Bears vs. Falcons match report');
     });
@@ -64,7 +77,8 @@ describe('React app schedule More tab hub helpers', () => {
             title: 'Watch live',
             icon: 'radio',
             badge: 'Live',
-            url: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1'
+            url: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1',
+            shareUrl: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1'
         });
         expect(destinations[0].url).not.toContain('replay=true');
     });
@@ -137,8 +151,11 @@ describe('React app schedule More tab hub helpers', () => {
         const practice = event({ id: 'practice-1', type: 'practice' });
 
         expect(getPublicGameReportHref(game)).toBe('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
+        expect(getPublicGameReportShareHref(game)).toBe('https://share.allplays.ai/report?teamId=team-1&gameId=game-1');
         expect(getPublicLiveHref(game)).toBe('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1');
+        expect(getPublicLiveShareHref(game)).toBe('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1');
         expect(getPublicReplayHref(game)).toBe('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true');
+        expect(getPublicReplayShareHref(game)).toBe('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true');
         expect(getPublicPlayerHref('team-1', 'game-1', 'player-1')).toBe('https://allplays.ai/player.html#teamId=team-1&gameId=game-1&playerId=player-1');
         expect(getPublicTeamHref(practice)).toBe('https://allplays.ai/team.html#teamId=team-1');
         expect(getPublicPracticeHref(practice)).toBe('https://allplays.ai/drills.html?teamId=team-1&eventId=practice-1');

@@ -35,6 +35,9 @@ vi.mock('@legacy/drill-constants.js', () => ({
 vi.mock('@legacy/team-media-utils.js', () => ({
     isSupportedTeamMediaDocument: vi.fn(() => true)
 }));
+vi.mock('@legacy/team-media-upload-limits.js', () => ({
+    validateTeamMediaUploadBatch: vi.fn(() => ({ valid: true, message: '' }))
+}));
 
 import { renderCertificate } from './legacyCertificates';
 import { DRILL_LEVELS, DRILL_TYPES, DRILL_TYPE_COLORS } from './legacyDrills';
@@ -48,7 +51,7 @@ import {
     hasQuantityDiscountRule,
     requiresRegistrationOption
 } from './legacyRegistration';
-import { isSupportedTeamMediaDocument } from './legacyTeamMedia';
+import { isSupportedTeamMediaDocument, validateTeamMediaUploadBatch } from './legacyTeamMedia';
 
 it('keeps utility-backed pages behind legacy adapters and the shared alias boundary', () => {
     const profileSource = readFileSync('src/pages/Profile.tsx', 'utf8');
@@ -86,5 +89,6 @@ describe('legacy utility adapters', () => {
         expect(DRILL_LEVELS).toEqual(['All', 'Advanced']);
         expect(DRILL_TYPE_COLORS.Technical.text).toBe('text-purple-800');
         expect(isSupportedTeamMediaDocument(new File(['demo'], 'doc.pdf', { type: 'application/pdf' }))).toBe(true);
+        expect(validateTeamMediaUploadBatch([])).toEqual({ valid: true, message: '' });
     });
 });

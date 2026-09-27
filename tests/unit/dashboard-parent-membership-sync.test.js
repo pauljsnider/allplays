@@ -12,7 +12,25 @@ function getRequireSyncedAuth() {
     return match[0].replace(/\n\n        async function init$/, '');
 }
 
-function runRequireSyncedAuth(checkAuth, windowObject = { location: { href: '' } }) {
+function createWindowObject() {
+    const listeners = new Map();
+    return {
+        location: { href: '' },
+        CustomEvent: class TestCustomEvent {
+            constructor(type) {
+                this.type = type;
+            }
+        },
+        addEventListener: vi.fn((type, listener) => listeners.set(type, listener)),
+        removeEventListener: vi.fn((type, listener) => {
+            if (listeners.get(type) === listener) listeners.delete(type);
+        }),
+        dispatchEvent: vi.fn(),
+        listeners
+    };
+}
+
+function runRequireSyncedAuth(checkAuth, windowObject = createWindowObject()) {
     const source = `${getRequireSyncedAuth()}; return requireSyncedAuth();`;
     return new Function('checkAuth', 'window', source)(checkAuth, windowObject);
 }
@@ -21,30 +39,39 @@ describe('dashboard parent membership sync', () => {
     const html = readRepoFile('dashboard.html');
 
     it('uses the rich auth path before loading parent-linked teams', () => {
-        expect(html).toContain("import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUserProfile, getUnreadChatCounts } from './js/db.js?v=127';");
-        expect(html).toContain("import { checkAuth } from './js/auth.js?v=135';");
+        expect(html).toContain("import { deleteTeam, getUnreadChatCounts } from './js/db.js?v=4433199';");
+        expect(html).toContain("import { loadDashboardTeams } from './js/dashboard-team-load.js?v=4';");
+        expect(html).toContain("import { checkAuth } from './js/auth.js?v=4433203';");
         expect(html).toContain('function requireSyncedAuth()');
         expect(html).toContain('const user = await requireSyncedAuth();');
-        expect(html).toContain('getParentTeams(user.uid)');
+        // checkAuth() already merged isAdmin/profileEmail/parentOf onto `user`, so
+        // the page reuses those instead of refetching the profile itself.
+        expect(html).not.toContain('getUserProfile');
+        expect(html).toContain('const { fullAccessTeams: coachTeams, parentTeams } = await loadDashboardTeams({');
+        expect(html).not.toContain('getParentTeams(');
         expect(html).not.toContain('requireAuth as authRequireAuth');
     });
 
-    it('unsubscribes when checkAuth invokes the user callback synchronously', async () => {
+    it('keeps the auth subscription through dashboard bootstrap and releases it on pagehide', async () => {
         const user = { uid: 'parent-1' };
         const unsubscribe = vi.fn();
+        const windowObject = createWindowObject();
         const checkAuth = vi.fn((callback) => {
             callback(user);
             return unsubscribe;
         });
 
-        await expect(runRequireSyncedAuth(checkAuth)).resolves.toBe(user);
+        await expect(runRequireSyncedAuth(checkAuth, windowObject)).resolves.toBe(user);
+
+        expect(unsubscribe).not.toHaveBeenCalled();
+        windowObject.listeners.get('pagehide')();
 
         expect(unsubscribe).toHaveBeenCalledTimes(1);
     });
 
     it('unsubscribes and redirects when checkAuth synchronously reports no user', async () => {
         const unsubscribe = vi.fn();
-        const windowObject = { location: { href: '' } };
+        const windowObject = createWindowObject();
         const checkAuth = vi.fn((callback) => {
             callback(null);
             return unsubscribe;
@@ -59,14 +86,46 @@ describe('dashboard parent membership sync', () => {
     it('ignores duplicate auth emissions after settling', async () => {
         const user = { uid: 'parent-1' };
         const unsubscribe = vi.fn();
+        const windowObject = createWindowObject();
         const checkAuth = vi.fn((callback) => {
             callback(user);
             callback({ uid: 'parent-2' });
             return unsubscribe;
         });
 
-        await expect(runRequireSyncedAuth(checkAuth)).resolves.toBe(user);
+        await expect(runRequireSyncedAuth(checkAuth, windowObject)).resolves.toBe(user);
 
+        expect(unsubscribe).not.toHaveBeenCalled();
+        windowObject.listeners.get('pagehide')();
+
+        expect(unsubscribe).toHaveBeenCalledTimes(1);
+    });
+
+    it('dispatches a reload signal when parent access arrives after bootstrap', async () => {
+        const initialUser = { uid: 'parent-1', parentOf: [] };
+        let active = true;
+        const unsubscribe = vi.fn(() => {
+            active = false;
+        });
+        const windowObject = createWindowObject();
+        let publishAuth;
+        const checkAuth = vi.fn((callback) => {
+            publishAuth = (user) => {
+                if (active) callback(user);
+            };
+            publishAuth(initialUser);
+            return unsubscribe;
+        });
+
+        await expect(runRequireSyncedAuth(checkAuth, windowObject)).resolves.toBe(initialUser);
+        publishAuth({
+            uid: 'parent-1',
+            parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+        });
+
+        expect(windowObject.dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'allplays-dashboard-parent-access-enriched'
+        }));
         expect(unsubscribe).toHaveBeenCalledTimes(1);
     });
 
@@ -78,7 +137,7 @@ describe('dashboard parent membership sync', () => {
 
     it('does not merge parent-only teams into the primary full-access grid', () => {
         expect(html).toContain('full-access-teams-grid');
-        expect(html).toContain('fullAccessTeams.map(team => renderTeamCard');
+        expect(html).toContain('fullAccessTeams.map((team, index) => renderTeamCard(team, { eager: index === 0 }))');
     });
 
     it('renders parent-only teams in a separate collapsed section for mixed-role users', () => {

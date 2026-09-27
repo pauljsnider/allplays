@@ -149,7 +149,7 @@ export function Composer({
                             {preview.file.type.startsWith('video/') ? (
                                 <video src={preview.url} className="h-full w-full object-cover" muted playsInline />
                             ) : (
-                                <img src={preview.url} alt={preview.file.name || `Attachment preview ${index + 1}`} className="h-full w-full object-cover" />
+                                <img src={preview.url} alt={preview.file.name || `Attachment preview ${index + 1}`} loading="lazy" decoding="async" className="h-full w-full object-cover" />
                             )}
                             <button type="button" className="absolute right-1 top-1 rounded-full bg-gray-950/70 p-1 text-white" onClick={() => onRemoveFile(index)} aria-label="Remove attachment" disabled={disabled}>
                                 <X className="h-3 w-3" aria-hidden="true" />

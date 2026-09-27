@@ -81,11 +81,13 @@ function serializeHomepageGame(game = {}, teamId, team = {}) {
     ? projectSharedGameForPublicTeam(game, teamId)
     : { ...game, teamId };
   if (!projected) return null;
-  const serialized = serializePublicGame(projected);
+  const serialized = serializePublicGame(projected, { team, recordedReplayMarkerOnly: true });
   if (!serialized) return null;
 
   const homeScore = serialized.isHome ? serialized.teamScore : serialized.opponentScore;
   const awayScore = serialized.isHome ? serialized.opponentScore : serialized.teamScore;
+  const hasRecordedReplay = serialized.videoLifecycle === 'completed'
+    && game.hasRecordedReplay === true;
   return {
     id: serialized.id,
     teamId,
@@ -94,12 +96,16 @@ function serializeHomepageGame(game = {}, teamId, team = {}) {
     endsAt: serialized.endsAt,
     location: serialized.location,
     isHome: serialized.isHome,
-    status: serialized.status,
-    liveStatus: serialized.status,
+    status: serialized.sourceStatus || '',
+    liveStatus: serialized.liveStatus || '',
     homeScore,
     awayScore,
     liveViewerCount: finiteNonNegative(game.liveViewerCount),
-    videoUrl: serialized.videoUrl,
+    videoLifecycle: serialized.videoLifecycle,
+    // Homepage cards only need a safe capability marker for recorded replay
+    // navigation. The playback callable is the sole URL-release boundary.
+    videoUrl: serialized.videoLifecycle === 'live' ? serialized.videoUrl : null,
+    hasRecordedReplay,
     isSharedGame: projected.isSharedGame === true,
     team: serializePublicTeam(teamId, team)
   };
@@ -143,12 +149,16 @@ async function serializePublicHomepageCandidates({
         continue;
       }
       const game = team ? serializeHomepageGame(candidate, teamId, team) : null;
+      const videoLifecycle = game?.videoLifecycle;
+      const hasCompletedLivePlayback = ['completed', 'final'].includes(game?.liveStatus);
+      const hasReplayExperience = videoLifecycle === 'completed'
+        && (hasCompletedLivePlayback || game?.hasRecordedReplay === true);
       const categoryMatches = game && (
         category === 'live'
-          ? game.status === 'live'
+          ? videoLifecycle === 'live'
           : category === 'replays'
-            ? game.status === 'completed'
-            : !['live', 'completed', 'cancelled'].includes(game.status)
+            ? hasReplayExperience
+            : videoLifecycle === 'upcoming'
       );
       if (categoryMatches) {
         serialized.push(game);

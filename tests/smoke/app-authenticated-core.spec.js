@@ -83,9 +83,27 @@ test('staff account reaches every critical app workflow with smoke fixtures', as
             forbidden: [/Unable to load/i, /Team not found/i, /No players have been added yet/i],
             requiredHref: `/players/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.playerId)}`
         });
+        await page.setViewportSize({ width: 390, height: 844 });
         await openAuthenticatedAppRoute(page, config.appBaseUrl, `${teamPath}/edit`, { heading: /Team settings|Edit team/ });
+        const teamNameInput = page.getByPlaceholder('Team name');
+        const loadedTeamName = await teamNameInput.inputValue();
+        await teamNameInput.fill(`${loadedTeamName} `);
+        const saveTray = page.getByRole('region', { name: /Team settings with unsaved changes/i });
+        await expect(saveTray).toBeVisible();
+        await page.getByRole('checkbox', { name: /Public team/i }).scrollIntoViewIfNeeded();
+        await expect(saveTray).toBeVisible();
+        const [trayBox, navBox] = await Promise.all([
+            saveTray.boundingBox(),
+            page.getByRole('navigation', { name: 'Primary navigation' }).boundingBox()
+        ]);
+        expect(trayBox).not.toBeNull();
+        expect(navBox).not.toBeNull();
+        expect(trayBox.y + trayBox.height).toBeLessThanOrEqual(navBox.y);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await expect(page.getByRole('heading', { name: /Team settings|Edit team/ })).toBeVisible({ timeout: 20_000 });
+        await page.setViewportSize({ width: 1280, height: 720 });
         await openAuthenticatedAppRoute(page, config.appBaseUrl, `/schedule?teamId=${encodeURIComponent(config.teamId)}`, {
-            heading: /Schedule|Your team calendar/,
+            heading: /^(Schedule|Team schedule management|Games, practices, RSVP)$/,
             requiredHref: `/schedule/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.eventId)}`
         });
         await openAuthenticatedAppRoute(page, config.appBaseUrl, `/messages/${encodeURIComponent(config.teamId)}`, { heading: 'Conversations' });
@@ -130,7 +148,7 @@ test('parent account reaches every critical family workflow with linked fixtures
             requiredHref: playerPath
         });
         await openAuthenticatedAppRoute(page, config.appBaseUrl, `/schedule?teamId=${encodeURIComponent(config.teamId)}`, {
-            heading: /Schedule|Your team calendar/,
+            heading: /^(Schedule|Team schedule management|Games, practices, RSVP)$/,
             requiredHref: `/schedule/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.eventId)}`
         });
         await openAuthenticatedAppRoute(page, config.appBaseUrl, `/messages/${encodeURIComponent(config.teamId)}`, { heading: 'Conversations' });
@@ -144,7 +162,7 @@ test('parent account reaches every critical family workflow with linked fixtures
         await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/access', { heading: 'Family workflows' });
         await expect(page.getByText('Access requests', { exact: true })).toBeVisible();
         await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/household', { heading: 'Family workflows' });
-        await expect(page.getByText('Create invite', { exact: true })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Create invite' })).toBeVisible();
         await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/share', { heading: 'Family workflows' });
         await expect(page.getByText('Family share', { exact: true })).toBeVisible();
         await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/certificates', { heading: 'Family workflows' });

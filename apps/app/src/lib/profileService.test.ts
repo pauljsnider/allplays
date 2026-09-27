@@ -25,6 +25,9 @@ const telemetryMocks = vi.hoisted(() => {
         createAppTimer: vi.fn(() => ({ end: timerEnd }))
     };
 });
+const capacitorHttpMocks = vi.hoisted(() => ({
+    post: vi.fn()
+}));
 
 vi.mock('../../../../js/db.js', () => dbMocks);
 vi.mock('../../../../js/notification-preferences.js', () => ({
@@ -45,6 +48,9 @@ vi.mock('@capacitor/camera', () => ({
 vi.mock('@capacitor/core', () => ({
     Capacitor: {
         isNativePlatform: vi.fn(() => false)
+    },
+    CapacitorHttp: {
+        post: capacitorHttpMocks.post
     }
 }));
 vi.mock('./authService', () => ({
@@ -58,7 +64,7 @@ vi.mock('../../../../js/team-visibility.js', () => ({
 
 import { normalizeProfilePhoto } from './profilePhotoService';
 import { getNativeAuthIdToken } from './authService';
-import { createProfileAccessCode, loadNotificationTeams, loadParentTeams, loadProfileAccessCodesPage, loadProfileDocument, requestAccountMerge } from './profileService';
+import { createProfileAccessCode, loadManagedTeamsFromNativeCallable, loadNotificationTeams, loadParentTeams, loadProfileAccessCodesPage, loadProfileDocument, requestAccountMerge } from './profileService';
 
 describe('createProfileAccessCode', () => {
     beforeEach(() => {
@@ -84,6 +90,19 @@ describe('createProfileAccessCode', () => {
 
         expect(dbMocks.generateAccessCode).not.toHaveBeenCalled();
         expect(dbMocks.createAccessCode).not.toHaveBeenCalled();
+    });
+
+    it('rejects phone-only friend invites before code generation or persistence', async () => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+
+        await expect(createProfileAccessCode('user-1', '  ', '555-0100')).rejects.toThrow(
+            "Phone-only invites aren't available because sign-in can't verify phone ownership. Enter the recipient's email instead."
+        );
+
+        expect(dbMocks.generateAccessCode).not.toHaveBeenCalled();
+        expect(dbMocks.createAccessCode).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it('uses the code as the Firestore document id in the native REST fallback', async () => {
@@ -123,7 +142,7 @@ describe('createProfileAccessCode', () => {
         });
         vi.stubGlobal('fetch', fetchMock);
 
-        await expect(createProfileAccessCode('user-1', '', '555-0100')).resolves.toBe('FIRST123');
+        await expect(createProfileAccessCode('user-1', 'friend@example.com', '555-0100')).resolves.toBe('FIRST123');
 
         const patchCall = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH');
         const patchBody = JSON.parse(String(patchCall?.[1]?.body || '{}'));
@@ -160,16 +179,15 @@ it('routes handled profile-service failures through the shared logger helper', (
     expect(profileServiceSource).not.toContain('console.');
 });
 
-it('keeps native notification team loading compatible with legacy owner emails', () => {
+it('routes native notification team discovery through the server-filtered callable', () => {
     const profileServiceSource = readFileSync('src/lib/profileService.ts', 'utf8');
     const nativeNotificationSource = profileServiceSource.slice(
         profileServiceSource.indexOf('async function nativeLoadNotificationTeams'),
         profileServiceSource.indexOf('async function nativeLoadParentTeams')
     );
 
-    expect(nativeNotificationSource).toContain("nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail)");
-    expect(nativeNotificationSource).toContain("nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail)");
-    expect(nativeNotificationSource).toContain('ownerEmailTeams.flat()');
+    expect(nativeNotificationSource).toContain('loadManagedTeamsFromNativeCallable()');
+    expect(nativeNotificationSource).not.toContain("nativeRunQuery('teams', 'ownerEmail'");
 });
 
 describe('loadProfileDocument telemetry', () => {
@@ -179,6 +197,7 @@ describe('loadProfileDocument telemetry', () => {
 
     afterEach(() => {
         vi.unstubAllGlobals();
+        vi.useRealTimers();
     });
 
     it('records profile load timing when the SDK path succeeds', async () => {
@@ -234,6 +253,35 @@ describe('loadProfileDocument telemetry', () => {
             userIdPresent: true
         });
     });
+
+    it('starts the authenticated REST hedge before a stalled SDK read reaches its timeout', async () => {
+        vi.useFakeTimers();
+        dbMocks.getUserProfile.mockImplementation(() => new Promise(() => {}));
+        vi.mocked(getNativeAuthIdToken).mockResolvedValue('web-token');
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => ({
+                name: 'projects/demo/databases/(default)/documents/users/user-1',
+                fields: {
+                    fullName: { stringValue: 'REST Pat' }
+                }
+            })
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        const profile = loadProfileDocument('user-1');
+        await vi.advanceTimersByTimeAsync(749);
+        expect(fetchMock).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+
+        await expect(profile).resolves.toEqual({ id: 'user-1', fullName: 'REST Pat' });
+        expect(telemetryMocks.timerEnd).toHaveBeenCalledWith({
+            path: 'rest_fallback',
+            fallback: true,
+            userIdPresent: true
+        });
+    });
 });
 
 describe('native parent-team fallback hydration', () => {
@@ -246,7 +294,16 @@ describe('native parent-team fallback hydration', () => {
         vi.unstubAllGlobals();
     });
 
-    function mockNativeProfileFallbackFetch() {
+    function mockNativeProfileFallbackFetch({ managedIsPartial = false } = {}) {
+        capacitorHttpMocks.post.mockResolvedValue({
+            status: 200,
+            data: {
+                result: {
+                    items: [{ id: 'legacy-team', name: 'Legacy Lions', ownerEmail: 'parent@example.com' }],
+                    isPartial: managedIsPartial
+                }
+            }
+        });
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
 
@@ -329,6 +386,59 @@ describe('native parent-team fallback hydration', () => {
         return fetchMock;
     }
 
+    it('requests bounded chat metadata only for chat callers', async () => {
+        mockNativeProfileFallbackFetch();
+
+        await loadManagedTeamsFromNativeCallable({ includeChatMetadata: true });
+
+        expect(capacitorHttpMocks.post).toHaveBeenCalledWith(expect.objectContaining({
+            data: { data: { includeChatMetadata: true } },
+            connectTimeout: 8000,
+            readTimeout: 8000
+        }));
+        expect(getNativeAuthIdToken).toHaveBeenCalledWith(false);
+    });
+
+    it('refreshes a managed-team read once after a 401 response', async () => {
+        vi.mocked(getNativeAuthIdToken)
+            .mockResolvedValueOnce('cached-token')
+            .mockResolvedValueOnce('refreshed-token');
+        capacitorHttpMocks.post
+            .mockResolvedValueOnce({ status: 401, data: { error: { message: 'Unauthenticated.' } } })
+            .mockResolvedValueOnce({ status: 200, data: { result: { items: [], isPartial: false } } });
+
+        await expect(loadManagedTeamsFromNativeCallable()).resolves.toEqual({ teams: [], isPartial: false });
+
+        expect(getNativeAuthIdToken).toHaveBeenNthCalledWith(1, false);
+        expect(getNativeAuthIdToken).toHaveBeenNthCalledWith(2, true);
+        expect(capacitorHttpMocks.post).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not refresh a managed-team read after a 403 response', async () => {
+        capacitorHttpMocks.post.mockResolvedValue({
+            status: 403,
+            data: { error: { message: 'Missing or insufficient permissions.' } }
+        });
+
+        await expect(loadManagedTeamsFromNativeCallable()).rejects.toThrow('Missing or insufficient permissions.');
+
+        expect(getNativeAuthIdToken).toHaveBeenCalledTimes(1);
+        expect(getNativeAuthIdToken).toHaveBeenCalledWith(false);
+        expect(capacitorHttpMocks.post).toHaveBeenCalledTimes(1);
+    });
+
+    it('honors a caller-specific timeout for cold managed-team discovery', async () => {
+        mockNativeProfileFallbackFetch();
+
+        await loadManagedTeamsFromNativeCallable({ timeoutMs: 15000 });
+
+        expect(capacitorHttpMocks.post).toHaveBeenCalledWith(expect.objectContaining({
+            data: { data: {} },
+            connectTimeout: 15000,
+            readTimeout: 15000
+        }));
+    });
+
     it('uses per-document team reads for notification teams so parent hydration stays rule-compatible', async () => {
         dbMocks.getUserTeamsWithAccess.mockRejectedValue(new Error('sdk failed'));
         dbMocks.getParentTeams.mockRejectedValue(new Error('sdk failed'));
@@ -336,13 +446,28 @@ describe('native parent-team fallback hydration', () => {
 
         await expect(loadNotificationTeams('user-1', 'parent@example.com')).resolves.toEqual([
             { id: 'team-1', name: 'Bears' },
-            { id: 'team-3', name: 'Cougars' }
+            { id: 'team-3', name: 'Cougars' },
+            { id: 'legacy-team', name: 'Legacy Lions' }
         ]);
 
+        expect(capacitorHttpMocks.post).toHaveBeenCalledWith(expect.objectContaining({
+            url: 'https://us-central1-demo-project.cloudfunctions.net/listManagedTeams',
+            data: { data: {} }
+        }));
+        expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('.cloudfunctions.net/listManagedTeams'))).toBe(false);
         expect(fetchMock.mock.calls.some(([, init]) => String(init?.body || '').includes('"fieldPath":"__name__"'))).toBe(false);
         expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-1'))).toBe(true);
         expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-2'))).toBe(true);
         expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-3'))).toBe(true);
+    });
+
+    it('rejects partial native managed-team discovery instead of hiding notification teams', async () => {
+        dbMocks.getUserTeamsWithAccess.mockRejectedValue(new Error('sdk failed'));
+        dbMocks.getParentTeams.mockRejectedValue(new Error('sdk failed'));
+        mockNativeProfileFallbackFetch({ managedIsPartial: true });
+
+        await expect(loadNotificationTeams('user-1', 'parent@example.com'))
+            .rejects.toThrow('Managed team discovery returned partial results.');
     });
 
     it('reuses the per-document fallback loader for parent teams', async () => {

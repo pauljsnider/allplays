@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 
 export type UserRole = 'parent' | 'coach' | 'admin' | 'platformAdmin';
+export type ProfileHydrationStatus = 'success' | 'fallback';
 
 export type CapabilityCategory =
   | 'Entry'
@@ -61,6 +62,7 @@ export interface AuthUser {
 export interface AuthState {
   user: AuthUser | null;
   profile: Record<string, unknown> | null;
+  profileHydration?: ProfileHydrationStatus | null;
   loading: boolean;
   error: string | null;
   roles: UserRole[];

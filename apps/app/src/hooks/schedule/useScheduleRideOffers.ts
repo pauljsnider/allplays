@@ -80,6 +80,8 @@ export function useScheduleRideOffers() {
   const eventRef = useRef(event);
   const updateEventsRef = useRef(updateEvents);
   const offersRef = useRef<ScheduleRideOffer[]>([]);
+  const authUserRef = useRef(auth.user);
+  const childEventsRef = useRef(childEvents);
   const {
     loading,
     error: loadError,
@@ -93,7 +95,9 @@ export function useScheduleRideOffers() {
   useEffect(() => {
     eventRef.current = event;
     updateEventsRef.current = updateEvents;
-  }, [event, updateEvents]);
+    authUserRef.current = auth.user;
+    childEventsRef.current = childEvents;
+  }, [auth.user, childEvents, event, updateEvents]);
 
   useEffect(() => {
     offersRef.current = offers;
@@ -116,7 +120,7 @@ export function useScheduleRideOffers() {
     const currentEvent = eventRef.current;
     const hadOffers = offersRef.current.length > 0;
     return runLoadOffers(
-      () => loadParentScheduleRideOffers(currentEvent),
+      () => loadParentScheduleRideOffers(currentEvent, authUserRef.current, childEventsRef.current),
       {
         clearError: true,
         getErrorMessage: (loadError) => getRideOffersErrorMessage(loadError, 'Unable to load rideshare offers.'),

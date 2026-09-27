@@ -61,7 +61,7 @@ describe('clipboardImage', () => {
       'utf8'
     );
     const rosterSource = readFileSync(
-      path.resolve(process.cwd(), 'apps/app/src/pages/TeamDetail.tsx'),
+      path.resolve(process.cwd(), 'apps/app/src/pages/team-detail/RosterTab.tsx'),
       'utf8'
     );
     const chatSource = readFileSync(

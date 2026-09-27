@@ -12,6 +12,7 @@ const firebaseMocks = vi.hoisted(() => ({
     getRedirectResult: vi.fn(),
     isSignInWithEmailLink: vi.fn(),
     signInWithEmailLink: vi.fn(),
+    limit: vi.fn(),
     updatePassword: vi.fn()
 }));
 
@@ -31,22 +32,22 @@ const dbMocks = vi.hoisted(() => ({
     normalizeParentScopeLinks: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=22', () => firebaseMocks);
-vi.mock('../../js/db.js?v=127', () => dbMocks);
-vi.mock('../../js/signup-flow.js?v=12', () => ({
+vi.mock('../../js/firebase.js?v=33', () => firebaseMocks);
+vi.mock('../../js/db.js?v=4433199', () => dbMocks);
+vi.mock('../../js/signup-flow.js?v=14', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
-vi.mock('../../js/admin-invite.js?v=6', () => ({
+vi.mock('../../js/admin-invite.js?v=12', () => ({
     redeemAdminInviteAcceptance: vi.fn(),
     redeemAdminInviteAtomically: vi.fn()
 }));
-vi.mock('../../js/parent-membership-utils.js?v=2', () => ({
+vi.mock('../../js/parent-membership-utils.js?v=3', () => ({
     mergeApprovedParentMembershipRequests: vi.fn()
 }));
-vi.mock('../../js/accept-invite-flow.js?v=11', () => ({
+vi.mock('../../js/accept-invite-flow.js?v=443314', () => ({
     createInviteProcessor: vi.fn()
 }));
-vi.mock('../../js/auth-email.js?v=1', () => ({
+vi.mock('../../js/auth-email.js?v=8', () => ({
     queueCurrentUserVerificationEmail: vi.fn(),
     queueInviteSignInEmail: vi.fn(),
     queuePasswordResetEmail: vi.fn()

@@ -23,6 +23,13 @@
   <meta property="og:url" content="https://allplays.ai/teams.html">
   <link rel="icon" type="image/png" href="img/logo_small.png">
   <title>Browse Teams - ALL PLAYS</title>
+  <meta name="twitter:description" content="Browse public youth sports teams on Allplays and explore schedules, live games, replays, and team activity.">
+
+  <meta property="og:image" content="https://allplays.ai/img/logo_large.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Browse Teams - ALL PLAYS">
+  <meta name="twitter:image" content="https://allplays.ai/img/logo_large.png">
+
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="css/styles.css">
   <script>
@@ -102,9 +109,9 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { discoverPublicTeams } from './js/db.js?v=127';
-    import { renderHeader, renderFooter, escapeHtml, getSafeImageUrl, resolveZip } from './js/utils.js?v=18';
-    import { checkAuth } from './js/auth.js?v=135';
+    import { discoverPublicTeams } from './js/db.js?v=4433199';
+    import { renderHeader, renderFooter, escapeHtml, getSafeImageUrl, resolveZip } from './js/utils.js?v=443375';
+    import { checkAuth } from './js/auth.js?v=4433203';
 
     checkAuth((user) => {
       // Allow viewing without login - user can be null
@@ -219,7 +226,7 @@
           return a.localeCompare(b);
         });
 
-        const card = (team) => {
+        const card = (team, { eager = false } = {}) => {
           const teamName = String(team.name || 'Unnamed Team');
           const escapedTeamName = escapeHtml(teamName);
           const escapedTeamId = escapeHtml(team.id);
@@ -235,7 +242,7 @@
             <div class="p-6">
               <div class="flex items-center space-x-4 mb-4">
                 ${safePhotoUrl
-            ? `<img src="${safePhotoUrl}" alt="${escapedTeamName}" class="w-16 h-16 rounded-full object-cover border-2 border-gray-200 group-hover:border-primary-400 transition">`
+            ? `<img loading="${eager ? 'eager' : 'lazy'}" decoding="async" src="${safePhotoUrl}" alt="${escapedTeamName}" class="w-16 h-16 rounded-full object-cover border-2 border-gray-200 group-hover:border-primary-400 transition">`
             : `<div class="w-16 h-16 rounded-full bg-gradient-to-br from-primary-100 to-primary-200 flex items-center justify-center border-2 border-gray-200 group-hover:border-primary-400 transition">
                       <span class="text-2xl font-bold text-primary-600">${initial}</span>
                     </div>`
@@ -265,8 +272,14 @@
         `;
         };
 
+        let renderedCardIndex = 0;
         const markup = locationKeys.map(loc => {
           const teamsForLoc = grouped[loc].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+          const cardsMarkup = teamsForLoc.map((team) => {
+            const eager = renderedCardIndex === 0;
+            renderedCardIndex += 1;
+            return card(team, { eager });
+          }).join('');
           return `
             <section class="space-y-4">
               <div class="flex items-center justify-between px-2">
@@ -279,7 +292,7 @@
                 </span>
               </div>
               <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                ${teamsForLoc.map(card).join('')}
+                ${cardsMarkup}
               </div>
             </section>
           `;

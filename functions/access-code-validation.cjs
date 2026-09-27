@@ -1,3 +1,30 @@
+const {
+  createFirestoreFixedWindowRateLimitReservation,
+  getRequestIp
+} = require('./rate-limit.cjs');
+
+const ACCESS_CODE_VALIDATION_RATE_LIMIT_COLLECTION = 'accessCodeValidationRateLimits';
+const ACCESS_CODE_VALIDATION_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
+const ACCESS_CODE_VALIDATION_UID_MAX_REQUESTS = 30;
+const ACCESS_CODE_VALIDATION_NETWORK_MAX_REQUESTS = 120;
+
+function parsePositiveInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function buildAccessCodeValidationRateLimitBoundaries({ uid, requestIp }) {
+  const normalizedUid = String(uid || '').trim();
+  const normalizedRequestIp = String(requestIp || '').trim() || 'unknown';
+  if (!normalizedUid) {
+    throw new TypeError('An authenticated UID is required for access-code validation rate limiting.');
+  }
+  return {
+    uid: ['access-code-validation', 'uid', normalizedUid].join('\n'),
+    network: ['access-code-validation', 'network', normalizedRequestIp].join('\n')
+  };
+}
+
 function getExpirationTime(expiresAt) {
   if (!expiresAt) return null;
   if (typeof expiresAt.toMillis === 'function') return expiresAt.toMillis();
@@ -98,10 +125,102 @@ function validateAccessCodeCandidates(docs, nowMs = Date.now(), acceptingUserId 
   };
 }
 
+function createAccessCodeValidationHandler({
+  firestore,
+  auth,
+  HttpsError,
+  now = Date.now,
+  getRequestIpAddress = getRequestIp,
+  rateLimitCollectionName = ACCESS_CODE_VALIDATION_RATE_LIMIT_COLLECTION,
+  rateLimitWindowMs = ACCESS_CODE_VALIDATION_RATE_LIMIT_WINDOW_MS,
+  uidMaxRequests = ACCESS_CODE_VALIDATION_UID_MAX_REQUESTS,
+  networkMaxRequests = ACCESS_CODE_VALIDATION_NETWORK_MAX_REQUESTS
+}) {
+  const configuredWindowMs = parsePositiveInteger(
+    rateLimitWindowMs,
+    ACCESS_CODE_VALIDATION_RATE_LIMIT_WINDOW_MS
+  );
+  const prepareUidReservation = createFirestoreFixedWindowRateLimitReservation({
+    firestore,
+    collectionName: rateLimitCollectionName,
+    windowMs: configuredWindowMs,
+    maxRequests: parsePositiveInteger(uidMaxRequests, ACCESS_CODE_VALIDATION_UID_MAX_REQUESTS)
+  });
+  const prepareNetworkReservation = createFirestoreFixedWindowRateLimitReservation({
+    firestore,
+    collectionName: rateLimitCollectionName,
+    windowMs: configuredWindowMs,
+    maxRequests: parsePositiveInteger(networkMaxRequests, ACCESS_CODE_VALIDATION_NETWORK_MAX_REQUESTS)
+  });
+
+  return async function validateAccessCodeForAcceptance(data = {}, context = {}) {
+    const code = String(data?.code || '').trim().toUpperCase();
+    if (!code) {
+      throw new HttpsError('invalid-argument', 'Access code is required.');
+    }
+
+    const nativeAuthToken = String(data?.nativeAuthToken || '').trim();
+    const nativeAuthUser = nativeAuthToken
+      ? await auth.verifyIdToken(nativeAuthToken).catch(() => null)
+      : null;
+    const acceptingUserId = String(
+      context?.auth?.uid || nativeAuthUser?.uid || nativeAuthUser?.sub || ''
+    ).trim();
+    if (!acceptingUserId) {
+      return buildGenericPreAuthAccessCodeValidationResult();
+    }
+
+    const requestTime = now();
+    const boundaries = buildAccessCodeValidationRateLimitBoundaries({
+      uid: acceptingUserId,
+      requestIp: getRequestIpAddress(context?.rawRequest || {})
+    });
+    const uidReservation = prepareUidReservation(boundaries.uid, requestTime);
+    const networkReservation = prepareNetworkReservation(boundaries.network, requestTime);
+    const rateLimitDecision = await firestore.runTransaction(async (transaction) => {
+      const uidSnapshot = await transaction.get(uidReservation.ref);
+      const networkSnapshot = await transaction.get(networkReservation.ref);
+      const uid = uidReservation.evaluate(uidSnapshot);
+      const network = networkReservation.evaluate(networkSnapshot);
+      if (uid.allowed && network.allowed) {
+        uidReservation.commit(transaction, uid);
+        networkReservation.commit(transaction, network);
+      }
+      return { uid, network };
+    });
+
+    const rejectedBoundaries = Object.values(rateLimitDecision)
+      .filter((decision) => !decision.allowed);
+    if (rejectedBoundaries.length > 0) {
+      const retryAfterSeconds = Math.min(
+        Math.max(1, Math.ceil(configuredWindowMs / 1000)),
+        Math.max(...rejectedBoundaries.map((decision) => decision.retryAfterSeconds))
+      );
+      throw new HttpsError(
+        'resource-exhausted',
+        'Too many access-code validation attempts. Please wait and try again.',
+        { retryAfterSeconds }
+      );
+    }
+
+    const snapshot = await firestore.collection('accessCodes').where('code', '==', code).get();
+    return validateAccessCodeCandidates(snapshot.docs.map((docSnap) => ({
+      id: docSnap.id,
+      data: docSnap.data() || {}
+    })), requestTime, acceptingUserId);
+  };
+}
+
 module.exports = {
+  ACCESS_CODE_VALIDATION_NETWORK_MAX_REQUESTS,
+  ACCESS_CODE_VALIDATION_RATE_LIMIT_COLLECTION,
+  ACCESS_CODE_VALIDATION_RATE_LIMIT_WINDOW_MS,
+  ACCESS_CODE_VALIDATION_UID_MAX_REQUESTS,
   GENERIC_PREAUTH_ACCESS_CODE_MESSAGE,
+  buildAccessCodeValidationRateLimitBoundaries,
   buildGenericPreAuthAccessCodeValidationResult,
   buildSafeAccessCodeData,
+  createAccessCodeValidationHandler,
   getExpirationTime,
   isAccessCodeExpired,
   isAccessCodeInactive,

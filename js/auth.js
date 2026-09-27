@@ -11,17 +11,65 @@ import {
     isSignInWithEmailLink,
     signInWithEmailLink,
     updatePassword
-} from './firebase.js?v=22';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=127';
-import { executeEmailPasswordSignup } from './signup-flow.js?v=12';
-import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=6';
-import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=2';
-import { createInviteProcessor } from './accept-invite-flow.js?v=11';
+} from './firebase.js?v=33';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433199';
+import { executeEmailPasswordSignup } from './signup-flow.js?v=14';
+import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=12';
+import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=3';
+import { createInviteProcessor } from './accept-invite-flow.js?v=443314';
 import {
     queueCurrentUserVerificationEmail,
     queueInviteSignInEmail,
     queuePasswordResetEmail
-} from './auth-email.js?v=1';
+} from './auth-email.js?v=8';
+import { loadAuthProfileViaRest } from './auth-profile-rest.js?v=1';
+import { raceFirstSuccessfulRead } from './hedged-read.js?v=1';
+
+const AUTH_PROFILE_REST_HEDGE_DELAY_MS = 750;
+const AUTH_PROFILE_PRIMARY_TIMEOUT_MS = 8000;
+const AUTH_ACCESS_ENRICHMENT_TIMEOUT_MS = 1500;
+
+async function loadAuthProfile(user) {
+    const result = await raceFirstSuccessfulRead({
+        primary: () => getUserProfile(user.uid),
+        fallback: () => loadAuthProfileViaRest({
+            auth,
+            user,
+            timeoutMs: AUTH_PROFILE_PRIMARY_TIMEOUT_MS
+        }),
+        label: 'Profile load',
+        fallbackDelayMs: AUTH_PROFILE_REST_HEDGE_DELAY_MS,
+        primaryTimeoutMs: AUTH_PROFILE_PRIMARY_TIMEOUT_MS
+    });
+    if (result.source === 'fallback') {
+        console.warn('[auth] Loaded profile through authenticated REST after the SDK read was slow.');
+    }
+    return result.value;
+}
+
+function trackSettlement(promise) {
+    const state = { result: undefined };
+    const task = Promise.resolve(promise).then(
+        (value) => ({ status: 'fulfilled', value }),
+        (reason) => ({ status: 'rejected', reason })
+    ).then((result) => {
+        state.result = result;
+        return result;
+    });
+    return { state, task };
+}
+
+async function waitForAccessEnrichment(tasks) {
+    let timeoutId;
+    await Promise.race([
+        Promise.all(tasks),
+        new Promise((resolve) => {
+            timeoutId = setTimeout(resolve, AUTH_ACCESS_ENRICHMENT_TIMEOUT_MS);
+        })
+    ]).finally(() => {
+        if (timeoutId) clearTimeout(timeoutId);
+    });
+}
 
 async function cleanupFailedNewUser(user, context, options = {}) {
     const activationCode = String(options.activationCode || '').trim().toUpperCase();
@@ -406,74 +454,134 @@ export function getRedirectUrl(user) {
 
 export function checkAuth(callback, options = {}) {
     const { skipEmailVerificationCheck = true } = options;
+    let active = true;
+    let authGeneration = 0;
 
-    return onAuthStateChanged(auth, async (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+        const generation = ++authGeneration;
+        let initialCallbackDelivered = false;
+        let lateAccessChanged = false;
+        const publishLateAccess = () => {
+            if (!active || generation !== authGeneration) return;
+            if (!initialCallbackDelivered) {
+                lateAccessChanged = true;
+                return;
+            }
+            callback(user);
+        };
         if (user) {
             try {
-                let profile = await getUserProfile(user.uid) || {};
+                const approvedRequestsRead = trackSettlement(listMyParentMembershipRequests(user.uid));
+                const ownedTeamsRead = trackSettlement(getUserTeams(user.uid));
+                const accessEnrichmentDeadline = waitForAccessEnrichment([
+                    approvedRequestsRead.task,
+                    ownedTeamsRead.task
+                ]);
+                let profile = await loadAuthProfile(user) || {};
 
-                try {
-                    const approvedRequests = await listMyParentMembershipRequests(user.uid);
-                    const parentRequestSync = mergeApprovedParentMembershipRequests(profile, approvedRequests);
-                    if (parentRequestSync.changed) {
-                        await updateUserProfile(user.uid, parentRequestSync.userUpdate);
-                        profile = {
-                            ...profile,
-                            ...parentRequestSync.userUpdate
-                        };
-                        console.log('[auth] Synced approved parent membership requests to user profile');
+                const syncApprovedRequests = (result) => {
+                    if (result.status === 'rejected') {
+                        console.warn('[auth] Failed to sync approved parent membership requests:', result.reason);
+                        return false;
                     }
-                } catch (err) {
-                    console.warn('[auth] Failed to sync approved parent membership requests:', err);
+                    const parentRequestSync = mergeApprovedParentMembershipRequests(profile, result.value);
+                    if (!parentRequestSync.changed) return { changed: false, persistence: Promise.resolve() };
+                    profile = {
+                        ...profile,
+                        ...parentRequestSync.userUpdate
+                    };
+                    if (Array.isArray(parentRequestSync.userUpdate?.parentOf)) {
+                        user.parentOf = parentRequestSync.userUpdate.parentOf;
+                    }
+                    if (Array.isArray(parentRequestSync.userUpdate?.roles)) {
+                        user.roles = parentRequestSync.userUpdate.roles;
+                    }
+                    const persistence = Promise.resolve(updateUserProfile(user.uid, parentRequestSync.userUpdate))
+                        .then(() => console.log('[auth] Synced approved parent membership requests to user profile'))
+                        .catch((err) => console.warn('[auth] Failed to persist synced parent membership requests:', err));
+                    return { changed: true, persistence };
+                };
+
+                const mergeOwnedTeams = (result) => {
+                    if (result.status === 'rejected') {
+                        console.warn('Error fetching owned teams in auth check:', result.reason);
+                        return false;
+                    }
+                    const coachOf = Array.isArray(profile.coachOf) ? [...profile.coachOf] : [];
+                    result.value?.forEach((team) => {
+                        if (team?.id && !coachOf.includes(team.id)) coachOf.push(team.id);
+                    });
+                    const previousCoachOf = Array.isArray(user.coachOf) ? user.coachOf : [];
+                    const changed = coachOf.length !== previousCoachOf.length
+                        || coachOf.some((teamId, index) => teamId !== previousCoachOf[index]);
+                    profile = { ...profile, coachOf };
+                    user.coachOf = coachOf;
+                    return changed;
+                };
+
+                // These are authoritative access reads. Wait only for the
+                // bounded enrichment window so delayed successes reach this
+                // callback without restoring an unbounded dashboard spinner.
+                await accessEnrichmentDeadline;
+                if (approvedRequestsRead.state.result) {
+                    syncApprovedRequests(approvedRequestsRead.state.result);
+                } else {
+                    void approvedRequestsRead.task.then((result) => {
+                        const syncResult = syncApprovedRequests(result);
+                        if (syncResult?.changed) {
+                            publishLateAccess();
+                        }
+                    });
                 }
 
                 if (profile) {
                     if (profile.email) {
                         user.profileEmail = profile.email;
-                        if (!user.email) {
-                            user.email = profile.email;
-                        }
                     }
                     if (profile.isAdmin) user.isAdmin = true;
-                    if (profile.parentOf) user.parentOf = profile.parentOf;
+                    // A successfully loaded profile is authoritative even when
+                    // it has no parent links. Preserve that complete emptiness
+                    // so dashboard callers do not issue a redundant SDK read.
+                    user.parentOf = Array.isArray(profile.parentOf) ? profile.parentOf : [];
                     const teamMediaUploadTeamIds = getStringArray(profile.teamMediaUploadTeamIds);
                     const mediaUploadTeamIds = getStringArray(profile.mediaUploadTeamIds);
                     if (teamMediaUploadTeamIds) user.teamMediaUploadTeamIds = teamMediaUploadTeamIds;
                     if (mediaUploadTeamIds) user.mediaUploadTeamIds = mediaUploadTeamIds;
+                    const storedCoachOf = getStringArray(profile.coachOf);
+                    if (storedCoachOf) user.coachOf = storedCoachOf;
 
-                    // Auto-migrate: ensure parent scope fields only reflect active team/player links
+                    // Auto-migrate denormalized parent scope in the background.
+                    // Authorization continues to use the complete parentOf links
+                    // that were already loaded above.
                     if (Array.isArray(profile.parentOf) || Array.isArray(profile.parentTeamIds) || Array.isArray(profile.parentPlayerKeys)) {
-                        const normalizedParentScope = await normalizeParentScopeLinks(profile.parentOf || []);
-                        const expectedTeamIds = normalizedParentScope.parentTeamIds.slice().sort();
-                        const expectedParentPlayerKeys = normalizedParentScope.parentPlayerKeys.slice().sort();
                         const currentTeamIds = (profile.parentTeamIds || []).slice().sort();
                         const currentParentPlayerKeys = (profile.parentPlayerKeys || []).slice().sort();
-                        if (JSON.stringify(expectedTeamIds) !== JSON.stringify(currentTeamIds) ||
-                            JSON.stringify(expectedParentPlayerKeys) !== JSON.stringify(currentParentPlayerKeys)) {
-                            try {
-                                await updateUserProfile(user.uid, {
+                        normalizeParentScopeLinks(profile.parentOf || [])
+                            .then((normalizedParentScope) => {
+                                const expectedTeamIds = normalizedParentScope.parentTeamIds.slice().sort();
+                                const expectedParentPlayerKeys = normalizedParentScope.parentPlayerKeys.slice().sort();
+                                if (JSON.stringify(expectedTeamIds) === JSON.stringify(currentTeamIds) &&
+                                    JSON.stringify(expectedParentPlayerKeys) === JSON.stringify(currentParentPlayerKeys)) {
+                                    return null;
+                                }
+                                return Promise.resolve(updateUserProfile(user.uid, {
                                     parentTeamIds: expectedTeamIds,
                                     parentPlayerKeys: expectedParentPlayerKeys
-                                });
-                                console.log('[auth] Auto-migrated parentTeamIds/parentPlayerKeys for user');
-                            } catch (err) {
-                                console.warn('[auth] Failed to auto-migrate parent parent scope fields:', err);
-                            }
-                        }
+                                })).then(() => console.log('[auth] Auto-migrated parentTeamIds/parentPlayerKeys for user'));
+                            })
+                            .catch((err) => console.warn('[auth] Failed to auto-migrate parent parent scope fields:', err));
                     }
 
-                    if (profile.coachOf) {
-                        user.coachOf = profile.coachOf;
+                    if (Array.isArray(profile.coachOf)) {
+                        user.coachOf = [...profile.coachOf];
+                    }
+                    const ownedTeamsResult = ownedTeamsRead.state.result;
+                    if (ownedTeamsResult) {
+                        mergeOwnedTeams(ownedTeamsResult);
                     } else {
-                        // Dynamic check for owned teams (backward compatibility)
-                        try {
-                            const ownedTeams = await getUserTeams(user.uid);
-                            if (ownedTeams && ownedTeams.length > 0) {
-                                user.coachOf = ownedTeams.map(t => t.id);
-                            }
-                        } catch (err) {
-                            console.warn('Error fetching owned teams in auth check:', err);
-                        }
+                        void ownedTeamsRead.task.then((result) => {
+                            if (mergeOwnedTeams(result)) publishLateAccess();
+                        });
                     }
 
                     if (profile.roles) user.roles = profile.roles;
@@ -497,8 +605,17 @@ export function checkAuth(callback, options = {}) {
                 console.error('Error fetching user profile for auth check:', e);
             }
         }
+        if (!active || generation !== authGeneration) return;
         callback(user);
+        initialCallbackDelivered = true;
+        if (lateAccessChanged && active && generation === authGeneration) callback(user);
     });
+
+    if (typeof unsubscribe !== 'function') return unsubscribe;
+    return () => {
+        active = false;
+        unsubscribe();
+    };
 }
 
 export function resetPassword(email) {

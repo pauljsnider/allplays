@@ -92,6 +92,10 @@ import {
   type RosterImportPlannedOperationForApp
 } from './teamDetailService';
 import {
+  createTeamForApp,
+  getCreateTeamSportOptions
+} from './teamCreationService';
+import {
   buildRosterAiImportCommitPlan,
   extractPastedRosterCsv,
   generateRosterAiImportRows,
@@ -110,6 +114,7 @@ import {
   parseCsvText,
   type ScheduleCsvImportPreviewRow
 } from './scheduleCsvImport';
+import type { CoverageAwareStatPresentation } from './adapters/legacyDiamondStatPresentation';
 import type { AuthUser } from './types';
 import { assertPrivateAiPendingPayloadFitsFirestore } from './privateAiStorageBounds';
 import { startWorkflowTimer, WORKFLOW_TIMING } from './workflowTiming';
@@ -237,9 +242,17 @@ export type PrivateAiToolResult = {
   ok: boolean;
   data?: unknown;
   error?: string;
+  failureStage?: PrivateAiToolFailureStage;
   requiresConfirmation?: boolean;
   confirmationId?: string;
 };
+
+export type PrivateAiToolFailureStage =
+  | 'planning'
+  | 'review-preparation'
+  | 'proposal-save'
+  | 'read'
+  | 'execution';
 
 export type PrivateAiSendResult = {
   userMessage: PrivateAiMessage;
@@ -308,7 +321,7 @@ type PrivateAiToolDefinition = {
     summary?: string;
     previewSummary?: Record<string, unknown>;
   }>;
-  resolve: (user: AuthUser, args: Record<string, unknown>) => Promise<unknown>;
+  resolve: (user: AuthUser, args: Record<string, unknown>, context?: PrivateAiToolContext) => Promise<unknown>;
 };
 
 type PrivateAiToolContext = {
@@ -316,6 +329,9 @@ type PrivateAiToolContext = {
   confirmationGroupId?: string;
   allowedToolNames?: string[];
   preparedArtifact?: PrivateAiTeamArtifactDraft;
+  requestText?: string;
+  teamId?: string;
+  teamName?: string;
 };
 
 type PrivateAiPreparedWrite = {
@@ -511,7 +527,9 @@ export async function sendPrivateAiMessage(
 
   try {
     const aiResult = await generatePrivateAiAnswer(user, question, priorMessages, {
-      conversationId: activeConversationId
+      conversationId: activeConversationId,
+      teamId: compactText(requestContext.teamId),
+      teamName: compactText(requestContext.teamName)
     });
     const assistantMessage = await savePrivateAiMessage(user, {
       role: 'assistant',
@@ -1721,7 +1739,8 @@ export async function generatePrivateAiAnswer(
   const confirmationGroupId = createConfirmationGroupId();
   const toolContext = {
     ...context,
-    confirmationGroupId
+    confirmationGroupId,
+    requestText: question
   };
   const imperativeWriteRequest = looksLikeImperativePrivateAiWriteRequest(question);
   if (looksLikeFunctionalHelpQuestion(question) && !looksLikeImperativePrivateAiWriteRequest(question)) {
@@ -1739,6 +1758,16 @@ export async function generatePrivateAiAnswer(
       args: {}
     }, toolContext));
   }
+  if (looksLikeNextGameQuestion(question)) {
+    toolResults.push(await runPrivateAiTool(user, {
+      name: 'list_schedule',
+      args: { range: 'upcoming', type: 'game', limit: 3 }
+    }, toolContext));
+    const groundedAnswer = buildGroundedNextGameAnswer(toolResults[toolResults.length - 1]);
+    if (groundedAnswer && !imperativeWriteRequest) {
+      return { answer: groundedAnswer, toolResults };
+    }
+  }
   let plannerInput = buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities });
 
   for (let round = 0; round < maxToolRounds; round += 1) {
@@ -1747,6 +1776,15 @@ export async function generatePrivateAiAnswer(
 
     if (planner.answer && !planner.toolCalls.length) {
       if (imperativeWriteRequest && !hasPrivateAiWriteToolResult(question, toolResults)) {
+        const hasFailedWriteResult = toolResults.some((result) => (
+          !result.ok && getPrivateAiToolDefinition(result.name)?.mode === 'write'
+        ));
+        if (!hasFailedWriteResult && isPrivateAiWriteClarificationAnswer(planner.answer)) {
+          return {
+            answer: clampAnswer(planner.answer),
+            toolResults
+          };
+        }
         plannerInput = `${buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities })}\n` +
           `CORRECTION: Your prior response claimed or described a change without calling a write tool. ` +
           `Do not say a change is prepared, reviewed, staged, confirmed, or completed unless the matching write tool returned that result. ` +
@@ -1772,6 +1810,7 @@ export async function generatePrivateAiAnswer(
     blockedCalls.forEach((call) => toolResults.push({
       name: compactText(call.name),
       ok: false,
+      failureStage: 'planning',
       error: 'That tool is not allowed for this attachment request.'
     }));
     if (!allowedCalls.length) {
@@ -1799,6 +1838,7 @@ export async function generatePrivateAiAnswer(
     unrelatedWriteCalls.forEach((call) => toolResults.push({
       name: compactText(call.name),
       ok: false,
+      failureStage: 'planning',
       error: getExpectedPrivateAiWriteToolNames(question) === null
         ? 'The requested write operation could not be classified safely.'
         : 'That write tool does not match the requested operation.'
@@ -1831,6 +1871,7 @@ export async function generatePrivateAiAnswer(
           roundResults.push({
             name: compactText(call.name),
             ok: false,
+            failureStage: 'review-preparation',
             error: error?.message || 'Tool failed.'
           });
         }
@@ -1851,7 +1892,7 @@ export async function generatePrivateAiAnswer(
 
   if (imperativeWriteRequest && !hasPrivateAiWriteToolResult(question, toolResults)) {
     return {
-      answer: 'I could not prepare that change because no reviewed action was staged. Please try the request again.',
+      answer: buildPrivateAiWriteFailureAnswer(question, toolResults),
       toolResults
     };
   }
@@ -1897,10 +1938,17 @@ async function runPrivateAiToolInternal(
   const definition = getPrivateAiToolDefinition(name);
   let scheduleImportTimer: ReturnType<typeof startWorkflowTimer> | null = null;
   const isConfirmedWrite = context.confirmedWriteToken === confirmedWriteExecutionToken;
+  let failureStage: PrivateAiToolFailureStage = definition?.mode === 'write' && isConfirmedWrite
+    ? 'execution'
+    : definition?.mode === 'write'
+      ? 'review-preparation'
+      : definition
+        ? 'read'
+        : 'planning';
 
   try {
     if (!definition) {
-      return { name, ok: false, error: `Unsupported tool: ${name}` };
+      return { name, ok: false, failureStage, error: `Unsupported tool: ${name}` };
     }
 
     if (definition.mode === 'write' && !isConfirmedWrite) {
@@ -1917,6 +1965,7 @@ async function runPrivateAiToolInternal(
         : definition.prepare
           ? await definition.prepare(user, args)
           : { args };
+      failureStage = 'proposal-save';
       const pending = await savePrivateAiPendingAction(user, definition, preparedAction.args, context, preparedAction);
       return {
         name,
@@ -1937,7 +1986,7 @@ async function runPrivateAiToolInternal(
         rowCount: Array.isArray(args.rows) ? args.rows.length : 0
       });
     }
-    const data = await definition.resolve(user, args);
+    const data = await definition.resolve(user, args, context);
     scheduleImportTimer?.end({ success: true });
     if (definition.mode === 'write') {
       await savePrivateAiActionAudit(user, definition.name, args, data).catch(() => {});
@@ -1952,6 +2001,7 @@ async function runPrivateAiToolInternal(
     return {
       name,
       ok: false,
+      failureStage,
       error: error?.message || 'Tool failed.'
     };
   }
@@ -1964,6 +2014,26 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     mode: 'read',
     description: 'Account profile, roles, notification preferences, linked teams, and linked players.',
     resolve: async (user) => summarizeProfile(user, await getUserProfile(user.uid).catch(() => null))
+  },
+  {
+    name: 'create_team',
+    mode: 'write',
+    domain: 'team-creation',
+    description: 'Create a new team owned by the signed-in user and add its default sport stat template. Args: name/teamName, sport, zip optional, isPublic optional.',
+    prepare: async (_user, args) => prepareCreateTeamAction(args),
+    resolve: async (user, args) => {
+      const result = await createTeamForApp(user, {
+        name: compactText(args.name),
+        sport: compactText(args.sport),
+        zip: compactText(args.zip),
+        isPublic: args.isPublic !== false
+      });
+      return {
+        ...result,
+        teamName: compactText(args.name),
+        sport: compactText(args.sport)
+      };
+    }
   },
   {
     name: 'get_home',
@@ -1989,13 +2059,20 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
   {
     name: 'list_schedule',
     mode: 'read',
-    description: 'Schedule events with RSVP, rideshare, assignments, score, location, and player context.',
+    description: 'Schedule events with RSVP, rideshare, assignments, score, location, and player context. Args: range, type, teamId, teamName, playerName, limit. Include the requested team/player and game/practice scope; results report whether the matching set is complete.',
     aliases: ['get_schedule'],
-    resolve: async (user, args) => {
+    resolve: async (user, args, context) => {
       const range = compactText(args.range).toLowerCase();
-      return summarizeSchedule(await loadParentSchedule(user, {
-        includePastGames: range === 'all'
-      }), args);
+      const targetScope = await resolvePrivateAiScheduleTargetScope(user, args, context);
+      const schedule = await loadParentSchedule(user, {
+        includePastGames: range === 'all',
+        ...(targetScope.teamId ? { targetTeamId: targetScope.teamId } : {})
+      });
+      return summarizeSchedule(schedule, inferPrivateAiScheduleArgs(schedule, {
+        ...args,
+        ...(targetScope.teamId ? { teamId: targetScope.teamId } : {}),
+        ...(targetScope.playerId ? { playerId: targetScope.playerId } : {})
+      }, context?.requestText));
     }
   },
   {
@@ -2003,9 +2080,18 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     mode: 'read',
     description: 'Most recent past game for the parent account, including RSVP status. Args: teamId, teamName, playerId, childId, playerName, childName.',
     aliases: ['last_game', 'get_previous_game'],
-    resolve: async (user, args) => summarizeLastGame(await loadParentSchedule(user, {
-      includePastGames: true
-    }), args)
+    resolve: async (user, args, context) => {
+      const targetScope = await resolvePrivateAiScheduleTargetScope(user, args, context);
+      const schedule = await loadParentSchedule(user, {
+        includePastGames: true,
+        ...(targetScope.teamId ? { targetTeamId: targetScope.teamId } : {})
+      });
+      return summarizeLastGame(schedule, inferPrivateAiScheduleArgs(schedule, {
+        ...args,
+        ...(targetScope.teamId ? { teamId: targetScope.teamId } : {}),
+        ...(targetScope.playerId ? { playerId: targetScope.playerId } : {})
+      }, context?.requestText));
+    }
   },
   {
     name: 'get_schedule_event',
@@ -2029,11 +2115,21 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
   {
     name: 'list_rsvps',
     mode: 'read',
-    description: 'RSVP status and summaries for schedule events.',
-    resolve: async (user, args) => {
-      const schedule = await loadParentSchedule(user, { includePastGames: compactText(args.range).toLowerCase() === 'all' });
+    description: 'RSVP status and summaries for schedule events. Args: range, type, teamId, teamName, playerId, playerName, limit.',
+    resolve: async (user, args, context) => {
+      const targetScope = await resolvePrivateAiScheduleTargetScope(user, args, context);
+      const schedule = await loadParentSchedule(user, {
+        includePastGames: compactText(args.range).toLowerCase() === 'all',
+        ...(targetScope.teamId ? { targetTeamId: targetScope.teamId } : {})
+      });
+      const summary = summarizeSchedule(schedule, inferPrivateAiScheduleArgs(schedule, {
+        ...args,
+        ...(targetScope.teamId ? { teamId: targetScope.teamId } : {}),
+        ...(targetScope.playerId ? { playerId: targetScope.playerId } : {})
+      }, context?.requestText));
       return {
-        events: summarizeSchedule(schedule, args).events.map((event: any) => pickFields(event, [
+        ...pickFields(summary, ['query', 'totalMatchingEvents', 'returnedEventCount', 'hasMoreEvents', 'resultComplete', 'absenceConfirmed']),
+        events: summary.events.map((event: any) => pickFields(event, [
           'eventId',
           'teamId',
           'teamName',
@@ -2935,7 +3031,7 @@ function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
       name: 'update_schedule_event',
       mode: 'write',
       domain: 'schedule-attendance-planning',
-      description: 'Update a managed-team game or practice. Args: teamId, eventId, eventType, partial input fields to change, and practice scope occurrence|series.',
+      description: 'Update a managed-team game or practice. Args: teamId, eventId, eventType, partial input fields to change, and practice scope occurrence|series. After Diamond activation, home/away, tracker config, and linked opponent fields are locked.',
       prepare: (user, args) => prepareManagedScheduleEventUpdateAction(user, args, 'Update schedule event'),
       resolve: async (user, args) => {
         const teamId = await requireManagedTeamId(user, args);
@@ -2948,7 +3044,11 @@ function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
               scope: compactText(args.scope) === 'occurrence' ? 'occurrence' : 'series',
               instanceDate: compactText(args.instanceDate)
             } as any)
-          : service.updateScheduledGameForApp(teamId, eventId, input, user);
+          : compactText(args.trackingEngine) === 'diamond-v2'
+            ? service.updateScheduledGameForApp(teamId, eventId, input, user, {
+                preservePinnedDiamondFields: true
+              })
+            : service.updateScheduledGameForApp(teamId, eventId, input, user);
       }
     },
     {
@@ -3187,6 +3287,39 @@ async function requireManagedTeamId(user: AuthUser, args: Record<string, unknown
   const teamId = await resolveAccessibleTeamId(user, args, { requireManager: true });
   if (!teamId) throw new Error('No managed team matched that request or your access changed.');
   return teamId;
+}
+
+function prepareCreateTeamAction(args: Record<string, unknown>) {
+  const name = compactText(args.name || args.teamName);
+  if (!name) throw new Error('Team name is required.');
+
+  const requestedSport = compactText(args.sport || args.sportName);
+  if (!requestedSport) throw new Error('Sport is required.');
+  const sportOptions = getCreateTeamSportOptions();
+  const sport = sportOptions.find((option) => option.toLowerCase() === requestedSport.toLowerCase());
+  if (!sport) {
+    throw new Error(`Choose a supported sport: ${sportOptions.join(', ')}.`);
+  }
+
+  const zip = compactText(args.zip || args.zipCode || args.postalCode);
+  const isPublic = args.isPublic !== false;
+  return {
+    args: {
+      name,
+      sport,
+      zip,
+      isPublic
+    },
+    summary: `Create team | ${name} | Sport: ${sport}`,
+    previewSummary: {
+      domain: 'team-creation',
+      action: 'Create team',
+      name,
+      sport,
+      zip,
+      isPublic
+    }
+  };
 }
 
 async function prepareManagedTeamAction(user: AuthUser, args: Record<string, unknown>, label: string) {
@@ -3440,6 +3573,25 @@ function applyPrivateAiScheduleEventUpdateInput(
   };
 }
 
+function hasPinnedDiamondScheduleFieldMutation(
+  event: ParentScheduleEvent,
+  requestedInput: Record<string, unknown>
+) {
+  if (event.type !== 'game' || compactText(event.trackingEngine) !== 'diamond-v2') return false;
+  if (hasOwn(requestedInput, 'isHome')) {
+    const requestedIsHome = requestedInput.isHome === null || requestedInput.isHome === undefined
+      ? null
+      : requestedInput.isHome === true;
+    if (requestedIsHome !== (event.isHome ?? null)) return true;
+  }
+  if (
+    hasOwn(requestedInput, 'statTrackerConfigId')
+    && compactText(requestedInput.statTrackerConfigId) !== compactText(event.statTrackerConfigId)
+  ) return true;
+  return hasOwn(requestedInput, 'opponentTeamId')
+    && compactText(requestedInput.opponentTeamId) !== compactText(event.opponentTeamId);
+}
+
 async function prepareManagedScheduleEventUpdateAction(
   user: AuthUser,
   args: Record<string, unknown>,
@@ -3454,6 +3606,10 @@ async function prepareManagedScheduleEventUpdateAction(
   // Keep the tool's existing argument contract: planners may place editable
   // event fields either inside `input` or directly alongside the selectors.
   const requestedInput = isPlainObject(args.input) ? args.input : args;
+  const isDiamondGame = event.type === 'game' && compactText(event.trackingEngine) === 'diamond-v2';
+  if (hasPinnedDiamondScheduleFieldMutation(event, requestedInput)) {
+    throw new Error('Home/away, tracker config, and linked opponent are locked after Diamond activation. Update other schedule details only.');
+  }
   const input = mergePrivateAiScheduleEventUpdateInput(event, requestedInput);
   const proposedEvent = applyPrivateAiScheduleEventUpdateInput(event, input);
   const eventSummary = summarizeScheduleEvent(proposedEvent);
@@ -3469,7 +3625,9 @@ async function prepareManagedScheduleEventUpdateAction(
             scope: compactText(args.scope) === 'occurrence' ? 'occurrence' : 'series',
             instanceDate: compactText(args.instanceDate)
           }
-        : {})
+        : isDiamondGame
+          ? { trackingEngine: 'diamond-v2' }
+          : {})
     },
     summary: `${label} | ${event.teamName}: ${getScheduleTitle(proposedEvent)}${event.childName ? ` | Player: ${event.childName}` : ''}`,
     previewSummary: {
@@ -3588,15 +3746,19 @@ async function loadPlayerDetailForAi(user: AuthUser, args: Record<string, unknow
   if (!player) {
     throw new Error('No matching player was found for this account.');
   }
-  const [detail, clips, statTotals] = await Promise.all([
+  const [detail, clips, statTotalsResult] = await Promise.all([
     loadParentPlayerDetailWithAthleteProfile(user, player.teamId, player.playerId),
     loadParentPlayerVideoClips(user, player.teamId, player.playerId).catch(() => []),
-    loadParentPlayerStatTotals(user, player.teamId, player.playerId).catch(() => null)
+    loadParentPlayerStatTotals(user, player.teamId, player.playerId).then(
+      (data) => ({ status: 'complete' as const, data }),
+      () => ({ status: 'unavailable' as const, data: null })
+    )
   ]);
   return {
     ...detail,
     clips,
-    seasonStatTotals: statTotals
+    seasonStatTotals: statTotalsResult.data,
+    seasonStatTotalsLoadStatus: statTotalsResult.status
   };
 }
 
@@ -4576,6 +4738,18 @@ function buildPendingActionSummary(definition: PrivateAiToolDefinition, args: Re
 }
 
 function summarizeExecutedAction(result: PrivateAiToolResult) {
+  if (result.name === 'create_team') {
+    const data = isPlainObject(result.data) ? result.data : {};
+    const teamName = compactText(data.teamName) || 'New team';
+    const sport = compactText(data.sport);
+    if (compactText(data.defaultStatConfigError)) {
+      return `Team ${teamName} was created, but its${sport ? ` ${sport}` : ''} stat template could not be verified.`;
+    }
+    if (data.defaultStatConfigCreated === true) {
+      return `Team ${teamName} created with the${sport ? ` ${sport}` : ''} stat template.`;
+    }
+    return `Team ${teamName} created.`;
+  }
   if (result.name === 'update_rsvp') return 'RSVP updated.';
   if (result.name === 'update_rsvps_for_children') return 'Family RSVPs updated.';
   if (result.name === 'claim_assignment') return 'Assignment claimed.';
@@ -4713,7 +4887,7 @@ function collectPrivateAiRetryArtifacts(results: PrivateAiToolResult[]) {
 
 function summarizeAuditResult(result: unknown) {
   if (!isPlainObject(result)) return result;
-  return pickFields(result, ['event', 'offerId', 'requestId', 'status', 'response', 'updatedChildren', 'tokenId', 'url', 'email', 'role', 'teamId', 'playerId', 'child', 'text', 'target', 'importedCount', 'failedCount']);
+  return pickFields(result, ['event', 'offerId', 'requestId', 'status', 'response', 'updatedChildren', 'tokenId', 'url', 'email', 'role', 'teamId', 'teamName', 'sport', 'defaultStatConfigCreated', 'playerId', 'child', 'text', 'target', 'importedCount', 'failedCount']);
 }
 
 function summarizeRosterPreview(rows: RosterAiImportPreviewRow[]) {
@@ -5362,14 +5536,21 @@ function buildPlannerPrompt({
   toolResults: PrivateAiToolResult[];
   roleCapabilities: PrivateAiRoleCapabilities;
 }) {
+  const temporalContext = getPrivateAiTemporalContext();
   return `You are ALL PLAYS, a private assistant for the signed-in youth sports parent or coach.\n` +
     `You may answer from conversation context for general navigation. For account-specific facts, request tools first.\n` +
     `Use only the available tools; never ask for or invent Firestore paths.\n` +
     `Return strict JSON only, with no markdown.\n` +
-    `If you need data, return {"toolCalls":[{"name":"list_schedule","args":{"range":"upcoming","limit":8}}]}.\n` +
+    `For schedule data, include the exact requested team/player and game/practice type in list_schedule args whenever the question supplies them.\n` +
+    `Example: {"toolCalls":[{"name":"list_schedule","args":{"range":"upcoming","type":"game","teamName":"Bears","limit":8}}]}.\n` +
     `For last/previous game questions, call get_last_game. For game-specific questions, do not answer with practices as substitutes.\n` +
+    `Never claim that no matching schedule event exists unless the tool result says absenceConfirmed is true. If schedule coverage is partial, say the complete schedule could not be verified.\n` +
+    `For player development, recentGamesEvidence.loadStatus partial or unavailable means the recent schedule could not be fully verified: do not claim there are no recent games.\n` +
+    `For player season statistics, seasonStatTotals.loadStatus unavailable means the full season could not be verified: never derive season totals from recentGames or claim season zero or absence. For Diamond player statistics, honor diamondEvidence exactly: partial or pending totals are lower bounds, unavailable values are unknown, zero may be claimed only when complete is true, and absence may be claimed only when absenceConfirmed is true. A zero may be stated only when diamondEvidence.complete is true, the requested stat key is explicitly present in stats or totals, and that stat's relevant statCoverage entry is complete; a missing stat key never means zero. Never turn a missing seasonStatTotals result into totals from recent partial rows.\n` +
     `For writes, call the write tool with normalized args. The app will stage it and require user confirmation before execution.\n` +
     `Imperative requests that ask to add, invite, create, update, remove, cancel, or send something are write requests, not help questions. Call the matching write tool instead of get_help.\n` +
+    `Resolve relative dates such as "Saturday" against CURRENT DATE/TIME CONTEXT, choosing the next future occurrence unless the user says otherwise. Use that time zone when the user does not supply one.\n` +
+    `For an imperative write with enough information, call the matching write tool before returning an answer. If a required detail is still ambiguous, return one concise clarification question and do not claim the action was prepared or completed.\n` +
     (roleCapabilities.isTeamManager
       ? `Adding roster players does not require parent or guardian email addresses. If the user asks to add players only, call apply_roster_import with name-only add operations and no familyContacts. Do not ask for contact details or call invite_roster_parent unless the user explicitly asks to invite a parent or guardian.\n`
       : '') +
@@ -5380,10 +5561,50 @@ function buildPlannerPrompt({
     getRoleAuthorizedPrivateAiToolDefinitions(user, roleCapabilities).map((definition) => (
       `- [${definition.domain || inferPrivateAiToolDomain(definition.name)}] ${definition.name} (${definition.mode}): ${definition.description}`
     )).join('\n') + `\n\n` +
+    `CURRENT DATE/TIME CONTEXT:\n${JSON.stringify(temporalContext)}\n\n` +
     `USER:\n${JSON.stringify(summarizeSignedInUser(user, roleCapabilities))}\n\n` +
     `RECENT CHAT HISTORY:\n${JSON.stringify(history)}\n\n` +
     `QUESTION:\n${question}\n\n` +
     `TOOL RESULTS SO FAR:\n${JSON.stringify(formatToolResultsForPrompt(toolResults))}\n`;
+}
+
+function getPrivateAiTemporalContext() {
+  const now = new Date();
+  let timeZone = 'UTC';
+  try {
+    timeZone = compactText(Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC';
+  } catch {
+    timeZone = 'UTC';
+  }
+  try {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hourCycle: 'h23'
+      }).formatToParts(now)
+        .filter((part) => part.type !== 'literal')
+        .map((part) => [part.type, part.value])
+    );
+    return {
+      currentDate: `${parts.year}-${parts.month}-${parts.day}`,
+      currentTime: `${parts.hour}:${parts.minute}:${parts.second}`,
+      timeZone,
+      currentInstant: now.toISOString()
+    };
+  } catch {
+    return {
+      currentDate: now.toISOString().slice(0, 10),
+      currentTime: now.toISOString().slice(11, 19),
+      timeZone: 'UTC',
+      currentInstant: now.toISOString()
+    };
+  }
 }
 
 function buildFinalAnswerPrompt({
@@ -5405,6 +5626,9 @@ function buildFinalAnswerPrompt({
     `If a tool result requires confirmation, state the proposed change clearly and tell the user they can reply "yes" to confirm. Do not mention internal confirmation IDs or codes.\n` +
     `For schedule confirmations, restate the team, game or practice, date and time, time zone, opponent or title, and location when those details are present. Never answer with only a confirmation instruction.\n` +
     `When the user asks for a game, answer from game records only; if only practices are available, say no matching game was found.\n` +
+    `Never claim that no matching schedule event exists unless the schedule result says absenceConfirmed is true. If coverage is incomplete, say the complete schedule could not be verified.\n` +
+    `For player development, recentGamesEvidence.loadStatus partial or unavailable means the recent schedule could not be fully verified: do not claim there are no recent games.\n` +
+    `For player season statistics, seasonStatTotals.loadStatus unavailable means the full season could not be verified: never derive season totals from recentGames or claim season zero or absence. For Diamond player statistics, honor diamondEvidence exactly: partial or pending totals are lower bounds, unavailable values are unknown, zero may be claimed only when complete is true, and absence may be claimed only when absenceConfirmed is true. A zero may be stated only when diamondEvidence.complete is true, the requested stat key is explicitly present in stats or totals, and that stat's relevant statCoverage entry is complete; a missing stat key never means zero. Never turn a missing seasonStatTotals result into totals from recent partial rows.\n` +
     `Answer concisely. Include dates, times, team names, and player names when relevant.\n` +
     `Return strict JSON only: {"answer":"..."}.\n\n` +
     `USER:\n${JSON.stringify(summarizeSignedInUser(user, roleCapabilities))}\n\n` +
@@ -5419,6 +5643,7 @@ function formatToolResultsForPrompt(toolResults: PrivateAiToolResult[]) {
     ok: result.ok,
     data: result.data,
     error: result.error,
+    failureStage: result.failureStage,
     requiresConfirmation: result.requiresConfirmation === true
   }));
 }
@@ -5556,6 +5781,222 @@ function summarizeHome(home: any) {
   };
 }
 
+function inferPrivateAiScheduleArgs(
+  schedule: any,
+  args: Record<string, unknown>,
+  requestText = ''
+) {
+  const inferred = { ...args };
+  const normalizedRequest = normalizeScheduleMentionText(requestText);
+  const requestedType = compactText(args.type || args.eventType).toLowerCase();
+  if (!requestedType && normalizedRequest) {
+    const mentionsGame = /\b(?:game|games|match|matches)\b/.test(normalizedRequest);
+    const mentionsPractice = /\b(?:practice|practices|training|workout|workouts)\b/.test(normalizedRequest);
+    if (mentionsGame !== mentionsPractice) inferred.type = mentionsGame ? 'game' : 'practice';
+  } else if (/^(?:game|games|match|matches)$/.test(requestedType)) {
+    inferred.type = 'game';
+  } else if (/^(?:practice|practices|training|workout|workouts)$/.test(requestedType)) {
+    inferred.type = 'practice';
+  }
+
+  if (!compactText(args.teamId || args.teamName) && normalizedRequest) {
+    const team = findUniqueScheduleMention(normalizedRequest, collectScheduleTeamMentions(schedule), 'team');
+    if (team) inferred.teamId = team.id;
+  }
+  if (!compactText(args.childId || args.playerId || args.childName || args.playerName) && normalizedRequest) {
+    const player = findUniqueScheduleMention(normalizedRequest, collectSchedulePlayerMentions(schedule), 'player');
+    if (player) inferred.playerId = player.id;
+  }
+  return inferred;
+}
+
+function normalizeScheduleMentionText(value: unknown) {
+  return compactText(value)
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function collectScheduleTeamMentions(schedule: any) {
+  const mentions = new Map<string, { id: string; name: string }>();
+  const add = (value: any) => {
+    const id = compactText(value?.teamId || value?.id);
+    const name = compactText(value?.teamName || value?.name);
+    if (id && name && !mentions.has(id)) mentions.set(id, { id, name });
+  };
+  (schedule?.children || []).forEach(add);
+  (schedule?.staffTeams || []).forEach(add);
+  (schedule?.events || []).forEach(add);
+  return Array.from(mentions.values());
+}
+
+function collectSchedulePlayerMentions(schedule: any) {
+  const mentions = new Map<string, { id: string; name: string }>();
+  const add = (value: any) => {
+    const id = compactText(value?.childId || value?.playerId);
+    const name = compactText(value?.childName || value?.name);
+    if (id && name && !mentions.has(id)) mentions.set(id, { id, name });
+  };
+  (schedule?.children || []).forEach(add);
+  (schedule?.events || []).forEach(add);
+  return Array.from(mentions.values());
+}
+
+function findUniqueScheduleMention<T extends { id: string; name: string }>(
+  normalizedRequest: string,
+  candidates: T[],
+  label: 'team' | 'player'
+): T | null {
+  const normalizedCandidates = candidates
+    .map((candidate) => ({
+      ...candidate,
+      normalizedName: normalizeScheduleMentionText(candidate.name)
+    }));
+  const paddedRequest = ` ${normalizedRequest} `;
+  const matches = normalizedCandidates
+    .filter((candidate) => {
+      if (!candidate.normalizedName) return false;
+      if (label === 'player' && !candidate.normalizedName.includes(' ')) return false;
+      return paddedRequest.includes(` ${candidate.normalizedName} `);
+    })
+    .sort((left, right) => right.normalizedName.length - left.normalizedName.length);
+  if (matches.length) {
+    const longestLength = matches[0].normalizedName.length;
+    const longestMatches = matches.filter((candidate) => candidate.normalizedName.length === longestLength);
+    if (new Set(longestMatches.map((candidate) => candidate.id)).size > 1) {
+      throw new Error(`More than one accessible ${label} matches that schedule question. Choose one ${label}.`);
+    }
+    return longestMatches[0];
+  }
+
+  if (label !== 'player') return null;
+  const requestTokens = normalizedRequest.split(' ').filter(Boolean);
+  const scheduleContinuationTokens = new Set([
+    'game', 'games', 'last', 'month', 'next', 'practice', 'practices', 'recent',
+    'rsvp', 'rsvps', 'schedule', 'this', 'today', 'tomorrow', 'upcoming', 'week'
+  ]);
+  let hasUnmatchedFullNameSyntax = false;
+  const firstNameMatches = normalizedCandidates.filter((candidate) => {
+    const [firstName] = candidate.normalizedName.split(' ');
+    if (!firstName) return false;
+    return requestTokens.some((token, index) => {
+      if (token !== firstName) return false;
+      const previousToken = requestTokens[index - 1] || '';
+      const nextToken = requestTokens[index + 1] || '';
+      if (nextToken === 's') return true;
+      const tokenAfterNext = requestTokens[index + 2] || '';
+      if (
+        nextToken
+        && !scheduleContinuationTokens.has(nextToken)
+        && (
+          previousToken === 'for'
+          || previousToken === 'player'
+          || tokenAfterNext === 's'
+          || scheduleContinuationTokens.has(tokenAfterNext)
+        )
+      ) {
+        hasUnmatchedFullNameSyntax = true;
+      }
+      if (previousToken !== 'for' && previousToken !== 'player') return false;
+      if (!nextToken || scheduleContinuationTokens.has(nextToken)) return true;
+      hasUnmatchedFullNameSyntax = true;
+      return false;
+    });
+  });
+  if (new Set(firstNameMatches.map((candidate) => candidate.id)).size > 1) {
+    throw new Error('More than one accessible player has that first name. Choose the full player name.');
+  }
+  if (!firstNameMatches.length && hasUnmatchedFullNameSyntax) {
+    throw new Error('No accessible player matches that full name. Choose an active linked player.');
+  }
+  return firstNameMatches[0] || null;
+}
+
+function collectAccessibleSchedulePlayerMentions(access: AccessibleAiTeamsResult, teamId = '') {
+  return access.schedulePlayers.filter((player) => !teamId || player.teamId === teamId);
+}
+
+function resolveExplicitSchedulePlayer(
+  args: Record<string, unknown>,
+  access: AccessibleAiTeamsResult,
+  teamId = ''
+) {
+  const requestedPlayerId = compactText(args.playerId || args.childId);
+  const requestedPlayerName = normalizeScheduleMentionText(args.playerName || args.childName);
+  if (!requestedPlayerId && !requestedPlayerName) return null;
+  const candidates = collectAccessibleSchedulePlayerMentions(access, teamId)
+    .filter((candidate) => !requestedPlayerId || candidate.playerId === requestedPlayerId)
+    .filter((candidate) => !requestedPlayerName || normalizeScheduleMentionText(candidate.name) === requestedPlayerName);
+  if (candidates.length > 1) {
+    throw new Error('More than one accessible player matches that schedule request. Choose the team and player.');
+  }
+  return candidates[0] || null;
+}
+
+async function resolvePrivateAiScheduleTargetScope(
+  user: AuthUser,
+  args: Record<string, unknown>,
+  context: PrivateAiToolContext = {}
+) {
+  const normalizedRequest = normalizeScheduleMentionText(context.requestText);
+  const access = await loadAccessibleAiTeams(user);
+  const mentionedTeam = normalizedRequest
+    ? findUniqueScheduleMention(normalizedRequest, access.scheduleTeams, 'team')
+    : null;
+  const mentionedPlayerCandidate = normalizedRequest
+    ? findUniqueScheduleMention(normalizedRequest, [
+        ...collectAccessibleSchedulePlayerMentions(access).map((player) => ({ ...player, isAvailable: true })),
+        ...access.unavailableSchedulePlayers.map((player) => ({ ...player, isAvailable: false }))
+      ], 'player')
+    : null;
+  if (mentionedPlayerCandidate?.isAvailable === false) {
+    throw new Error('That player is not available in this account schedule. Choose an active linked player.');
+  }
+  const mentionedPlayer = mentionedPlayerCandidate?.isAvailable === true
+    ? mentionedPlayerCandidate
+    : null;
+  if (mentionedTeam && mentionedPlayer && mentionedTeam.id !== mentionedPlayer.teamId) {
+    throw new Error('The named team and player do not match. Choose the correct team or player.');
+  }
+  if (mentionedTeam || mentionedPlayer) {
+    return {
+      teamId: mentionedTeam?.id || mentionedPlayer?.teamId || '',
+      playerId: mentionedPlayer?.playerId || ''
+    };
+  }
+
+  const explicitTeamId = compactText(args.teamId);
+  const explicitTeamName = compactText(args.teamName);
+  let resolvedExplicitTeamId = explicitTeamId;
+  if (!resolvedExplicitTeamId && explicitTeamName) {
+    resolvedExplicitTeamId = await resolveAccessibleTeamId(user, { teamName: explicitTeamName }) || '';
+    if (!resolvedExplicitTeamId) throw new Error(`No accessible team matches "${explicitTeamName}".`);
+  }
+  const hasExplicitPlayerSelector = Boolean(compactText(args.playerId || args.childId || args.playerName || args.childName));
+  const explicitPlayer = resolveExplicitSchedulePlayer(args, access, resolvedExplicitTeamId);
+  if (hasExplicitPlayerSelector && !explicitPlayer) {
+    throw new Error('No accessible player matches that schedule request.');
+  }
+  if (resolvedExplicitTeamId || explicitPlayer) {
+    return {
+      teamId: resolvedExplicitTeamId || explicitPlayer?.teamId || '',
+      playerId: explicitPlayer?.playerId || ''
+    };
+  }
+
+  const launcherTeamId = compactText(context.teamId);
+  if (launcherTeamId) return { teamId: launcherTeamId, playerId: '' };
+  const launcherTeamName = compactText(context.teamName);
+  if (launcherTeamName) {
+    const launcherResolvedTeamId = await resolveAccessibleTeamId(user, { teamName: launcherTeamName });
+    if (!launcherResolvedTeamId) throw new Error(`No accessible team matches "${launcherTeamName}".`);
+    return { teamId: launcherResolvedTeamId, playerId: '' };
+  }
+  return { teamId: '', playerId: '' };
+}
+
 function summarizeSchedule(schedule: any, args: Record<string, unknown>) {
   const now = new Date();
   const requestedLimit = Number(args.limit || 12);
@@ -5564,13 +6005,18 @@ function summarizeSchedule(schedule: any, args: Record<string, unknown>) {
   const eventType = compactText(args.type).toLowerCase();
   const teamId = compactText(args.teamId);
   const teamName = compactText(args.teamName).toLowerCase();
-  const playerName = compactText(args.playerName).toLowerCase();
+  const playerId = compactText(args.playerId || args.childId);
+  const playerName = compactText(args.playerName || args.childName).toLowerCase();
 
   let events = Array.isArray(schedule.events) ? schedule.events.slice() : [];
   if (range === 'upcoming') {
-    events = events.filter((event: ParentScheduleEvent) => event.date.getTime() >= startOfDay(now).getTime());
+    events = events
+      .filter((event: ParentScheduleEvent) => event.date.getTime() >= startOfDay(now).getTime())
+      .sort((left: ParentScheduleEvent, right: ParentScheduleEvent) => left.date.getTime() - right.date.getTime());
   } else if (range === 'recent') {
-    events = events.filter((event: ParentScheduleEvent) => event.date.getTime() < startOfDay(now).getTime()).reverse();
+    events = events
+      .filter((event: ParentScheduleEvent) => event.date.getTime() < startOfDay(now).getTime())
+      .sort((left: ParentScheduleEvent, right: ParentScheduleEvent) => right.date.getTime() - left.date.getTime());
   }
   if (eventType === 'game' || eventType === 'practice') {
     events = events.filter((event: ParentScheduleEvent) => event.type === eventType);
@@ -5581,11 +6027,32 @@ function summarizeSchedule(schedule: any, args: Record<string, unknown>) {
   if (teamName) {
     events = events.filter((event: ParentScheduleEvent) => event.teamName.toLowerCase().includes(teamName));
   }
+  if (playerId) {
+    events = events.filter((event: ParentScheduleEvent) => event.childId === playerId);
+  }
   if (playerName) {
     events = events.filter((event: ParentScheduleEvent) => event.childName.toLowerCase().includes(playerName));
   }
 
+  const totalMatchingEvents = events.length;
+  const returnedEventCount = Math.min(totalMatchingEvents, itemLimit);
+  const hasMoreEvents = totalMatchingEvents > returnedEventCount;
+  const sourceComplete = schedule?.isPartial !== true;
+
   return {
+    query: {
+      range,
+      ...(eventType ? { type: eventType } : {}),
+      ...(teamId ? { teamId } : {}),
+      ...(teamName ? { teamName } : {}),
+      ...(playerId ? { playerId } : {}),
+      ...(playerName ? { playerName } : {})
+    },
+    totalMatchingEvents,
+    returnedEventCount,
+    hasMoreEvents,
+    resultComplete: sourceComplete && !hasMoreEvents,
+    absenceConfirmed: sourceComplete && totalMatchingEvents === 0,
     children: (schedule.children || []).slice(0, 20).map((child: any) => pickFields(child, ['playerId', 'childId', 'name', 'childName', 'teamId', 'teamName'])),
     events: events.slice(0, itemLimit).map(summarizeScheduleEvent)
   };
@@ -5615,9 +6082,13 @@ function summarizeLastGame(schedule: any, args: Record<string, unknown>) {
     lastGame: pastGames[0] ? summarizeScheduleEvent(pastGames[0]) : null,
     recentGames: pastGames.slice(0, 5).map(summarizeScheduleEvent),
     upcomingGames: upcomingGames.slice(0, 3).map(summarizeScheduleEvent),
+    resultComplete: schedule?.isPartial !== true,
+    absenceConfirmed: schedule?.isPartial !== true && pastGames.length === 0,
     message: pastGames.length
       ? ''
-      : 'No past games were found for the requested player or team.'
+      : schedule?.isPartial === true
+        ? 'The complete schedule could not be verified.'
+        : 'No past games were found for the requested player or team.'
   };
 }
 
@@ -5709,7 +6180,169 @@ function summarizeTeamDetail(detail: any) {
   };
 }
 
+function summarizeDiamondStatEvidence(
+  statPresentation: Partial<CoverageAwareStatPresentation> | null | undefined,
+  aggregateProjectionPending?: unknown
+) {
+  const statCoverage = isPlainObject(statPresentation?.statCoverage)
+    ? Object.fromEntries(Object.entries(statPresentation.statCoverage).map(([key, value]) => [
+        compactText(key),
+        compactText(value).toLowerCase()
+      ]).filter(([key]) => Boolean(key)))
+    : {};
+  const observedStatKeys = Array.isArray(statPresentation?.observedStatKeys)
+    ? statPresentation.observedStatKeys.map(compactText).filter(Boolean)
+    : [];
+  const unavailableStatKeys = Array.isArray(statPresentation?.unavailableStatKeys)
+    ? statPresentation.unavailableStatKeys.map(compactText).filter(Boolean)
+    : [];
+  const projectionSignals = [
+    statPresentation?.projection?.pending,
+    statPresentation?.projectionPending,
+    aggregateProjectionPending
+  ].filter((value): value is boolean => typeof value === 'boolean');
+  // A missing or contradictory freshness signal cannot prove a complete
+  // projection. The nested signal is what per-game rows carry; the top-level
+  // signal remains a compatibility input for season aggregates.
+  const pending = projectionSignals.length === 0 || projectionSignals.some((value) => value);
+  const coverageStatuses = Object.values(statCoverage);
+  const coverageComplete = coverageStatuses.length > 0
+    && coverageStatuses.every((status) => status === 'complete')
+    && observedStatKeys.length === 0
+    && unavailableStatKeys.length === 0;
+  const complete = !pending && coverageComplete;
+
+  return {
+    status: pending ? 'pending' : complete ? 'complete' : 'partial',
+    complete,
+    pending,
+    statCoverage,
+    observedStatKeys,
+    unavailableStatKeys,
+    projectionPending: pending
+  };
+}
+
+function isDiamondPlayerStatRow(row: any) {
+  return row?.statPresentation?.isDiamond === true
+    || String(row?.event?.trackingEngine || '').trim().toLowerCase() === 'diamond-v2';
+}
+
+function summarizeDiamondPlayerStatRowEvidence(row: any) {
+  return summarizeDiamondStatEvidence(
+    row?.statPresentation?.isDiamond === true ? row.statPresentation : null
+  );
+}
+
 function summarizePlayerDevelopment(detail: any) {
+  const statRows = Array.isArray(detail.statRows) ? detail.statRows : [];
+  const reportedScheduleLoadStatus = compactText(detail.scheduleLoadStatus).toLowerCase();
+  const recentGamesLoadStatus = reportedScheduleLoadStatus === 'partial'
+    ? 'partial'
+    : reportedScheduleLoadStatus === 'unavailable' || compactText(detail.scheduleLoadError)
+      ? 'unavailable'
+      : 'complete';
+  const hasDiamondRows = statRows.some(isDiamondPlayerStatRow);
+  const seasonTotals = detail.seasonStatTotals;
+  const seasonTotalsLoadStatus = detail.seasonStatTotalsLoadStatus === 'complete'
+    ? 'complete'
+    : 'unavailable';
+  const hasLoadedSeasonTotals = seasonTotalsLoadStatus === 'complete' && isPlainObject(seasonTotals);
+  const seasonDiamond = seasonTotals?.diamond;
+  const hasConsistentDiamondSeasonEnvelope = seasonDiamond?.hasDiamond === true;
+  const hasInconsistentDiamondSeasonEnvelope = hasDiamondRows && !hasConsistentDiamondSeasonEnvelope;
+  const hasDiamondSeason = hasConsistentDiamondSeasonEnvelope || hasDiamondRows;
+  const seasonCoverageEvidence = hasConsistentDiamondSeasonEnvelope
+    ? summarizeDiamondStatEvidence(seasonTotals?.statPresentation, seasonDiamond.pending)
+    : null;
+  const seasonPublicStatsStatus = compactText(seasonDiamond?.publicStatsStatus).toLowerCase() || 'unknown';
+  const seasonPrivateStatsStatus = compactText(seasonDiamond?.privateStatsStatus).toLowerCase() || 'unknown';
+  const requestedStatVisibility = compactText(seasonDiamond?.requestedStatVisibility).toLowerCase() || 'public';
+  const seasonAccessComplete = seasonPublicStatsStatus === 'complete'
+    && (requestedStatVisibility !== 'manager-internal' || seasonPrivateStatsStatus === 'complete');
+  const seasonEvidenceComplete = seasonCoverageEvidence?.complete === true && seasonAccessComplete;
+  const unavailableSeasonTotals = {
+    available: false,
+    loadStatus: 'unavailable',
+    gameCount: null,
+    totals: null,
+    absenceConfirmed: false
+  };
+  const seasonStatTotals = !hasLoadedSeasonTotals
+    ? {
+        ...unavailableSeasonTotals,
+        ...(hasDiamondRows ? {
+          diamondEvidence: {
+            status: 'pending',
+            complete: false,
+            pending: true,
+            publicStatsStatus: 'unavailable',
+            privateStatsStatus: 'unknown',
+            requestedStatVisibility: 'public',
+            statVisibility: 'public',
+            sourceRevisions: [],
+            absenceConfirmed: false,
+            coverage: {
+              statCoverage: {},
+              observedStatKeys: [],
+              unavailableStatKeys: [],
+              projectionPending: true
+            }
+          }
+        } : {})
+      }
+    : seasonTotals && !hasInconsistentDiamondSeasonEnvelope ? {
+    loadStatus: 'complete',
+    gameCount: seasonTotals.gameCount,
+    totals: seasonTotals.totals || {},
+    ...(Array.isArray(seasonTotals.statDefinitions) ? {
+      statDefinitions: seasonTotals.statDefinitions.slice(0, 64)
+    } : {}),
+    ...(seasonDiamond?.hasDiamond ? {
+      available: true,
+      diamondEvidence: {
+        status: seasonCoverageEvidence?.pending === true
+          ? 'pending'
+          : seasonEvidenceComplete ? 'complete' : 'partial',
+        complete: seasonEvidenceComplete,
+        pending: seasonCoverageEvidence?.pending !== false,
+        publicStatsStatus: seasonPublicStatsStatus,
+        privateStatsStatus: seasonPrivateStatsStatus,
+        requestedStatVisibility,
+        statVisibility: compactText(seasonDiamond.statVisibility) || 'public',
+        sourceRevisions: Array.isArray(seasonDiamond.sourceRevisions) ? seasonDiamond.sourceRevisions : [],
+        absenceConfirmed: seasonAccessComplete && seasonDiamond.absenceConfirmed === true,
+        coverage: {
+          statCoverage: seasonCoverageEvidence?.statCoverage || {},
+          observedStatKeys: seasonCoverageEvidence?.observedStatKeys || [],
+          unavailableStatKeys: seasonCoverageEvidence?.unavailableStatKeys || [],
+          projectionPending: seasonCoverageEvidence?.projectionPending !== false
+        }
+      }
+    } : {})
+  } : hasDiamondSeason ? {
+    available: false,
+    loadStatus: 'complete',
+    gameCount: null,
+    totals: null,
+    diamondEvidence: {
+      status: 'pending',
+      complete: false,
+      pending: true,
+      publicStatsStatus: 'unavailable',
+      privateStatsStatus: 'unknown',
+      requestedStatVisibility: 'public',
+      statVisibility: 'public',
+      sourceRevisions: [],
+      absenceConfirmed: false,
+      coverage: {
+        statCoverage: {},
+        observedStatKeys: [],
+        unavailableStatKeys: [],
+        projectionPending: true
+      }
+    }
+  } : unavailableSeasonTotals;
   return {
     player: {
       id: detail.player?.id || detail.child?.playerId,
@@ -5722,14 +6355,19 @@ function summarizePlayerDevelopment(detail: any) {
     },
     nextEvent: detail.nextEvent ? summarizeScheduleEvent(detail.nextEvent) : null,
     actionCounts: detail.actionCounts,
-    recentGames: (detail.statRows || []).slice(0, 6).map((row: any) => ({
+    recentGamesEvidence: {
+      loadStatus: recentGamesLoadStatus,
+      complete: recentGamesLoadStatus === 'complete',
+      absenceConfirmed: recentGamesLoadStatus === 'complete' && statRows.length === 0
+    },
+    recentGames: statRows.slice(0, 6).map((row: any) => ({
       event: summarizeScheduleEvent(row.event),
-      stats: row.stats || {}
+      stats: row.stats || {},
+      ...(isDiamondPlayerStatRow(row) ? {
+        diamondEvidence: summarizeDiamondPlayerStatRowEvidence(row)
+      } : {})
     })),
-    seasonStatTotals: detail.seasonStatTotals ? {
-      gameCount: detail.seasonStatTotals.gameCount,
-      totals: detail.seasonStatTotals.totals || {}
-    } : summarizeStatRowsTotals(detail.statRows || []),
+    seasonStatTotals,
     trackingSummary: (detail.trackingSummary || []).slice(0, 12),
     incentives: detail.incentives ? {
       activeRules: (detail.incentives.currentRules || []).slice(0, 8),
@@ -5749,7 +6387,7 @@ function summarizePlayerDevelopment(detail: any) {
     } : null,
     certificates: (detail.certificates || []).slice(0, 5),
     clips: (detail.clips || []).slice(0, 8),
-    coachingPrompt: 'Use recent stats, tracking, incentives, upcoming schedule, and profile gaps to suggest practical next steps for the player. Avoid medical advice.'
+    coachingPrompt: 'When recentGamesEvidence.loadStatus is partial or unavailable, do not claim there are no recent games; say the recent schedule could not be fully verified. When seasonStatTotals.loadStatus is unavailable, do not infer season totals from recentGames or claim season zero or absence. Use recent stats only within their Diamond completeness evidence. Partial values are lower bounds and unavailable values are unknown. State zero only when diamondEvidence.complete is true, the requested stat key is explicitly present, and its statCoverage entry is complete; a missing stat key never means zero. Absence is confirmed only when absenceConfirmed is true. Never describe partial, pending, or unavailable Diamond totals as complete or as zero. Use tracking, incentives, upcoming schedule, and profile gaps to suggest practical next steps. Avoid medical advice.'
   };
 }
 
@@ -5768,22 +6406,6 @@ function summarizeFees(fees: any[]) {
       'totalAmountCents',
       'checkoutUrl'
     ]))
-  };
-}
-
-function summarizeStatRowsTotals(rows: any[]) {
-  const totals = (Array.isArray(rows) ? rows : []).reduce<Record<string, number>>((acc, row) => {
-    Object.entries(row?.stats || {}).forEach(([key, value]) => {
-      const numeric = Number(value);
-      if (key && Number.isFinite(numeric)) {
-        acc[key] = (acc[key] || 0) + numeric;
-      }
-    });
-    return acc;
-  }, {});
-  return {
-    gameCount: Array.isArray(rows) ? rows.length : 0,
-    totals
   };
 }
 
@@ -5873,8 +6495,18 @@ type AccessibleAiTeam = {
   detail: any;
 };
 
+type AccessibleAiSchedulePlayer = {
+  id: string;
+  name: string;
+  teamId: string;
+  playerId: string;
+};
+
 type AccessibleAiTeamsResult = {
   teams: AccessibleAiTeam[];
+  scheduleTeams: Array<{ id: string; name: string }>;
+  schedulePlayers: AccessibleAiSchedulePlayer[];
+  unavailableSchedulePlayers: AccessibleAiSchedulePlayer[];
   isPartial: boolean;
   partialError?: unknown;
   managerTeamsPartial: boolean;
@@ -5904,6 +6536,44 @@ async function loadAccessibleAiTeams(user: AuthUser): Promise<AccessibleAiTeamsR
   const scheduleScope = scheduleScopeResult.status === 'fulfilled'
     ? scheduleScopeResult.value
     : { children: [], staffTeams: [], isPartial: true, staffTeamsPartial: true };
+  const scheduleTeams = new Map<string, { id: string; name: string }>();
+  const schedulePlayers = new Map<string, AccessibleAiSchedulePlayer>();
+  const unavailableSchedulePlayers = new Map<string, AccessibleAiSchedulePlayer>();
+  const addScheduleTeam = (value: unknown) => {
+    const candidate = (value || {}) as Record<string, unknown>;
+    const id = compactText(candidate.teamId || candidate.id);
+    const name = compactText(candidate.teamName || candidate.name) || id;
+    if (id && name && !scheduleTeams.has(id)) scheduleTeams.set(id, { id, name });
+  };
+  const addSchedulePlayer = (value: unknown, teamIdOverride = '', teamNameOverride = '') => {
+    const candidate = (value || {}) as Record<string, unknown>;
+    const teamId = compactText(teamIdOverride || candidate.teamId);
+    const teamName = compactText(teamNameOverride || candidate.teamName);
+    const playerId = compactText(candidate.playerId || candidate.childId || candidate.id);
+    const name = compactText(candidate.playerName || candidate.childName || candidate.name);
+    const id = `${teamId}:${playerId}`;
+    if (teamId && playerId && name && !schedulePlayers.has(id)) {
+      schedulePlayers.set(id, { id, name, teamId, playerId });
+      unavailableSchedulePlayers.delete(id);
+      addScheduleTeam({ teamId, teamName });
+    }
+  };
+  const addUnavailableSchedulePlayer = (value: unknown, teamIdOverride = '') => {
+    const candidate = (value || {}) as Record<string, unknown>;
+    const teamId = compactText(teamIdOverride || candidate.teamId);
+    const playerId = compactText(candidate.playerId || candidate.childId || candidate.id);
+    const name = compactText(candidate.playerName || candidate.childName || candidate.name);
+    const id = `${teamId}:${playerId}`;
+    if (teamId && playerId && name && !schedulePlayers.has(id) && !unavailableSchedulePlayers.has(id)) {
+      unavailableSchedulePlayers.set(id, { id, name, teamId, playerId });
+    }
+  };
+  (home.teams || []).forEach(addScheduleTeam);
+  (scheduleScope.staffTeams || []).forEach(addScheduleTeam);
+  (scheduleScope.children || []).forEach((child) => {
+    addScheduleTeam(child);
+    addSchedulePlayer(child);
+  });
   if (scheduleScope.isPartial === true) isPartial = true;
   let managerTeamsPartial = scheduleScopeResult.status === 'rejected'
     || (scheduleScope.staffTeamsPartial ?? scheduleScope.isPartial) === true;
@@ -5972,8 +6642,29 @@ async function loadAccessibleAiTeams(user: AuthUser): Promise<AccessibleAiTeamsR
       }
     }
   });
+  details.forEach((team) => {
+    addScheduleTeam({ teamId: team.teamId, teamName: team.teamName });
+    (team.detail?.linkedPlayers || []).forEach((player: unknown) => {
+      addSchedulePlayer(player, team.teamId, team.teamName);
+    });
+    if (team.canManageTeam) {
+      (team.detail?.players || []).forEach((player: unknown) => {
+        addSchedulePlayer(player, team.teamId, team.teamName);
+      });
+    } else {
+      (team.detail?.players || []).forEach((player: unknown) => {
+        addUnavailableSchedulePlayer(player, team.teamId);
+      });
+    }
+    (team.detail?.inactivePlayers || []).forEach((player: unknown) => {
+      addUnavailableSchedulePlayer(player, team.teamId);
+    });
+  });
   return {
     teams: details,
+    scheduleTeams: Array.from(scheduleTeams.values()),
+    schedulePlayers: Array.from(schedulePlayers.values()),
+    unavailableSchedulePlayers: Array.from(unavailableSchedulePlayers.values()),
     isPartial,
     managerTeamsPartial,
     ...(partialError ? { partialError } : {}),
@@ -6629,6 +7320,62 @@ function looksLikeFunctionalHelpQuestion(question: string) {
   ].some((term) => text.includes(term));
 }
 
+function isPrivateAiWriteClarificationAnswer(answer: string) {
+  const text = compactText(answer);
+  const normalized = text.toLowerCase();
+  if (!normalized) return false;
+  const completionClaim = (
+    /\b(?:i|we|all plays)\s+(?:have\s+|just\s+)?(?:prepared|reviewed|staged|queued|scheduled|created|updated|saved|sent|removed|cancelled|completed|confirmed|applied)\b/.test(normalized)
+    || /\b(?:change|request|game|practice|event|team|invite|message|rsvp|update)\b.{0,80}\b(?:is|was|has been|have been)\s+(?:prepared|reviewed|staged|queued|scheduled|created|updated|saved|sent|removed|cancelled|completed|confirmed|applied)\b/.test(normalized)
+    || /\breply\s+["']?(?:yes|confirm)\b/.test(normalized)
+  );
+  if (completionClaim) return false;
+  return /\?$/.test(text)
+    || /^(?:which|what|when|where|who|please (?:provide|choose|specify|tell)|tell me|could you|can you|i need)\b/.test(normalized)
+    || /\b(?:cannot|can't|could not|couldn't|unable to)\b.{0,120}\b(?:without|until|need|provide|choose|specify)\b/.test(normalized);
+}
+
+function buildPrivateAiWriteFailureAnswer(question: string, toolResults: PrivateAiToolResult[]) {
+  const failedWrite = [...toolResults].reverse().find((result) => (
+    !result.ok
+    && getPrivateAiToolDefinition(result.name)?.mode === 'write'
+    && (
+      result.failureStage === 'planning'
+      || privateAiWriteToolMatchesQuestion(question, result.name)
+    )
+  ));
+  if (failedWrite?.failureStage === 'proposal-save') {
+    return 'I reviewed that change, but could not save it for confirmation. Nothing was applied. Please try again.';
+  }
+  if (failedWrite?.failureStage === 'review-preparation') {
+    return `I could not prepare that change during review because ${getPrivateAiReviewFailureReason(failedWrite.error)}.`;
+  }
+  return 'I could not prepare that change because ALL PLAYS AI did not select a matching reviewed action. Nothing was applied. Please try again.';
+}
+
+function getPrivateAiReviewFailureReason(error: unknown) {
+  const text = compactText(error).toLowerCase();
+  if (/team access|managed team|verify.{0,40}team|matching team/.test(text)) {
+    return 'I could not verify management access to the requested team. Use the exact team name or team ID and try again';
+  }
+  if (/more than one|ambiguous|choose one/.test(text)) {
+    return 'more than one authorized target matched. Choose the exact team, player, or event and try again';
+  }
+  if (/team name is required/.test(text)) {
+    return 'a team name is required. Tell me the exact name and try again';
+  }
+  if (/sport is required/.test(text)) {
+    return 'a sport is required. Tell me which sport template to use and try again';
+  }
+  if (/supported sport/.test(text)) {
+    return 'the requested sport template is not supported. Choose a sport offered by Create Team and try again';
+  }
+  if (/time zone|schedule event time|startdate|\bdate\b|\btime\b/.test(text)) {
+    return 'the requested date, time, or time zone could not be validated. Provide the full date and time zone and try again';
+  }
+  return 'the requested target or details could not be verified. Check the exact names and required fields, then try again';
+}
+
 function looksLikeImperativePrivateAiWriteRequest(question: string) {
   const text = normalizePrivateAiIntentText(question);
   const writeVerb = '(?:add|invite|create|update|change|remove|delete|deactivate|reactivate|cancel|schedule|reschedule|move|send|resend|retry|set|mark|record|assign|claim|release|save|import|complete|submit|request|revoke|retire|toggle|enable|disable|approve|reject|review|close|reopen|offer|post|pay|favorite|unfavorite)';
@@ -6721,6 +7468,9 @@ function getExpectedPrivateAiWriteToolNames(question: string): Set<string> | nul
       ? new Set(['set_player_tracking_status'])
       : new Set(['save_team_tracking_item']);
   }
+  if (looksLikePrivateAiCreateTeamRequest(text)) {
+    return new Set(['create_team']);
+  }
   if (/\b(?:team settings?|team name|team sport|league url|livestream url)\b/.test(text)) {
     return new Set(['update_team_settings']);
   }
@@ -6795,6 +7545,21 @@ function normalizePrivateAiIntentText(question: string) {
     .trim();
 }
 
+function looksLikePrivateAiCreateTeamRequest(text: string) {
+  if (/\bteam\s+(?:admin|administrator|email|fee|invite|invitation|message|tracking)\b/.test(text)) {
+    return false;
+  }
+  const match = text.match(/\bcreate\s+(.{0,80}?)\bteam\b/);
+  if (!match) return false;
+
+  const allowedModifiers = new Set(['a', 'an', 'the', 'new']);
+  getCreateTeamSportOptions().forEach((sport) => {
+    compactText(sport).toLowerCase().match(/[a-z0-9]+/g)?.forEach((word) => allowedModifiers.add(word));
+  });
+  const modifiers = match[1].toLowerCase().match(/[a-z0-9]+/g) || [];
+  return modifiers.every((word) => allowedModifiers.has(word));
+}
+
 function looksLikePrivateAiTeamAdminRequest(text: string) {
   return (
     /\b(?:team admin|administrator)\b/.test(text)
@@ -6846,7 +7611,31 @@ function getPrivateAiPreparedWriteKey(prepared: PrivateAiPreparedWrite) {
 
 function looksLikeLastGameQuestion(question: string) {
   const text = compactText(question).toLowerCase();
-  return /\b(last|previous|most recent|latest|prior)\b/.test(text) && /\bgame|match\b/.test(text);
+  return /\b(last|previous|most recent|latest|prior)\b/.test(text) && /\b(?:game|match)\b/.test(text);
+}
+
+function looksLikeNextGameQuestion(question: string) {
+  const text = compactText(question).toLowerCase();
+  return /\b(next|upcoming)\b/.test(text) && /\b(?:game|match)\b/.test(text);
+}
+
+function buildGroundedNextGameAnswer(result: PrivateAiToolResult | undefined) {
+  if (!result?.ok || !isPlainObject(result.data)) return '';
+  const events = Array.isArray(result.data.events) ? result.data.events : [];
+  const nextGame = events.find((event) => isPlainObject(event) && compactText(event.type).toLowerCase() === 'game');
+  if (nextGame) {
+    const teamName = compactText(nextGame.teamName) || 'Your team';
+    const title = compactText(nextGame.title) || 'a game';
+    const dateLabel = compactText(nextGame.dateLabel) || compactText(nextGame.date);
+    const timeLabel = compactText(nextGame.timeLabel);
+    const location = compactText(nextGame.location);
+    const playerName = compactText(nextGame.childName);
+    return `${teamName}'s next game is ${dateLabel}${timeLabel ? ` at ${timeLabel}` : ''}: ${title}${location ? ` at ${location}` : ''}${playerName ? ` for ${playerName}` : ''}.`;
+  }
+  if (result.data.absenceConfirmed === true) {
+    return 'I found no upcoming game in the complete schedule for the requested team or player.';
+  }
+  return 'I could not verify the complete schedule, so I cannot confirm the next game yet.';
 }
 
 function clampAnswer(answer: string) {

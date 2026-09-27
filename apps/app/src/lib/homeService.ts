@@ -1,4 +1,3 @@
-import { listParentTeamFeeRecipients } from './adapters/legacyHomeFees';
 import { normalizeParentFeeRecord } from './adapters/legacyHomeFees';
 import { loadChatInbox } from './chatService';
 import { startUxTimer } from './uxTiming';
@@ -14,7 +13,9 @@ import {
   getTeamsSummaryBootstrapCacheKey,
   loadCachedAppData
 } from './appDataCache';
-import { toAppServiceError, type AppServiceError } from './appErrors';
+import { toAppServiceError } from './appErrors';
+import { listParentTeamFeeRecipientsForApp } from './parentFeeRecipientsService';
+import { isNativeRuntime } from './nativeRuntime';
 import {
   hydrateParentScheduleDetails,
   loadParentSchedule,
@@ -26,35 +27,74 @@ import type { AuthUser } from './types';
 
 const homeSummaryTtlMs = 45 * 1000;
 const homeSecondaryTtlMs = 30 * 1000;
+const homeMaxStaleMs = 5 * 60 * 1000;
 const teamsSummaryTtlMs = 30 * 1000;
 const logger = createLogger('home');
+
+type ParentHomeNativeLoadContext = {
+  loadProfile: () => Promise<Record<string, unknown>>;
+  loadManagedTeams: () => Promise<{ teams: any[]; isPartial: boolean }>;
+};
 
 type ParentHomeSummaryBootstrapResult = {
   home: ParentHomeModel;
   schedule: ParentScheduleLoadResult;
+  nativeContext?: ParentHomeNativeLoadContext;
 };
 
 type ParentHomeSummaryOptions = {
   force?: boolean;
   scheduleScope?: ParentScheduleScope;
+  nativeContext?: ParentHomeNativeLoadContext;
+  onBackgroundError?: (error: unknown) => void;
+};
+
+type ParentScheduleSummaryOptions = ParentHomeSummaryOptions & {
+  onPartial?: (schedule: ParentScheduleLoadResult) => void;
+  onRefresh?: (schedule: ParentScheduleLoadResult) => void;
 };
 
 type ParentHomeSummaryBootstrapOptions = ParentHomeSummaryOptions & {
   onPartial?: (result: ParentHomeSummaryBootstrapResult) => void;
+  onRefresh?: (result: ParentHomeSummaryBootstrapResult) => void;
 };
 
-function rethrowIfPermissionError(error: unknown, fallbackMessage: string) {
-  const appError = toAppServiceError(error, fallbackMessage);
-  if (appError.type === 'permission') {
-    throw appError;
-  }
-  return appError;
+type ParentTeamsSummaryBootstrapOptions = {
+  force?: boolean;
+  onPartial?: (home: ParentHomeModel) => void;
+};
+
+function createParentHomeNativeLoadContext(userId: string): ParentHomeNativeLoadContext | undefined {
+  if (!isNativeRuntime()) return undefined;
+  let profilePromise: Promise<Record<string, unknown>> | null = null;
+  let managedTeamsPromise: Promise<{ teams: any[]; isPartial: boolean }> | null = null;
+  return {
+    loadProfile: () => {
+      if (!profilePromise) {
+        profilePromise = import('./nativeHomeLoaders').then(({ loadNativeHomeProfile }) => loadNativeHomeProfile(userId));
+      }
+      return profilePromise;
+    },
+    loadManagedTeams: () => {
+      if (!managedTeamsPromise) {
+        managedTeamsPromise = import('./nativeHomeLoaders').then(({ loadNativeHomeManagedTeams }) => (
+          loadNativeHomeManagedTeams()
+        ));
+      }
+      return managedTeamsPromise;
+    }
+  };
 }
 
-function throwIfAllSecondarySlicesFailed(errors: AppServiceError[]) {
-  if (errors.length >= 3) {
-    throw errors[0];
+function normalizeSecondaryError(error: unknown, fallbackMessage: string) {
+  return toAppServiceError(error, fallbackMessage);
+}
+
+function requireCompleteChatInbox<T extends { isPartial?: boolean }>(chatInbox: T): T {
+  if (chatInbox.isPartial === true) {
+    throw new Error('Home chat access is incomplete. Try loading Home again.');
   }
+  return chatInbox;
 }
 
 export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeModel> {
@@ -64,10 +104,10 @@ export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeM
 
   const schedule = await loadParentScheduleSummary(user);
   const [chatInbox, rawFees] = await Promise.all([
-    loadChatInbox(user).catch((error) => {
+    loadChatInbox(user).then(requireCompleteChatInbox).catch((error) => {
       throw toAppServiceError(error, 'Unable to load Home chat.');
     }),
-    Promise.resolve(listParentTeamFeeRecipients(user.uid, schedule.children)).catch((error) => {
+    listParentTeamFeeRecipientsForApp(user.uid, schedule.children).catch((error) => {
       throw toAppServiceError(error, 'Unable to load Home fees.');
     })
   ]);
@@ -88,6 +128,31 @@ export async function loadParentHomeSummary(
   return summary.home;
 }
 
+export async function loadParentSearchTeamsSummary(user: AuthUser | null): Promise<ParentHomeModel> {
+  if (!user?.uid) {
+    return buildParentHomeModel({ children: [], events: [], inboxTeams: [], fees: [] });
+  }
+
+  const scheduleScope = await loadParentScheduleScope(user);
+  if (scheduleScope.isPartial === true) {
+    throw toAppServiceError(
+      new Error('Search team access discovery is incomplete. Try searching again.'),
+      'Unable to load search teams.'
+    );
+  }
+
+  return buildParentHomeModel({
+    children: scheduleScope.children,
+    events: [],
+    inboxTeams: normalizeStaffTeams({
+      children: [],
+      events: [],
+      staffTeams: scheduleScope.staffTeams
+    }),
+    fees: []
+  });
+}
+
 export async function loadParentHomeSummaryBootstrap(
   user: AuthUser | null,
   options: ParentHomeSummaryBootstrapOptions = {}
@@ -100,6 +165,7 @@ export async function loadParentHomeSummaryBootstrap(
     };
   }
 
+  const nativeContext = options.nativeContext || createParentHomeNativeLoadContext(user.uid);
   const toBootstrapResult = (schedule: ParentScheduleLoadResult): ParentHomeSummaryBootstrapResult => ({
     home: buildParentHomeModel({
       children: schedule.children,
@@ -107,13 +173,21 @@ export async function loadParentHomeSummaryBootstrap(
       inboxTeams: normalizeStaffTeams(schedule),
       fees: []
     }),
-    schedule
+    schedule,
+    ...(nativeContext ? { nativeContext } : {})
   });
   const schedule = await loadParentScheduleSummary(user, {
     force: options.force,
     scheduleScope: options.scheduleScope,
+    nativeContext,
     ...(options.onPartial ? {
       onPartial: (partialSchedule) => options.onPartial?.(toBootstrapResult(partialSchedule))
+    } : {}),
+    ...(options.onRefresh ? {
+      onRefresh: (refreshedSchedule) => options.onRefresh?.(toBootstrapResult(refreshedSchedule))
+    } : {}),
+    ...(options.onBackgroundError ? {
+      onBackgroundError: options.onBackgroundError
     } : {})
   });
   return toBootstrapResult(schedule);
@@ -126,7 +200,7 @@ export async function loadParentTeamsSummary(user: AuthUser | null, options: { f
 
 export async function loadParentTeamsSummaryBootstrap(
   user: AuthUser | null,
-  options: { force?: boolean } = {}
+  options: ParentTeamsSummaryBootstrapOptions = {}
 ): Promise<{ home: ParentHomeModel; scheduleScope: ParentScheduleScope }> {
   if (!user?.uid) {
     return {
@@ -140,25 +214,74 @@ export async function loadParentTeamsSummaryBootstrap(
     async () => {
       const timer = startUxTimer('teams summary load');
       try {
-        const [chatInbox, scheduleScope] = await Promise.all([
-          loadChatInbox(user, { includeLastMessages: false }).catch((error) => {
-            throw toAppServiceError(error, 'Unable to load teams.');
-          }),
+        let availableChatTeams: any[] = [];
+        let availableScheduleScope: ParentScheduleScope | null = null;
+        const emitAvailableTeams = () => {
+          const model = buildParentHomeModel({
+            children: availableScheduleScope?.children || [],
+            events: [],
+            inboxTeams: mergeTeamSummaries(
+              normalizeStaffTeams({ children: [], events: [], staffTeams: availableScheduleScope?.staffTeams }),
+              normalizeInboxTeams(availableChatTeams)
+            ),
+            fees: []
+          });
+          // A verified nonempty result can unblock the chooser while slower,
+          // unrelated family-scope reads finish. Empty or failed slices stay
+          // fail-closed until the complete bootstrap result is known.
+          if (model.teams.length > 0) options.onPartial?.(model);
+        };
+        const [chatInboxResult, scheduleScope] = await Promise.all([
+          loadChatInbox(user, { includeLastMessages: false })
+            .then(requireCompleteChatInbox)
+            .then((chatInbox) => {
+              availableChatTeams = chatInbox.teams || [];
+              emitAvailableTeams();
+              return { chatInbox, error: null };
+            })
+            .catch((error) => ({
+              chatInbox: { teams: [] },
+              error: toAppServiceError(error, 'Unable to load team chat.')
+            })),
           loadParentScheduleScope(user)
+            .then((scheduleScope) => {
+              availableScheduleScope = scheduleScope;
+              emitAvailableTeams();
+              return scheduleScope;
+            })
+            .catch((error) => {
+              throw toAppServiceError(error, 'Unable to load teams.');
+            })
         ]);
+        const hasDiscoveredTeams = scheduleScope.children.length > 0 || Boolean(scheduleScope.staffTeams?.length);
+        if (scheduleScope.isPartial === true && !hasDiscoveredTeams) {
+          if (chatInboxResult.error) {
+            throw chatInboxResult.error;
+          }
+          throw toAppServiceError(
+            new Error('Team access discovery is incomplete. Try loading teams again.'),
+            'Unable to load teams.'
+          );
+        }
+        if (chatInboxResult.error) {
+          logger.warn('Team chat summary failed; using schedule access for the team chooser.', {
+            error: chatInboxResult.error
+          });
+        }
         const model = buildParentHomeModel({
           children: scheduleScope.children,
           events: [],
           inboxTeams: mergeTeamSummaries(
             normalizeStaffTeams({ children: [], events: [], staffTeams: scheduleScope.staffTeams }),
-            normalizeInboxTeams(chatInbox.teams || [])
+            normalizeInboxTeams(chatInboxResult.chatInbox.teams || [])
           ),
           fees: []
         });
         timer.end({
           children: scheduleScope.children.length,
           teams: model.teams.length,
-          inboxTeams: chatInbox.teams?.length || 0
+          inboxTeams: chatInboxResult.chatInbox.teams?.length || 0,
+          chatPartial: Boolean(chatInboxResult.error)
         });
         return {
           home: model,
@@ -169,7 +292,12 @@ export async function loadParentTeamsSummaryBootstrap(
         throw error;
       }
     },
-    { ttlMs: teamsSummaryTtlMs, force: options.force, persist: false }
+    {
+      ttlMs: teamsSummaryTtlMs,
+      force: options.force,
+      persist: false,
+      shouldCache: (result) => result.scheduleScope.isPartial !== true
+    }
   );
 }
 
@@ -178,7 +306,9 @@ export async function loadParentHomeWithSecondaryData(
   options: {
     force?: boolean;
     schedule?: ParentScheduleLoadResult;
+    nativeContext?: ParentHomeNativeLoadContext;
     onPartial?: (model: ParentHomeModel) => void;
+    onBackgroundError?: (error: unknown) => void;
   } = {}
 ): Promise<ParentHomeModel> {
   if (!user?.uid) {
@@ -205,8 +335,9 @@ export async function loadParentHomeWithSecondaryData(
     // Stream each secondary slice independently so Home renders schedule cards
     // immediately and fills in chat badges / fee items / hydrated RSVP states as
     // each arrives, instead of blocking on all of them before any update (#2037).
-    // A per-slice failure degrades that card rather than gating the whole page.
-    const secondaryErrors: AppServiceError[] = [];
+    // A failed slice leaves the streamed preview available, but the final load
+    // rejects so Home labels it retryable and never caches empty fallback data
+    // as authoritative chat, fee, or schedule state.
     const results = await Promise.allSettled([
       hydrateParentScheduleDetails(schedule, user).then((hydratedSchedule) => {
         const nextSchedule = hydratedSchedule || schedule;
@@ -217,38 +348,38 @@ export async function loadParentHomeWithSecondaryData(
         emit(patch);
         return patch;
       }).catch((error) => {
-        const appError = rethrowIfPermissionError(error, 'Unable to hydrate Home schedule.');
-        secondaryErrors.push(appError);
+        const appError = normalizeSecondaryError(error, 'Unable to hydrate Home schedule.');
         logger.warn('Schedule hydration failed.', { error: appError });
-        return null;
+        throw appError;
       }),
-      loadChatInbox(user).then((chatInbox) => {
+      loadChatInbox(user, options.nativeContext ? {
+        nativeProfileLoader: options.nativeContext.loadProfile,
+        nativeManagedTeamsLoader: options.nativeContext.loadManagedTeams
+      } : {}).then((chatInbox) => {
         const nextInboxTeams = normalizeInboxTeams(chatInbox.teams || []);
         emit({ inboxTeams: nextInboxTeams });
+        requireCompleteChatInbox(chatInbox);
         return nextInboxTeams;
       }).catch((error) => {
-        const appError = rethrowIfPermissionError(error, 'Unable to load Home chat.');
-        secondaryErrors.push(appError);
+        const appError = normalizeSecondaryError(error, 'Unable to load Home chat.');
         logger.warn('Chat inbox failed.', { error: appError });
-        return [];
+        throw appError;
       }),
-      Promise.resolve(listParentTeamFeeRecipients(user.uid, children)).then((rawFees) => {
+      listParentTeamFeeRecipientsForApp(user.uid, children).then((rawFees) => {
         const nextFees = (rawFees || []).map((fee: any) => normalizeParentFeeRecord(fee));
         emit({ fees: nextFees });
         return nextFees;
       }).catch((error) => {
-        const appError = rethrowIfPermissionError(error, 'Unable to load Home fees.');
-        secondaryErrors.push(appError);
+        const appError = normalizeSecondaryError(error, 'Unable to load Home fees.');
         logger.warn('Fees failed.', { error: appError });
-        return [];
+        throw appError;
       })
     ]);
 
-    const permissionFailure = results.find((result) => result.status === 'rejected');
-    if (permissionFailure?.status === 'rejected') {
-      throw permissionFailure.reason;
+    const failedSlice = results.find((result) => result.status === 'rejected');
+    if (failedSlice?.status === 'rejected') {
+      throw failedSlice.reason;
     }
-    throwIfAllSecondarySlicesFailed(secondaryErrors);
 
     const [scheduleResult, chatResult, feesResult] = results;
     return buildParentHomeModel({
@@ -257,12 +388,19 @@ export async function loadParentHomeWithSecondaryData(
       inboxTeams: chatResult.status === 'fulfilled' ? chatResult.value : partialState.inboxTeams,
       fees: feesResult.status === 'fulfilled' ? feesResult.value : partialState.fees
     });
-  }, { ttlMs: homeSecondaryTtlMs, force: options.force });
+  }, {
+    ttlMs: homeSecondaryTtlMs,
+    force: options.force,
+    maxStaleMs: homeMaxStaleMs,
+    staleWhileRevalidate: true,
+    onRefresh: onPartial || undefined,
+    onRefreshError: options.onBackgroundError
+  });
 }
 
 export async function loadParentScheduleSummary(
   user: AuthUser | null,
-  options: ParentHomeSummaryOptions & { onPartial?: (schedule: ParentScheduleLoadResult) => void } = {}
+  options: ParentScheduleSummaryOptions = {}
 ): Promise<ParentScheduleLoadResult> {
   if (!user?.uid) return { children: [], events: [] };
   const hasScopedStaffTeams = Boolean(options.scheduleScope?.staffTeams?.length);
@@ -272,11 +410,18 @@ export async function loadParentScheduleSummary(
       hydrateDetails: false,
       expandStaffPlayers: false,
       parentScope: options.scheduleScope,
+      nativeProfileLoader: options.nativeContext?.loadProfile,
+      nativeStaffTeamsLoader: options.nativeContext?.loadManagedTeams,
       ...(options.onPartial ? { onPartial: options.onPartial } : {})
     }),
     {
       ttlMs: homeSummaryTtlMs,
       force: options.force || hasScopedStaffTeams,
+      maxStaleMs: homeMaxStaleMs,
+      staleWhileRevalidate: true,
+      onRefresh: options.onPartial,
+      onBackgroundRefresh: options.onRefresh,
+      onRefreshError: options.onBackgroundError,
       shouldCache: (result) => result?.isPartial !== true
     }
   );

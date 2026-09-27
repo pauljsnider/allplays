@@ -28,7 +28,9 @@ function TeamProbe({ teamId, preferredConversationId = '' }: { teamId: string; p
             <div data-testid="can-moderate">{String(state.canModerate)}</div>
             <div data-testid="selected-conversation">{state.selectedConversationId}</div>
             <div data-testid="conversation-count">{state.conversations.length}</div>
+            <div data-testid="error">{state.error || ''}</div>
             <button type="button" onClick={() => state.switchConversation('staff')}>Open staff</button>
+            <button type="button" onClick={state.retryContext}>Retry context</button>
         </div>
     );
 }
@@ -192,6 +194,32 @@ describe('useChatTeam', () => {
         await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
         expect(screen.getByTestId('conversation-count').textContent).toBe('2');
         expect(screen.getByTestId('selected-conversation').textContent).toBe('staff');
+    });
+
+    it('surfaces conversation hydration failures and retries the complete load', async () => {
+        vi.mocked(loadChatTeamContext).mockResolvedValue({
+            team: { id: 'team-1', name: 'Bears' },
+            profile: {},
+            canModerate: true
+        });
+        vi.mocked(loadChatConversations)
+            .mockRejectedValueOnce(new Error('Chat conversations could not be completely verified. Try again.'))
+            .mockResolvedValueOnce([
+                { id: DEFAULT_TEAM_CONVERSATION_ID, type: 'team', isDefault: true },
+                { id: 'staff', type: 'group', name: 'Staff only' }
+            ]);
+
+        render(<TeamProbe teamId="team-1" />);
+
+        await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
+        expect(screen.getByTestId('error').textContent).toContain('could not be completely verified');
+        expect(screen.getByTestId('conversation-count').textContent).toBe('0');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Retry context' }));
+
+        await waitFor(() => expect(screen.getByTestId('conversation-count').textContent).toBe('2'));
+        expect(screen.getByTestId('error').textContent).toBe('');
+        expect(loadChatConversations).toHaveBeenCalledTimes(2);
     });
 
     it('switches conversations immediately when the selected id changes', async () => {

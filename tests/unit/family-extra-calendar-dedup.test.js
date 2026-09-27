@@ -52,6 +52,7 @@ const {
     getGames,
     getTrackedCalendarEventUids,
     fetchAndParseCalendar,
+    hasReplayVideoEvidence,
     recordExternalCalendarFailure
 } = deps;
 const expandRecurrence = () => [];
@@ -69,7 +70,9 @@ return buildCombinedSchedule;
             date: new Date('2026-06-15T17:00:00Z'),
             opponent: 'Lions',
             location: 'Home Field',
-            status: 'scheduled'
+            status: 'completed',
+            liveStatus: 'scheduled',
+            replayVideo: { publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }
         }],
         getTrackedCalendarEventUids: async () => [],
         fetchAndParseCalendar: async url => {
@@ -77,6 +80,7 @@ return buildCombinedSchedule;
             if (result instanceof Error) throw result;
             return result || [];
         },
+        hasReplayVideoEvidence: game => Boolean(game?.replayVideo?.publicUrl),
         recordExternalCalendarFailure: failure => failures.push(failure)
     });
 }
@@ -112,7 +116,8 @@ describe('family page extra calendar deduplication', () => {
         expect(events).toHaveLength(3);
         expect(events.find(event => event.id === 'db-game-1')).toMatchObject({
             opponent: 'Lions',
-            isDbGame: true
+            isDbGame: true,
+            hasReplayVideo: true
         });
         expect(events.find(event => event.id === 'extra-1')).toMatchObject({
             sourceCalendarUrl: firstUrl,

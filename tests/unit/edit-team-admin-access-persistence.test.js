@@ -207,6 +207,12 @@ function createEnvironment(initialState, overrides = {}) {
         'name',
         'description',
         'sport',
+        'diamond-fastpitch-sport-option',
+        'diamond-team-setup',
+        'diamond-scorebook-enabled',
+        'diamond-team-setup-options',
+        'diamond-rules-profile',
+        'diamond-capture-mode',
         'teamColorPrimary',
         'teamColorSecondary',
         'notificationEmail',
@@ -305,6 +311,9 @@ function createEnvironment(initialState, overrides = {}) {
     elements.get('standingsPointLoss').value = '0';
     elements.get('isPublic').checked = true;
     elements.get('streamAccessMode').value = 'admins';
+    elements.get('diamond-team-setup').classList.add('hidden');
+    elements.get('diamond-team-setup-options').classList.add('hidden');
+    elements.get('diamond-capture-mode').value = 'quick';
     elements.get('photo-upload').files = [];
 
     const document = {
@@ -327,6 +336,7 @@ function createEnvironment(initialState, overrides = {}) {
     const window = {
         document,
         location,
+        __ALLPLAYS_CONFIG__: overrides.runtimeConfig,
         navigator: {
             clipboard: {
                 async writeText() {}
@@ -358,19 +368,35 @@ function extractEditTeamModule() {
 
     return match[1]
         .replace(
-            /import\s+\{\s*createTeam,\s*updateTeam,\s*getTeam,\s*getUserProfile,\s*getUserTeamsWithAccess,\s*getPlayers,\s*getPlayerPrivateProfile,\s*copySelectedPlayersForTeamRollover,\s*uploadTeamPhoto,\s*addConfig,\s*getUnreadChatCount,\s*inviteAdmin,\s*addTeamAdminEmail,\s*getTeamAccessCodes(?:,\s*getConfigs,\s*getGames,\s*updateGame)?(?:,\s*getRegistrationSources)?(?:,\s*syncRegistrationProvider)?\s*\}\s+from\s+'\.\/js\/db\.js\?v=\d+';/,
-            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } = deps.db;'
+            /import\s+\{\s*createTeam,\s*updateTeam,\s*getTeam,\s*getUserProfile,\s*getUserTeamsWithAccess,\s*getPlayers,\s*getPlayerPrivateProfile,\s*copySelectedPlayersForTeamRollover,\s*uploadTeamPhoto(?:,\s*deleteLegacyImageUpload)?,\s*addConfig,\s*getUnreadChatCount,\s*inviteAdmin,\s*addTeamAdminEmail,\s*getTeamAccessCodes(?:,\s*getConfigs,\s*getGames,\s*updateGame)?(?:,\s*getRegistrationSources)?(?:,\s*syncRegistrationProvider)?\s*\}\s+from\s+'\.\/js\/db\.js\?v=\d+';/,
+            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, deleteLegacyImageUpload, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } = deps.db;'
         )
         .replace(
-            "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=2';",
-            'const { getDefaultStatConfigForSport } = deps.statConfigPresets;'
+            "import { validateProfilePhotoFile } from './js/profile-photo-paths.js?v=3';",
+            'const { validateProfilePhotoFile } = deps.profilePhotoPaths;'
         )
         .replace(
-            "import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=2';",
+            "import { getDefaultDiamondStatConfigForSport, getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=4';",
+            'const { getDefaultDiamondStatConfigForSport, getDefaultStatConfigForSport } = deps.statConfigPresets;'
+        )
+        .replace(
+            "import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=4';",
             'const { buildTeamSportConfigMigrationPlan } = deps.teamStatConfigMigration;'
         )
         .replace(
-            "import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=18';",
+            "import { configureDiamondTeamForSport } from './js/diamond-scorebook-client.js?v=4';",
+            'const { configureDiamondTeamForSport } = deps.diamondScorebookClient;'
+        )
+        .replace(
+            "import { listDiamondRulesProfilesForSport } from './js/diamond-rules-profiles.js?v=2';",
+            'const { listDiamondRulesProfilesForSport } = deps.diamondRulesProfiles;'
+        )
+        .replace(
+            "import { isDiamondScorebookUiEnabled } from './js/launch-features.js?v=3';",
+            'const { isDiamondScorebookUiEnabled } = deps.launchFeatures;'
+        )
+        .replace(
+            /import\s+\{\s*renderHeader,\s*renderFooter,\s*getUrlParams,\s*escapeHtml\s*\}\s+from\s+'\.\/js\/utils\.js\?v=\d+';/,
             'const { renderHeader, renderFooter, getUrlParams, escapeHtml } = deps.utils;'
         )
         .replace(
@@ -378,15 +404,15 @@ function extractEditTeamModule() {
             'const { checkAuth, sendInviteEmail } = deps.auth;'
         )
         .replace(
-            "import { renderTeamAdminBanner } from './js/team-admin-banner.js';",
+            /import\s+\{\s*renderTeamAdminBanner\s*\}\s+from\s+'\.\/js\/team-admin-banner\.js\?v=\d+';/,
             'const { renderTeamAdminBanner } = deps.teamAdminBanner;'
         )
         .replace(
-            "import { normalizeYouTubeEmbedUrl } from './js/live-stream-utils.js?v=1';",
+            "import { normalizeYouTubeEmbedUrl } from './js/live-stream-utils.js?v=2';",
             'const { normalizeYouTubeEmbedUrl } = deps.liveStreamUtils;'
         )
         .replace(
-            "import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=4';",
+            /import\s+\{\s*hasFullTeamAccess,\s*normalizeAdminEmailList,\s*normalizeStreamVolunteerEmailList,\s*normalizeTeamPermissions\s*\}\s+from\s+'\.\/js\/team-access\.js\?v=\d+';/,
             'const { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } = deps.teamAccess;'
         )
         .replace(
@@ -467,6 +493,7 @@ async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = 
             async uploadTeamPhoto() {
                 throw new Error('Not implemented in test');
             },
+            async deleteLegacyImageUpload() {},
             async addConfig() {
                 return 'config-1';
             },
@@ -536,6 +563,9 @@ async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = 
             }
         },
         statConfigPresets: {
+            getDefaultDiamondStatConfigForSport() {
+                return null;
+            },
             getDefaultStatConfigForSport() {
                 return null;
             }
@@ -550,9 +580,35 @@ async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = 
                 };
             }
         },
+        diamondScorebookClient: {
+            async configureDiamondTeamForSport() {
+                return { configured: false };
+            }
+        },
+        diamondRulesProfiles: {
+            listDiamondRulesProfilesForSport(sport) {
+                const normalized = String(sport || '').trim().toLowerCase();
+                if (normalized === 'baseball') {
+                    return [
+                        { id: 'baseball-youth', version: 1, sport: 'baseball', label: 'Baseball — configurable youth' },
+                        { id: 'baseball-nfhs', version: 1, sport: 'baseball', label: 'Baseball — NFHS style' }
+                    ];
+                }
+                if (normalized === 'softball' || normalized === 'fastpitch') {
+                    return [{ id: 'fastpitch-youth', version: 1, sport: 'fastpitch', label: 'Fastpitch — configurable youth' }];
+                }
+                return [];
+            }
+        },
+        launchFeatures: {
+            isDiamondScorebookUiEnabled() {
+                return env.window.__ALLPLAYS_CONFIG__?.diamondScorebookUiEnabled === true;
+            }
+        },
         teamAccess: await import('../../js/team-access.js'),
         rolloverAccess: await import('../../js/rollover-access.js'),
         rosterRolloverPreview: await import('../../js/roster-rollover-preview.js'),
+        profilePhotoPaths: await import('../../js/profile-photo-paths.js'),
         editTeamAdminInvites: {
             ...(await import('../../js/edit-team-admin-invites.js')),
             async processPendingAdminInvites() {
@@ -597,6 +653,18 @@ async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = 
         teamStatConfigMigration: {
             ...baseDeps.teamStatConfigMigration,
             ...(dependencyOverrides.teamStatConfigMigration || {})
+        },
+        diamondScorebookClient: {
+            ...baseDeps.diamondScorebookClient,
+            ...(dependencyOverrides.diamondScorebookClient || {})
+        },
+        diamondRulesProfiles: {
+            ...baseDeps.diamondRulesProfiles,
+            ...(dependencyOverrides.diamondRulesProfiles || {})
+        },
+        launchFeatures: {
+            ...baseDeps.launchFeatures,
+            ...(dependencyOverrides.launchFeatures || {})
         },
         teamAccess: {
             ...baseDeps.teamAccess,
@@ -972,6 +1040,487 @@ describe('edit team admin access persistence', () => {
         }
     });
 
+    it('keeps Diamond off by default and sends an explicit profile only after opt-in', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            createCalls: [],
+            updateCalls: []
+        };
+        const configurationCalls = [];
+        const env = await bootEditTeam(initialState, {
+            href: 'http://example.com/edit-team.html',
+            runtimeConfig: { diamondScorebookUiEnabled: true }
+        }, {
+            diamondScorebookClient: {
+                async configureDiamondTeamForSport(teamId, sport, options) {
+                    configurationCalls.push({ teamId, sport, options: deepClone(options) });
+                    return { configured: true, enabled: true, settings: options };
+                }
+            }
+        });
+        try {
+            expect(env.elements.get('diamond-scorebook-enabled').checked).toBe(false);
+            expect(env.elements.get('diamond-team-setup').classList.contains('hidden')).toBe(true);
+
+            env.elements.get('name').value = 'Diamond Sharks';
+            env.elements.get('sport').value = 'Baseball';
+            await env.elements.get('sport').dispatchEvent(new MockEvent('change'));
+            expect(env.elements.get('diamond-team-setup').classList.contains('hidden')).toBe(false);
+            expect(env.elements.get('diamond-rules-profile').value).toBe('baseball-youth@1');
+
+            env.elements.get('diamond-scorebook-enabled').checked = true;
+            await env.elements.get('diamond-scorebook-enabled').dispatchEvent(new MockEvent('change'));
+            env.elements.get('diamond-rules-profile').value = 'baseball-nfhs@1';
+            env.elements.get('diamond-capture-mode').value = 'full';
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(configurationCalls).toEqual([{
+                teamId: 'team-created',
+                sport: 'Baseball',
+                options: {
+                    enabled: true,
+                    rulesProfileId: 'baseball-nfhs',
+                    rulesProfileVersion: 1,
+                    captureMode: 'full'
+                }
+            }]);
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it.each([
+        ['missing', undefined],
+        ['false', { diamondScorebookUiEnabled: false }]
+    ])('keeps Diamond setup unavailable with %s runtime config and preserves normal Baseball creation', async (_label, runtimeConfig) => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            createCalls: [],
+            updateCalls: []
+        };
+        const configurationCalls = [];
+        const env = await bootEditTeam(initialState, {
+            href: 'http://example.com/edit-team.html',
+            runtimeConfig
+        }, {
+            diamondScorebookClient: {
+                async configureDiamondTeamForSport(...args) {
+                    configurationCalls.push(args);
+                    return { configured: true };
+                }
+            }
+        });
+        try {
+            env.elements.get('name').value = 'Classic Baseball';
+            env.elements.get('sport').value = 'Baseball';
+            await env.elements.get('sport').dispatchEvent(new MockEvent('change'));
+
+            expect(env.elements.get('diamond-team-setup').hidden).toBe(true);
+            expect(env.elements.get('diamond-team-setup').classList.contains('hidden')).toBe(true);
+
+            env.elements.get('diamond-scorebook-enabled').checked = true;
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(configurationCalls).toEqual([]);
+            expect(env.state.createCalls).toHaveLength(1);
+            expect(env.state.createCalls[0].teamData.sport).toBe('Baseball');
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('retries Diamond enrollment on the existing team after a transient setup failure', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Existing Sharks',
+                sport: 'Baseball',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                isPublic: true,
+                adminEmails: []
+            },
+            createCalls: [],
+            updateCalls: []
+        };
+        const configurationCalls = [];
+        let attempt = 0;
+        const env = await bootEditTeam(initialState, {
+            href: 'http://example.com/edit-team.html?teamId=team-1&created=1',
+            runtimeConfig: { diamondScorebookUiEnabled: true }
+        }, {
+            diamondScorebookClient: {
+                async configureDiamondTeamForSport(...args) {
+                    configurationCalls.push(deepClone(args));
+                    attempt += 1;
+                    if (attempt === 1) throw new Error('temporary setup failure');
+                    return { configured: true, enabled: true };
+                }
+            }
+        });
+        try {
+            expect(env.elements.get('diamond-team-setup').hidden).toBe(false);
+            env.elements.get('diamond-scorebook-enabled').checked = true;
+            await env.elements.get('diamond-scorebook-enabled').dispatchEvent(new MockEvent('change'));
+            env.elements.get('diamond-rules-profile').value = 'baseball-nfhs@1';
+            env.elements.get('diamond-capture-mode').value = 'full';
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.alerts.at(-1)).toContain('Retry from this page; no second team will be created.');
+            expect(env.window.location.href).toContain('teamId=team-1');
+            expect(env.elements.get('diamond-team-setup').hidden).toBe(false);
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.createCalls).toEqual([]);
+            expect(configurationCalls).toEqual([
+                ['team-1', 'Baseball', {
+                    enabled: true,
+                    rulesProfileId: 'baseball-nfhs',
+                    rulesProfileVersion: 1,
+                    captureMode: 'full'
+                }],
+                ['team-1', 'Baseball', {
+                    enabled: true,
+                    rulesProfileId: 'baseball-nfhs',
+                    rulesProfileVersion: 1,
+                    captureMode: 'full'
+                }]
+            ]);
+            expect(env.window.location.href).toBe('http://example.com/dashboard.html');
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('creates a team before uploading and saving its final team-owned photo', async () => {
+        const operations = [];
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            createCalls: [],
+            updateCalls: []
+        };
+        const env = await bootEditTeam(initialState, { href: 'http://example.com/edit-team.html' }, {
+            db: {
+                async createTeam(teamData) {
+                    operations.push({ type: 'create', teamData: deepClone(teamData) });
+                    return 'team-created';
+                },
+                async uploadTeamPhoto(file, options) {
+                    operations.push({ type: 'upload', file, options: deepClone(options) });
+                    return {
+                        url: 'https://cdn.example.test/team-created.jpg',
+                        path: 'profile-photos/teams/team-created/team/team.jpg'
+                    };
+                },
+                async updateTeam(teamId, teamData) {
+                    operations.push({ type: 'update', teamId, teamData: deepClone(teamData) });
+                }
+            }
+        });
+        try {
+            env.elements.get('name').value = 'Photo Sharks';
+            env.elements.get('sport').value = 'Basketball';
+            env.elements.get('photo-upload').files = [{ name: 'team.jpg', type: 'image/jpeg', size: 123 }];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(operations.map(({ type }) => type)).toEqual(['create', 'upload', 'update']);
+            expect(operations[0].teamData).toMatchObject({ photoUrl: null, photoPath: null });
+            expect(operations[1].options).toEqual({ returnUpload: true, teamId: 'team-created' });
+            expect(operations[2]).toMatchObject({
+                teamId: 'team-created',
+                teamData: {
+                    photoUrl: 'https://cdn.example.test/team-created.jpg',
+                    photoPath: 'profile-photos/teams/team-created/team/team.jpg'
+                }
+            });
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it.each([
+        [{ name: 'empty.jpg', type: 'image/jpeg', size: 0 }, 'non-empty image file'],
+        [{ name: 'notes.txt', type: 'text/plain', size: 123 }, 'image file'],
+        [{ name: 'huge.jpg', type: 'image/jpeg', size: 6 * 1024 * 1024 }, '5 MB or smaller']
+    ])('rejects an invalid new-team photo before creating its owner', async (file, expectedMessage) => {
+        const env = await bootEditTeam({
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            createCalls: [],
+            updateCalls: []
+        }, { href: 'http://example.com/edit-team.html' });
+        try {
+            env.elements.get('name').value = 'Photo Sharks';
+            env.elements.get('sport').value = 'Basketball';
+            env.elements.get('photo-upload').files = [file];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.createCalls).toEqual([]);
+            expect(env.state.updateCalls).toEqual([]);
+            expect(env.alerts.at(-1)).toContain(expectedMessage);
+            expect(env.elements.get('save-btn').disabled).toBe(false);
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('lets another team admin replace a team photo and cleans the prior owned path after persistence', async () => {
+        const deletedPaths = [];
+        const initialState = {
+            currentUser: { uid: 'admin-2', email: 'admin2@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Photo Sharks',
+                description: '',
+                sport: 'Basketball',
+                notificationEmail: '',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                adminEmails: ['admin2@example.com'],
+                photoUrl: 'https://cdn.example.test/old.jpg',
+                photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+            },
+            updateCalls: []
+        };
+        const env = await bootEditTeam(initialState, undefined, {
+            db: {
+                async uploadTeamPhoto() {
+                    return {
+                        url: 'https://cdn.example.test/new.jpg',
+                        path: 'profile-photos/teams/team-1/team/new.jpg'
+                    };
+                },
+                async deleteLegacyImageUpload(path) {
+                    deletedPaths.push(path);
+                }
+            }
+        });
+        try {
+            env.elements.get('photo-upload').files = [{ name: 'new.jpg', type: 'image/jpeg', size: 123 }];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.updateCalls).toHaveLength(1);
+            expect(env.state.updateCalls[0].teamData).toMatchObject({
+                photoUrl: 'https://cdn.example.test/new.jpg',
+                photoPath: 'profile-photos/teams/team-1/team/new.jpg'
+            });
+            expect(deletedPaths).toEqual(['profile-photos/teams/team-1/team/old.jpg']);
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('preserves an uploaded replacement when an existing team save outcome is uncertain', async () => {
+        const deletedPaths = [];
+        let teamReads = 0;
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Photo Sharks',
+                description: '',
+                sport: 'Basketball',
+                notificationEmail: '',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                photoUrl: 'https://cdn.example.test/old.jpg',
+                photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+            },
+            updateCalls: []
+        };
+        const env = await bootEditTeam(initialState, undefined, {
+            db: {
+                async uploadTeamPhoto() {
+                    return {
+                        url: 'https://cdn.example.test/new.jpg',
+                        path: 'profile-photos/teams/team-1/team/new.jpg'
+                    };
+                },
+                async updateTeam() {
+                    throw Object.assign(new Error('network unavailable'), { code: 'firestore/unavailable' });
+                },
+                async getTeam() {
+                    teamReads += 1;
+                    if (teamReads === 1) return deepClone(initialState.team);
+                    throw new Error('confirmation read unavailable');
+                },
+                async deleteLegacyImageUpload(path) {
+                    deletedPaths.push(path);
+                }
+            }
+        });
+        try {
+            env.elements.get('photo-upload').files = [{ name: 'new.jpg', type: 'image/jpeg', size: 123 }];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(deletedPaths).toEqual([]);
+            expect(env.alerts.at(-1)).toContain('team save may have completed');
+            expect(env.alerts.at(-1)).toContain('uploaded photo was preserved');
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('accepts an ambiguous existing-team save only after the new photo path is authoritative', async () => {
+        const deletedPaths = [];
+        let teamReads = 0;
+        const oldTeam = {
+            id: 'team-1',
+            ownerId: 'owner-1',
+            name: 'Photo Sharks',
+            description: '',
+            sport: 'Basketball',
+            notificationEmail: '',
+            leagueUrl: '',
+            standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+            zip: '66209',
+            isPublic: true,
+            photoUrl: 'https://cdn.example.test/old.jpg',
+            photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+        };
+        const env = await bootEditTeam({
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: oldTeam,
+            updateCalls: []
+        }, undefined, {
+            db: {
+                async getTeam() {
+                    teamReads += 1;
+                    return teamReads === 1
+                        ? deepClone(oldTeam)
+                        : { ...deepClone(oldTeam), photoUrl: 'https://cdn.example.test/new.jpg', photoPath: 'profile-photos/teams/team-1/team/new.jpg' };
+                },
+                async uploadTeamPhoto() {
+                    return {
+                        url: 'https://cdn.example.test/new.jpg',
+                        path: 'profile-photos/teams/team-1/team/new.jpg'
+                    };
+                },
+                async updateTeam() {
+                    throw Object.assign(new Error('network unavailable'), { code: 'firestore/unavailable' });
+                },
+                async deleteLegacyImageUpload(path) {
+                    deletedPaths.push(path);
+                }
+            }
+        });
+        try {
+            env.elements.get('photo-upload').files = [{ name: 'new.jpg', type: 'image/jpeg', size: 123 }];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(deletedPaths).toEqual(['profile-photos/teams/team-1/team/old.jpg']);
+            expect(env.window.location.href).toMatch(/\/dashboard\.html$/);
+            expect(env.alerts.some((message) => message.includes('may have completed'))).toBe(false);
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('deletes an uploaded replacement when an authoritative re-read shows it was not committed', async () => {
+        const deletedPaths = [];
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Photo Sharks',
+                description: '',
+                sport: 'Basketball',
+                notificationEmail: '',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                photoUrl: 'https://cdn.example.test/old.jpg',
+                photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+            },
+            updateCalls: []
+        };
+        const env = await bootEditTeam(initialState, undefined, {
+            db: {
+                async uploadTeamPhoto() {
+                    return {
+                        url: 'https://cdn.example.test/new.jpg',
+                        path: 'profile-photos/teams/team-1/team/new.jpg'
+                    };
+                },
+                async updateTeam() {
+                    throw Object.assign(new Error('network unavailable'), { code: 'firestore/unavailable' });
+                },
+                async deleteLegacyImageUpload(path) {
+                    deletedPaths.push(path);
+                }
+            }
+        });
+        try {
+            env.elements.get('photo-upload').files = [{ name: 'new.jpg', type: 'image/jpeg', size: 123 }];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(deletedPaths).toEqual(['profile-photos/teams/team-1/team/new.jpg']);
+            expect(env.window.location.href).not.toBe('dashboard.html');
+            expect(env.alerts.at(-1)).toContain('Error saving team');
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('preserves a new team photo when its document update outcome is uncertain', async () => {
+        const deletedPaths = [];
+        const env = await bootEditTeam({
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            createCalls: [],
+            updateCalls: []
+        }, { href: 'http://example.com/edit-team.html' }, {
+            db: {
+                async createTeam() {
+                    return 'team-created';
+                },
+                async uploadTeamPhoto() {
+                    return {
+                        url: 'https://cdn.example.test/new.jpg',
+                        path: 'profile-photos/teams/team-created/team/new.jpg'
+                    };
+                },
+                async updateTeam() {
+                    throw Object.assign(new Error('network unavailable'), { code: 'unavailable' });
+                },
+                async getTeam() {
+                    throw new Error('confirmation read unavailable');
+                },
+                async deleteLegacyImageUpload(path) {
+                    deletedPaths.push(path);
+                }
+            }
+        });
+        try {
+            env.elements.get('name').value = 'Photo Sharks';
+            env.elements.get('sport').value = 'Basketball';
+            env.elements.get('photo-upload').files = [{ name: 'new.jpg', type: 'image/jpeg', size: 123 }];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(deletedPaths).toEqual([]);
+            expect(env.alerts.some((message) => message.includes('photo save state could not be confirmed'))).toBe(true);
+            expect(env.window.location.href).toContain('teamId=team-created');
+        } finally {
+            env.cleanup();
+        }
+    });
+
     it('runs sport migration before saving the new team sport so failed migrations can be retried', async () => {
         const initialState = {
             currentUser: { uid: 'owner-1', email: 'owner@example.com' },
@@ -1050,6 +1599,184 @@ describe('edit team admin access persistence', () => {
             expect(initialState.updateCalls).toEqual([]);
             expect(initialState.team.sport).toBe('Basketball');
             expect(env.alerts.at(-1)).toContain('game migration failed');
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('blocks a third sport on a mismatched dark-rollout Diamond team before any upload, migration, configuration, or team write', async () => {
+        const operations = [];
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Diamond Sharks',
+                description: 'Travel team',
+                sport: 'Soccer',
+                diamondScorebook: {
+                    enabled: true,
+                    sport: 'baseball',
+                    rulesProfileId: 'baseball-youth',
+                    rulesProfileVersion: 1,
+                    captureMode: 'quick'
+                },
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                isPublic: true,
+                adminEmails: []
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState, {
+            href: 'http://example.com/edit-team.html?teamId=team-1'
+        }, {
+            db: {
+                async uploadTeamPhoto() {
+                    operations.push('uploadTeamPhoto');
+                    return { url: 'https://example.test/new.jpg', path: 'profile-photos/teams/team-1/team/new.jpg' };
+                },
+                async getConfigs() {
+                    operations.push('getConfigs');
+                    return [];
+                },
+                async getGames() {
+                    operations.push('getGames');
+                    return [];
+                },
+                async addConfig() {
+                    operations.push('addConfig');
+                    return 'config-1';
+                },
+                async updateGame() {
+                    operations.push('updateGame');
+                },
+                async updateTeam() {
+                    operations.push('updateTeam');
+                }
+            },
+            diamondScorebookClient: {
+                async configureDiamondTeamForSport() {
+                    operations.push('configureDiamondTeamForSport');
+                    return { configured: true, enabled: true };
+                }
+            }
+        });
+        try {
+            operations.length = 0;
+            env.elements.get('sport').value = 'Basketball';
+            env.elements.get('photo-upload').files = [{ name: 'new.jpg', type: 'image/jpeg', size: 123 }];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(operations).toEqual([]);
+            expect(env.state.updateCalls).toEqual([]);
+            expect(env.alerts.at(-1)).toContain('Diamond Scorebook v2 is enrolled for baseball');
+            expect(env.alerts.at(-1)).toContain('no changes were written');
+            expect(env.elements.get('save-btn').disabled).toBe(false);
+            expect(env.elements.get('save-btn').textContent).toBe('Save Team');
+            expect(env.window.location.href).toBe('http://example.com/edit-team.html?teamId=team-1');
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('repairs an existing Diamond sport mismatch back to the stored enrollment sport while rollout UI is dark', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Diamond Sharks',
+                description: 'Travel team',
+                sport: 'Soccer',
+                diamondScorebook: {
+                    enabled: true,
+                    sport: 'baseball',
+                    rulesProfileId: 'baseball-youth',
+                    rulesProfileVersion: 1,
+                    captureMode: 'quick'
+                },
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                isPublic: true,
+                adminEmails: []
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState, {
+            href: 'http://example.com/edit-team.html?teamId=team-1'
+        });
+        try {
+            env.elements.get('sport').value = 'Baseball';
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.updateCalls).toHaveLength(1);
+            expect(env.state.updateCalls[0].teamData.sport).toBe('Baseball');
+            expect(env.alerts.some((message) => message.includes('no changes were written'))).toBe(false);
+            expect(env.window.location.href).toBe('http://example.com/dashboard.html');
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('still saves unrelated edits when an enrolled Diamond team keeps its sport', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Diamond Sharks',
+                description: 'Travel team',
+                sport: 'Baseball',
+                diamondScorebook: { enabled: true, sport: 'baseball' },
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                isPublic: true,
+                adminEmails: []
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState);
+        try {
+            env.elements.get('name').value = 'Diamond Sharks Updated';
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.updateCalls).toHaveLength(1);
+            expect(env.state.updateCalls[0].teamData).toMatchObject({
+                name: 'Diamond Sharks Updated',
+                sport: 'Baseball'
+            });
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('preserves classic team sport changes when Diamond is not enrolled', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Classic Sharks',
+                sport: 'Basketball',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                isPublic: true,
+                adminEmails: []
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState);
+        try {
+            env.elements.get('sport').value = 'Soccer';
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.updateCalls).toHaveLength(1);
+            expect(env.state.updateCalls[0].teamData.sport).toBe('Soccer');
         } finally {
             env.cleanup();
         }
@@ -1142,7 +1869,7 @@ describe('edit team admin access persistence', () => {
         }
     });
 
-  it('normalizes an invited existing-team admin email without granting access before redemption', async () => {
+  it('does not rewrite normalized admin emails during an existing-team metadata save', async () => {
         const initialState = {
             currentUser: { uid: 'owner-1', email: 'owner@example.com' },
             team: {
@@ -1169,9 +1896,7 @@ describe('edit team admin access persistence', () => {
             await env.elements.get('team-form').requestSubmit();
 
             expect(env.state.updateCalls).toHaveLength(1);
-            expect(env.state.updateCalls[0].teamData.adminEmails).toEqual([
-                'existing@example.com'
-            ]);
+            expect(env.state.updateCalls[0].teamData).not.toHaveProperty('adminEmails');
         } finally {
             env.cleanup();
         }
@@ -1216,7 +1941,7 @@ describe('edit team admin access persistence', () => {
             await env.elements.get('team-form').requestSubmit();
 
             expect(env.state.updateCalls).toHaveLength(1);
-            expect(env.state.updateCalls[0].teamData.adminEmails).toEqual(['existing@example.com']);
+            expect(env.state.updateCalls[0].teamData).not.toHaveProperty('adminEmails');
             expect(env.elements.get('admin-list').textContent).not.toContain('pending@example.com');
         } finally {
             env.cleanup();

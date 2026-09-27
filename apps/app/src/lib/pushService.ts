@@ -56,6 +56,8 @@ const iosNotificationSettingsUrl = 'app-settings:';
 const androidNotificationSettingsUrl = 'intent:#Intent;action=android.settings.APP_NOTIFICATION_SETTINGS;S.extra_app_package=ai.allplays.lite;end';
 const androidAppSettingsUrl = 'app-settings:';
 const pushPrimerStoragePrefix = 'allplays.pushPrimer.';
+const androidNotificationChannelSchemaStorageKey = 'allplays.androidNotificationChannelsSchemaVersion';
+const androidNotificationChannelSchemaVersion = '1';
 export const androidNotificationChannels = [
   {
     id: 'allplays_messages',
@@ -131,6 +133,11 @@ export async function ensureAndroidNotificationChannels(): Promise<void> {
     return androidNotificationChannelsPromise;
   }
 
+  const channelSchemaStorage = readAndroidNotificationChannelSchema();
+  if (channelSchemaStorage.current) {
+    return;
+  }
+
   let setupFailed = false;
   androidNotificationChannelsPromise = Promise.all(androidNotificationChannels.map(async (channel) => {
     try {
@@ -142,6 +149,10 @@ export async function ensureAndroidNotificationChannels(): Promise<void> {
   })).then(() => {
     if (setupFailed) {
       androidNotificationChannelsPromise = null;
+      return;
+    }
+    if (channelSchemaStorage.available) {
+      persistCurrentAndroidNotificationChannelSchema();
     }
   });
 
@@ -385,11 +396,38 @@ function readPushPrimerDecision(context: PushNotificationPrimerContext): { decis
   }
 }
 
-function getPushPrimerStorage() {
+function getLocalStorage() {
   if (typeof window === 'undefined') {
     return null;
   }
   return window.localStorage || null;
+}
+
+function readAndroidNotificationChannelSchema() {
+  try {
+    const storage = getLocalStorage();
+    if (!storage) {
+      return { available: false, current: false };
+    }
+    return {
+      available: true,
+      current: storage.getItem(androidNotificationChannelSchemaStorageKey) === androidNotificationChannelSchemaVersion
+    };
+  } catch {
+    return { available: false, current: false };
+  }
+}
+
+function persistCurrentAndroidNotificationChannelSchema() {
+  try {
+    getLocalStorage()?.setItem(androidNotificationChannelSchemaStorageKey, androidNotificationChannelSchemaVersion);
+  } catch {
+    // Channel setup remains usable when durable storage is unavailable; a later launch retries.
+  }
+}
+
+function getPushPrimerStorage() {
+  return getLocalStorage();
 }
 
 function getPushPrimerStorageKey(context: PushNotificationPrimerContext) {

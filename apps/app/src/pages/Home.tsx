@@ -37,6 +37,7 @@ import {
   blockFriend,
   commentOnSocialPost,
   createSocialPost,
+  discardSocialPostMediaUpload,
   hideSocialPost,
   loadSocialHome,
   removeFriend,
@@ -46,7 +47,8 @@ import {
   sendFriendRequest,
   reactToSocialPost,
   uploadSocialPostMedia,
-  type CreateSocialPostInput
+  type CreateSocialPostInput,
+  type SocialMediaUpload
 } from '../lib/socialService';
 import {
   getEventDetailPath,
@@ -96,6 +98,7 @@ import type { AuthState } from '../lib/types';
 import { OpportunityCard } from '../components/OpportunityCard';
 import { listPublicOpportunities } from '../lib/opportunityService';
 import type { PublicOpportunity } from '../lib/opportunityLogic';
+import { getSafeSocialPostRoute } from '../lib/socialNavigation';
 
 type HomeSectionId = 'today' | 'feed' | 'players' | 'teams' | 'friends';
 
@@ -135,6 +138,7 @@ const emptyHome = (): ParentHomeModel => ({
   players: [],
   teams: [],
   upcomingEvents: [],
+  feedGames: [],
   actionItems: [],
   fees: [],
   metrics: {
@@ -150,9 +154,14 @@ function getHomeSectionRoute(section: HomeSectionId) {
   return section === 'today' ? '/home' : `/home?section=${section}`;
 }
 
+function getHomeTeamScope(home: ParentHomeModel) {
+  return home.teams.map((team) => team.teamId).sort().join('|');
+}
+
 function isHomeSectionReady(section: HomeSectionId, state: { loading: boolean; socialLoading: boolean; hasLoadedHomeDetails: boolean; showBlockingErrorState: boolean }) {
   if (state.loading || state.showBlockingErrorState) return false;
-  if (section === 'today' || section === 'feed' || section === 'friends') {
+  if (section === 'today') return true;
+  if (section === 'feed' || section === 'friends') {
     return state.hasLoadedHomeDetails && !state.socialLoading;
   }
   return state.hasLoadedHomeDetails;
@@ -177,13 +186,14 @@ export function Home({ auth }: { auth: AuthState }) {
   const [home, setHome] = useState<ParentHomeModel>(() => emptyHome());
   const [social, setSocial] = useState<SocialHomeModel>(() => emptySocialHome());
   const [activeSection, setActiveSection] = useState<HomeSectionId>('today');
-  const [officialsAccess, setOfficialsAccess] = useState<{ hasAccess: boolean; teamCount: number } | null>(null);
+  const [officialsAccess, setOfficialsAccess] = useState<{ hasAccess: boolean; teamCount: number; isPartial: boolean } | null>(null);
   const [socialStatus, setSocialStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const [previewHomeUserId, setPreviewHomeUserId] = useState<string | null>(null);
   const [loadedHomeDetailsUserId, setLoadedHomeDetailsUserId] = useState<string | null>(null);
+  const [failedHomeDetailsUserId, setFailedHomeDetailsUserId] = useState<string | null>(null);
   const [homeLoadError, setHomeLoadError] = useState<AppServiceError | null>(null);
   const { loading, error, clearError, run: runPrimaryLoad } = useAsyncOperation();
   const { loading: socialLoading, run: runSecondaryLoad } = useAsyncOperation();
@@ -191,51 +201,147 @@ export function Home({ auth }: { auth: AuthState }) {
   const homeSectionNavRef = useRef<HTMLElement | null>(null);
 
   const authUserId = auth.user?.uid || null;
+  const currentAuthUserIdRef = useRef(authUserId);
+  const homeLoadGenerationRef = useRef(0);
+  currentAuthUserIdRef.current = authUserId;
   const hasHomePreview = Boolean(authUserId) && authUserId === previewHomeUserId;
   const hasLoadedHomeDetails = Boolean(authUserId) && authUserId === loadedHomeDetailsUserId;
 
-  const refreshHome = async ({ force = false }: { force?: boolean } = {}) => {
+  const refreshHome = async ({
+    force = false,
+    forceSecondary = false,
+    preserveCurrentHome = false
+  }: { force?: boolean; forceSecondary?: boolean; preserveCurrentHome?: boolean } = {}) => {
     const user = auth.user;
     if (!user) return;
+    const loadGeneration = homeLoadGenerationRef.current + 1;
+    homeLoadGenerationRef.current = loadGeneration;
+    const isCurrentHomeLoad = () => (
+      currentAuthUserIdRef.current === user.uid
+      && homeLoadGenerationRef.current === loadGeneration
+    );
+    let secondaryLoadPromise: Promise<unknown> | null = null;
     let receivedHomePreview = false;
+    let summaryResultReturned = false;
     const hasExistingHome = loadedHomeDetailsUserId === user.uid;
     clearError();
     setHomeLoadError(null);
     setSocialStatus(null);
+    if (!hasExistingHome && !preserveCurrentHome && previewHomeUserId !== user.uid) {
+      setHome(emptyHome());
+      setSocial(emptySocialHome());
+    }
     const timer = startScreenMountTimer('home', {
-      force,
+      force: force || forceSecondary,
       hasExistingHome
     });
-    return runPrimaryLoad(
+    const handleBackgroundError = (backgroundError: unknown) => {
+      if (!isCurrentHomeLoad()) return;
+      const appError = toAppServiceError(backgroundError, 'Unable to refresh Home details.');
+      setFailedHomeDetailsUserId(user.uid);
+      setHomeLoadError(appError);
+      setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
+    };
+    const summary = await runPrimaryLoad(
       async () => {
         const summary = await loadParentHomeSummaryBootstrap(user, {
           force,
+          onBackgroundError: handleBackgroundError,
           onPartial: (partial) => {
+            if (!isCurrentHomeLoad()) return;
+            // Once the stale summary has returned, background loader partials
+            // are incomplete intermediate states. Wait for onRefresh's complete
+            // result before replacing downstream work.
+            if (summaryResultReturned || hasExistingHome) return;
             receivedHomePreview = true;
             setHome(partial.home);
             setPreviewHomeUserId(user.uid);
             setHomeLoadError(null);
+          },
+          onRefresh: (refreshedSummary) => {
+            if (!isCurrentHomeLoad()) return;
+            if (refreshedSummary.schedule.isPartial === true) {
+              handleBackgroundError(new Error('The refreshed Home summary is incomplete.'));
+              return;
+            }
+            receivedHomePreview = true;
+            setHome(refreshedSummary.home);
+            setSocial(emptySocialHome());
+            setPreviewHomeUserId(user.uid);
+            setHomeLoadError(null);
+            // Re-enter through the fresh summary cache while forcing every
+            // downstream slice. Incrementing the Home generation prevents the
+            // stale secondary/social promises from overwriting this scope.
+            void refreshHome({ forceSecondary: true, preserveCurrentHome: true });
           }
         });
+        summaryResultReturned = true;
+        if (!isCurrentHomeLoad()) return summary;
         receivedHomePreview = true;
-        setHome(summary.home);
+        if (!hasExistingHome) setHome(summary.home);
         setPreviewHomeUserId(user.uid);
         setHomeLoadError(null);
+        let latestSecondaryHome = summary.home;
+        let secondaryResultReturned = false;
+        let latestSocialRequestId = 0;
+        const summaryTeamScope = getHomeTeamScope(summary.home);
+        let latestRequestedSocialScope = summaryTeamScope;
+        const socialHomePromise = loadSocialHome(user, summary.home)
+          .then((socialHome) => ({ socialHome, error: null }))
+          .catch((socialError: unknown) => ({ socialHome: null, error: socialError }));
+        const loadAndApplySocial = async (
+          targetHome: ParentHomeModel,
+          useSummaryRequest = false
+        ) => {
+          const targetScope = getHomeTeamScope(targetHome);
+          const requestId = latestSocialRequestId + 1;
+          latestSocialRequestId = requestId;
+          latestRequestedSocialScope = targetScope;
+          const socialResult = useSummaryRequest && targetScope === summaryTeamScope
+            ? await socialHomePromise
+            : await loadSocialHome(user, targetHome)
+              .then((socialHome) => ({ socialHome, error: null }))
+              .catch((socialError: unknown) => ({ socialHome: null, error: socialError }));
+          if (!isCurrentHomeLoad() || requestId !== latestSocialRequestId) return null;
+          if (socialResult.error || !socialResult.socialHome) {
+            throw socialResult.error || new Error('Unable to load Home social details.');
+          }
+          setSocial(socialResult.socialHome);
+          return socialResult.socialHome;
+        };
 
-        void runSecondaryLoad(
+        secondaryLoadPromise = runSecondaryLoad(
           async () => {
             const secondaryHome = await loadParentHomeWithSecondaryData(user, {
-              force,
+              force: force || forceSecondary,
               schedule: summary.schedule,
+              nativeContext: summary.nativeContext,
+              onBackgroundError: handleBackgroundError,
               // Render each secondary slice (chat badges, fees, hydrated RSVP) as it
               // arrives instead of waiting for all of them (#2037).
-              onPartial: (partial) => setHome(partial)
+              onPartial: (partial) => {
+                if (!isCurrentHomeLoad()) return;
+                latestSecondaryHome = partial;
+                if (!hasExistingHome) setHome(partial);
+                const partialTeamScope = getHomeTeamScope(partial);
+                if (secondaryResultReturned && partialTeamScope !== latestRequestedSocialScope) {
+                  // Do not retain social records authorized by the stale team
+                  // scope while its background replacement is still loading.
+                  setSocial(emptySocialHome());
+                  void loadAndApplySocial(partial).catch(handleBackgroundError);
+                }
+              }
             });
+            if (!isCurrentHomeLoad()) return;
+            secondaryResultReturned = true;
+            latestSecondaryHome = secondaryHome;
             setHome(secondaryHome);
             setLoadedHomeDetailsUserId(user.uid);
+            setFailedHomeDetailsUserId(null);
             setHomeLoadError(null);
-            const socialHome = await loadSocialHome(user, secondaryHome);
-            setSocial(socialHome);
+            const secondaryTeamScope = getHomeTeamScope(secondaryHome);
+            const socialHome = await loadAndApplySocial(secondaryHome, secondaryTeamScope === summaryTeamScope);
+            if (!isCurrentHomeLoad() || !socialHome) return;
             timer.end({
               hydrated: true,
               playerCount: secondaryHome.players.length,
@@ -249,9 +355,23 @@ export function Home({ auth }: { auth: AuthState }) {
           },
           {
             rethrow: false,
+            ignoreStale: true,
             getErrorMessage: (secondaryError) => getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.')),
             onError: (secondaryError) => {
+              if (!isCurrentHomeLoad()) return;
+              secondaryResultReturned = true;
               const appError = toAppServiceError(secondaryError, 'Unable to refresh Home details.');
+              // Settle the visible failure before waiting on independent social
+              // work, which may still be pending. A preview is not a full load.
+              setFailedHomeDetailsUserId(user.uid);
+              setHomeLoadError(appError);
+              setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
+              const latestTeamScope = getHomeTeamScope(latestSecondaryHome);
+              void loadAndApplySocial(latestSecondaryHome, latestTeamScope === summaryTeamScope).catch(() => {
+                // The Home details error remains the visible retry signal. Social
+                // state is left untouched so a failed independent load cannot
+                // replace the last verified feed with an authoritative empty one.
+              });
               timer.end({
                 hydrated: false,
                 playerCount: summary.home.players.length,
@@ -261,14 +381,6 @@ export function Home({ auth }: { auth: AuthState }) {
                 feeCount: summary.home.fees.length,
                 error: appError.message
               });
-              if (!hasExistingHome) {
-                setHomeLoadError(appError);
-                setLoadedHomeDetailsUserId(null);
-                setSocial(emptySocialHome());
-                setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
-                return;
-              }
-              setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
             }
           }
         );
@@ -276,11 +388,14 @@ export function Home({ auth }: { auth: AuthState }) {
         return summary;
       },
       {
-        getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome || receivedHomePreview),
+        getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome),
         rethrow: false,
+        ignoreStale: true,
         onError: (loadError) => {
+          if (!isCurrentHomeLoad()) return;
           const appError = toAppServiceError(loadError, 'Unable to load Home.');
           setHomeLoadError(appError);
+          setFailedHomeDetailsUserId(user.uid);
           timer.end({
             hydrated: false,
             error: appError.message
@@ -295,19 +410,25 @@ export function Home({ auth }: { auth: AuthState }) {
         }
       }
     );
+    await secondaryLoadPromise;
+    return summary;
   };
 
   useEffect(() => {
     if (!auth.user?.uid) {
       hasStartedInitialHomeLoadRef.current = false;
-      return;
+      homeLoadGenerationRef.current += 1;
+      return undefined;
     }
     hasStartedInitialHomeLoadRef.current = true;
     refreshHome();
+    return () => {
+      homeLoadGenerationRef.current += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
 
-  useRefreshOnResume(() => { void refreshHome({ force: true }); }, { enabled: Boolean(auth.user?.uid) });
+  useRefreshOnResume(() => refreshHome({ force: true }), { enabled: Boolean(auth.user?.uid) });
 
   useEffect(() => {
     if (!hasStartedInitialHomeLoadRef.current) {
@@ -329,12 +450,12 @@ export function Home({ auth }: { auth: AuthState }) {
     loadOfficialAssignmentsAccess(user)
       .then((result) => {
         if (!cancelled) {
-          setOfficialsAccess({ hasAccess: result.hasAccess, teamCount: result.teamCount });
+          setOfficialsAccess({ hasAccess: result.hasAccess, teamCount: result.teamCount, isPartial: result.isPartial });
         }
       })
       .catch(() => {
         if (!cancelled && typeof window !== 'undefined') {
-          setOfficialsAccess({ hasAccess: false, teamCount: 0 });
+          setOfficialsAccess({ hasAccess: false, teamCount: 0, isPartial: true });
         }
       });
     return () => {
@@ -362,7 +483,7 @@ export function Home({ auth }: { auth: AuthState }) {
 
   const hasRenderableHome = !authUserId || hasHomePreview || hasLoadedHomeDetails;
   const showBlockingErrorState = !loading && !hasRenderableHome && Boolean(homeLoadError);
-  const showInitialHomeSkeleton = loading && !hasRenderableHome;
+  const showInitialHomeSkeleton = Boolean(authUserId) && !hasRenderableHome && !homeLoadError;
   const canRenderHomeSections = !loading || hasRenderableHome;
   const displayName = auth.user?.displayName || auth.user?.email || 'ALL PLAYS User';
   const standaloneActionCount = home.actionItems.filter((action) => action.kind === 'assignment' || action.kind === 'rideshare').length;
@@ -373,7 +494,10 @@ export function Home({ auth }: { auth: AuthState }) {
   const homeSectionReady = isHomeSectionReady(activeSection, { loading, socialLoading, hasLoadedHomeDetails, showBlockingErrorState });
   const canRenderFirstRunHome = !authUserId || hasLoadedHomeDetails;
   const homeDetailsPending = Boolean(authUserId) && !hasLoadedHomeDetails;
-  const resolvedOfficialsAccess = authUserId ? officialsAccess : { hasAccess: false, teamCount: 0 };
+  const homeDetailsRefreshFailed = Boolean(authUserId) && authUserId === failedHomeDetailsUserId;
+  const showIncompleteHomeError = !hasLoadedHomeDetails && Boolean(homeLoadError);
+  const canRenderFeed = canRenderHomeSections && !showBlockingErrorState && (!showIncompleteHomeError || social.feedItems.length > 0);
+  const resolvedOfficialsAccess = authUserId ? officialsAccess : { hasAccess: false, teamCount: 0, isPartial: false };
 
   useViewLoadTimer({
     viewName: `home ${activeSection}`,
@@ -471,6 +595,7 @@ export function Home({ auth }: { auth: AuthState }) {
       void refreshSocial(home, { preserveStatus: true });
     } catch (postError: any) {
       setSocialStatus({ tone: 'error', message: postError?.message || 'Unable to create post.' });
+      throw postError;
     }
   };
 
@@ -486,8 +611,8 @@ export function Home({ auth }: { auth: AuthState }) {
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
               <span className="app-label">Home</span>
-              <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] ${homeDetailsPending ? 'bg-gray-100 text-gray-600' : openCount ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
-                {homeDetailsPending ? 'Loading' : openCount ? `${openCount} open` : 'Caught up'}
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] ${homeDetailsRefreshFailed ? 'bg-rose-50 text-rose-700' : homeDetailsPending ? 'bg-gray-100 text-gray-600' : openCount ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                {homeDetailsRefreshFailed ? 'Needs refresh' : homeDetailsPending ? 'Loading' : openCount ? `${openCount} open` : 'Caught up'}
               </span>
             </div>
             <h1 className="mt-0.5 text-xl font-black leading-tight text-gray-950">Your day</h1>
@@ -499,7 +624,7 @@ export function Home({ auth }: { auth: AuthState }) {
           </button>
         </div>
         <div className="hidden gap-1.5 overflow-x-auto border-t border-gray-100 px-3 py-2 sm:flex sm:px-4">
-          {homeDetailsPending ? (
+          {homeDetailsPending && !homeLoadError ? (
             <div className="flex min-h-8 flex-none items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 text-xs font-black text-gray-600" role="status">
               <Loader2 className="h-3.5 w-3.5 flex-none animate-spin" aria-hidden="true" />
               Checking actions
@@ -545,9 +670,13 @@ export function Home({ auth }: { auth: AuthState }) {
 
       {showInitialHomeSkeleton ? <HomePageSkeleton /> : null}
 
-      {showBlockingErrorState ? <HomeLoadErrorState error={homeLoadError} onRetry={() => refreshHome({ force: true })} retrying={loading} /> : null}
+      {showBlockingErrorState || showIncompleteHomeError ? <HomeLoadErrorState error={homeLoadError} onRetry={() => refreshHome({ force: true })} retrying={loading} /> : null}
 
-      {canRenderHomeSections && !showBlockingErrorState && activeSection === 'today' ? (
+      {showIncompleteHomeError && activeSection === 'today' && social.feedItems.length > 0 ? (
+        <HomeFeedPreview social={social} loading={false} onOpenComposer={openComposer} />
+      ) : null}
+
+      {canRenderHomeSections && !showBlockingErrorState && !showIncompleteHomeError && activeSection === 'today' ? (
         <TodaySection
           home={home}
           social={social}
@@ -557,7 +686,7 @@ export function Home({ auth }: { auth: AuthState }) {
           officialsAccess={resolvedOfficialsAccess}
         />
       ) : null}
-      {canRenderHomeSections && !showBlockingErrorState && activeSection === 'feed' ? (
+      {canRenderFeed && activeSection === 'feed' ? (
         <FeedSection
           social={social}
           loading={socialLoading}
@@ -568,9 +697,9 @@ export function Home({ auth }: { auth: AuthState }) {
           onStatus={setSocialStatus}
         />
       ) : null}
-      {canRenderHomeSections && !showBlockingErrorState && activeSection === 'players' ? <PlayersSection players={home.players} /> : null}
-      {canRenderHomeSections && !showBlockingErrorState && activeSection === 'teams' ? <TeamsSection teams={home.teams} players={home.players} /> : null}
-      {canRenderHomeSections && !showBlockingErrorState && activeSection === 'friends' ? (
+      {canRenderHomeSections && !showBlockingErrorState && !showIncompleteHomeError && activeSection === 'players' ? <PlayersSection players={home.players} /> : null}
+      {canRenderHomeSections && !showBlockingErrorState && !showIncompleteHomeError && activeSection === 'teams' ? <TeamsSection teams={home.teams} players={home.players} /> : null}
+      {canRenderHomeSections && !showBlockingErrorState && !showIncompleteHomeError && activeSection === 'friends' ? (
         <FriendsSection
           auth={auth}
           home={home}
@@ -657,7 +786,7 @@ function PublicBenefitCard({ icon: Icon, title, detail }: { icon: LucideIcon; ti
   );
 }
 
-function getHomeRoleContext(auth: AuthState, officialsAccess: { hasAccess: boolean; teamCount: number } | null) {
+function getHomeRoleContext(auth: AuthState, officialsAccess: { hasAccess: boolean; teamCount: number; isPartial: boolean } | null) {
   if (auth.isPlatformAdmin || auth.isAdmin) return 'Administration';
   if (auth.isCoach) return 'Coach home';
   if (officialsAccess?.hasAccess) return 'Official assignments';
@@ -678,7 +807,7 @@ function TodaySection({
   socialLoading: boolean;
   hasLoadedHomeDetails: boolean;
   onOpenComposer: (type?: SocialPostType) => void;
-  officialsAccess: { hasAccess: boolean; teamCount: number } | null;
+  officialsAccess: { hasAccess: boolean; teamCount: number; isPartial: boolean } | null;
 }) {
   const unreadTeams = home.teams
     .filter((team) => Number(team.unreadCount || 0) > 0)
@@ -692,10 +821,14 @@ function TodaySection({
   const remainingActions = topAction ? home.actionItems.slice(1, 6) : home.actionItems.slice(0, 6);
   const remainingActionCount = Math.max(0, home.actionItems.length - (topAction ? 1 : 0));
   const isFirstRunParent = home.players.length === 0 && home.teams.length === 0;
+  const multiRsvpTo = home.metrics.rsvpNeeded > 1 ? '/schedule?bulkRsvp=1' : null;
 
   if (isFirstRunParent) {
     if (!hasLoadedHomeDetails || officialsAccess === null) {
       return <HomePageSkeleton />;
+    }
+    if (officialsAccess.isPartial) {
+      return <OfficialsAccessCard officialsAccess={officialsAccess} />;
     }
     if (officialsAccess.hasAccess) {
       return <TeamOperationsFirstRunSection officialsAccess={officialsAccess} />;
@@ -705,13 +838,22 @@ function TodaySection({
 
   return (
     <div className="home-section-content space-y-3">
+      {multiRsvpTo ? (
+        <section className="flex items-center justify-between gap-3 rounded-xl border border-primary-100 bg-primary-50 px-3 py-2" aria-label="Availability summary actions">
+          <div>
+            <div className="app-label text-primary-700">Availability summary</div>
+            <p className="mt-0.5 text-xs font-semibold text-primary-800">{home.metrics.rsvpNeeded} responses due</p>
+          </div>
+          <MultiRsvpLink to={multiRsvpTo} />
+        </section>
+      ) : null}
+
       <TodayPriorityCard
         action={topAction}
         nextEvent={nextEvent}
         loading={!hasLoadedHomeDetails}
         remainingActions={remainingActions}
         remainingActionCount={remainingActionCount}
-        multiRsvpTo={home.metrics.rsvpNeeded > 1 ? '/schedule?bulkRsvp=1' : null}
       />
 
       <section className="home-signal-grid grid gap-2 sm:grid-cols-3">
@@ -808,13 +950,12 @@ function HomeDetailsLoadingState({ message }: { message: string }) {
   );
 }
 
-function TodayPriorityCard({ action, nextEvent, loading, remainingActions, remainingActionCount, multiRsvpTo }: {
+function TodayPriorityCard({ action, nextEvent, loading, remainingActions, remainingActionCount }: {
   action: ParentHomeAction | null;
   nextEvent: ParentScheduleEvent | null;
   loading: boolean;
   remainingActions: ParentHomeAction[];
   remainingActionCount: number;
-  multiRsvpTo: string | null;
 }) {
   if (!action) {
     if (loading) {
@@ -868,10 +1009,7 @@ function TodayPriorityCard({ action, nextEvent, loading, remainingActions, remai
         <div className="border-t border-gray-100 px-4 pb-3 pt-2">
           <div className="flex items-center justify-between gap-3">
             <div className="app-label">Also to do</div>
-            <div className="flex items-center gap-2">
-              {multiRsvpTo ? <MultiRsvpLink to={multiRsvpTo} /> : null}
-              <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-black text-gray-600">{remainingActionCount}</span>
-            </div>
+            <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-black text-gray-600">{remainingActionCount}</span>
           </div>
           <div className="mt-2 space-y-2">
             {remainingActions.slice(0, 3).map((item) => (
@@ -1000,11 +1138,6 @@ function PlayersSection({ players }: { players: ParentHomePlayer[] }) {
     );
   }
 
-  const rsvpPlayers = players.filter((player) => player.rsvpNeeded > 0);
-  const multiRsvpRoute = rsvpPlayers.length === 1
-    ? `/schedule?playerId=${encodeURIComponent(rsvpPlayers[0].playerId)}&bulkRsvp=1`
-    : '/schedule?bulkRsvp=1';
-
   return (
     <section className="home-section-content app-card p-4">
       <div className="flex items-center justify-between gap-3">
@@ -1012,9 +1145,7 @@ function PlayersSection({ players }: { players: ParentHomePlayer[] }) {
           <div className="app-label">Players</div>
           <h2 className="mt-1 app-section-title">My players</h2>
         </div>
-        {players.reduce((total, player) => total + player.rsvpNeeded, 0) > 1
-          ? <MultiRsvpLink to={multiRsvpRoute} />
-          : <UserRound className="h-5 w-5 text-primary-600" aria-hidden="true" />}
+        <UserRound className="h-5 w-5 text-primary-600" aria-hidden="true" />
       </div>
       <div className="mt-3 grid gap-2 lg:grid-cols-2">
         {players.map((player) => (
@@ -1042,11 +1173,6 @@ function TeamsSection({ teams, players }: { teams: ParentHomeTeam[]; players: Pa
     );
   }
 
-  const rsvpTeamIds = [...new Set(players.filter((player) => player.rsvpNeeded > 0).map((player) => player.teamId))];
-  const multiRsvpRoute = rsvpTeamIds.length === 1
-    ? `/schedule?teamId=${encodeURIComponent(rsvpTeamIds[0])}&bulkRsvp=1`
-    : '/schedule?bulkRsvp=1';
-
   return (
     <section className="home-section-content app-card p-4">
       <div className="flex items-center justify-between gap-3">
@@ -1054,22 +1180,26 @@ function TeamsSection({ teams, players }: { teams: ParentHomeTeam[]; players: Pa
           <div className="app-label">My teams</div>
           <h2 className="mt-1 app-section-title">Teams</h2>
         </div>
-        {players.reduce((total, player) => total + player.rsvpNeeded, 0) > 1
-          ? <MultiRsvpLink to={multiRsvpRoute} />
-          : <Users className="h-5 w-5 text-primary-600" aria-hidden="true" />}
+        <Users className="h-5 w-5 text-primary-600" aria-hidden="true" />
       </div>
       <div className="mt-3 grid gap-2 lg:grid-cols-2">
         {teams.map((team) => (
-          <TeamCard key={team.teamId} team={team} />
+          <TeamCard
+            key={team.teamId}
+            team={team}
+            rsvpNeeded={players
+              .filter((player) => player.teamId === team.teamId)
+              .reduce((total, player) => total + player.rsvpNeeded, 0)}
+          />
         ))}
       </div>
     </section>
   );
 }
 
-function MultiRsvpLink({ to }: { to: string }) {
+function MultiRsvpLink({ to, scopeLabel }: { to: string; scopeLabel?: string }) {
   return (
-    <Link to={to} className="ghost-button !min-h-9 !px-3 text-xs">
+    <Link to={to} className="ghost-button !min-h-9 !px-3 text-xs" aria-label={scopeLabel ? `Multi RSVP for ${scopeLabel}` : undefined}>
       <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
       Multi RSVP
     </Link>
@@ -1094,7 +1224,7 @@ function FirstRunAccessSection() {
   );
 }
 
-function TeamOperationsFirstRunSection({ officialsAccess }: { officialsAccess: { hasAccess: boolean; teamCount: number } }) {
+function TeamOperationsFirstRunSection({ officialsAccess }: { officialsAccess: { hasAccess: boolean; teamCount: number; isPartial: boolean } }) {
   return (
     <section className="home-section-content space-y-3">
       <OfficialsAccessCard officialsAccess={officialsAccess} />
@@ -1113,7 +1243,19 @@ function TeamOperationsFirstRunSection({ officialsAccess }: { officialsAccess: {
   );
 }
 
-function OfficialsAccessCard({ officialsAccess }: { officialsAccess: { hasAccess: boolean; teamCount: number } | null }) {
+function OfficialsAccessCard({ officialsAccess }: { officialsAccess: { hasAccess: boolean; teamCount: number; isPartial: boolean } | null }) {
+  if (officialsAccess?.isPartial && !officialsAccess.hasAccess) {
+    return (
+      <Link
+        to="/officials"
+        className="app-card block border-amber-200 bg-amber-50 p-4 text-amber-950 transition hover:border-amber-300"
+      >
+        <div className="app-label text-amber-800">Officials</div>
+        <h2 className="mt-1 app-section-title">Assignments could not refresh</h2>
+        <div className="mt-1 text-sm font-semibold text-amber-900">Open Officials to retry. Your linked teams were not treated as empty.</div>
+      </Link>
+    );
+  }
   if (!officialsAccess?.hasAccess) return null;
 
   return (
@@ -1130,7 +1272,9 @@ function OfficialsAccessCard({ officialsAccess }: { officialsAccess: { hasAccess
           <div className="app-label">Officials</div>
           <h2 className="mt-1 app-section-title">Manage assignments</h2>
           <div className="mt-1 text-sm font-semibold text-gray-600">Review upcoming games, respond to pending slots, and claim open officiating assignments.</div>
-          <div className="mt-2 text-xs font-black uppercase tracking-[0.04em] text-primary-700">{officialsAccess.teamCount} linked team{officialsAccess.teamCount === 1 ? '' : 's'}</div>
+          <div className="mt-2 text-xs font-black uppercase tracking-[0.04em] text-primary-700">
+            {officialsAccess.teamCount} {officialsAccess.isPartial ? 'verified linked' : 'linked'} team{officialsAccess.teamCount === 1 ? '' : 's'}
+          </div>
         </div>
         <ChevronRight className="h-5 w-5 flex-none text-gray-400" aria-hidden="true" />
       </div>
@@ -1193,6 +1337,11 @@ function HomeFeedPreview({ social, loading, onOpenComposer }: { social: SocialHo
         </button>
       </div>
       <div className="space-y-2 p-3">
+        {social.feedError ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs font-bold text-amber-800" role="alert">
+            {social.feedError}
+          </div>
+        ) : null}
         {loading ? (
           <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm font-bold text-gray-600">
             <Loader2 className="h-4 w-4 animate-spin text-primary-600" aria-hidden="true" />
@@ -1200,11 +1349,11 @@ function HomeFeedPreview({ social, loading, onOpenComposer }: { social: SocialHo
           </div>
         ) : previewItems.length ? previewItems.map((item) => (
           <SocialFeedMini key={item.id} item={item} />
-        )) : (
+        )) : !social.feedError ? (
           <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-3 text-sm font-bold text-gray-600">
             Post a player moment, team photo, or game recap to start your family feed.
           </div>
-        )}
+        ) : null}
         <Link to="/home?section=feed" className="flex min-h-10 items-center justify-between rounded-xl bg-primary-50 px-3 text-sm font-black text-primary-800">
           Open full feed
           <ChevronRight className="h-4 w-4" aria-hidden="true" />
@@ -1215,8 +1364,7 @@ function HomeFeedPreview({ social, loading, onOpenComposer }: { social: SocialHo
 }
 
 function SocialFeedMini({ item }: { item: SocialFeedItem }) {
-  const href = item.route || item.href || '/home?section=feed';
-  const isExternal = Boolean(item.href && !item.route);
+  const href = getSafeSocialPostRoute(item.route, item.href);
   const content = (
     <>
       <div className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-gray-950 text-white">
@@ -1226,17 +1374,17 @@ function SocialFeedMini({ item }: { item: SocialFeedItem }) {
         <span className="block truncate text-sm font-black text-gray-950">{item.title}</span>
         <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">{item.detail}</span>
       </span>
-      <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
+      {href ? <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" /> : null}
     </>
   );
-  return isExternal ? (
-    <a href={href} target="_blank" rel="noreferrer" className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200">
-      {content}
-    </a>
-  ) : (
+  return href ? (
     <Link to={href} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200">
       {content}
     </Link>
+  ) : (
+    <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3">
+      {content}
+    </div>
   );
 }
 
@@ -1327,6 +1475,12 @@ function FeedSection({
             </div>
           </div>
         </div>
+        {filter !== 'opportunities' && social.feedError ? (
+          <div className="m-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3" role="alert">
+            <span className="text-xs font-bold text-amber-800">{social.feedError}</span>
+            <button type="button" className="secondary-button !min-h-10 text-xs" onClick={() => onRefresh()} disabled={loading}>Retry feed</button>
+          </div>
+        ) : null}
         <div className="grid gap-3 p-3 xl:grid-cols-[minmax(0,1fr)_280px]">
           <div className="space-y-3">
             {filter === 'opportunities' ? opportunityLoading ? (
@@ -1341,7 +1495,7 @@ function FeedSection({
                 onStatus={onStatus}
                 onOptimisticHide={setPostOptimisticallyHidden}
               />
-            )) : (
+            )) : social.feedError ? null : (
               <EmptyCard
                 icon={Newspaper}
                 title="No posts for this filter"
@@ -1424,8 +1578,7 @@ function SocialFeedCard({
   const inFlightActionsRef = useRef(new Set<string>());
   const canPersist = Boolean(auth.user?.uid);
   const isAuthor = item.authorId === auth.user?.uid;
-  const primaryHref = item.route || item.href || '';
-  const isExternal = Boolean(item.href && !item.route);
+  const primaryHref = getSafeSocialPostRoute(item.route, item.href);
 
   useEffect(() => {
     setOptimisticItem(item);
@@ -1497,6 +1650,7 @@ function SocialFeedCard({
   const hideBusy = Boolean(busyActions.hide);
   const reportBusy = Boolean(busyActions.report);
   const commentBusy = Boolean(busyActions.comment);
+  const likeStateUnavailable = optimisticItem.viewerReactionError === true;
 
   return (
     <article className="social-feed-card app-card overflow-hidden shadow-sm">
@@ -1543,22 +1697,15 @@ function SocialFeedCard({
       <div className="border-t border-gray-100 bg-gray-50 p-3">
         <div className="flex flex-wrap items-center gap-2">
           {primaryHref ? (
-            isExternal ? (
-              <a href={primaryHref} target="_blank" rel="noreferrer" className="ghost-button !min-h-9 !px-3 text-xs">
-                Open source
-                <ChevronRight className="h-4 w-4" aria-hidden="true" />
-              </a>
-            ) : (
-              <Link to={primaryHref} className="ghost-button !min-h-9 !px-3 text-xs">
-                Open source
-                <ChevronRight className="h-4 w-4" aria-hidden="true" />
-              </Link>
-            )
+            <Link to={primaryHref} className="ghost-button !min-h-9 !px-3 text-xs">
+              Open source
+              <ChevronRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
           ) : null}
           <button
             type="button"
             className={`ghost-button !min-h-9 !px-3 text-xs ${optimisticItem.viewerHasLiked ? '!border-rose-200 !bg-rose-50 !text-rose-700' : ''}`}
-            disabled={!canPersist || likeBusy}
+            disabled={!canPersist || likeBusy || likeStateUnavailable}
             onClick={() => runAction({
               actionKey: 'like',
               action: async () => {
@@ -1567,6 +1714,7 @@ function SocialFeedCard({
                   setOptimisticItem((current) => ({
                     ...current,
                     viewerHasLiked: result.liked,
+                    viewerReactionError: false,
                     reactionCounts: { ...current.reactionCounts, like: result.count }
                   }));
                 }
@@ -1589,8 +1737,10 @@ function SocialFeedCard({
                 }
               }))
             })}
-            aria-label={`${optimisticItem.viewerHasLiked ? 'Unlike' : 'Like'} post, ${likeCount} like${likeCount === 1 ? '' : 's'}`}
-            title={optimisticItem.viewerHasLiked ? 'Unlike' : 'Like'}
+            aria-label={likeStateUnavailable
+              ? `Like status unavailable, ${likeCount} like${likeCount === 1 ? '' : 's'}`
+              : `${optimisticItem.viewerHasLiked ? 'Unlike' : 'Like'} post, ${likeCount} like${likeCount === 1 ? '' : 's'}`}
+            title={likeStateUnavailable ? 'Refresh the feed to verify Like status' : optimisticItem.viewerHasLiked ? 'Unlike' : 'Like'}
           >
             {likeBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Heart className={`h-4 w-4 ${optimisticItem.viewerHasLiked ? 'fill-current' : ''}`} aria-hidden="true" />}
             {likeCount}
@@ -1956,12 +2106,16 @@ function SocialComposerModal({
   onSubmit: (input: CreateSocialPostInput) => Promise<void> | void;
 }) {
   const initialPreset = getSocialPostPresetForType(initialType);
+  const initialTeamId = initialPreset.prefersPlayer
+    ? home.players[0]?.teamId || home.teams[0]?.teamId || ''
+    : home.teams[0]?.teamId || '';
   const [presetId, setPresetId] = useState(initialPreset.id);
   const activePreset = socialPostPresets.find((preset) => preset.id === presetId) || initialPreset;
   const type = activePreset.type;
   const [visibility, setVisibility] = useState<SocialVisibility>(activePreset.defaultVisibility);
-  const [teamId, setTeamId] = useState(home.teams[0]?.teamId || '');
+  const [teamId, setTeamId] = useState(initialTeamId);
   const [playerKey, setPlayerKey] = useState(initialPreset.prefersPlayer && home.players[0] ? `${home.players[0].teamId}::${home.players[0].playerId}` : '');
+  const [gameKey, setGameKey] = useState(() => getComposerGameKey(getComposerGamesForType(home.feedGames || [], initialTeamId, initialPreset.type)[0] || null));
   const [playerTaggingEnabled, setPlayerTaggingEnabled] = useState(initialPreset.prefersPlayer);
   const [caption, setCaption] = useState('');
   const [mediaFile, setMediaFile] = useState<File | null>(null);
@@ -1971,21 +2125,27 @@ function SocialComposerModal({
   const [localError, setLocalError] = useState('');
 
   const supportsOptionalPlayerTagging = type === 'game_recap' || type === 'team_media' || type === 'practice_packet';
+  const supportsGameSelection = type === 'game_recap' || type === 'upcoming_game';
   const playerSelectionEnabled = activePreset.prefersPlayer || playerTaggingEnabled;
-  const fallbackPlayer = home.players.find((player) => player.teamId === teamId) || home.players[0] || null;
+  const selectedTeam = home.teams.find((team) => team.teamId === teamId) || home.teams[0] || null;
+  const teamPlayers = home.players.filter((player) => player.teamId === selectedTeam?.teamId);
+  const fallbackPlayer = teamPlayers[0] || null;
   const selectedPlayer = playerSelectionEnabled
-    ? home.players.find((player) => `${player.teamId}::${player.playerId}` === playerKey) || (activePreset.prefersPlayer ? fallbackPlayer : null)
+    ? teamPlayers.find((player) => `${player.teamId}::${player.playerId}` === playerKey) || (activePreset.prefersPlayer ? fallbackPlayer : null)
     : null;
-  const selectedTeam = playerSelectionEnabled && selectedPlayer
-    ? home.teams.find((team) => team.teamId === selectedPlayer.teamId) || home.teams.find((team) => team.teamId === teamId) || home.teams[0] || null
-    : home.teams.find((team) => team.teamId === teamId) || home.teams[0] || null;
-  const suggestedTitle = getComposerSuggestedTitle(type, selectedTeam, selectedPlayer);
+  const teamGames = getComposerGamesForType(home.feedGames || [], selectedTeam?.teamId || '', type);
+  const selectedGame = supportsGameSelection
+    ? teamGames.find((event) => getComposerGameKey(event) === gameKey) || teamGames[0] || null
+    : null;
+  const suggestedTitle = getComposerSuggestedTitle(type, selectedTeam, selectedPlayer, selectedGame);
   const visibleUserIds = visibility === 'friends' || visibility === 'friends_and_team'
     ? social.friends.map((friend) => friend.userId)
     : [];
-  const subjectLabel = playerSelectionEnabled && selectedPlayer
-    ? `${selectedPlayer.playerName} · ${selectedPlayer.teamName}`
-    : selectedTeam?.teamName || 'Choose team';
+  const subjectLabel = selectedGame
+    ? getComposerGameLabel(selectedGame)
+    : playerSelectionEnabled && selectedPlayer
+      ? `${selectedPlayer.playerName} · ${selectedPlayer.teamName}`
+      : selectedTeam?.teamName || 'Choose team';
 
   const selectPreset = (nextPresetId: typeof presetId) => {
     const nextPreset = socialPostPresets.find((preset) => preset.id === nextPresetId);
@@ -2001,37 +2161,69 @@ function SocialComposerModal({
         setTeamId(nextPlayer.teamId);
       }
     }
+    if (nextPreset.type === 'game_recap' || nextPreset.type === 'upcoming_game') {
+      const nextTeamId = home.teams.find((team) => team.teamId === teamId)?.teamId || home.teams[0]?.teamId || '';
+      const nextGame = getComposerGamesForType(home.feedGames || [], nextTeamId, nextPreset.type)[0] || null;
+      setGameKey(getComposerGameKey(nextGame));
+    }
+  };
+
+  const selectTeam = (nextTeamId: string) => {
+    setTeamId(nextTeamId);
+    const nextPlayer = home.players.find((player) => player.teamId === nextTeamId) || null;
+    setPlayerKey(playerSelectionEnabled && nextPlayer ? `${nextPlayer.teamId}::${nextPlayer.playerId}` : '');
+    const nextGame = getComposerGamesForType(home.feedGames || [], nextTeamId, type)[0] || null;
+    setGameKey(getComposerGameKey(nextGame));
   };
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setLocalError('');
     setSubmitting(true);
+    let uploadedMedia: SocialMediaUpload | null = null;
     try {
+      if (!selectedTeam) {
+        throw new Error('Choose a team for this post.');
+      }
+      if (activePreset.prefersPlayer && !selectedPlayer) {
+        throw new Error('Choose a player for this post.');
+      }
+      if (supportsGameSelection && !selectedGame) {
+        throw new Error(type === 'game_recap' ? 'Choose a completed game for this recap.' : 'Choose an upcoming game for this post.');
+      }
       if (activePreset.requiresMedia && !mediaFile) {
         throw new Error('Add a photo or video for this share.');
       }
       if (!caption.trim() && !mediaFile) {
         throw new Error('Add a short note or attach a photo/video.');
       }
-      const media = mediaFile ? [await uploadSocialPostMedia(selectedTeam?.teamId || teamId, mediaFile)] : [];
+      uploadedMedia = mediaFile ? await uploadSocialPostMedia(selectedTeam.teamId, mediaFile) : null;
+      const media = uploadedMedia ? [{
+        type: uploadedMedia.type,
+        url: uploadedMedia.url,
+        name: uploadedMedia.name,
+        thumbnailUrl: uploadedMedia.thumbnailUrl
+      }] : [];
       await onSubmit({
         type,
         visibility,
         title: suggestedTitle,
-        detail: getComposerDetail(type, selectedTeam, selectedPlayer),
+        detail: getComposerDetail(type, selectedTeam, selectedPlayer, selectedGame),
         caption: caption.trim(),
         teamId: selectedTeam?.teamId || teamId || null,
         teamName: selectedTeam?.teamName || null,
         playerIds: selectedPlayer ? [selectedPlayer.playerId] : [],
         playerNames: selectedPlayer ? [selectedPlayer.playerName] : [],
-        sourceType: selectedPlayer ? 'player' : selectedTeam ? 'team' : 'manual',
-        sourceId: selectedPlayer?.playerId || selectedTeam?.teamId || null,
-        route: getComposerRoute(type, selectedTeam, selectedPlayer),
+        sourceType: selectedGame ? 'game' : selectedPlayer ? 'player' : selectedTeam ? 'team' : 'manual',
+        sourceId: selectedGame?.id || selectedPlayer?.playerId || selectedTeam?.teamId || null,
+        route: getComposerRoute(type, selectedTeam, selectedPlayer, selectedGame),
         media,
         visibleUserIds
       });
     } catch (error: any) {
+      if (uploadedMedia) {
+        await discardSocialPostMediaUpload(uploadedMedia).catch(() => undefined);
+      }
       setLocalError(error?.message || 'Unable to create post.');
     } finally {
       setSubmitting(false);
@@ -2109,10 +2301,24 @@ function SocialComposerModal({
               </label>
               <label className="block">
                 <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Team</span>
-                <select value={selectedTeam?.teamId || teamId} onChange={(event) => setTeamId(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100">
+                <select value={selectedTeam?.teamId || teamId} onChange={(event) => selectTeam(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100">
                   {home.teams.length ? home.teams.map((team) => <option key={team.teamId} value={team.teamId}>{team.teamName}</option>) : <option value="">No team linked</option>}
                 </select>
               </label>
+              {supportsGameSelection ? (
+                <label className="block sm:col-span-2">
+                  <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Game</span>
+                  <select
+                    value={selectedGame ? getComposerGameKey(selectedGame) : ''}
+                    onChange={(event) => setGameKey(event.target.value)}
+                    className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                  >
+                    {teamGames.length
+                      ? teamGames.map((game) => <option key={getComposerGameKey(game)} value={getComposerGameKey(game)}>{getComposerGameLabel(game)}</option>)
+                      : <option value="">No games on this team</option>}
+                  </select>
+                </label>
+              ) : null}
               {supportsOptionalPlayerTagging ? (
                 <div className="block sm:col-span-2">
                   <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Optional</span>
@@ -2148,7 +2354,7 @@ function SocialComposerModal({
                 <label className="block sm:col-span-2">
                   <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Player</span>
                   <select
-                    value={playerKey}
+                    value={selectedPlayer ? `${selectedPlayer.teamId}::${selectedPlayer.playerId}` : ''}
                     onChange={(event) => {
                       const nextKey = event.target.value;
                       setPlayerKey(nextKey);
@@ -2158,7 +2364,7 @@ function SocialComposerModal({
                     className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
                   >
                     {activePreset.prefersPlayer ? null : <option value="">Choose player</option>}
-                    {home.players.map((player) => <option key={`${player.teamId}-${player.playerId}`} value={`${player.teamId}::${player.playerId}`}>{player.playerName} · {player.teamName}</option>)}
+                    {teamPlayers.map((player) => <option key={`${player.teamId}-${player.playerId}`} value={`${player.teamId}::${player.playerId}`}>{player.playerName} · {player.teamName}</option>)}
                   </select>
                 </label>
               ) : null}
@@ -2233,23 +2439,47 @@ function SocialTypeIcon({ type }: { type: SocialPostType }) {
   return <Newspaper className="h-5 w-5" aria-hidden="true" />;
 }
 
-function getComposerSuggestedTitle(type: SocialPostType, team: ParentHomeTeam | null, player: ParentHomePlayer | null) {
+function getComposerGameKey(event: ParentScheduleEvent | null) {
+  return event ? `${event.teamId}::${event.id}::${event.date.toISOString()}` : '';
+}
+
+function getComposerGamesForType(events: ParentScheduleEvent[], teamId: string, type: SocialPostType) {
+  const now = Date.now();
+  return events.filter((event) => {
+    if (event.teamId !== teamId) return false;
+    if (type === 'game_recap') {
+      const status = String(event.status || '').toLowerCase();
+      const liveStatus = String(event.liveStatus || '').toLowerCase();
+      return status === 'completed' || status === 'final' || liveStatus === 'completed' || liveStatus === 'final';
+    }
+    if (type === 'upcoming_game') return event.date.getTime() >= now;
+    return true;
+  });
+}
+
+function getComposerGameLabel(event: ParentScheduleEvent) {
+  return `${formatEventDateLabel(event.date)} · ${getScheduleTitle(event)}`;
+}
+
+function getComposerSuggestedTitle(type: SocialPostType, team: ParentHomeTeam | null, player: ParentHomePlayer | null, game: ParentScheduleEvent | null) {
   if (type === 'player_moment') return player ? `${player.playerName} moment` : 'Player moment';
   if (type === 'achievement') return player ? `${player.playerName} achievement` : 'Player achievement';
-  if (type === 'game_recap') return team ? `${team.teamName} game recap` : 'Game recap';
+  if (type === 'game_recap') return game ? `${game.teamName} ${getScheduleTitle(game)} recap` : team ? `${team.teamName} game recap` : 'Game recap';
   if (type === 'team_media') return team ? `${team.teamName} team photo` : 'Team photo';
   if (type === 'practice_packet') return team ? `${team.teamName} practice packet` : 'Practice packet';
   if (type === 'upcoming_game') return team ? `${team.teamName} upcoming game` : 'Upcoming game';
   return team ? `${team.teamName} update` : 'ALL PLAYS update';
 }
 
-function getComposerDetail(type: SocialPostType, team: ParentHomeTeam | null, player: ParentHomePlayer | null) {
+function getComposerDetail(type: SocialPostType, team: ParentHomeTeam | null, player: ParentHomePlayer | null, game: ParentScheduleEvent | null) {
   const subject = player?.playerName || team?.teamName || 'ALL PLAYS';
   const teamName = team?.teamName ? ` · ${team.teamName}` : '';
-  return `${getSocialTypeLabel(type)} · ${subject}${player ? teamName : ''}`;
+  const gameDetail = game ? ` · ${getComposerGameLabel(game)}` : '';
+  return `${getSocialTypeLabel(type)} · ${subject}${player ? teamName : ''}${gameDetail}`;
 }
 
-function getComposerRoute(type: SocialPostType, team: ParentHomeTeam | null, player: ParentHomePlayer | null) {
+function getComposerRoute(type: SocialPostType, team: ParentHomeTeam | null, player: ParentHomePlayer | null, game: ParentScheduleEvent | null) {
+  if (game) return getEventDetailPath({ ...game, childId: player?.playerId || game.childId });
   if (player) return getPlayerDetailPath(player.teamId, player.playerId);
   if (team && (type === 'team_media' || type === 'manual_post' || type === 'upcoming_game')) return getTeamHomePath(team.teamId);
   if (team && (type === 'game_recap' || type === 'practice_packet')) return `/schedule?teamId=${encodeURIComponent(team.teamId)}`;
@@ -2349,58 +2579,74 @@ function PlayerCard({ player }: { player: ParentHomePlayer }) {
   const actionCount = player.rsvpNeeded + player.packetsReady + player.openAssignments + (player.unreadCount > 0 ? 1 : 0);
   const playerPath = getPlayerDetailPath(player.teamId, player.playerId);
   return (
-    <Link
-      to={playerPath}
-      className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/40"
-      onClick={(event) => handleParentCoreDrillInClick(event, playerPath, {
-        trigger: 'player_card',
-        actionKind: 'player',
-        teamId: player.teamId,
-        playerId: player.playerId
-      })}
-    >
-      <PlayerAvatar name={player.playerName} />
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="truncate text-sm font-black text-gray-950">{player.playerName}</div>
-          {actionCount > 0 ? <span className="flex-none rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-800">{actionCount}</span> : null}
+    <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
+      <Link
+        to={playerPath}
+        className="flex min-w-0 flex-1 items-center gap-3"
+        onClick={(event) => handleParentCoreDrillInClick(event, playerPath, {
+          trigger: 'player_card',
+          actionKind: 'player',
+          teamId: player.teamId,
+          playerId: player.playerId
+        })}
+      >
+        <PlayerAvatar name={player.playerName} />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="truncate text-sm font-black text-gray-950">{player.playerName}</div>
+            {actionCount > 0 ? <span className="flex-none rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-800">{actionCount}</span> : null}
+          </div>
+          <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{player.teamName || 'Team'}</div>
+          <div className="mt-1 truncate text-xs font-bold text-gray-600">{player.nextEvent ? `${formatEventDateLabel(player.nextEvent.date)} · ${getScheduleTitle(player.nextEvent)}` : 'No upcoming events'}</div>
         </div>
-        <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{player.teamName || 'Team'}</div>
-        <div className="mt-1 truncate text-xs font-bold text-gray-600">{player.nextEvent ? `${formatEventDateLabel(player.nextEvent.date)} · ${getScheduleTitle(player.nextEvent)}` : 'No upcoming events'}</div>
-      </div>
-      <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
-    </Link>
+        <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
+      </Link>
+      {player.rsvpNeeded > 1 ? (
+        <MultiRsvpLink
+          to={`/schedule?playerId=${encodeURIComponent(player.playerId)}&bulkRsvp=1`}
+          scopeLabel={player.playerName}
+        />
+      ) : null}
+    </div>
   );
 }
 
-function TeamCard({ team }: { team: ParentHomeTeam }) {
+function TeamCard({ team, rsvpNeeded }: { team: ParentHomeTeam; rsvpNeeded: number }) {
   const teamPath = getTeamHomePath(team.teamId);
   return (
-    <Link
-      to={teamPath}
-      className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/40"
-      aria-label={`Open ${team.teamName} team page`}
-      onClick={(event) => handleParentCoreDrillInClick(event, teamPath, {
-        trigger: 'team_card',
-        actionKind: 'team',
-        teamId: team.teamId
-      })}
-    >
-      <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
-        <Trophy className="h-5 w-5" aria-hidden="true" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="truncate text-sm font-black text-gray-950">{team.teamName}</div>
-          {team.unreadCount > 0 ? <span className="flex-none rounded-full bg-primary-600 px-2 py-0.5 text-[10px] font-black text-white">{team.unreadCount}</span> : null}
+    <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
+      <Link
+        to={teamPath}
+        className="flex min-w-0 flex-1 items-center gap-3"
+        aria-label={`Open ${team.teamName} team page`}
+        onClick={(event) => handleParentCoreDrillInClick(event, teamPath, {
+          trigger: 'team_card',
+          actionKind: 'team',
+          teamId: team.teamId
+        })}
+      >
+        <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
+          <Trophy className="h-5 w-5" aria-hidden="true" />
         </div>
-        <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">
-          {team.players.length ? team.players.map((player) => player.playerName).join(', ') : `${team.role}${team.sport ? ` · ${team.sport}` : ''}`}
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="truncate text-sm font-black text-gray-950">{team.teamName}</div>
+            {team.unreadCount > 0 ? <span className="flex-none rounded-full bg-primary-600 px-2 py-0.5 text-[10px] font-black text-white">{team.unreadCount}</span> : null}
+          </div>
+          <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">
+            {team.players.length ? team.players.map((player) => player.playerName).join(', ') : `${team.role}${team.sport ? ` · ${team.sport}` : ''}`}
+          </div>
+          <div className="mt-1 truncate text-xs font-bold text-gray-600">{team.nextEvent ? `${formatEventDateLabel(team.nextEvent.date)} · ${getScheduleTitle(team.nextEvent)}` : `${team.role} · ${team.eventCount} events`}</div>
         </div>
-        <div className="mt-1 truncate text-xs font-bold text-gray-600">{team.nextEvent ? `${formatEventDateLabel(team.nextEvent.date)} · ${getScheduleTitle(team.nextEvent)}` : `${team.role} · ${team.eventCount} events`}</div>
-      </div>
-      <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
-    </Link>
+        <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
+      </Link>
+      {rsvpNeeded > 1 ? (
+        <MultiRsvpLink
+          to={`/schedule?teamId=${encodeURIComponent(team.teamId)}&bulkRsvp=1`}
+          scopeLabel={team.teamName}
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -2513,32 +2759,32 @@ function getAsyncErrorMessage(error: unknown, fallback: string) {
 
 function getHomeLoadErrorMessage(error: AppServiceError, hasExistingHome: boolean) {
   if (hasExistingHome) {
-    if (error.type === 'network') return 'Unable to refresh Home while offline. Showing the last loaded Home.';
+    if (error.type === 'network') return 'Unable to refresh Home. The request failed or timed out. Showing the last loaded Home. Try again.';
     if (error.type === 'permission') return 'Unable to refresh Home because access was denied. Showing the last loaded Home.';
     if (error.type === 'not_found') return 'Unable to refresh Home because the requested data was not found. Showing the last loaded Home.';
     if (error.type === 'validation') return error.message;
     return 'Unable to refresh Home. Showing the last loaded Home. Try again.';
   }
-  if (error.type === 'network') return 'Unable to load Home while offline. Check your connection and try again.';
+  if (error.type === 'network') return 'Unable to load Home. The request failed or timed out. Try again.';
   if (error.type === 'permission') return 'You do not have permission to load this Home data.';
   if (error.type === 'not_found') return 'Home data was not found. Try again or check the linked team access.';
   if (error.type === 'validation') return error.message;
-  return getAsyncErrorMessage(error, 'Unable to load Home. Try again.');
+  return 'Unable to load Home. Try again.';
 }
 
 function getHomeSecondaryErrorMessage(error: AppServiceError) {
-  if (error.type === 'network') return 'Home details could not refresh while offline.';
+  if (error.type === 'network') return 'Home details could not refresh. The request failed or timed out. Try again.';
   if (error.type === 'permission') return 'Home details could not refresh because access was denied.';
   if (error.type === 'not_found') return 'Home details could not refresh because some data was not found.';
   if (error.type === 'validation') return error.message;
-  return getAsyncErrorMessage(error, 'Unable to refresh Home details.');
+  return 'Unable to refresh Home details. Try again.';
 }
 
 function getHomeLoadErrorStateCopy(error: AppServiceError | null) {
   if (error?.type === 'network') {
     return {
       title: 'Home could not connect',
-      detail: 'Check your connection and try loading Home again.'
+      detail: 'The request failed or timed out. Try loading Home again.'
     };
   }
   if (error?.type === 'permission') {

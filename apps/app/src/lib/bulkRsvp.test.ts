@@ -1,15 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ParentScheduleEvent } from './scheduleLogic';
 import {
   applyBulkRsvpResponse,
   getBulkRsvpCandidates,
   getBulkRsvpNoteReadyCandidates,
   getBulkRsvpResultMessage,
+  getInitialBulkRsvpCandidates,
   getNeededBulkRsvpEventKeys,
   groupBulkRsvpEvents,
   groupBulkRsvpSubmissions,
   maxBulkRsvpEvents,
-  maxGroupedRsvpPlayerIds
+  maxGroupedRsvpPlayerIds,
+  runBulkRsvpSubmissionQueue
 } from './bulkRsvp';
 
 function event(index: number, overrides: Partial<ParentScheduleEvent> = {}): ParentScheduleEvent {
@@ -60,6 +62,26 @@ describe('bulk RSVP helpers', () => {
 
     expect(candidates).toHaveLength(maxBulkRsvpEvents);
     expect(getNeededBulkRsvpEventKeys(withResponse)).toHaveLength(maxBulkRsvpEvents - 1);
+  });
+
+  it('limits initial hydration to visible groups while retaining every sibling child row', () => {
+    const visibleGroups = Array.from({ length: 10 }, (_, index) => event(index + 1));
+    const offscreenGroups = Array.from({ length: 2 }, (_, index) => event(index + 11));
+    const lateSibling = event(1, {
+      eventKey: 'team-1::game-1::player-99',
+      childId: 'player-99',
+      childName: 'Player 99'
+    });
+
+    expect(getInitialBulkRsvpCandidates(
+      [...visibleGroups, ...offscreenGroups, lateSibling],
+      10,
+      new Date('2100-01-01T00:00:00Z')
+    ).map((candidate) => candidate.eventKey)).toEqual([
+      visibleGroups[0]?.eventKey,
+      lateSibling.eventKey,
+      ...visibleGroups.slice(1).map((candidate) => candidate.eventKey)
+    ]);
   });
 
   it('excludes rows whose private RSVP note did not finish hydrating', () => {
@@ -119,5 +141,43 @@ describe('bulk RSVP helpers', () => {
   it('formats complete and partial result summaries', () => {
     expect(getBulkRsvpResultMessage(2, 0, 'going')).toBe('2 RSVPs saved as going.');
     expect(getBulkRsvpResultMessage(1, 2, 'not_going')).toBe('1 saved; 2 RSVPs need another try.');
+  });
+
+  it('bounds active submissions, starts queued groups as slots open, and preserves input identity', async () => {
+    const groups = ['first', 'second', 'third', 'fourth', 'fifth'];
+    const deferred = new Map<string, { resolve: () => void; promise: Promise<void> }>();
+    let active = 0;
+    let peak = 0;
+    const completionOrder: string[] = [];
+
+    const resultsPromise = runBulkRsvpSubmissionQueue(groups, async (group) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      let resolve!: () => void;
+      const promise = new Promise<void>((finish) => { resolve = finish; });
+      deferred.set(group, { resolve, promise });
+      await promise;
+      active -= 1;
+      completionOrder.push(group);
+      return `${group}-saved`;
+    }, 2);
+
+    await vi.waitFor(() => expect(deferred.size).toBe(2));
+    expect(peak).toBe(2);
+    deferred.get('second')?.resolve();
+    await vi.waitFor(() => expect(deferred.has('third')).toBe(true));
+    expect(active).toBe(2);
+    deferred.get('first')?.resolve();
+    deferred.get('third')?.resolve();
+    await vi.waitFor(() => expect(deferred.has('fourth')).toBe(true));
+    deferred.get('fourth')?.resolve();
+    await vi.waitFor(() => expect(deferred.has('fifth')).toBe(true));
+    deferred.get('fifth')?.resolve();
+
+    await expect(resultsPromise).resolves.toEqual([
+      'first-saved', 'second-saved', 'third-saved', 'fourth-saved', 'fifth-saved'
+    ]);
+    expect(completionOrder).toEqual(['second', 'first', 'third', 'fourth', 'fifth']);
+    expect(peak).toBe(2);
   });
 });

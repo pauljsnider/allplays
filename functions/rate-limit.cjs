@@ -108,7 +108,7 @@ function createInMemoryRateLimiter({ windowMs = 60_000, maxRequests = 120, maxKe
   };
 }
 
-function createFirestoreFixedWindowRateLimiter({
+function createFirestoreFixedWindowRateLimitReservation({
   firestore,
   collectionName,
   windowMs = 60_000,
@@ -125,7 +125,7 @@ function createFirestoreFixedWindowRateLimiter({
   const configuredMaxRequests = parsePositiveInteger(maxRequests, 120);
   const rateLimitCollection = firestore.collection(collectionName.trim());
 
-  return async function reserveRateLimitSlot(boundary, now = Date.now(), reservationId = '') {
+  return function prepareRateLimitReservation(boundary, now = Date.now(), reservationId = '') {
     if ((typeof boundary !== 'string' && typeof boundary !== 'number')
       || (typeof boundary === 'number' && !Number.isFinite(boundary))) {
       throw new TypeError('A string or finite number rate-limit boundary is required.');
@@ -144,57 +144,83 @@ function createFirestoreFixedWindowRateLimiter({
     const documentId = crypto.createHash('sha256').update(normalizedBoundary, 'utf8').digest('hex');
     const limitRef = rateLimitCollection.doc(documentId);
 
-    return firestore.runTransaction(async (transaction) => {
-      const snapshot = await transaction.get(limitRef);
-      const existing = snapshot.exists ? snapshot.data() || {} : {};
-      const existingResetAt = Number(existing.resetAt);
-      const windowActive = Number.isFinite(existingResetAt) && existingResetAt > now;
-      const resetAt = windowActive ? existingResetAt : now + configuredWindowMs;
-      const existingCount = Number(existing.count);
-      const validExistingCount = Number.isSafeInteger(existingCount) && existingCount >= 0;
-      const existingReservations = windowActive && Array.isArray(existing.reservationIds)
-        ? existing.reservationIds.filter((value) => typeof value === 'string')
-        : [];
-      if (reservationHash && validExistingCount && existingReservations.includes(reservationHash)) {
-        return {
-          allowed: true,
-          retryAfterSeconds: Math.max(1, Math.ceil((resetAt - now) / 1000)),
-          remaining: Math.max(0, configuredMaxRequests - existingCount)
-        };
-      }
-      const count = windowActive && validExistingCount
-        ? existingCount >= configuredMaxRequests
-          ? configuredMaxRequests + 1
-          : existingCount + 1
-        : 1;
-
-      // Once a boundary is exhausted, keep rejecting from the stored window
-      // without performing another write. Repeated abusive requests can still
-      // incur a bounded lookup, but cannot amplify into unbounded writes.
-      if (!windowActive || !validExistingCount || existingCount < configuredMaxRequests) {
-        const nextValue = {
-          count: Math.min(count, configuredMaxRequests),
-          resetAt,
-          expiresAt: new Date(resetAt)
-        };
-        if (existingReservations.length || reservationHash) {
-          nextValue.reservationIds = reservationHash
-            ? [...existingReservations, reservationHash]
-            : existingReservations;
+    return {
+      ref: limitRef,
+      evaluate(snapshot) {
+        const existing = snapshot.exists ? snapshot.data() || {} : {};
+        const existingResetAt = Number(existing.resetAt);
+        const windowActive = Number.isFinite(existingResetAt) && existingResetAt > now;
+        const resetAt = windowActive ? existingResetAt : now + configuredWindowMs;
+        const existingCount = Number(existing.count);
+        const validExistingCount = Number.isSafeInteger(existingCount) && existingCount >= 0;
+        const existingReservations = windowActive && Array.isArray(existing.reservationIds)
+          ? existing.reservationIds.filter((value) => typeof value === 'string')
+          : [];
+        if (reservationHash && validExistingCount && existingReservations.includes(reservationHash)) {
+          return {
+            allowed: true,
+            retryAfterSeconds: Math.max(1, Math.ceil((resetAt - now) / 1000)),
+            remaining: Math.max(0, configuredMaxRequests - existingCount),
+            nextValue: null
+          };
         }
-        transaction.set(limitRef, nextValue);
-      }
+        const count = windowActive && validExistingCount
+          ? existingCount >= configuredMaxRequests
+            ? configuredMaxRequests + 1
+            : existingCount + 1
+          : 1;
+        let nextValue = null;
 
-      return {
-        allowed: count <= configuredMaxRequests,
-        retryAfterSeconds: Math.max(1, Math.ceil((resetAt - now) / 1000)),
-        remaining: Math.max(0, configuredMaxRequests - count)
-      };
+        // Once a boundary is exhausted, keep rejecting from the stored window
+        // without performing another write. Repeated abusive requests can still
+        // incur a bounded lookup, but cannot amplify into unbounded writes.
+        if (!windowActive || !validExistingCount || existingCount < configuredMaxRequests) {
+          nextValue = {
+            count: Math.min(count, configuredMaxRequests),
+            resetAt,
+            expiresAt: new Date(resetAt)
+          };
+          if (existingReservations.length || reservationHash) {
+            nextValue.reservationIds = reservationHash
+              ? [...existingReservations, reservationHash]
+              : existingReservations;
+          }
+        }
+
+        return {
+          allowed: count <= configuredMaxRequests,
+          retryAfterSeconds: Math.max(1, Math.ceil((resetAt - now) / 1000)),
+          remaining: Math.max(0, configuredMaxRequests - count),
+          nextValue
+        };
+      },
+      commit(transaction, decision) {
+        if (decision?.allowed && decision.nextValue) {
+          transaction.set(limitRef, decision.nextValue);
+        }
+      }
+    };
+  };
+}
+
+function createFirestoreFixedWindowRateLimiter(options = {}) {
+  const { firestore } = options;
+  const prepareReservation = createFirestoreFixedWindowRateLimitReservation(options);
+
+  return async function reserveRateLimitSlot(boundary, now = Date.now(), reservationId = '') {
+    const reservation = prepareReservation(boundary, now, reservationId);
+    return firestore.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(reservation.ref);
+      const decision = reservation.evaluate(snapshot);
+      reservation.commit(transaction, decision);
+      const { nextValue, ...result } = decision;
+      return result;
     });
   };
 }
 
 module.exports = {
+  createFirestoreFixedWindowRateLimitReservation,
   createFirestoreFixedWindowRateLimiter,
   createInMemoryRateLimiter,
   getRequestIp

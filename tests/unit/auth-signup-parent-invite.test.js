@@ -15,6 +15,7 @@ const firebaseMocks = vi.hoisted(() => {
         getRedirectResult: vi.fn(),
         isSignInWithEmailLink: vi.fn(),
         signInWithEmailLink: vi.fn(),
+        limit: vi.fn(),
         updatePassword: vi.fn()
     };
 });
@@ -42,10 +43,10 @@ const authEmailMocks = vi.hoisted(() => ({
     queuePasswordResetEmail: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=22', () => firebaseMocks);
-vi.mock('../../js/db.js?v=127', () => dbMocks);
-vi.mock('../../js/auth-email.js?v=1', () => authEmailMocks);
-vi.mock('../../js/admin-invite.js?v=6', () => ({
+vi.mock('../../js/firebase.js?v=33', () => firebaseMocks);
+vi.mock('../../js/db.js?v=4433199', () => dbMocks);
+vi.mock('../../js/auth-email.js?v=8', () => authEmailMocks);
+vi.mock('../../js/admin-invite.js?v=12', () => ({
     redeemAdminInviteAcceptance: vi.fn()
 }));
 

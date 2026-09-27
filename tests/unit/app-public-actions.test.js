@@ -108,6 +108,40 @@ describe('React app public URL actions', () => {
         );
     });
 
+    it('opens absolute HTTP URLs in a new browser context for web builds', async () => {
+        const { openPublicUrl } = await loadPublicActions();
+        const open = vi.fn(() => ({ closed: false }));
+        vi.stubGlobal('window', {
+            open,
+            location: { href: '' }
+        });
+
+        await openPublicUrl('http://video.example.test/drill');
+
+        expect(open).toHaveBeenCalledWith('http://video.example.test/drill', '_blank', 'noopener,noreferrer');
+    });
+
+    it.each([
+        'javascript:alert(1)',
+        'data:text/html,unsafe',
+        'intent://unsafe.example.test/#Intent;end',
+        'webcal://calendar.example.test/team.ics',
+        '//unsafe.example.test/path',
+        'https://'
+    ])('rejects an unsupported or malformed web URL without navigation', async (url) => {
+        const { openPublicUrl } = await loadPublicActions();
+        const open = vi.fn();
+        const location = { href: 'https://allplays.ai/current' };
+        vi.stubGlobal('window', { open, location });
+
+        await expect(openPublicUrl(url)).rejects.toThrow();
+
+        expect(open).not.toHaveBeenCalled();
+        expect(location.href).toBe('https://allplays.ai/current');
+        expect(browserMocks.open).not.toHaveBeenCalled();
+        expect(appLauncherMocks.openUrl).not.toHaveBeenCalled();
+    });
+
     it('falls back to clipboard copy when web share is unavailable', async () => {
         const { sharePublicUrl } = await loadPublicActions();
         const writeText = vi.fn().mockResolvedValue(undefined);

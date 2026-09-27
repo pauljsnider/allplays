@@ -109,6 +109,11 @@ const teamMocks = vi.hoisted(() => ({
     retryRosterParentInviteEmailForApp: vi.fn()
 }));
 
+const teamCreationMocks = vi.hoisted(() => ({
+    createTeamForApp: vi.fn(),
+    getCreateTeamSportOptions: vi.fn()
+}));
+
 const rosterAiMocks = vi.hoisted(() => ({
     buildRosterAiImportCommitPlan: vi.fn(),
     extractPastedRosterCsv: vi.fn(),
@@ -170,6 +175,7 @@ vi.mock('../../apps/app/src/lib/chatService.ts', () => chatMocks);
 vi.mock('../../apps/app/src/lib/homeService.ts', () => homeMocks);
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 vi.mock('../../apps/app/src/lib/teamDetailService.ts', () => teamMocks);
+vi.mock('../../apps/app/src/lib/teamCreationService.ts', () => teamCreationMocks);
 vi.mock('../../apps/app/src/lib/rosterAiImport.ts', () => rosterAiMocks);
 vi.mock('../../apps/app/src/lib/playerService.ts', () => playerMocks);
 vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => toolsMocks);
@@ -495,6 +501,19 @@ beforeEach(async () => {
         emailDeduplicated: false,
         teamName: 'Bears',
         playerName: 'Avery'
+    });
+    teamCreationMocks.getCreateTeamSportOptions.mockReturnValue([
+        'Basketball',
+        'Soccer',
+        'Baseball',
+        'Softball',
+        'Football',
+        'Volleyball'
+    ]);
+    teamCreationMocks.createTeamForApp.mockResolvedValue({
+        teamId: 'team-new',
+        defaultStatConfigCreated: true,
+        defaultStatConfigError: null
     });
     playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValue({
         child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
@@ -1046,6 +1065,576 @@ describe('private AI service', () => {
             toolNames: ['get_schedule']
         });
         expect(result.toolResults[0]).toMatchObject({ name: 'get_schedule', ok: true });
+    });
+
+    it('grounds a named-team next-game answer before a global event limit can hide it', async () => {
+        const earlierPractices = Array.from({ length: 8 }, (_, index) => futureEvent({
+            eventKey: `team-${index}:practice-${index}:player-${index}`,
+            id: `practice-${index}`,
+            teamId: `team-${index}`,
+            teamName: `Team ${index}`,
+            type: 'practice',
+            date: new Date(`2099-01-${String(index + 1).padStart(2, '0')}T18:00:00Z`),
+            childId: `player-${index}`,
+            childName: `Player ${index}`
+        }));
+        const jrCurrentGame = futureEvent({
+            eventKey: 'team-current:game-current:player-current',
+            id: 'game-current',
+            teamId: 'team-current',
+            teamName: 'Jr KC Current',
+            date: new Date('2099-02-01T19:30:00Z'),
+            childId: 'player-current',
+            childName: 'Madison',
+            opponent: 'Toca Fusion Orange GU11'
+        });
+        homeMocks.loadParentHome.mockResolvedValue({
+            metrics: {},
+            actionItems: [],
+            players: [{ playerId: 'player-current', name: 'Madison', teamId: 'team-current', teamName: 'Jr KC Current' }],
+            teams: [{ teamId: 'team-current', teamName: 'Jr KC Current', players: [{ name: 'Madison' }] }],
+            upcomingEvents: [...earlierPractices, jrCurrentGame],
+            fees: []
+        });
+        scheduleMocks.loadParentScheduleScope.mockResolvedValue({
+            profile: {},
+            children: [{ playerId: 'player-current', name: 'Madison', teamId: 'team-current', teamName: 'Jr KC Current' }],
+            staffTeams: []
+        });
+        teamMocks.loadParentTeamDetail.mockImplementation(async (teamId) => ({
+            team: { id: teamId, name: teamId === 'team-current' ? 'Jr KC Current' : teamId },
+            players: teamId === 'team-current' ? [{ id: 'player-current', name: 'Madison' }] : [],
+            inactivePlayers: [],
+            canManageTeam: false
+        }));
+        scheduleMocks.loadParentSchedule.mockImplementation(async (_user, options = {}) => ({
+            children: [{ playerId: 'player-current', name: 'Madison', teamId: 'team-current', teamName: 'Jr KC Current' }],
+            events: options.targetTeamId === 'team-current'
+                ? [jrCurrentGame]
+                : [...earlierPractices, jrCurrentGame],
+            isPartial: false
+        }));
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{ name: 'list_schedule', args: { range: 'upcoming', limit: 8 } }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'I do not see an upcoming Jr KC Current game.'
+            })));
+
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await generatePrivateAiAnswer(authUser, "When is Jr KC Current's next game?");
+
+        expect(result.answer).toContain("Jr KC Current's next game");
+        expect(result.answer).toContain('Toca Fusion Orange GU11');
+        expect(result.toolResults[0]).toMatchObject({
+            name: 'list_schedule',
+            ok: true,
+            data: {
+                query: { range: 'upcoming', type: 'game', teamId: 'team-current' },
+                totalMatchingEvents: 1,
+                absenceConfirmed: false,
+                events: [expect.objectContaining({
+                    eventId: 'game-current',
+                    teamId: 'team-current',
+                    teamName: 'Jr KC Current',
+                    type: 'game'
+                })]
+            }
+        });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, {
+            includePastGames: false,
+            targetTeamId: 'team-current'
+        });
+        expect(aiMocks.model.generateContent).not.toHaveBeenCalled();
+    });
+
+    it('preserves a launched team scope when the planner omits schedule filters', async () => {
+        const launchedGame = futureEvent({
+            id: 'launched-game',
+            teamId: 'team-launched',
+            teamName: 'Launched Team',
+            date: new Date('2099-03-01T18:00:00Z')
+        });
+        scheduleMocks.loadParentSchedule.mockImplementation(async (_user, options = {}) => {
+            if (options.targetTeamId !== 'team-launched') throw new Error('Global schedule should not be loaded.');
+            return { children: [], events: [launchedGame], isPartial: false };
+        });
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{ name: 'get_schedule', args: { range: 'upcoming', limit: 8 } }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({ answer: 'The launched team has one event.' })));
+
+        const { sendPrivateAiMessage } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await sendPrivateAiMessage(
+            authUser,
+            'What is on this team schedule?',
+            'default',
+            { teamId: 'team-launched' }
+        );
+
+        expect(result.toolResults.find((tool) => tool.name === 'get_schedule')).toMatchObject({
+            name: 'get_schedule',
+            ok: true,
+            data: { events: [expect.objectContaining({ teamId: 'team-launched' })] }
+        });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, {
+            includePastGames: false,
+            targetTeamId: 'team-launched'
+        });
+    });
+
+    it.each([
+        {
+            toolName: 'list_schedule',
+            args: { range: 'upcoming', type: 'game', limit: 8 },
+            requestText: "When is Target Team's next game?",
+            expectedPath: ['events', 0]
+        },
+        {
+            toolName: 'get_last_game',
+            args: {},
+            requestText: "What was Target Team's last game?",
+            expectedPath: ['lastGame']
+        },
+        {
+            toolName: 'list_rsvps',
+            args: { range: 'upcoming', limit: 8 },
+            requestText: "Show Target Team's RSVPs.",
+            expectedPath: ['events', 0]
+        }
+    ])('lets the current question override launch context for $toolName', async ({
+        toolName,
+        args,
+        requestText,
+        expectedPath
+    }) => {
+        const targetFutureGame = futureEvent({
+            id: 'target-future',
+            teamId: 'team-target',
+            teamName: 'Target Team',
+            date: new Date('2099-04-01T18:00:00Z')
+        });
+        const targetPastGame = futureEvent({
+            id: 'target-past',
+            teamId: 'team-target',
+            teamName: 'Target Team',
+            date: new Date('2026-01-01T18:00:00Z')
+        });
+        homeMocks.loadParentHome.mockResolvedValue({
+            metrics: {},
+            actionItems: [],
+            players: [],
+            teams: [
+                { teamId: 'team-launch', teamName: 'Launch Team', players: [] },
+                { teamId: 'team-target', teamName: 'Target Team', players: [] }
+            ],
+            upcomingEvents: [],
+            fees: []
+        });
+        teamMocks.loadParentTeamDetail.mockImplementation(async (teamId) => ({
+            team: { id: teamId, name: teamId === 'team-target' ? 'Target Team' : 'Launch Team' },
+            players: [],
+            inactivePlayers: [],
+            canManageTeam: false
+        }));
+        scheduleMocks.loadParentSchedule.mockImplementation(async (_user, options = {}) => {
+            if (options.targetTeamId !== 'team-target') throw new Error('The launch team must not override the current question.');
+            return { children: [], events: [targetPastGame, targetFutureGame], isPartial: false };
+        });
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await runPrivateAiTool(authUser, { name: toolName, args }, {
+            teamId: 'team-launch',
+            requestText
+        });
+        const scopedEvent = expectedPath.reduce((value, key) => value?.[key], result.data);
+
+        expect(result.ok).toBe(true);
+        expect(scopedEvent).toMatchObject({ teamId: 'team-target', teamName: 'Target Team' });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, expect.objectContaining({
+            targetTeamId: 'team-target'
+        }));
+    });
+
+    it.each([
+        {
+            toolName: 'list_schedule',
+            args: { range: 'upcoming', type: 'game', limit: 8 },
+            requestText: "When is Madison's next game?",
+            expectedPath: ['events', 0]
+        },
+        {
+            toolName: 'get_last_game',
+            args: {},
+            requestText: "What was Madison's last game?",
+            expectedPath: ['lastGame']
+        },
+        {
+            toolName: 'list_rsvps',
+            args: { range: 'upcoming', limit: 8 },
+            requestText: "Show Madison's RSVPs.",
+            expectedPath: ['events', 0]
+        }
+    ])('resolves a named player before loading and limiting $toolName', async ({
+        toolName,
+        args,
+        requestText,
+        expectedPath
+    }) => {
+        const teammateEvents = Array.from({ length: 8 }, (_, index) => futureEvent({
+            eventKey: `team-current:teammate-${index}:teammate-player-${index}`,
+            id: `teammate-${index}`,
+            teamId: 'team-current',
+            teamName: 'Jr KC Current',
+            date: new Date(`2099-03-${String(index + 1).padStart(2, '0')}T18:00:00Z`),
+            childId: `teammate-player-${index}`,
+            childName: `Teammate ${index}`
+        }));
+        const madisonFutureGame = futureEvent({
+            id: 'madison-future',
+            teamId: 'team-current',
+            teamName: 'Jr KC Current',
+            date: new Date('2099-05-01T18:00:00Z'),
+            childId: 'player-current',
+            childName: 'Madison Snider'
+        });
+        const madisonPastGame = futureEvent({
+            id: 'madison-past',
+            teamId: 'team-current',
+            teamName: 'Jr KC Current',
+            date: new Date('2026-01-01T18:00:00Z'),
+            childId: 'player-current',
+            childName: 'Madison Snider'
+        });
+        homeMocks.loadParentHome.mockResolvedValue({
+            metrics: {},
+            actionItems: [],
+            players: [{ playerId: 'player-current', name: 'Madison Snider', teamId: 'team-current', teamName: 'Jr KC Current' }],
+            teams: [{ teamId: 'team-current', teamName: 'Jr KC Current', players: [{ name: 'Madison Snider' }] }],
+            upcomingEvents: [],
+            fees: []
+        });
+        teamMocks.loadParentTeamDetail.mockResolvedValue({
+            team: { id: 'team-current', name: 'Jr KC Current' },
+            linkedPlayers: [{ id: 'player-current', name: 'Madison Snider' }],
+            players: [{ id: 'player-current', name: 'Madison Snider' }],
+            inactivePlayers: [],
+            canManageTeam: false
+        });
+        scheduleMocks.loadParentSchedule.mockImplementation(async (_user, options = {}) => {
+            if (options.targetTeamId !== 'team-current') throw new Error('The named player team must be loaded directly.');
+            return {
+                children: [{ playerId: 'player-current', name: 'Madison Snider', teamId: 'team-current', teamName: 'Jr KC Current' }],
+                events: [madisonPastGame, ...teammateEvents, madisonFutureGame],
+                isPartial: false
+            };
+        });
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await runPrivateAiTool(authUser, { name: toolName, args }, { requestText });
+        const scopedEvent = expectedPath.reduce((value, key) => value?.[key], result.data);
+
+        expect(result.ok).toBe(true);
+        expect(scopedEvent).toMatchObject({ childId: 'player-current', childName: 'Madison Snider' });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, expect.objectContaining({
+            targetTeamId: 'team-current'
+        }));
+    });
+
+    it('rejects an ambiguous first-name player scope before loading a schedule', async () => {
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [{ teamId: 'team-current', teamName: 'Jr KC Current' }]
+        });
+        teamMocks.loadParentTeamDetail.mockResolvedValue({
+            team: { id: 'team-current', name: 'Jr KC Current' },
+            linkedPlayers: [
+                { id: 'player-snider', name: 'Madison Snider' },
+                { id: 'player-jones', name: 'Madison Jones' }
+            ],
+            players: [
+                { id: 'player-snider', name: 'Madison Snider' },
+                { id: 'player-jones', name: 'Madison Jones' }
+            ],
+            inactivePlayers: [],
+            canManageTeam: false
+        });
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(authUser, { name: 'list_schedule', args: {} }, {
+            requestText: "When is Madison's next game?"
+        })).resolves.toMatchObject({
+            ok: false,
+            error: expect.stringContaining('full player name')
+        });
+        expect(scheduleMocks.loadParentSchedule).not.toHaveBeenCalled();
+    });
+
+    it('rejects a first name shared by active and unavailable players', async () => {
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [{ teamId: 'team-current', teamName: 'Jr KC Current' }]
+        });
+        teamMocks.loadParentTeamDetail.mockResolvedValue({
+            team: { id: 'team-current', name: 'Jr KC Current' },
+            linkedPlayers: [{ id: 'player-snider', name: 'Madison Snider' }],
+            players: [{ id: 'player-snider', name: 'Madison Snider' }],
+            inactivePlayers: [{ id: 'player-jones', name: 'Madison Jones' }],
+            canManageTeam: false
+        });
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(authUser, { name: 'list_schedule', args: {} }, {
+            requestText: "When is Madison's next game?"
+        })).resolves.toMatchObject({
+            ok: false,
+            error: expect.stringContaining('full player name')
+        });
+        expect(scheduleMocks.loadParentSchedule).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        'When is the next game for Madison Jones?',
+        "When is Madison Jones's next game?",
+        'When is Madison Jones next game?'
+    ])('rejects an unmatched full player name instead of selecting a shared first name: %s', async (requestText) => {
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [{ teamId: 'team-current', teamName: 'Jr KC Current' }]
+        });
+        teamMocks.loadParentTeamDetail.mockResolvedValue({
+            team: { id: 'team-current', name: 'Jr KC Current' },
+            linkedPlayers: [{ id: 'player-snider', name: 'Madison Snider' }],
+            players: [{ id: 'player-snider', name: 'Madison Snider' }],
+            inactivePlayers: [],
+            canManageTeam: false
+        });
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(authUser, { name: 'list_schedule', args: {} }, {
+            requestText
+        })).resolves.toMatchObject({
+            ok: false,
+            error: expect.stringContaining('full name')
+        });
+        expect(scheduleMocks.loadParentSchedule).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['list_schedule', { range: 'upcoming' }, "When is Madison's next game for Target Team?"],
+        ['get_last_game', {}, "What was Madison's last game for Target Team?"],
+        ['list_rsvps', { range: 'upcoming' }, "Show Madison's RSVPs for Target Team."]
+    ])('rejects conflicting current-question team and player scope for %s', async (toolName, args, requestText) => {
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [
+                { teamId: 'team-current', teamName: 'Jr KC Current' },
+                { teamId: 'team-target', teamName: 'Target Team' }
+            ]
+        });
+        teamMocks.loadParentTeamDetail.mockImplementation(async (teamId) => ({
+            team: { id: teamId, name: teamId === 'team-current' ? 'Jr KC Current' : 'Target Team' },
+            linkedPlayers: teamId === 'team-current' ? [{ id: 'player-current', name: 'Madison' }] : [],
+            players: teamId === 'team-current' ? [{ id: 'player-current', name: 'Madison' }] : [],
+            inactivePlayers: [],
+            canManageTeam: false
+        }));
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(authUser, { name: toolName, args }, { requestText })).resolves.toMatchObject({
+            ok: false,
+            error: expect.stringContaining('do not match')
+        });
+        expect(scheduleMocks.loadParentSchedule).not.toHaveBeenCalled();
+    });
+
+    it.each(['list_schedule', 'get_last_game', 'list_rsvps'])(
+        'rejects an invalid explicit player even when %s has a valid team',
+        async (toolName) => {
+            homeMocks.loadParentHome.mockResolvedValue({
+                teams: [{ teamId: 'team-current', teamName: 'Jr KC Current' }]
+            });
+            teamMocks.loadParentTeamDetail.mockResolvedValue({
+                team: { id: 'team-current', name: 'Jr KC Current' },
+                linkedPlayers: [{ id: 'player-current', name: 'Madison' }],
+                players: [{ id: 'player-current', name: 'Madison' }],
+                inactivePlayers: [],
+                canManageTeam: false
+            });
+
+            const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+            await expect(runPrivateAiTool(authUser, {
+                name: toolName,
+                args: { teamId: 'team-current', playerId: 'missing-player' }
+            })).resolves.toMatchObject({
+                ok: false,
+                error: expect.stringContaining('No accessible player')
+            });
+            expect(scheduleMocks.loadParentSchedule).not.toHaveBeenCalled();
+        }
+    );
+
+    it.each([
+        ['Jordan', [{ id: 'player-teammate', name: 'Jordan' }], []],
+        ['Casey', [], [{ id: 'player-inactive', name: 'Casey' }]]
+    ])('does not confirm schedule absence for unavailable player %s', async (playerName, players, inactivePlayers) => {
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [{ teamId: 'team-current', teamName: 'Jr KC Current' }]
+        });
+        teamMocks.loadParentTeamDetail.mockResolvedValue({
+            team: { id: 'team-current', name: 'Jr KC Current' },
+            linkedPlayers: [{ id: 'player-current', name: 'Madison' }],
+            players,
+            inactivePlayers,
+            canManageTeam: false
+        });
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(authUser, { name: 'list_schedule', args: {} }, {
+            requestText: `When is ${playerName}'s next game?`
+        })).resolves.toMatchObject({
+            ok: false,
+            error: expect.stringContaining('not available in this account schedule')
+        });
+        expect(scheduleMocks.loadParentSchedule).not.toHaveBeenCalled();
+    });
+
+    it('does not treat a single-token player name as an ordinary word', async () => {
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [
+                { teamId: 'team-launch', teamName: 'Launch Team' },
+                { teamId: 'team-current', teamName: 'Jr KC Current' }
+            ]
+        });
+        teamMocks.loadParentTeamDetail.mockImplementation(async (teamId) => ({
+            team: { id: teamId, name: teamId === 'team-launch' ? 'Launch Team' : 'Jr KC Current' },
+            linkedPlayers: [],
+            players: teamId === 'team-current' ? [{ id: 'player-will', name: 'Will' }] : [],
+            inactivePlayers: [],
+            canManageTeam: teamId === 'team-current'
+        }));
+        scheduleMocks.loadParentSchedule.mockResolvedValue({ children: [], events: [], isPartial: false });
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await runPrivateAiTool(authUser, { name: 'list_schedule', args: {} }, {
+            teamId: 'team-launch',
+            requestText: 'Will there be a game?'
+        });
+
+        expect(result.ok).toBe(true);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, expect.objectContaining({
+            targetTeamId: 'team-launch'
+        }));
+    });
+
+    it('keeps a named team target when unrelated access discovery is partial', async () => {
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [
+                { teamId: 'team-launch', teamName: 'Launch Team' },
+                { teamId: 'team-target', teamName: 'Target Team' }
+            ]
+        });
+        teamMocks.loadParentTeamDetail.mockImplementation(async (teamId) => {
+            if (teamId === 'team-target') throw new Error('Target detail temporarily unavailable.');
+            return {
+                team: { id: 'team-launch', name: 'Launch Team' },
+                linkedPlayers: [],
+                players: [],
+                inactivePlayers: [],
+                canManageTeam: false
+            };
+        });
+        scheduleMocks.loadParentSchedule.mockResolvedValue({ children: [], events: [], isPartial: false });
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await runPrivateAiTool(authUser, { name: 'list_schedule', args: {} }, {
+            teamId: 'team-launch',
+            requestText: "When is Target Team's next game?"
+        });
+
+        expect(result.ok).toBe(true);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, expect.objectContaining({
+            targetTeamId: 'team-target'
+        }));
+    });
+
+    it('does not confirm schedule absence when the targeted load is partial', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({ children: [], events: [], isPartial: true });
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await runPrivateAiTool(authUser, {
+            name: 'list_schedule',
+            args: { range: 'upcoming', type: 'game', teamId: 'team-current', limit: 8 }
+        });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                totalMatchingEvents: 0,
+                returnedEventCount: 0,
+                resultComplete: false,
+                absenceConfirmed: false,
+                events: []
+            }
+        });
+    });
+
+    it('scopes the deterministic last-game preload to the team named in the question', async () => {
+        const jrCurrentPastGame = futureEvent({
+            id: 'past-current-game',
+            teamId: 'team-current',
+            teamName: 'Jr KC Current',
+            date: new Date('2026-01-01T18:00:00Z'),
+            opponent: 'Past Opponent'
+        });
+        homeMocks.loadParentHome.mockResolvedValue({
+            metrics: {},
+            actionItems: [],
+            players: [],
+            teams: [{ teamId: 'team-current', teamName: 'Jr KC Current', players: [] }],
+            upcomingEvents: [],
+            fees: []
+        });
+        teamMocks.loadParentTeamDetail.mockResolvedValue({
+            team: { id: 'team-current', name: 'Jr KC Current' },
+            players: [],
+            inactivePlayers: [],
+            canManageTeam: false
+        });
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [],
+            events: [jrCurrentPastGame],
+            isPartial: false
+        });
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await runPrivateAiTool(authUser, {
+            name: 'get_last_game',
+            args: {}
+        }, {
+            requestText: "What was Jr KC Current's last game?"
+        });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                lastGame: expect.objectContaining({
+                    eventId: 'past-current-game',
+                    teamId: 'team-current',
+                    teamName: 'Jr KC Current',
+                    type: 'game'
+                }),
+                absenceConfirmed: false
+            }
+        });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, {
+            includePastGames: true,
+            targetTeamId: 'team-current'
+        });
     });
 
     it('stores exact pending-action references on the assistant proposal message', async () => {
@@ -2623,6 +3212,7 @@ describe('private AI service', () => {
                     unpaidCents: 200
                 }),
                 seasonStatTotals: {
+                    loadStatus: 'complete',
                     gameCount: 8,
                     totals: {
                         goals: 7,
@@ -2643,12 +3233,23 @@ describe('private AI service', () => {
         expect(playerMocks.loadParentPlayerStatTotals).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
     });
 
-    it('keeps player development answers available when optional video clips fail to load', async () => {
+    it('keeps player development available but does not infer season totals when an older Diamond game may be outside recent rows', async () => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Baseball' },
+            statRows: [{
+                event: futureEvent({ id: 'recent-legacy-game' }),
+                stats: { hits: 2 }
+            }]
+        });
         playerMocks.loadParentPlayerVideoClips.mockRejectedValueOnce(new Error('Games unavailable'));
         playerMocks.loadParentPlayerStatTotals.mockRejectedValueOnce(new Error('Totals unavailable'));
         const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
 
-        await expect(runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } })).resolves.toMatchObject({
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
             ok: true,
             data: expect.objectContaining({
                 player: expect.objectContaining({
@@ -2657,16 +3258,534 @@ describe('private AI service', () => {
                 }),
                 clips: [],
                 seasonStatTotals: {
-                    gameCount: 1,
-                    totals: {
-                        points: 8,
-                        rebounds: 4
-                    }
+                    available: false,
+                    loadStatus: 'unavailable',
+                    gameCount: null,
+                    totals: null,
+                    absenceConfirmed: false
                 }
             })
         });
+        expect(result.data.recentGames[0]).toMatchObject({ stats: { hits: 2 } });
+        expect(result.data.recentGames[0]).not.toHaveProperty('diamondEvidence');
+        expect(result.data.coachingPrompt).toContain('do not infer season totals from recentGames');
         expect(playerMocks.loadParentPlayerDetailWithAthleteProfile).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
         expect(playerMocks.loadParentPlayerVideoClips).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
+    });
+
+    it('fails closed when a season-total load reports success without a result', async () => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            statRows: [{
+                event: futureEvent({ id: 'recent-game' }),
+                stats: { points: 9 }
+            }]
+        });
+        playerMocks.loadParentPlayerStatTotals.mockResolvedValueOnce(null);
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                recentGames: [{ stats: { points: 9 } }],
+                seasonStatTotals: {
+                    available: false,
+                    loadStatus: 'unavailable',
+                    gameCount: null,
+                    totals: null,
+                    absenceConfirmed: false
+                }
+            }
+        });
+    });
+
+    it('preserves a completed empty season-total load as authoritative empty data', async () => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            statRows: []
+        });
+        playerMocks.loadParentPlayerStatTotals.mockResolvedValueOnce({
+            teamId: 'team-1',
+            playerId: 'player-1',
+            gameCount: 0,
+            gameIds: [],
+            totals: {}
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                seasonStatTotals: {
+                    loadStatus: 'complete',
+                    gameCount: 0,
+                    totals: {}
+                }
+            }
+        });
+        expect(result.data.seasonStatTotals).not.toHaveProperty('available', false);
+    });
+
+    it('does not infer no recent games when the overview schedule load failed but season totals are nonzero', async () => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            scheduleLoadError: 'Schedule is temporarily unavailable. Refresh the player to try again.',
+            statRows: []
+        });
+        playerMocks.loadParentPlayerStatTotals.mockResolvedValueOnce({
+            teamId: 'team-1',
+            playerId: 'player-1',
+            gameCount: 3,
+            gameIds: ['game-1', 'game-2', 'game-3'],
+            totals: { points: 18 }
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                recentGames: [],
+                recentGamesEvidence: {
+                    loadStatus: 'unavailable',
+                    complete: false,
+                    absenceConfirmed: false
+                },
+                seasonStatTotals: {
+                    loadStatus: 'complete',
+                    gameCount: 3,
+                    totals: { points: 18 }
+                }
+            }
+        });
+        expect(result.data.coachingPrompt).toContain('do not claim there are no recent games');
+    });
+
+    it('does not infer no recent games from a partial empty overview schedule', async () => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            scheduleLoadStatus: 'partial',
+            scheduleLoadError: 'Some schedule sources are temporarily unavailable. Recent games may be incomplete.',
+            statRows: []
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                recentGames: [],
+                recentGamesEvidence: {
+                    loadStatus: 'partial',
+                    complete: false,
+                    absenceConfirmed: false
+                }
+            }
+        });
+        expect(result.data.coachingPrompt).toContain('partial or unavailable');
+    });
+
+    it('serializes partial Diamond totals with explicit lower-bound, coverage, and absence evidence', async () => {
+        playerMocks.loadParentPlayerStatTotals.mockResolvedValueOnce({
+            teamId: 'team-1',
+            playerId: 'player-1',
+            gameCount: 2,
+            gameIds: ['diamond-1', 'diamond-2'],
+            totals: { h: 1 },
+            statPresentation: {
+                isDiamond: true,
+                statCoverage: { h: 'partial' },
+                observedStatKeys: ['h'],
+                unavailableStatKeys: ['rbi'],
+                projectionPending: true
+            },
+            diamond: {
+                hasDiamond: true,
+                pending: true,
+                sourceRevisions: [8],
+                requestedStatVisibility: 'public',
+                statVisibility: 'public',
+                privateStatsStatus: 'not-requested',
+                publicStatsStatus: 'partial',
+                absenceConfirmed: false
+            }
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                seasonStatTotals: {
+                    available: true,
+                    gameCount: 2,
+                    totals: { h: 1 },
+                    diamondEvidence: {
+                        complete: false,
+                        pending: true,
+                        publicStatsStatus: 'partial',
+                        absenceConfirmed: false,
+                        coverage: {
+                            statCoverage: { h: 'partial' },
+                            observedStatKeys: ['h'],
+                            unavailableStatKeys: ['rbi'],
+                            projectionPending: true
+                        }
+                    }
+                }
+            }
+        });
+        expect(result.data.coachingPrompt).toContain('Partial values are lower bounds');
+        expect(result.data.coachingPrompt).toContain('Never describe partial, pending, or unavailable Diamond totals as complete or as zero');
+    });
+
+    it('does not inherit public absence when manager-internal Diamond access is incomplete', async () => {
+        playerMocks.loadParentPlayerStatTotals.mockResolvedValueOnce({
+            teamId: 'team-1',
+            playerId: 'player-1',
+            gameCount: 1,
+            gameIds: ['diamond-1'],
+            totals: {},
+            statPresentation: {
+                isDiamond: true,
+                projectionPending: false,
+                statCoverage: { h: 'complete' },
+                observedStatKeys: [],
+                unavailableStatKeys: []
+            },
+            diamond: {
+                hasDiamond: true,
+                pending: false,
+                sourceRevisions: [8],
+                requestedStatVisibility: 'manager-internal',
+                statVisibility: 'public',
+                privateStatsStatus: 'partial',
+                publicStatsStatus: 'complete',
+                absenceConfirmed: true
+            }
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                seasonStatTotals: {
+                    available: true,
+                    totals: {},
+                    diamondEvidence: {
+                        status: 'partial',
+                        complete: false,
+                        requestedStatVisibility: 'manager-internal',
+                        privateStatsStatus: 'partial',
+                        publicStatsStatus: 'complete',
+                        absenceConfirmed: false
+                    }
+                }
+            }
+        });
+    });
+
+    it('serializes per-game Diamond freshness and coverage as pending, partial, or complete evidence', async () => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Baseball' },
+            statRows: [
+                {
+                    event: futureEvent({ id: 'diamond-pending', trackingEngine: 'diamond-v2' }),
+                    stats: { h: 0 },
+                    statPresentation: {
+                        isDiamond: true,
+                        projection: { pending: true },
+                        statCoverage: { h: 'complete' },
+                        observedStatKeys: [],
+                        unavailableStatKeys: []
+                    }
+                },
+                {
+                    event: futureEvent({ id: 'diamond-partial', trackingEngine: 'diamond-v2' }),
+                    stats: { h: 0 },
+                    statPresentation: {
+                        isDiamond: true,
+                        projection: { pending: false },
+                        statCoverage: { h: 'partial' },
+                        observedStatKeys: ['h'],
+                        unavailableStatKeys: ['rbi']
+                    }
+                },
+                {
+                    event: futureEvent({ id: 'diamond-complete', trackingEngine: 'diamond-v2' }),
+                    stats: { h: 0 },
+                    statPresentation: {
+                        isDiamond: true,
+                        projection: { pending: false },
+                        statCoverage: { h: 'complete' },
+                        observedStatKeys: [],
+                        unavailableStatKeys: []
+                    }
+                },
+                {
+                    event: futureEvent({ id: 'diamond-unknown', trackingEngine: 'diamond-v2' }),
+                    stats: { h: 0 },
+                    statPresentation: {
+                        isDiamond: true,
+                        statCoverage: { h: 'complete' },
+                        observedStatKeys: [],
+                        unavailableStatKeys: []
+                    }
+                }
+            ]
+        });
+        playerMocks.loadParentPlayerStatTotals.mockResolvedValueOnce({
+            teamId: 'team-1',
+            playerId: 'player-1',
+            gameCount: 4,
+            gameIds: ['diamond-pending', 'diamond-partial', 'diamond-complete', 'diamond-unknown'],
+            totals: { h: 0 },
+            statPresentation: {
+                isDiamond: true,
+                projectionPending: true,
+                statCoverage: { h: 'partial' },
+                observedStatKeys: ['h'],
+                unavailableStatKeys: []
+            },
+            diamond: {
+                hasDiamond: true,
+                pending: true,
+                sourceRevisions: [8],
+                publicStatsStatus: 'partial',
+                privateStatsStatus: 'not-requested',
+                absenceConfirmed: false
+            }
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result.data.recentGames.map((row) => row.diamondEvidence)).toEqual([
+            expect.objectContaining({
+                status: 'pending',
+                complete: false,
+                pending: true,
+                statCoverage: { h: 'complete' }
+            }),
+            expect.objectContaining({
+                status: 'partial',
+                complete: false,
+                pending: false,
+                statCoverage: { h: 'partial' },
+                observedStatKeys: ['h'],
+                unavailableStatKeys: ['rbi']
+            }),
+            expect.objectContaining({
+                status: 'complete',
+                complete: true,
+                pending: false,
+                statCoverage: { h: 'complete' }
+            }),
+            expect.objectContaining({
+                status: 'pending',
+                complete: false,
+                pending: true,
+                statCoverage: { h: 'complete' }
+            })
+        ]);
+    });
+
+    it.each([
+        ['missing', undefined],
+        ['malformed', 'not-an-envelope'],
+        ['contradictory', {
+            isDiamond: false,
+            projectionPending: false,
+            statCoverage: { h: 'complete' },
+            observedStatKeys: [],
+            unavailableStatKeys: []
+        }]
+    ])('guards Diamond-engine per-game stats when stat presentation is %s', async (_label, statPresentation) => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Baseball' },
+            statRows: [{
+                event: futureEvent({ id: 'diamond-1', trackingEngine: 'diamond-v2' }),
+                stats: { h: 0 },
+                ...(statPresentation === undefined ? {} : { statPresentation })
+            }]
+        });
+        playerMocks.loadParentPlayerStatTotals.mockRejectedValueOnce(new Error('Totals unavailable'));
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result.data.recentGames[0]).toMatchObject({
+            stats: { h: 0 },
+            diamondEvidence: {
+                status: 'pending',
+                complete: false,
+                pending: true,
+                statCoverage: {},
+                observedStatKeys: [],
+                unavailableStatKeys: [],
+                projectionPending: true
+            }
+        });
+    });
+
+    it('suppresses legacy recent-row totals when a Diamond season total load is unavailable', async () => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Baseball' },
+            statRows: [{
+                event: futureEvent({ id: 'diamond-1', trackingEngine: 'diamond-v2' }),
+                stats: { h: 1 },
+                statPresentation: {
+                    isDiamond: true,
+                    projectionPending: true,
+                    statCoverage: { h: 'partial' },
+                    observedStatKeys: ['h'],
+                    unavailableStatKeys: []
+                }
+            }]
+        });
+        playerMocks.loadParentPlayerStatTotals.mockRejectedValueOnce(new Error('Diamond statistics are temporarily unavailable. Refresh to retry.'));
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                seasonStatTotals: {
+                    available: false,
+                    gameCount: null,
+                    totals: null,
+                    diamondEvidence: {
+                        complete: false,
+                        pending: true,
+                        publicStatsStatus: 'unavailable',
+                        absenceConfirmed: false
+                    }
+                }
+            }
+        });
+        expect(result.data.seasonStatTotals.totals).not.toEqual({ h: 1 });
+    });
+
+    it.each([
+        ['missing', undefined],
+        ['contradictory', { hasDiamond: false }]
+    ])('suppresses unguarded season totals when Diamond rows have a %s Diamond envelope', async (_label, diamond) => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Baseball' },
+            statRows: [{
+                event: futureEvent({ id: 'diamond-1', trackingEngine: 'diamond-v2' }),
+                stats: { h: 1 },
+                statPresentation: {
+                    isDiamond: true,
+                    projection: { pending: false },
+                    statCoverage: { h: 'complete' },
+                    observedStatKeys: [],
+                    unavailableStatKeys: []
+                }
+            }]
+        });
+        playerMocks.loadParentPlayerStatTotals.mockResolvedValueOnce({
+            teamId: 'team-1',
+            playerId: 'player-1',
+            gameCount: 0,
+            gameIds: [],
+            totals: {},
+            ...(diamond === undefined ? {} : { diamond })
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                seasonStatTotals: {
+                    available: false,
+                    gameCount: null,
+                    totals: null,
+                    diamondEvidence: {
+                        status: 'pending',
+                        complete: false,
+                        pending: true,
+                        publicStatsStatus: 'unavailable',
+                        absenceConfirmed: false,
+                        coverage: {
+                            projectionPending: true
+                        }
+                    }
+                }
+            }
+        });
+    });
+
+    it('instructs the answer model not to turn incomplete Diamond evidence into complete or zero claims', async () => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Baseball' },
+            statRows: [{
+                event: futureEvent({ id: 'diamond-pending', trackingEngine: 'diamond-v2' }),
+                stats: { h: 0 },
+                statPresentation: {
+                    isDiamond: true,
+                    projection: { pending: true },
+                    statCoverage: { h: 'complete' },
+                    observedStatKeys: [],
+                    unavailableStatKeys: []
+                }
+            }]
+        });
+        playerMocks.loadParentPlayerStatTotals.mockResolvedValueOnce({
+            teamId: 'team-1', playerId: 'player-1', gameCount: 2, gameIds: ['diamond-1', 'diamond-2'],
+            totals: { h: 1 },
+            statPresentation: { isDiamond: true, statCoverage: { h: 'partial' }, observedStatKeys: ['h'], unavailableStatKeys: [], projectionPending: true },
+            diamond: { hasDiamond: true, pending: true, sourceRevisions: [8], publicStatsStatus: 'partial', privateStatsStatus: 'not-requested', absenceConfirmed: false }
+        });
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{ name: 'get_player_development', args: { playerName: 'ave' } }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({ answer: 'The known totals are incomplete.' })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await generatePrivateAiAnswer(authUser, 'How is Avery developing?');
+
+        const answerPrompt = String(aiMocks.model.generateContent.mock.calls[1][0]);
+        expect(answerPrompt).toContain('partial or pending totals are lower bounds');
+        expect(answerPrompt).toContain('seasonStatTotals.loadStatus unavailable');
+        expect(answerPrompt).toContain('never derive season totals from recentGames');
+        expect(answerPrompt).toContain('Never turn a missing seasonStatTotals result into totals from recent partial rows');
+        expect(answerPrompt).toContain('the requested stat key is explicitly present');
+        expect(answerPrompt).toContain('a missing stat key never means zero');
+        expect(answerPrompt).toContain('"stats":{"h":0},"diamondEvidence":{"status":"pending","complete":false,"pending":true');
+        expect(answerPrompt).toContain('"publicStatsStatus":"partial"');
+        expect(answerPrompt).toContain('"absenceConfirmed":false');
     });
 
     it('opts all-range AI schedule lookups into full history loads', async () => {
@@ -2731,7 +3850,10 @@ describe('private AI service', () => {
                 ]
             }
         });
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, { includePastGames: true });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, {
+            includePastGames: true,
+            targetTeamId: 'team-1'
+        });
     });
 
     it('preloads the last game lookup before answering last-game RSVP questions', async () => {
@@ -4601,6 +5723,7 @@ describe('private AI service', () => {
         ['family share link', 'create_family_share_link'],
         ['access request', 'submit_access_request'],
         ['incentive rule', 'save_player_incentive_rule'],
+        ['team creation', 'create_team'],
         ['team admin invitation', 'invite_team_admin'],
         ['tracking item', 'save_team_tracking_item'],
         ['stat configuration', 'save_stat_configuration'],
@@ -5404,6 +6527,148 @@ describe('private AI service', () => {
         expect(result.toolResults.some((tool) => tool.name === 'get_help')).toBe(false);
     });
 
+    it('stages and confirms a new team with a canonical sport template', async () => {
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'create_team',
+                    args: {
+                        name: 'paul score test',
+                        sport: 'soccer'
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'The new team is staged for review. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const staged = await generatePrivateAiAnswer(
+            authUser,
+            'Create a new team called paul score test with soccer template.'
+        );
+
+        expect(aiMocks.model.generateContent.mock.calls[0][0]).toContain('create_team (write)');
+        expect(staged.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'create_team',
+                ok: true,
+                requiresConfirmation: true
+            })
+        ]);
+        expect(teamCreationMocks.createTeamForApp).not.toHaveBeenCalled();
+        expect(firebaseMocks.setDoc).toHaveBeenCalledWith(
+            expect.objectContaining({
+                path: ['users', 'user-1', 'privateAiPendingActions', staged.toolResults[0].confirmationId]
+            }),
+            expect.objectContaining({
+                toolName: 'create_team',
+                payloadScope: 'user',
+                args: {
+                    name: 'paul score test',
+                    sport: 'Soccer',
+                    zip: '',
+                    isPublic: true
+                }
+            })
+        );
+
+        const confirmed = await generatePrivateAiAnswer(
+            authUser,
+            `confirm ${staged.toolResults[0].confirmationId}`
+        );
+
+        expect(teamCreationMocks.createTeamForApp).toHaveBeenCalledTimes(1);
+        expect(teamCreationMocks.createTeamForApp).toHaveBeenCalledWith(authUser, {
+            name: 'paul score test',
+            sport: 'Soccer',
+            zip: '',
+            isPublic: true
+        });
+        expect(confirmed.answer).toBe('Confirmed. Team paul score test created with the Soccer stat template.');
+    });
+
+    it.each([
+        'Create a soccer team called Bears.',
+        'Create the team Bears.'
+    ])('recognizes natural team-creation phrasing: %s', async (question) => {
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'create_team',
+                    args: {
+                        name: 'Bears',
+                        sport: 'soccer'
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'The Bears team is staged for review. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(authUser, question);
+
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'create_team',
+                ok: true,
+                requiresConfirmation: true
+            })
+        ]);
+        expect(teamCreationMocks.createTeamForApp).not.toHaveBeenCalled();
+    });
+
+    it('reports team creation separately when its stat template cannot be added', async () => {
+        teamCreationMocks.createTeamForApp.mockResolvedValueOnce({
+            teamId: 'team-new',
+            defaultStatConfigCreated: false,
+            defaultStatConfigError: 'permission denied'
+        });
+        const { generatePrivateAiAnswer, runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const staged = await runPrivateAiTool(authUser, {
+            name: 'create_team',
+            args: {
+                name: 'Template Warning FC',
+                sport: 'Soccer'
+            }
+        });
+
+        const confirmed = await generatePrivateAiAnswer(authUser, `confirm ${staged.confirmationId}`);
+
+        expect(confirmed.toolResults[0]).toMatchObject({
+            name: 'create_team',
+            ok: true,
+            data: {
+                teamId: 'team-new',
+                defaultStatConfigCreated: false,
+                defaultStatConfigError: 'permission denied'
+            }
+        });
+        expect(confirmed.answer).toBe('Confirmed. Team Template Warning FC was created, but its Soccer stat template could not be verified.');
+    });
+
+    it('lets the planner ask for missing write details instead of replacing the question with a staging error', async () => {
+        aiMocks.model.generateContent.mockResolvedValueOnce(modelText(JSON.stringify({
+            answer: 'Which time zone should I use for Saturday at 3 PM?'
+        })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(
+            authUser,
+            'Create a new game for test team for Saturday 3pm.'
+        );
+
+        expect(result).toEqual({
+            answer: 'Which time zone should I use for Saturday at 3 PM?',
+            toolResults: []
+        });
+        expect(aiMocks.model.generateContent).toHaveBeenCalledTimes(1);
+        expect(aiMocks.model.generateContent.mock.calls[0][0]).toContain('CURRENT DATE/TIME CONTEXT');
+        expect(aiMocks.model.generateContent.mock.calls[0][0]).toContain('Resolve relative dates such as "Saturday"');
+        expect(aiMocks.model.generateContent.mock.calls[0][0]).toMatch(/"timeZone":"[^"]+"/);
+    });
+
     it('does not accept a false write preview without staging the matching action', async () => {
         const coachUser = {
             ...authUser,
@@ -5486,14 +6751,58 @@ describe('private AI service', () => {
             'Create a game for Bears against Failed Write Opponent.'
         );
 
-        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.answer).toBe('I could not prepare that change during review because I could not verify management access to the requested team. Use the exact team name or team ID and try again.');
         expect(result.toolResults).toEqual([
             expect.objectContaining({
                 name: 'create_schedule_event',
                 ok: false,
+                failureStage: 'review-preparation',
                 error: expect.stringContaining('Team access lookup failed')
             })
         ]);
+    });
+
+    it('reports proposal persistence separately from review preparation', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        firebaseMocks.runTransaction.mockRejectedValueOnce(new Error('Firestore unavailable'));
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'create_schedule_event',
+                    args: {
+                        teamId: 'team-1',
+                        eventType: 'game',
+                        input: {
+                            startDate: '2026-08-15T15:00:00-05:00'
+                        }
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'The game is staged. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(
+            coachUser,
+            'Create a game for Bears on August 15, 2026 at 3 PM America/Chicago.'
+        );
+
+        expect(result.answer).toBe('I reviewed that change, but could not save it for confirmation. Nothing was applied. Please try again.');
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'create_schedule_event',
+                ok: false,
+                failureStage: 'proposal-save',
+                error: expect.stringContaining('Firestore unavailable')
+            })
+        ]);
+        expect(scheduleMocks.createScheduledGameForApp).not.toHaveBeenCalled();
     });
 
     it('does not treat an unrelated staged write as the requested roster action', async () => {
@@ -5524,11 +6833,12 @@ describe('private AI service', () => {
 
         const result = await generatePrivateAiAnswer(coachUser, 'Add Alex to the Bears roster.');
 
-        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.answer).toBe('I could not prepare that change because ALL PLAYS AI did not select a matching reviewed action. Nothing was applied. Please try again.');
         expect(result.toolResults).toEqual([
             expect.objectContaining({
                 name: 'create_schedule_event',
                 ok: false,
+                failureStage: 'planning',
                 error: expect.stringContaining('does not match the requested operation')
             })
         ]);
@@ -5566,11 +6876,12 @@ describe('private AI service', () => {
 
         const result = await generatePrivateAiAnswer(coachUser, prompt);
 
-        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.answer).toBe('I could not prepare that change because ALL PLAYS AI did not select a matching reviewed action. Nothing was applied. Please try again.');
         expect(result.toolResults).toEqual([
             expect.objectContaining({
                 name: 'apply_roster_import',
                 ok: false,
+                failureStage: 'planning',
                 error: expect.stringContaining('does not match the requested operation')
             })
         ]);
@@ -5648,7 +6959,7 @@ describe('private AI service', () => {
 
         const result = await generatePrivateAiAnswer(coachUser, prompt);
 
-        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.answer).toBe('I could not prepare that change because ALL PLAYS AI did not select a matching reviewed action. Nothing was applied. Please try again.');
         expect(result.toolResults).toEqual([]);
         expect(aiMocks.model.generateContent).toHaveBeenCalledTimes(2);
     });
@@ -5681,11 +6992,12 @@ describe('private AI service', () => {
 
         const result = await generatePrivateAiAnswer(coachUser, prompt);
 
-        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.answer).toBe('I could not prepare that change because ALL PLAYS AI did not select a matching reviewed action. Nothing was applied. Please try again.');
         expect(result.toolResults).toHaveLength(2);
         expect(result.toolResults.every((tool) => (
             tool.name === 'create_schedule_event'
             && tool.ok === false
+            && tool.failureStage === 'planning'
             && tool.error.includes('does not match the requested operation')
         ))).toBe(true);
         expect(firebaseMocks.setDoc).not.toHaveBeenCalled();
@@ -5712,7 +7024,7 @@ describe('private AI service', () => {
 
         const result = await generatePrivateAiAnswer(coachUser, 'Set the requested thing for Bears.');
 
-        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.answer).toBe('I could not prepare that change because ALL PLAYS AI did not select a matching reviewed action. Nothing was applied. Please try again.');
         expect(result.toolResults.every((tool) => tool.ok === false)).toBe(true);
         expect(result.toolResults.every((tool) => tool.error.includes('could not be classified safely'))).toBe(true);
         expect(firebaseMocks.setDoc).not.toHaveBeenCalled();
@@ -6078,6 +7390,90 @@ describe('private AI service', () => {
             }),
             coachUser
         );
+    });
+
+    it('preserves pinned Diamond fields during a confirmed location-only schedule update', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
+            events: [futureEvent({
+                trackingEngine: 'diamond-v2',
+                location: 'Old Diamond',
+                isHome: null,
+                statTrackerConfigId: 'diamond-config',
+                opponentTeamId: null
+            })]
+        });
+
+        const result = await executeConfirmedToolForTest(coachUser, {
+            name: 'update_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                eventType: 'game',
+                input: { location: 'New Diamond' }
+            }
+        }, { conversationId: 'diamond-location-only-update' });
+
+        expect(result).toMatchObject({ name: 'update_schedule_event', ok: true });
+        expect(scheduleMocks.updateScheduledGameForApp).toHaveBeenCalledWith(
+            'team-1',
+            'game-1',
+            expect.objectContaining({
+                location: 'New Diamond',
+                isHome: null,
+                statTrackerConfigId: 'diamond-config',
+                opponentTeamId: ''
+            }),
+            coachUser,
+            { preservePinnedDiamondFields: true }
+        );
+    });
+
+    it.each([
+        ['isHome', false],
+        ['statTrackerConfigId', 'other-config'],
+        ['opponentTeamId', 'team-3']
+    ])('rejects Diamond schedule mutations to pinned %s', async (field, value) => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
+            events: [futureEvent({
+                trackingEngine: 'diamond-v2',
+                isHome: true,
+                statTrackerConfigId: 'diamond-config',
+                opponentTeamId: 'team-2'
+            })]
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(coachUser, {
+            name: 'update_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                eventType: 'game',
+                input: {
+                    location: 'New Diamond',
+                    [field]: value
+                }
+            }
+        })).resolves.toMatchObject({
+            name: 'update_schedule_event',
+            ok: false,
+            error: expect.stringContaining('locked after Diamond activation')
+        });
+        expect(scheduleMocks.updateScheduledGameForApp).not.toHaveBeenCalled();
     });
 
     it('preserves top-level event fields when preparing a partial schedule update', async () => {

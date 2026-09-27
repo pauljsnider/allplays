@@ -71,7 +71,7 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { acquireProfilePhoto } from '../../apps/app/src/lib/profilePhotoService.ts';
+import { acquireProfilePhoto, validateProfilePhotoFile } from '../../apps/app/src/lib/profilePhotoService.ts';
 
 describe('React app profile photo service', () => {
     beforeEach(() => {
@@ -118,5 +118,12 @@ describe('React app profile photo service', () => {
         expect(file.size).toBe(new Blob(['bounded-photo'], { type: 'image/jpeg' }).size);
         expect(file.name).toMatch(/^profile-library-\d+\.jpeg$/);
         expect(createElementSpy).not.toHaveBeenCalledWith('canvas');
+    });
+
+    it('rejects empty and oversized profile images before upload', () => {
+        expect(() => validateProfilePhotoFile(new File([], 'empty.png', { type: 'image/png' })))
+            .toThrow('Choose a valid profile photo.');
+        expect(() => validateProfilePhotoFile(new File([new Uint8Array(10 * 1024 * 1024 + 1)], 'large.jpg', { type: 'image/jpeg' })))
+            .toThrow('Profile photos must be 10 MB or smaller.');
     });
 });

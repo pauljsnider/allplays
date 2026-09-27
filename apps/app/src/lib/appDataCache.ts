@@ -22,11 +22,13 @@ type LoadCachedAppDataOptions<T> = {
   maxStaleMs?: number;
   staleWhileRevalidate?: boolean;
   onRefresh?: (value: T) => void;
+  onBackgroundRefresh?: (value: T) => void;
+  onRefreshError?: (error: unknown) => void;
   shouldCache?: (value: T) => boolean;
 };
 
 type StoredCacheEntry = {
-  version: 1;
+  version: 2;
   value: unknown;
   expiresAt: number;
 };
@@ -69,6 +71,8 @@ export function loadCachedAppData<T>(
     maxStaleMs = defaultMaxStaleMs,
     staleWhileRevalidate = false,
     onRefresh,
+    onBackgroundRefresh,
+    onRefreshError,
     shouldCache
   }: LoadCachedAppDataOptions<T> = {}
 ): Promise<T> {
@@ -83,13 +87,24 @@ export function loadCachedAppData<T>(
   if (
     !force
     && staleWhileRevalidate
-    && existing?.hydratedFromStorage
+    && existing
     && hasCachedValue(existing)
     && existing.expiresAt + maxStaleMs > now
   ) {
-    const refreshPromise = loadAndStoreCachedAppData(key, loader, existing, { ttlMs, persist, onRefresh, shouldCache });
+    const refreshPromise = loadAndStoreCachedAppData(key, loader, existing, {
+      ttlMs,
+      persist,
+      onRefresh: onRefresh || onBackgroundRefresh
+        ? (value) => {
+          onRefresh?.(value);
+          onBackgroundRefresh?.(value);
+        }
+        : undefined,
+      shouldCache
+    });
     refreshPromise.catch((error) => {
       logger.warn('Background refresh failed.', { error });
+      onRefreshError?.(error);
     });
     return Promise.resolve(existing.value as T);
   }
@@ -227,7 +242,7 @@ function readStoredCacheEntry<T>(key: string, now: number, maxStaleMs: number): 
     return null;
   }
 
-  if (!parsed || parsed.version !== 1 || !Number.isFinite(parsed.expiresAt)) {
+  if (!parsed || parsed.version !== 2 || !Number.isFinite(parsed.expiresAt)) {
     storage.removeItem(storageKey);
     return null;
   }
@@ -252,7 +267,7 @@ function writeStoredCacheEntry<T>(key: string, entry: CacheEntry<T>) {
 
   try {
     const stored: StoredCacheEntry = {
-      version: 1,
+      version: 2,
       value: entry.value,
       expiresAt: entry.expiresAt
     };
@@ -327,6 +342,12 @@ function replaceCacheValue(this: Record<string, unknown>, key: string, value: un
   if (originalValue instanceof Date) {
     return { __type: 'Date', value: originalValue.toISOString() };
   }
+  if (typeof originalValue === 'number' && !Number.isFinite(originalValue)) {
+    return {
+      __type: 'NonFiniteNumber',
+      value: Number.isNaN(originalValue) ? 'NaN' : originalValue > 0 ? 'Infinity' : '-Infinity'
+    };
+  }
   return value;
 }
 
@@ -338,6 +359,16 @@ function reviveCacheValue(_key: string, value: unknown) {
     && typeof (value as { value?: unknown }).value === 'string'
   ) {
     return new Date((value as { value: string }).value);
+  }
+  if (
+    value
+    && typeof value === 'object'
+    && (value as { __type?: unknown }).__type === 'NonFiniteNumber'
+  ) {
+    const marker = value as { value?: unknown };
+    if (marker.value === 'NaN') return Number.NaN;
+    if (marker.value === 'Infinity') return Number.POSITIVE_INFINITY;
+    if (marker.value === '-Infinity') return Number.NEGATIVE_INFINITY;
   }
   return value;
 }

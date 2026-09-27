@@ -25,12 +25,32 @@ export function summarizePersistedTrackingState({
   };
 }
 
+function normalizeTrackLiveResetEventId(value) {
+  const resetEventId = typeof value === 'string' ? value.trim() : '';
+  return resetEventId && resetEventId.length <= 128 && !resetEventId.includes('/')
+    ? resetEventId
+    : '';
+}
+
+export function createTrackLiveResetEventId(cryptoSource = globalThis.crypto) {
+  if (typeof cryptoSource?.randomUUID === 'function') {
+    return normalizeTrackLiveResetEventId(`reset-${cryptoSource.randomUUID()}`);
+  }
+  if (typeof cryptoSource?.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16);
+    cryptoSource.getRandomValues(bytes);
+    return `reset-${Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('')}`;
+  }
+  return '';
+}
+
 export function buildTrackLiveResetUpdate({
   currentGame = {},
   currentConfig = null,
   period,
   liveLineup = { onCourt: [], bench: [] },
-  liveResetAt = serverTimestamp()
+  liveResetAt = serverTimestamp(),
+  liveResetEventId = ''
 } = {}) {
   const onCourt = Array.isArray(liveLineup?.onCourt) ? [...liveLineup.onCourt] : [];
   const bench = Array.isArray(liveLineup?.bench) ? [...liveLineup.bench] : [];
@@ -53,6 +73,8 @@ export function buildTrackLiveResetUpdate({
     opponentTeamName: currentGame?.opponentTeamName || '',
     opponentTeamPhoto: currentGame?.opponentTeamPhoto || ''
   };
+  const normalizedResetEventId = normalizeTrackLiveResetEventId(liveResetEventId);
+  if (normalizedResetEventId) resetUpdate.liveResetEventId = normalizedResetEventId;
 
   if (isFootballSport({ game: currentGame, config: currentConfig })) {
     resetUpdate.liveFootballState = { possession: 'home', down: '1', distance: '10', yardLine: '' };
@@ -302,12 +324,21 @@ export async function runTrackLiveResetPersistence({
   publishResetEvent,
   updateResetState,
   cleanupPersistedState,
+  createResetEventId = createTrackLiveResetEventId,
   logWarn = () => {},
   logError = () => {}
 } = {}) {
+  let resetEventId = '';
+  try {
+    resetEventId = normalizeTrackLiveResetEventId(createResetEventId());
+  } catch (error) {
+    logWarn('Failed to create reset event identity:', error);
+  }
+  const resetContext = { resetEventId };
+
   if (typeof publishResetEvent === 'function') {
     try {
-      await publishResetEvent();
+      await publishResetEvent(resetContext);
     } catch (error) {
       logWarn('Failed to publish reset event:', error);
     }
@@ -315,7 +346,7 @@ export async function runTrackLiveResetPersistence({
 
   if (typeof updateResetState === 'function') {
     try {
-      await updateResetState();
+      await updateResetState(resetContext);
     } catch (error) {
       logError('Error updating game reset state:', error);
     }

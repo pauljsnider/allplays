@@ -2,16 +2,21 @@
 <html lang="en">
 
 <head>
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
-  <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    gtag('js', new Date());
-    gtag('config', 'G-3J13LHWFT3');
-  </script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="no-referrer">
+  <script>
+    (() => {
+      const legacyParams = new URLSearchParams(window.location.search);
+      const fragmentParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const token = fragmentParams.get('token') || legacyParams.get('token') || '';
+      window.__ALLPLAYS_FAMILY_SHARE_LINK__ = Object.freeze({ token });
+      if (token) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    })();
+  </script>
   <link rel="icon" type="image/png" href="img/logo_small.png">
   <title>Family Page - ALL PLAYS</title>
   <script src="https://cdn.tailwindcss.com"></script>
@@ -173,14 +178,16 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getFamilyShareToken, getFamilyShareView, resolveFamilyShareTokenChildren, getTeam, getGames, getTrackedCalendarEventUids } from './js/db.js?v=127';
-    import { resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=1';
-    import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=18';
+    import { getFamilyShareToken, getFamilyShareView, resolveFamilyShareTokenChildren, getTeam, getGames, getTrackedCalendarEventUids } from './js/db.js?v=4433199';
+    import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=3';
+    import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=443375';
 
     renderFooter(document.getElementById('footer-container'));
 
-    const params = new URLSearchParams(window.location.search);
-    const tokenId = params.get('token') || '';
+    const tokenId = window.__ALLPLAYS_FAMILY_SHARE_LINK__?.token ||
+      new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token') ||
+      new URLSearchParams(window.location.search).get('token') ||
+      '';
 
     let allScheduleEvents = [];
     let scheduleViewFilter = 'upcoming-all';
@@ -250,6 +257,11 @@
       return ['invalid', 'revoked', 'expired'].includes(reason) ? reason : '';
     }
 
+    function isFamilyShareRateLimitError(error) {
+      const code = String(error?.code || '').trim().toLowerCase();
+      return code === 'resource-exhausted' || code.endsWith('/resource-exhausted');
+    }
+
     async function init() {
       if (!tokenId) {
         showError();
@@ -270,6 +282,14 @@
           token = await getFamilyShareToken(tokenId);
         }
       } catch (err) {
+        if (isFamilyShareRateLimitError(err)) {
+          const retryAfterSeconds = Number(err?.details?.retryAfterSeconds);
+          const retryDetail = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+            ? `Please wait about ${Math.ceil(retryAfterSeconds)} seconds, then retry.`
+            : 'Please wait a moment, then retry.';
+          showError('Family page temporarily busy', retryDetail);
+          return;
+        }
         const authoritativeReason = getAuthoritativeFamilyShareProjectionErrorReason(err);
         if (authoritativeReason) {
           const messages = {
@@ -386,7 +406,7 @@
              class="flex items-center gap-3 p-3 hover:bg-primary-50 transition group">
             <div class="h-11 w-11 flex-shrink-0 rounded-full bg-gray-200 overflow-hidden border border-gray-300">
               ${child.playerPhotoUrl
-                ? `<img src="${escapeHtml(child.playerPhotoUrl)}" class="w-full h-full object-cover" loading="lazy">`
+                ? `<img decoding="async" src="${escapeHtml(child.playerPhotoUrl)}" class="w-full h-full object-cover" loading="lazy">`
                 : `<div class="w-full h-full flex items-center justify-center text-gray-400 text-xs font-bold">${escapeHtml((child.playerName || '?').charAt(0).toUpperCase())}</div>`
               }
             </div>
@@ -516,7 +536,13 @@
         for (const game of dbGames) {
           const isPractice = game.type === 'practice';
           const type = isPractice ? 'practice' : 'game';
-          const isCancelled = game.status === 'cancelled';
+          const normalizedGameStatus = String(game.status || '').trim().toLowerCase();
+          const normalizedGameLiveStatus = String(game.liveStatus || '').trim().toLowerCase();
+          const isCancelled = game.isCancelled === true
+            || normalizedGameStatus === 'cancelled'
+            || normalizedGameStatus === 'canceled'
+            || normalizedGameLiveStatus === 'cancelled'
+            || normalizedGameLiveStatus === 'canceled';
 
           if (isPractice && game.isSeriesMaster && game.recurrence) {
             for (const occ of expandRecurrence(game)) {
@@ -535,7 +561,7 @@
                   childId: child.playerId,
                   childName: child.playerName,
                   title: occ.title || null,
-                  status: game.status || 'scheduled',
+                  status: game.status || null,
                   liveStatus: game.liveStatus || null,
                   visibility: game.visibility || null,
                   isPrivate: game.isPrivate === true,
@@ -563,8 +589,10 @@
                 childId: child.playerId,
                 childName: child.playerName,
                 title: game.title || null,
-                status: game.status || 'scheduled',
+                status: game.status || null,
                 liveStatus: game.liveStatus || null,
+                hasReplayVideo: hasReplayVideoEvidence(game),
+                canOpenPublicViewer: game.canOpenPublicViewer === true,
                 visibility: game.visibility || null,
                 isPrivate: game.isPrivate === true,
                 isCancelled,
@@ -950,7 +978,7 @@
     function renderDayModalEvent(ev) {
       const timeStr = ev.date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
       const title = ev.type === 'practice' ? (ev.title || 'Practice') : `vs. ${ev.opponent || 'TBD'}`;
-      const watchCta = resolveScheduleWatchCta(ev);
+      const watchCta = ev.canOpenPublicViewer === true ? resolveScheduleWatchCta(ev) : null;
       return `
         <div class="mb-4 p-4 rounded-lg border border-gray-200 ${ev.isCancelled ? 'opacity-60' : ''}">
           <div class="text-xs font-semibold uppercase ${ev.type === 'practice' ? 'text-amber-700' : 'text-primary-700'}">${ev.type}</div>
@@ -1029,7 +1057,7 @@
         const typeLabel = game.type === 'practice' ? 'Practice' : 'Game';
         const typeColor = game.type === 'practice' ? 'bg-amber-100 text-amber-800' : 'bg-primary-100 text-primary-800';
         const isCancelled = game.isCancelled;
-        const watchCta = resolveScheduleWatchCta(game);
+        const watchCta = game.canOpenPublicViewer === true ? resolveScheduleWatchCta(game) : null;
         const childLabel = game.childNames.join(', ') || game.childName || 'Player';
         return `
           <div class="p-6 hover:bg-gray-50 transition flex flex-col sm:flex-row gap-4 sm:items-start ${isCancelled ? 'opacity-60' : ''}">

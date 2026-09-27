@@ -5,6 +5,7 @@ import {
   getScheduleTitle,
   type ParentScheduleEvent
 } from './scheduleLogic';
+import { hasReplayVideoSourceEvidence, isActiveGameForLive, isCompletedGameForReplay } from './youtubeReplay';
 
 export type ScheduleHubIcon = 'video' | 'radio' | 'file-text' | 'share' | 'clipboard-check' | 'users';
 
@@ -30,26 +31,30 @@ export function buildGameHubDestinations(event: ParentScheduleEvent): ScheduleHu
   const whenWhere = `${formatEventDateLabel(event.date)} ${formatEventTimeLabel(event.date)} · ${getScheduleLocationLabel(event, 'Location TBD')}`;
   const destinations: ScheduleHubDestination[] = [];
 
-  if (liveStatus === 'completed') {
+  const hasCompletedLivePlayback = liveStatus === 'completed' || liveStatus === 'final';
+  if (isCompletedGameForReplay(event)
+    && (hasCompletedLivePlayback || hasReplayVideoSourceEvidence(event))) {
     destinations.push({
       id: 'watch-replay',
       title: 'Watch replay',
       detail: 'Replay, reactions, and clips',
       icon: 'video',
       url: getPublicReplayHref(event),
+      shareUrl: getPublicReplayShareHref(event),
       actionLabel: 'Watch replay',
       shareLabel: 'Replay',
       shareTitle: `${title} replay`,
       shareText: `${title} replay · ${whenWhere}`,
       badge: 'Replay'
     });
-  } else if (liveStatus === 'live') {
+  } else if (isActiveGameForLive(event)) {
     destinations.push({
       id: 'watch-live',
       title: 'Watch live',
       detail: 'Live scoreboard, stream, and reactions',
       icon: 'radio',
       url: getPublicLiveHref(event),
+      shareUrl: getPublicLiveShareHref(event),
       actionLabel: 'Watch live',
       shareLabel: 'Live game',
       shareTitle: `${title} live`,
@@ -64,6 +69,7 @@ export function buildGameHubDestinations(event: ParentScheduleEvent): ScheduleHu
     detail: 'Score, summary, stats, and play-by-play',
     icon: 'file-text',
     url: getPublicGameReportHref(event),
+    shareUrl: getPublicGameReportShareHref(event),
     actionLabel: 'Open report',
     shareLabel: 'Match report',
     shareTitle: `${title} match report`,
@@ -122,6 +128,10 @@ export function getPublicGameReportHref(event: ParentScheduleEvent) {
   return getPublicHashHref('/game.html', { teamId: event.teamId, gameId: event.id });
 }
 
+export function getPublicGameReportShareHref(event: ParentScheduleEvent) {
+  return getSharePreviewHref('/report', { teamId: event.teamId, gameId: event.id });
+}
+
 export function getPublicLiveHref(event: ParentScheduleEvent) {
   return getPublicHref('/live-game.html', {
     teamId: event.teamId,
@@ -129,8 +139,23 @@ export function getPublicLiveHref(event: ParentScheduleEvent) {
   });
 }
 
+export function getPublicLiveShareHref(event: ParentScheduleEvent) {
+  return getSharePreviewHref('/watch', {
+    teamId: event.teamId,
+    gameId: event.id
+  });
+}
+
 export function getPublicReplayHref(event: ParentScheduleEvent) {
   return getPublicHref('/live-game.html', {
+    teamId: event.teamId,
+    gameId: event.id,
+    replay: 'true'
+  });
+}
+
+export function getPublicReplayShareHref(event: ParentScheduleEvent) {
+  return getSharePreviewHref('/watch', {
     teamId: event.teamId,
     gameId: event.id,
     replay: 'true'
@@ -156,12 +181,24 @@ function getPublicOrigin() {
   return 'https://allplays.ai';
 }
 
+function getSharePreviewOrigin() {
+  return 'https://share.allplays.ai';
+}
+
 function getPublicHref(path: string, params: Record<string, string>, hash = '') {
   const url = new URL(path, getPublicOrigin());
   Object.entries(params).forEach(([key, value]) => {
     if (value) url.searchParams.set(key, value);
   });
   if (hash) url.hash = hash;
+  return url.toString();
+}
+
+function getSharePreviewHref(path: string, params: Record<string, string>) {
+  const url = new URL(path, getSharePreviewOrigin());
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) url.searchParams.set(key, value);
+  });
   return url.toString();
 }
 

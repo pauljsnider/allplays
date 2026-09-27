@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Messages } from './Messages';
 import type { ChatInboxPreviewUpdate, ChatTeam } from '../lib/chatService';
@@ -16,6 +16,17 @@ const layoutMocks = vi.hoisted(() => ({ isDesktopWeb: false }));
 const opportunityMocks = vi.hoisted(() => ({
   listOpportunityInquiries: vi.fn().mockResolvedValue({ items: [], nextCursor: null })
 }));
+const chatWindowModuleMocks = vi.hoisted(() => {
+  let resolveModule!: () => void;
+  const moduleGate = new Promise<void>((resolve) => {
+    resolveModule = resolve;
+  });
+  return {
+    moduleGate,
+    moduleLoad: vi.fn(),
+    resolveModule: () => resolveModule()
+  };
+});
 
 vi.mock('../lib/chatService', () => chatServiceMocks);
 vi.mock('../lib/opportunityService', () => opportunityMocks);
@@ -26,27 +37,28 @@ vi.mock('../lib/useRefreshOnResume', () => ({
   useRefreshOnResume: vi.fn()
 }));
 vi.mock('../lib/uxTiming', () => ({
-  startScreenMountTimer: vi.fn(() => ({ end: vi.fn() }))
+  startScreenMountTimer: vi.fn(() => ({ end: vi.fn(), cancel: vi.fn() }))
 }));
 vi.mock('../lib/parentWorkflowTiming', () => ({
   completeParentCoreWorkflowTimer: vi.fn()
 }));
 vi.mock('../components/PageSkeletons', () => ({
-  MessagesPageSkeleton: () => <div>Loading messages inbox</div>
+  MessagesPageSkeleton: ({ embedded = false }: { embedded?: boolean }) => (
+    <div role="status" aria-label={embedded ? 'Loading team chat' : 'Loading team chats'}>
+      {embedded ? 'Loading team chat' : 'Loading team chats'}
+    </div>
+  )
 }));
 vi.mock('../components/PullToRefresh', () => ({
   PullToRefresh: ({ children }: { children: ReactNode }) => <div>{children}</div>
 }));
-vi.mock('./messages/components/ChatWindow', () => ({
-  ChatWindow: ({ teamId }: { teamId: string }) => <div data-testid="chat-window-team">Chat window {teamId}</div>,
-  TeamAvatar: ({ team }: { team: ChatTeam }) => <div aria-hidden="true">{team.name.slice(0, 1)}</div>,
-  MessageAvatar: () => null,
-  StatusBanner: () => null,
-  buildChatViewportSignature: vi.fn(),
-  isSelectedConversation: vi.fn(),
-  mergeVisibleChatMessages: vi.fn(),
-  normalizeConversationId: vi.fn()
-}));
+vi.mock('./messages/components/ChatWindow', async () => {
+  chatWindowModuleMocks.moduleLoad();
+  await chatWindowModuleMocks.moduleGate;
+  return {
+    ChatWindow: ({ teamId }: { teamId: string }) => <div data-testid="chat-window-team">Chat window {teamId}</div>
+  };
+});
 
 const auth: AuthState = {
   user: {
@@ -118,10 +130,12 @@ function opportunityInquiry(overrides: Partial<OpportunityInquiry> = {}): Opport
   };
 }
 
-function renderMessages() {
+function renderMessages(route = '/messages') {
   return render(
-    <MemoryRouter initialEntries={['/messages']}>
-      <Messages auth={auth} />
+    <MemoryRouter initialEntries={[route]}>
+      <Routes>
+        <Route path="/messages/:teamId?" element={<Messages auth={auth} />} />
+      </Routes>
     </MemoryRouter>
   );
 }
@@ -140,6 +154,28 @@ describe('Messages deferred inbox preview batching', () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  it('skips the chat window for the mobile inbox and loads it immediately for a direct team thread', async () => {
+    chatServiceMocks.loadChatInbox.mockResolvedValue({ teams: [team()] });
+
+    const inbox = renderMessages();
+    expect(await screen.findByRole('link', { name: /Bears/ })).toBeInTheDocument();
+    expect(chatWindowModuleMocks.moduleLoad).not.toHaveBeenCalled();
+    inbox.unmount();
+
+    chatServiceMocks.loadChatInbox.mockClear();
+    renderMessages('/messages/team-1');
+
+    await waitFor(() => expect(chatWindowModuleMocks.moduleLoad).toHaveBeenCalledTimes(1));
+    expect(chatServiceMocks.loadChatInbox).not.toHaveBeenCalled();
+    expect(screen.getByRole('status', { name: 'Loading team chats' })).toBeInTheDocument();
+
+    await act(async () => {
+      chatWindowModuleMocks.resolveModule();
+      await chatWindowModuleMocks.moduleGate;
+    });
+    expect(await screen.findByTestId('chat-window-team')).toHaveTextContent('team-1');
   });
 
   it('renders placeholder inbox rows, then hydrates a burst of deferred previews through the batch flush', async () => {
@@ -186,6 +222,33 @@ describe('Messages deferred inbox preview batching', () => {
       'Pat Parent: Could we play Saturday morning?'
     );
     expect(screen.getByText(/1 team chat · 1 opportunity/)).toBeInTheDocument();
+  });
+
+  it('labels partial inbox unread counts as unavailable and suppresses their badges', async () => {
+    chatServiceMocks.loadChatInbox.mockResolvedValue({ teams: [team({ unreadCount: 7 })], isPartial: true });
+
+    renderMessages();
+
+    expect(await screen.findByText(
+      'Showing verified team chats. Additional linked teams may appear after the access service refreshes. Message previews and unread counts may be incomplete until then.'
+    )).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Bears/ })).toBeInTheDocument();
+    expect(screen.getByText(/unread counts unavailable/)).toBeInTheDocument();
+    expect(screen.queryByText('7')).toBeNull();
+    expect(screen.queryByText('Messages couldn’t load')).toBeNull();
+  });
+
+  it('marks the inbox partial when a deferred message preview fails', async () => {
+    chatServiceMocks.loadChatInbox.mockImplementation(async (_user, options) => {
+      window.setTimeout(() => options.onPreviewError('team-1'), 0);
+      return { teams: [team()] };
+    });
+
+    renderMessages();
+
+    expect(await screen.findByRole('link', { name: /Bears/ })).toBeInTheDocument();
+    expect(await screen.findByText(/Message previews and unread counts may be incomplete/)).toBeInTheDocument();
+    expect(screen.queryByText('Messages couldn’t load')).toBeNull();
   });
 
   it('announces inbox failures and retries them in place', async () => {
@@ -387,7 +450,7 @@ describe('Messages inbox windowing', () => {
     try {
       const { unmount } = renderMessages();
       expect(await screen.findByTestId('messages-inbox-window')).toBeInTheDocument();
-      expect(addedScrollTargets).toHaveLength(1);
+      await waitFor(() => expect(addedScrollTargets).toHaveLength(1));
 
       unmount();
 

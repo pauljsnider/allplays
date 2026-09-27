@@ -184,14 +184,17 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getMyRsvps, getRsvpSummaries, getRsvps } from './js/db.js?v=127';
-        import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent, isTrackedCalendarEvent } from './js/utils.js?v=18';
+        import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getMyRsvps, getRsvpSummaries, getRsvps } from './js/db.js?v=4433199';
+        import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent, isTrackedCalendarEvent } from './js/utils.js?v=443375';
         import { mergeGlobalCalendarIcsEvents } from './js/calendar-ics-sync.js?v=1';
-        import { requireAuth, checkAuth } from './js/auth.js?v=135';
+        import { requireAuth, checkAuth } from './js/auth.js?v=4433203';
         import { buildLinkedPlayersByTeam, resolveCalendarRsvpSubmission } from './js/calendar-rsvp.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
         import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
         import { getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions } from './js/schedule-print.js?v=2';
+        import { addCalendarLoadedRange, createLatestCalendarRangeLoader, getMissingCalendarLoadRanges } from './js/calendar-load-window.js?v=2';
+        import { fetchLegacyCalendarFeed } from './js/calendar-feed-loading.js?v=1';
+        import { functions, httpsCallable } from './js/firebase.js?v=33';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -207,8 +210,21 @@
         let calendarYear = new Date().getFullYear();
         let activeDayDetail = null;
         let linkedPlayersByTeam = new Map();
+        let preparedPrivateCalendarFeedUrl = '';
+        let syncCalendarPreparationId = 0;
         let calendarTeams = [];
+        const RSVP_HYDRATION_CONCURRENCY = 6;
         const rsvpHydrationCache = new Map();
+        const rsvpHydrationTasks = new Map();
+        const rsvpHydrationQueue = [];
+        const prioritizedRsvpHydrationQueue = [];
+        let activeRsvpHydrationTasks = 0;
+        const loadedCalendarRangesByTeam = new Map();
+        const calendarGamesByTeam = new Map();
+        const calendarEventsByTeam = new Map();
+        const fullyLoadedCalendarTeams = new Set();
+        let renderedCalendarSelection = null;
+        let calendarNavigationToken = 0;
         let renderedRsvpHydrationToken = 0;
         const teamColors = {};
         const colorPalette = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#f97316'];
@@ -275,55 +291,136 @@
             if (summary) cached.summary = Promise.resolve(summary);
         }
 
-        async function hydrateRsvpEvents(events, { includeNotes = false, includeMissingSummary = false } = {}) {
+        async function hydrateRsvpEvent(eventForPrefs, { includeNotes, includeMissingSummary }) {
+            const key = `${eventForPrefs.teamId}::${eventForPrefs.id}`;
+            const cached = getRsvpHydrationCacheEntry(eventForPrefs.teamId, eventForPrefs.id);
+            const linkedPlayerIds = getLinkedPlayersForTeam(eventForPrefs.teamId).map((player) => player.playerId).filter(Boolean);
+            if (!cached.myRsvp) {
+                cached.myRsvp = getMyRsvp(eventForPrefs.teamId, eventForPrefs.id, currentUserId, linkedPlayerIds)
+                    .then((myRsvp) => myRsvp ? myRsvp.response : null);
+            }
+            if (includeMissingSummary && eventForPrefs.isTeamAdmin && !eventForPrefs.rsvpSummary && !cached.summary) {
+                cached.summary = getRsvpSummaries(eventForPrefs.teamId, [eventForPrefs.id])
+                    .then((summaries) => summaries?.get(eventForPrefs.id) || null);
+            }
+            if (includeNotes && eventForPrefs.notesVisible && !cached.rsvps) {
+                cached.rsvps = eventForPrefs.isTeamAdmin
+                    ? getRsvps(eventForPrefs.teamId, eventForPrefs.id)
+                    : getMyRsvps(eventForPrefs.teamId, eventForPrefs.id, currentUserId, linkedPlayerIds);
+            }
+
+            const myRsvpPromise = cached.myRsvp;
+            const summaryCachePromise = cached.summary;
+            const rsvpsCachePromise = cached.rsvps;
+            const summaryPromise = summaryCachePromise || Promise.resolve(null);
+            const rsvpsPromise = includeNotes && eventForPrefs.notesVisible ? (rsvpsCachePromise || Promise.resolve([])) : Promise.resolve([]);
+
+            try {
+                const [myRsvp, summary, rsvps] = await Promise.all([
+                    myRsvpPromise,
+                    summaryPromise,
+                    rsvpsPromise
+                ]);
+                if (cached.myRsvp !== myRsvpPromise || cached.summary !== summaryCachePromise) return;
+                applyRsvpHydration(allEvents, eventForPrefs.teamId, eventForPrefs.id, {
+                    myRsvp,
+                    summary
+                });
+                if (includeNotes && eventForPrefs.notesVisible) {
+                    const availabilityNotes = buildAvailabilityNoteRows(rsvps, eventForPrefs.availabilityPreferences, !!eventForPrefs.isTeamAdmin);
+                    allEvents.forEach((ev) => {
+                        if (ev.teamId === eventForPrefs.teamId && ev.id === eventForPrefs.id) {
+                            ev.availabilityNotes = availabilityNotes;
+                        }
+                    });
+                }
+            } catch (error) {
+                if (rsvpHydrationCache.get(key) === cached) {
+                    if (cached.myRsvp === myRsvpPromise) delete cached.myRsvp;
+                    if (cached.summary === summaryCachePromise) delete cached.summary;
+                    if (cached.rsvps === rsvpsCachePromise) delete cached.rsvps;
+                    if (Object.keys(cached).length === 0) rsvpHydrationCache.delete(key);
+                }
+                throw error;
+            }
+        }
+
+        function runQueuedRsvpHydrationTasks() {
+            while (activeRsvpHydrationTasks < RSVP_HYDRATION_CONCURRENCY) {
+                const task = prioritizedRsvpHydrationQueue.shift() || rsvpHydrationQueue.shift();
+                if (!task) return;
+
+                task.state = 'active';
+                task.startedIncludeNotes = task.includeNotes;
+                task.startedIncludeMissingSummary = task.includeMissingSummary;
+                activeRsvpHydrationTasks += 1;
+                Promise.resolve()
+                    .then(() => hydrateRsvpEvent(task.event, {
+                        includeNotes: task.startedIncludeNotes,
+                        includeMissingSummary: task.startedIncludeMissingSummary
+                    }))
+                    .catch(() => {
+                        task.failed = true;
+                    })
+                    .finally(() => {
+                        activeRsvpHydrationTasks -= 1;
+                        if (rsvpHydrationTasks.get(task.key) === task) {
+                            rsvpHydrationTasks.delete(task.key);
+                        }
+                        task.resolve();
+                        runQueuedRsvpHydrationTasks();
+                    });
+            }
+        }
+
+        function scheduleRsvpEventHydration(event, { includeNotes, includeMissingSummary, prioritize }) {
+            const key = `${event.teamId}::${event.id}`;
+            let task = rsvpHydrationTasks.get(key);
+            if (!task) {
+                task = {
+                    key,
+                    event,
+                    includeNotes,
+                    includeMissingSummary,
+                    prioritize,
+                    state: 'queued',
+                    failed: false
+                };
+                task.promise = new Promise((resolve) => {
+                    task.resolve = resolve;
+                });
+                rsvpHydrationTasks.set(key, task);
+                (prioritize ? prioritizedRsvpHydrationQueue : rsvpHydrationQueue).push(task);
+                runQueuedRsvpHydrationTasks();
+            } else {
+                task.includeNotes ||= includeNotes;
+                task.includeMissingSummary ||= includeMissingSummary;
+                if (prioritize && !task.prioritize && task.state === 'queued') {
+                    task.prioritize = true;
+                    const queuedIndex = rsvpHydrationQueue.indexOf(task);
+                    if (queuedIndex >= 0) rsvpHydrationQueue.splice(queuedIndex, 1);
+                    prioritizedRsvpHydrationQueue.push(task);
+                }
+            }
+
+            return task.promise.then(() => {
+                if (task.failed) return;
+                if ((includeNotes && !task.startedIncludeNotes)
+                    || (includeMissingSummary && !task.startedIncludeMissingSummary)) {
+                    return scheduleRsvpEventHydration(event, { includeNotes, includeMissingSummary, prioritize });
+                }
+            });
+        }
+
+        async function hydrateRsvpEvents(events, { includeNotes = false, includeMissingSummary = false, prioritize = false } = {}) {
             const dbEvents = getDbRsvpEvents(events);
             if (dbEvents.length === 0) return;
 
-            await Promise.all(dbEvents.map(async (eventForPrefs) => {
-                const cached = getRsvpHydrationCacheEntry(eventForPrefs.teamId, eventForPrefs.id);
-                const linkedPlayerIds = getLinkedPlayersForTeam(eventForPrefs.teamId).map((player) => player.playerId).filter(Boolean);
-                if (!cached.myRsvp) {
-                    cached.myRsvp = getMyRsvp(eventForPrefs.teamId, eventForPrefs.id, currentUserId, linkedPlayerIds)
-                        .then((myRsvp) => myRsvp ? myRsvp.response : null);
-                }
-                if (includeMissingSummary && eventForPrefs.isTeamAdmin && !eventForPrefs.rsvpSummary && !cached.summary) {
-                    cached.summary = getRsvpSummaries(eventForPrefs.teamId, [eventForPrefs.id])
-                        .then((summaries) => summaries?.get(eventForPrefs.id) || null);
-                }
-                if (includeNotes && eventForPrefs.notesVisible && !cached.rsvps) {
-                    cached.rsvps = eventForPrefs.isTeamAdmin
-                        ? getRsvps(eventForPrefs.teamId, eventForPrefs.id)
-                        : getMyRsvps(eventForPrefs.teamId, eventForPrefs.id, currentUserId, linkedPlayerIds);
-                }
-
-                const myRsvpPromise = cached.myRsvp;
-                const summaryCachePromise = cached.summary;
-                const summaryPromise = summaryCachePromise || Promise.resolve(null);
-                const rsvpsPromise = includeNotes && eventForPrefs.notesVisible ? (cached.rsvps || Promise.resolve([])) : Promise.resolve([]);
-
-                try {
-                    const [myRsvp, summary, rsvps] = await Promise.all([
-                        myRsvpPromise,
-                        summaryPromise,
-                        rsvpsPromise
-                    ]);
-                    if (cached.myRsvp !== myRsvpPromise || cached.summary !== summaryCachePromise) return;
-                    applyRsvpHydration(allEvents, eventForPrefs.teamId, eventForPrefs.id, {
-                        myRsvp,
-                        summary
-                    });
-                    if (includeNotes && eventForPrefs.notesVisible) {
-                        const availabilityNotes = buildAvailabilityNoteRows(rsvps, eventForPrefs.availabilityPreferences, !!eventForPrefs.isTeamAdmin);
-                        allEvents.forEach((ev) => {
-                            if (ev.teamId === eventForPrefs.teamId && ev.id === eventForPrefs.id) {
-                                ev.availabilityNotes = availabilityNotes;
-                            }
-                        });
-                    }
-                } catch (_) {
-                    rsvpHydrationCache.delete(`${eventForPrefs.teamId}::${eventForPrefs.id}`);
-                }
-            }));
+            await Promise.all(dbEvents.map((event) => scheduleRsvpEventHydration(event, {
+                includeNotes,
+                includeMissingSummary,
+                prioritize
+            })));
         }
 
         async function hydrateRenderedRsvpEvents() {
@@ -418,7 +515,7 @@
                 checkAuth((u) => renderHeader(document.getElementById('header-container'), u));
 
                 const profile = await getUserProfile(user.uid);
-                const email = user.email || profile?.email;
+                const email = user.email || null;
                 const parentOf = Array.isArray(profile?.parentOf) ? profile.parentOf : [];
                 linkedPlayersByTeam = buildLinkedPlayersByTeam(parentOf);
 
@@ -432,6 +529,7 @@
                 [...coachTeams, ...parentTeams].forEach(t => teamsMap.set(t.id, t));
                 const teams = Array.from(teamsMap.values());
                 calendarTeams = teams;
+                calendarEventsByTeam.clear();
 
                 // Assign colors to teams
                 teams.forEach((team, i) => {
@@ -447,10 +545,33 @@
                     teamFilter.appendChild(opt);
                 });
 
-                // Load events from all teams
-                const loadPromises = teams.map(async (team) => {
-                    const games = await getGames(team.id);
+                await loadCalendarRange(getCalendarRangeForCurrentView());
+                applyFilters();
+                renderedCalendarSelection = getCalendarSelection();
+            } catch (error) {
+                console.error('Calendar init error:', error);
+                document.getElementById('calendar-content').innerHTML = `<div class="text-center py-12 text-red-600">Error loading calendar: ${error.message}</div>`;
+            }
+        }
+
+        function publishCalendarEvents() {
+            const previousRsvpState = new Map(allEvents
+                .filter((event) => event.source === 'db' && rsvpHydrationCache.has(`${event.teamId}::${event.id}`))
+                .map((event) => [`${event.teamId}::${event.id}`, {
+                    myRsvp: event.myRsvp,
+                    rsvpSummary: event.rsvpSummary,
+                    availabilityNotes: event.availabilityNotes
+                }]));
+            allEvents = calendarTeams.flatMap((team) => calendarEventsByTeam.get(team.id) || []).map((event) => {
+                const previous = previousRsvpState.get(`${event.teamId}::${event.id}`);
+                return previous ? { ...event, ...previous } : event;
+            }).sort((a, b) => a.date - b.date);
+            applyFilters();
+        }
+
+        async function loadTeamEvents(team, games, onEvents = null) {
                     const events = [];
+                    const email = currentUser?.email || null;
                     const availabilityPreferences = normalizeAvailabilityPreferences(team.availabilityPreferences);
                     const isTeamAdmin = team.ownerId === currentUserId || (email && Array.isArray(team.adminEmails) && team.adminEmails.map(e => String(e).toLowerCase()).includes(String(email).toLowerCase())) || !!currentUser?.isAdmin;
                     const notesVisible = canViewAvailabilityNotes(availabilityPreferences, isTeamAdmin);
@@ -538,13 +659,15 @@
                         }
                     }
 
+                    onEvents?.(events);
+
                     // Load ICS calendar events
                     const calendarUrls = Array.isArray(team.calendarUrls) ? team.calendarUrls : [];
                     if (calendarUrls.length > 0) {
                         const trackedUids = await getTrackedCalendarEventUids(team.id, games);
                         for (const calUrl of calendarUrls) {
                             try {
-                                const icsEvents = await fetchAndParseCalendar(calUrl);
+                                const icsEvents = await fetchLegacyCalendarFeed(calUrl, fetchAndParseCalendar);
                                 events.push(...mergeGlobalCalendarIcsEvents({
                                     team,
                                     teamColor: teamColors[team.id],
@@ -554,6 +677,7 @@
                                     isTrackedCalendarEvent,
                                     buildGlobalCalendarIcsEvent
                                 }));
+                                onEvents?.(events);
                             } catch (e) {
                                 console.warn('Failed to load ICS calendar:', e);
                             }
@@ -561,17 +685,43 @@
                     }
 
                     return events;
-                });
-
-                const results = await Promise.all(loadPromises);
-                allEvents = results.flat().sort((a, b) => a.date - b.date);
-
-                applyFilters();
-            } catch (error) {
-                console.error('Calendar init error:', error);
-                document.getElementById('calendar-content').innerHTML = `<div class="text-center py-12 text-red-600">Error loading calendar: ${error.message}</div>`;
-            }
         }
+
+        const loadCalendarRange = createLatestCalendarRangeLoader(async (requestedRange) => {
+                const isAllHistory = !requestedRange;
+                const loadPromises = calendarTeams.map(async (team) => {
+                    const teamId = team.id;
+                    if (isAllHistory) {
+                        if (fullyLoadedCalendarTeams.has(teamId)) return;
+                        const games = await getGames(teamId);
+                        fullyLoadedCalendarTeams.add(teamId);
+                        calendarGamesByTeam.set(teamId, new Map(games.map((game) => [game.id, game])));
+                    } else {
+                        const loadedRanges = loadedCalendarRangesByTeam.get(teamId) || [];
+                        const missingRanges = getMissingCalendarLoadRanges(loadedRanges, requestedRange);
+                        if (missingRanges.length === 0) return;
+                        const existingGames = calendarGamesByTeam.get(teamId) || new Map();
+                        const fetchedGames = await Promise.all(missingRanges.map((range) => getGames(teamId, range)));
+                        fetchedGames.flat().forEach((game) => existingGames.set(game.id, game));
+                        calendarGamesByTeam.set(teamId, existingGames);
+                        missingRanges.forEach((range) => {
+                            loadedCalendarRangesByTeam.set(teamId, addCalendarLoadedRange(
+                                loadedCalendarRangesByTeam.get(teamId) || [],
+                                range
+                            ));
+                        });
+                    }
+                });
+                await Promise.all(loadPromises);
+                await Promise.all(calendarTeams.map(async (team) => {
+                    const games = [...(calendarGamesByTeam.get(team.id)?.values() || [])];
+                    return loadTeamEvents(team, games, (events) => {
+                        calendarEventsByTeam.set(team.id, events);
+                        publishCalendarEvents();
+                    });
+                }));
+                publishCalendarEvents();
+        });
 
         function applyFilters() {
             const now = new Date();
@@ -608,6 +758,36 @@
 
             updatePublicGamesFeedButton();
             render();
+        }
+
+        function getCalendarRangeForCurrentView() {
+            if (currentTimeRange === 'all') return null;
+            if (currentView === 'calendar') {
+                return {
+                    startDate: new Date(calendarYear, calendarMonth, 1),
+                    endDate: new Date(calendarYear, calendarMonth + 1, 0, 23, 59, 59, 999)
+                };
+            }
+            const now = new Date();
+            if (currentTimeRange === 'week') {
+                const startDate = new Date(now);
+                startDate.setDate(startDate.getDate() - startDate.getDay());
+                startDate.setHours(0, 0, 0, 0);
+                return { startDate, endDate: new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() + 7, 23, 59, 59, 999) };
+            }
+            if (currentTimeRange === 'quarter') {
+                const startDate = new Date(now);
+                startDate.setDate(startDate.getDate() - 30);
+                startDate.setHours(0, 0, 0, 0);
+                const endDate = new Date(now);
+                endDate.setDate(endDate.getDate() + 90);
+                endDate.setHours(23, 59, 59, 999);
+                return { startDate, endDate };
+            }
+            return {
+                startDate: new Date(now.getFullYear(), now.getMonth(), 1),
+                endDate: new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
+            };
         }
 
         function render() {
@@ -812,7 +992,7 @@
 
             modal.classList.remove('hidden');
 
-            await hydrateRsvpEvents(dayEvents, { includeNotes: true, includeMissingSummary: true });
+            await hydrateRsvpEvents(dayEvents, { includeNotes: true, includeMissingSummary: true, prioritize: true });
             if (activeDayDetail?.year === year && activeDayDetail?.month === month && activeDayDetail?.day === day && !modal.classList.contains('hidden')) {
                 renderDayDetailEvents(getDayDetailEvents(year, month, day), content);
             }
@@ -859,23 +1039,53 @@
         }
 
         // ===== FILTER HELPERS =====
-        function setView(view) {
-            currentView = view;
+        function getCalendarSelection() {
+            return { view: currentView, timeRange: currentTimeRange, month: calendarMonth, year: calendarYear };
+        }
+
+        function syncCalendarSelectionControls() {
             document.querySelectorAll('#view-detailed, #view-compact, #view-calendar').forEach(btn => {
-                btn.className = btn.id === `view-${view}`
+                btn.className = btn.id === `view-${currentView}`
                     ? 'px-3 py-1.5 text-xs font-semibold bg-primary-600 text-white'
                     : 'px-3 py-1.5 text-xs font-semibold bg-white text-gray-600 hover:bg-gray-50';
             });
-            applyFilters();
+            document.querySelectorAll('.time-range-btn').forEach(btn => {
+                const isActive = btn.textContent.trim().toLowerCase() === currentTimeRange;
+                btn.className = `time-range-btn px-3 py-1.5 text-xs font-semibold ${isActive ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`;
+            });
+        }
+
+        function loadAndRenderCalendarSelection(errorContext) {
+            const navigationToken = ++calendarNavigationToken;
+            return loadCalendarRange(getCalendarRangeForCurrentView()).then(() => {
+                if (navigationToken !== calendarNavigationToken) return;
+                applyFilters();
+                renderedCalendarSelection = getCalendarSelection();
+            }).catch((error) => {
+                if (navigationToken !== calendarNavigationToken) return;
+                console.error(`${errorContext} load error:`, error);
+                if (renderedCalendarSelection) {
+                    currentView = renderedCalendarSelection.view;
+                    currentTimeRange = renderedCalendarSelection.timeRange;
+                    calendarMonth = renderedCalendarSelection.month;
+                    calendarYear = renderedCalendarSelection.year;
+                    syncCalendarSelectionControls();
+                    applyFilters();
+                }
+                alert(`Failed to load calendar: ${error?.message || error}`);
+            });
+        }
+
+        function setView(view) {
+            currentView = view;
+            syncCalendarSelectionControls();
+            return loadAndRenderCalendarSelection('Calendar range');
         }
 
         function setTimeRange(range) {
             currentTimeRange = range;
-            document.querySelectorAll('.time-range-btn').forEach(btn => {
-                const isActive = btn.textContent.trim().toLowerCase() === range;
-                btn.className = `time-range-btn px-3 py-1.5 text-xs font-semibold ${isActive ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`;
-            });
-            applyFilters();
+            syncCalendarSelectionControls();
+            return loadAndRenderCalendarSelection('Calendar range');
         }
 
         function setTypeFilter(type) {
@@ -892,7 +1102,7 @@
             calendarMonth += delta;
             if (calendarMonth > 11) { calendarMonth = 0; calendarYear++; }
             if (calendarMonth < 0) { calendarMonth = 11; calendarYear--; }
-            render();
+            return loadAndRenderCalendarSelection('Calendar month');
         }
 
         function getCalendarViewEvents(rangeStart, rangeEnd) {
@@ -956,19 +1166,7 @@
             return candidateTeams.length === 1 ? candidateTeams[0] : null;
         }
 
-        function getPrivateCalendarFeedUrl(team) {
-            const directUrl = team?.privateCalendarFeedUrl ||
-                team?.calendarSubscriptionUrl ||
-                team?.calendarFeedUrl ||
-                team?.teamCalendarFeedUrl;
-            if (typeof directUrl === 'string' && directUrl.trim()) {
-                return directUrl.trim().replace(/^webcal:\/\//i, 'https://');
-            }
-
-            const token = team?.calendarSubscriptionToken ||
-                team?.privateCalendarToken ||
-                team?.calendarFeedToken ||
-                team?.teamCalendarToken;
+        function getPrivateCalendarFeedUrl(team, token) {
             if (!token || !team?.id) return '';
 
             const configuredUrl = window.__ALLPLAYS_CONFIG__?.teamCalendarFeedFunctionUrl || window.ALLPLAYS_TEAM_CALENDAR_FEED_URL;
@@ -977,7 +1175,7 @@
                 ? configuredUrl.trim()
                 : (typeof fallbackUrl === 'string' && fallbackUrl.includes('fetchCalendarIcs')
                     ? fallbackUrl.replace('fetchCalendarIcs', 'teamCalendarFeed')
-                    : 'https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed');
+                    : 'https://us-central1-game-flow-c6311.cloudfunctions.net/teamCalendarFeed');
             const separator = baseUrl.includes('?') ? '&' : '?';
             return `${baseUrl}${separator}teamId=${encodeURIComponent(team.id)}&token=${encodeURIComponent(token)}`;
         }
@@ -997,23 +1195,50 @@
             feedback.className = `text-sm ${tone === 'error' ? 'text-red-600' : tone === 'success' ? 'text-emerald-700' : 'text-gray-600'}`;
         }
 
-        function getCurrentCalendarFeedUrl() {
-            const team = getSelectedSyncCalendarTeam();
-            return team ? getPrivateCalendarFeedUrl(team) : '';
+        function setSyncCalendarActionsEnabled(enabled) {
+            ['sync-calendar-apple', 'sync-calendar-google', 'sync-calendar-copy'].forEach((id) => {
+                const button = document.getElementById(id);
+                if (button) button.disabled = !enabled;
+            });
         }
 
-        function openSyncCalendarModal() {
+        async function resolveCurrentCalendarFeedUrl() {
             const team = getSelectedSyncCalendarTeam();
-            const feedUrl = team ? getPrivateCalendarFeedUrl(team) : '';
+            if (!team) return '';
+
+            try {
+                const getPrivateTeamCalendarFeedToken = httpsCallable(functions, 'getPrivateTeamCalendarFeedToken');
+                const result = await getPrivateTeamCalendarFeedToken({ teamId: team.id });
+                const token = typeof result?.data?.token === 'string' ? result.data.token.trim() : '';
+                if (!token) return '';
+                return getPrivateCalendarFeedUrl(team, token);
+            } catch {
+                return '';
+            }
+        }
+
+        async function openSyncCalendarModal() {
+            const team = getSelectedSyncCalendarTeam();
+            const preparationId = ++syncCalendarPreparationId;
+            preparedPrivateCalendarFeedUrl = '';
+            setSyncCalendarActionsEnabled(false);
             document.getElementById('sync-calendar-modal')?.classList.remove('hidden');
             if (!team) {
                 setSyncCalendarFeedback('Select a team before opening a live calendar subscription.', 'error');
                 return;
             }
+            setSyncCalendarFeedback('Preparing your private calendar link…');
+            const feedUrl = await resolveCurrentCalendarFeedUrl();
+            if (preparationId !== syncCalendarPreparationId) return;
+            preparedPrivateCalendarFeedUrl = feedUrl;
+            setSyncCalendarActionsEnabled(Boolean(feedUrl));
             setSyncCalendarFeedback(feedUrl ? `Choose where to subscribe to ${team.name || 'this team'} schedule.` : 'Calendar subscription link is not available yet.', feedUrl ? 'neutral' : 'error');
         }
 
         function closeSyncCalendarModal() {
+            syncCalendarPreparationId += 1;
+            preparedPrivateCalendarFeedUrl = '';
+            setSyncCalendarActionsEnabled(false);
             document.getElementById('sync-calendar-modal')?.classList.add('hidden');
         }
 
@@ -1082,7 +1307,7 @@
                 ? configuredUrl.trim()
                 : (typeof fallbackUrl === 'string' && fallbackUrl.includes('fetchCalendarIcs')
                     ? fallbackUrl.replace('fetchCalendarIcs', 'publicTeamGamesIcs')
-                    : 'https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs');
+                    : 'https://us-central1-game-flow-c6311.cloudfunctions.net/publicTeamGamesIcs');
             const separator = baseUrl.includes('?') ? '&' : '?';
             return `${baseUrl}${separator}teamId=${encodeURIComponent(team.id)}`;
         }
@@ -1132,7 +1357,7 @@
         }
 
         document.getElementById('sync-calendar-apple')?.addEventListener('click', () => {
-            const feedUrl = getCurrentCalendarFeedUrl();
+            const feedUrl = preparedPrivateCalendarFeedUrl;
             if (!feedUrl) {
                 setSyncCalendarFeedback('Calendar subscription link is not available yet.', 'error');
                 return;
@@ -1141,7 +1366,7 @@
             setSyncCalendarFeedback('Opening Apple Calendar subscription.', 'success');
         });
         document.getElementById('sync-calendar-google')?.addEventListener('click', () => {
-            const feedUrl = getCurrentCalendarFeedUrl();
+            const feedUrl = preparedPrivateCalendarFeedUrl;
             if (!feedUrl) {
                 setSyncCalendarFeedback('Calendar subscription link is not available yet.', 'error');
                 return;
@@ -1149,8 +1374,8 @@
             window.open(getGoogleCalendarFeedUrl(feedUrl), '_blank', 'noopener');
             setSyncCalendarFeedback('Opening Google Calendar subscription.', 'success');
         });
-        document.getElementById('sync-calendar-copy')?.addEventListener('click', () => {
-            copyPrivateCalendarFeedUrl(getCurrentCalendarFeedUrl());
+        document.getElementById('sync-calendar-copy')?.addEventListener('click', async () => {
+            await copyPrivateCalendarFeedUrl(preparedPrivateCalendarFeedUrl);
         });
         document.getElementById('public-games-feed')?.addEventListener('click', copyPublicGamesFeedUrl);
 

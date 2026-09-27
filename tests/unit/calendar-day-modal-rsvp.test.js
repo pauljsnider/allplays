@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { addCalendarLoadedRange, createLatestCalendarRangeLoader, getMissingCalendarLoadRanges } from '../../js/calendar-load-window.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
@@ -129,6 +130,18 @@ const Blob = deps.Blob;
         .replace(
             /import \{ getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions \} from '\.\/js\/schedule-print\.js\?v=\d+';/,
             'const { getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions } = deps.schedulePrint;'
+        )
+        .replace(
+            /import \{ addCalendarLoadedRange, createLatestCalendarRangeLoader, getMissingCalendarLoadRanges \} from '\.\/js\/calendar-load-window\.js\?v=\d+';/,
+            'const { addCalendarLoadedRange, createLatestCalendarRangeLoader, getMissingCalendarLoadRanges } = deps.calendarLoadWindow;'
+        )
+        .replace(
+            /import \{ fetchLegacyCalendarFeed \} from '\.\/js\/calendar-feed-loading\.js\?v=\d+';/,
+            'const { fetchLegacyCalendarFeed } = deps.calendarFeed;'
+        )
+        .replace(
+            /import \{ functions, httpsCallable \} from '\.\/js\/firebase\.js\?v=\d+';/,
+            'const { functions, httpsCallable } = deps.firebase;'
         )
         .replace(/\binit\(\);\s*$/, 'await init();');
 }
@@ -279,6 +292,9 @@ function createDeps(submitRecorder, overrides = {}) {
             },
             async getMyRsvp(teamId, gameId, userId, playerIds) {
                 getMyRsvpCalls.push({ teamId, gameId, userId, playerIds });
+                if (typeof overrides.getMyRsvp === 'function') {
+                    return overrides.getMyRsvp(teamId, gameId, userId, playerIds);
+                }
                 return overrides.myRsvp || null;
             },
             async getRsvpSummaries(teamId, gameIds) {
@@ -433,6 +449,22 @@ function createDeps(submitRecorder, overrides = {}) {
             printSchedule() {},
             promptSchedulePrintOptions() { return null; }
         },
+        calendarLoadWindow: {
+            addCalendarLoadedRange,
+            createLatestCalendarRangeLoader,
+            getMissingCalendarLoadRanges
+        },
+        calendarFeed: {
+            async fetchLegacyCalendarFeed(_calendarUrl, fetchCalendar) {
+                return fetchCalendar();
+            }
+        },
+        firebase: {
+            functions: {},
+            httpsCallable() {
+                throw new Error('Unexpected private calendar token request');
+            }
+        },
         eventDate,
         initialSummary,
         updatedSummary,
@@ -465,6 +497,152 @@ async function flushCalendarHydration() {
 }
 
 describe('calendar day modal RSVP refresh', () => {
+    it('bounds visible RSVP hydration to six FIFO event tasks', async () => {
+        const eventDate = new Date();
+        const games = Array.from({ length: 50 }, (_, index) => ({
+            id: `game-${String(index + 1).padStart(2, '0')}`,
+            type: 'game',
+            opponent: `Opponent ${index + 1}`,
+            date: new Date(eventDate.getTime() + index * 60000).toISOString(),
+            location: 'North Field',
+            status: 'scheduled',
+            rsvpSummary: { going: 0, maybe: 0, notGoing: 0, notResponded: 1, total: 1 }
+        }));
+        const pending = new Map();
+        const startOrder = [];
+        let inFlight = 0;
+        let peakInFlight = 0;
+
+        await bootCalendar({
+            eventDate,
+            games,
+            getMyRsvp(_teamId, gameId) {
+                startOrder.push(gameId);
+                inFlight += 1;
+                peakInFlight = Math.max(peakInFlight, inFlight);
+                return new Promise((resolve) => {
+                    pending.set(gameId, () => {
+                        inFlight -= 1;
+                        resolve(null);
+                    });
+                });
+            }
+        });
+        await flushCalendarHydration();
+
+        expect(startOrder).toEqual(games.slice(0, 6).map((game) => game.id));
+        expect(peakInFlight).toBe(6);
+
+        for (let index = 0; index < games.length; index += 1) {
+            const gameId = games[index].id;
+            pending.get(gameId)();
+            await flushCalendarHydration();
+        }
+
+        expect(startOrder).toEqual(games.map((game) => game.id));
+        expect(peakInFlight).toBe(6);
+        expect(inFlight).toBe(0);
+    });
+
+    it('releases a hydration worker after failure and continues queued events', async () => {
+        const eventDate = new Date();
+        const games = Array.from({ length: 8 }, (_, index) => ({
+            id: `game-${index + 1}`,
+            type: 'game',
+            opponent: `Opponent ${index + 1}`,
+            date: new Date(eventDate.getTime() + index * 60000).toISOString(),
+            location: 'North Field',
+            status: 'scheduled',
+            rsvpSummary: { going: 0, maybe: 0, notGoing: 0, notResponded: 1, total: 1 }
+        }));
+        const pending = new Map();
+        const startOrder = [];
+        const attempts = new Map();
+
+        const { window } = await bootCalendar({
+            eventDate,
+            games,
+            getMyRsvp(_teamId, gameId) {
+                startOrder.push(gameId);
+                const attempt = (attempts.get(gameId) || 0) + 1;
+                attempts.set(gameId, attempt);
+                if (gameId === 'game-1' && attempt > 1) return null;
+                return new Promise((resolve, reject) => {
+                    pending.set(gameId, { resolve, reject });
+                });
+            }
+        });
+        await flushCalendarHydration();
+
+        expect(startOrder).toEqual(games.slice(0, 6).map((game) => game.id));
+
+        pending.get('game-1').reject(new Error('Firestore unavailable'));
+        await flushCalendarHydration();
+        expect(startOrder).toContain('game-7');
+
+        for (const gameId of ['game-2', 'game-3', 'game-4', 'game-5', 'game-6', 'game-7']) {
+            pending.get(gameId).resolve(null);
+            await flushCalendarHydration();
+        }
+        expect(startOrder).toContain('game-8');
+        pending.get('game-8').resolve(null);
+        await flushCalendarHydration();
+
+        expect(startOrder).toEqual(games.map((game) => game.id));
+
+        await window.setTimeRange('all');
+        await flushCalendarHydration();
+
+        expect(attempts.get('game-1')).toBe(2);
+        games.slice(1).forEach((game) => expect(attempts.get(game.id)).toBe(1));
+    });
+
+    it('prioritizes selected-day hydration through the bounded scheduler', async () => {
+        const now = new Date();
+        const listDate = new Date(now.getFullYear(), now.getMonth(), 10, 12);
+        const selectedDate = new Date(now.getFullYear(), now.getMonth(), 20, 12);
+        const games = Array.from({ length: 8 }, (_, index) => ({
+            id: `game-${index + 1}`,
+            type: 'game',
+            opponent: `Opponent ${index + 1}`,
+            date: (index === 7 ? selectedDate : new Date(listDate.getTime() + index * 60000)).toISOString(),
+            location: 'North Field',
+            status: 'scheduled',
+            rsvpSummary: { going: 0, maybe: 0, notGoing: 0, notResponded: 1, total: 1 }
+        }));
+        const pending = new Map();
+        const startOrder = [];
+        const { elements, window } = await bootCalendar({
+            eventDate: listDate,
+            games,
+            getMyRsvp(_teamId, gameId) {
+                startOrder.push(gameId);
+                return new Promise((resolve) => pending.set(gameId, resolve));
+            }
+        });
+        await flushCalendarHydration();
+
+        const modalHydration = window.openDayDetail(
+            selectedDate.getFullYear(),
+            selectedDate.getMonth(),
+            selectedDate.getDate()
+        );
+        pending.get('game-1')(null);
+        await flushCalendarHydration();
+
+        expect(startOrder[6]).toBe('game-8');
+        pending.get('game-8')(null);
+        await modalHydration;
+        expect(elements.get('day-modal-content').innerHTML).toContain('Opponent 8');
+
+        for (const gameId of ['game-2', 'game-3', 'game-4', 'game-5', 'game-6']) {
+            pending.get(gameId)(null);
+            await flushCalendarHydration();
+        }
+        pending.get('game-7')(null);
+        await flushCalendarHydration();
+    });
+
     it('keeps initial calendar boot summary-only for off-screen RSVP data', async () => {
         const eventDate = new Date('2026-03-15T18:00:00.000Z');
         const games = Array.from({ length: 25 }, (_, index) => ({
@@ -481,7 +659,7 @@ describe('calendar day modal RSVP refresh', () => {
         expect(getMyRsvpCalls).toEqual([]);
         expect(getRsvpsCalls).toEqual([]);
 
-        window.setTimeRange('all');
+        await window.setTimeRange('all');
 
         expect(elements.get('calendar-content').innerHTML).toContain('0 going · 0 maybe · 0 can\'t go · 1 no response');
         expect(elements.get('calendar-content').innerHTML).toContain('24 going · 0 maybe · 0 can\'t go · 1 no response');
@@ -640,7 +818,7 @@ describe('calendar day modal RSVP refresh', () => {
         });
         await flushCalendarHydration();
         await flushCalendarHydration();
-        window.setTimeRange('all');
+        await window.setTimeRange('all');
 
         expect(elements.get('calendar-content').innerHTML).toContain('bg-yellow-500 text-white border-yellow-500');
         expect(elements.get('calendar-content').innerHTML).not.toContain('bg-green-600 text-white border-green-600');
@@ -763,7 +941,7 @@ describe('calendar day modal RSVP refresh', () => {
     it('keeps the day-detail modal open and refreshes RSVP state after a save', async () => {
         const { elements, submitRecorder, updatedSummary, eventDate, window } = await bootCalendar();
 
-        window.setView('calendar');
+        await window.setView('calendar');
         await window.openDayDetail(eventDate.getUTCFullYear(), eventDate.getUTCMonth(), eventDate.getUTCDate());
 
         const beforeHtml = elements.get('day-modal-content').innerHTML;
@@ -820,7 +998,7 @@ describe('calendar day modal RSVP refresh', () => {
             ]
         });
 
-        window.setTimeRange('all');
+        await window.setTimeRange('all');
 
         const html = elements.get('calendar-content').innerHTML;
         expect(html).toContain('vs. Tracked Opponent');

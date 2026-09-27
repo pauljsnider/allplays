@@ -1,0 +1,192 @@
+'use strict';
+
+function cleanText(value, maxLength = 256) {
+  if (typeof value !== 'string' && typeof value !== 'number') return '';
+  return String(value).replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
+function normalizeEmail(value) {
+  return cleanText(value, 320).toLowerCase();
+}
+
+function normalizeEmailList(value) {
+  return Array.from(new Set(
+    (Array.isArray(value) ? value : [])
+      .map(normalizeEmail)
+      .filter(Boolean)
+  ));
+}
+
+function cleanHttpUrl(value) {
+  const text = cleanText(value, 2048);
+  if (!text) return null;
+  try {
+    const url = new URL(text);
+    return (url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password
+      ? url.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function serializeStaffTeamProfile(teamId, team = {}) {
+  const id = cleanText(teamId, 128);
+  if (!id) return null;
+  return {
+    id,
+    name: cleanText(team.name || team.teamName, 160) || 'Team',
+    sport: cleanText(team.sport, 80) || null,
+    photoUrl: cleanHttpUrl(
+      team.photoUrl || team.teamPhotoUrl || team.logoUrl || team.teamLogoUrl || team.imageUrl
+    ),
+    description: cleanText(team.description, 1000) || null,
+    active: team.active !== false,
+    archived: team.archived === true,
+    status: cleanText(team.status, 32) || null,
+    isPublic: team.isPublic === true
+  };
+}
+
+function serializeManagedTeamProfile(teamId, team = {}) {
+  const summary = serializeStaffTeamProfile(teamId, team);
+  if (!summary) return null;
+  return {
+    ...summary,
+    ownerId: cleanText(team.ownerId, 160) || null,
+    ownerEmail: normalizeEmail(team.ownerEmail) || null,
+    ownerEmailLower: normalizeEmail(team.ownerEmailLower) || null,
+    adminEmails: normalizeEmailList(team.adminEmails)
+  };
+}
+
+// Keep the recovery response explicit: spreading the canonical document would
+// expose every future server-only field through this fallback API.
+const MANAGED_TEAM_DOCUMENT_FIELDS = Object.freeze([
+  'name',
+  'teamName',
+  'description',
+  'sport',
+  'baseType',
+  'ageGroup',
+  'teamAgeGroup',
+  'age',
+  'competitiveLevel',
+  'level',
+  'availability',
+  'opportunityAvailability',
+  'photoUrl',
+  'photoPath',
+  'teamPhotoUrl',
+  'logoUrl',
+  'teamLogoUrl',
+  'imageUrl',
+  'zip',
+  'city',
+  'state',
+  'colors',
+  'primaryColor',
+  'secondaryColor',
+  'colorPrimary',
+  'colorSecondary',
+  'location',
+  'isPublic',
+  'public',
+  'visibility',
+  'searchVisibility',
+  'appAccess',
+  'webAccess',
+  'active',
+  'isActive',
+  'archived',
+  'status',
+  'ownerId',
+  'ownerEmail',
+  'ownerEmailLower',
+  'ownerName',
+  'adminEmails',
+  'notificationEmail',
+  'websiteUrl',
+  'leagueUrl',
+  'bracketUrl',
+  'standingsConfig',
+  'tournament',
+  'tournamentDivisions',
+  'tournamentPools',
+  'tournamentPoolOverrides',
+  'twitchChannel',
+  'streamEmbedUrl',
+  'youtubeEmbedUrl',
+  'youtubeVideoId',
+  'streamUrl',
+  'livestreamUrl',
+  'scheduleNotifications',
+  'calendarUrls',
+  'privateCalendarFeedUrl',
+  'calendarSubscriptionUrl',
+  'calendarFeedUrl',
+  'teamCalendarFeedUrl',
+  'calendarSubscriptionToken',
+  'privateCalendarToken',
+  'calendarFeedToken',
+  'teamCalendarToken',
+  'availabilityPreferences',
+  'defaultAssignments',
+  'teamPermissions',
+  'streamAccessMode',
+  'streamVolunteerEmails',
+  'mediaContributorEmails',
+  'mediaContributorUids',
+  'gameMediaContributorEmails',
+  'gameMediaContributorUids',
+  'approvedMediaContributorEmails',
+  'approvedMediaContributorUids',
+  'teamPassConfig',
+  'teamPass',
+  'premiumFeatures',
+  'recordedReplayPaywallEnabled',
+  'recordedReplayTeamPassRequired',
+  'registrationSource',
+  'registrationProvider',
+  'registrationSourceId',
+  'externalRegistrationTeamId',
+  'registrationExternalTeamId',
+  'registrationSourceSnapshot',
+  'registrationScheduleSnapshot',
+  'registrationRosterSnapshot',
+  'registrationScheduleImportStatus',
+  'registrationScheduleLastImportedAt',
+  'externalScheduleEvents',
+  'externalRosterPlayers',
+  'rosterFields',
+  'rosterProfileFields',
+  'playerProfileFields',
+  'customRosterFields',
+  'rosterFieldDefinitions',
+  'season',
+  'seasonId',
+  'currentSeasonId',
+  'division',
+  'createdAt',
+  'updatedAt',
+  'deactivatedAt',
+  'deactivatedBy'
+]);
+
+function serializeManagedTeamDocument(teamId, team = {}) {
+  const id = cleanText(teamId, 128);
+  if (!id || !team || typeof team !== 'object' || Array.isArray(team)) return null;
+  const item = { id };
+  MANAGED_TEAM_DOCUMENT_FIELDS.forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(team, field)) item[field] = team[field];
+  });
+  return item;
+}
+
+module.exports = {
+  normalizeEmail,
+  normalizeEmailList,
+  serializeManagedTeamDocument,
+  serializeStaffTeamProfile,
+  serializeManagedTeamProfile
+};

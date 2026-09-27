@@ -97,6 +97,18 @@ export function getPublicSmokePages() {
             readySelectors: ['#scoreboard-widget']
         },
         {
+            name: 'live game overlay preview',
+            path: '/live-game-overlay.html?demo=1',
+            titlePatterns: [/Live Game Broadcast - ALL PLAYS/i],
+            readySelectors: ['#broadcast-stage', '#score-bug', '#overlay-video']
+        },
+        {
+            name: 'diamond live viewer shell',
+            path: '/live-game-diamond-v2.html',
+            titlePatterns: [/Diamond Live.*ALL PLAYS/i],
+            readySelectors: ['#diamond-viewer-error', '#diamond-viewer-loading']
+        },
+        {
             name: 'privacy policy',
             path: '/privacy.html',
             titlePatterns: [/Privacy Policy.*ALL PLAYS/i],
@@ -119,6 +131,24 @@ export function getPublicSmokePages() {
             path: '/account-deletion.html',
             titlePatterns: [/Delete Account.*ALL PLAYS/i],
             readySelectors: ['main']
+        },
+        {
+            name: 'compare',
+            path: '/compare.html',
+            titlePatterns: [/ALL PLAYS/i],
+            readySelectors: ['#header-container', 'footer']
+        },
+        {
+            name: 'about',
+            path: '/about.html',
+            titlePatterns: [/ALL PLAYS/i],
+            readySelectors: ['#header-container', 'footer']
+        },
+        {
+            name: 'app landing',
+            path: '/app.html',
+            titlePatterns: [/ALL PLAYS/i],
+            readySelectors: ['#header-container', 'footer']
         }
     ];
 }

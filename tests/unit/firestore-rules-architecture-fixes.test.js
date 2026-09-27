@@ -21,7 +21,7 @@ const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'u
 
 describe('firestore.rules architecture fixes', () => {
     it('requires platform-admin team and user list reads to carry a limit of at most 100', () => {
-        const helperStart = rules.indexOf('function isBoundedGlobalAdminListQuery()');
+        const helperStart = rules.indexOf('function isBoundedGlobalAdminListQuery(maximumLimit)');
         const helperEnd = rules.indexOf('\n    }', helperStart) + '\n    }'.length;
         const helperRules = rules.slice(helperStart, helperEnd);
         const usersStart = rules.indexOf('match /users/{userId}');
@@ -33,11 +33,11 @@ describe('firestore.rules architecture fixes', () => {
 
         expect(helperRules).toContain('request.query.limit != null');
         expect(helperRules).toContain('request.query.limit > 0');
-        expect(helperRules).toContain('request.query.limit <= 100');
+        expect(helperRules).toContain('request.query.limit <= maximumLimit');
         expect(userRules).toContain('allow get: if isGlobalAdmin() || isOwner(userId);');
-        expect(userRules).toContain('allow list: if isBoundedGlobalAdminListQuery() || isOwner(userId);');
-        expect(teamRules).toContain('allow get: if canReadTeamDocument(resource.data);');
-        expect(teamRules).toContain('allow list: if isBoundedGlobalAdminListQuery() ||');
+        expect(userRules).toContain('allow list: if isBoundedGlobalAdminListQuery(100) || isOwner(userId);');
+        expect(teamRules).toContain('allow get: if canReadTeamDocument(teamId, resource.data);');
+        expect(teamRules).toContain('allow list: if isBoundedGlobalAdminListQuery(100) ||');
         expect(userRules).not.toContain('allow read: if isGlobalAdmin()');
         expect(teamRules).not.toContain('allow read: if canReadTeamDocument(resource.data);');
     });
@@ -56,7 +56,7 @@ describe('firestore.rules architecture fixes', () => {
         );
 
         expect(indexRule).toContain('allow get: if isGlobalAdmin();');
-        expect(indexRule).toContain('allow list: if isBoundedGlobalAdminListQuery();');
+        expect(indexRule).toContain('allow list: if isBoundedGlobalAdminListQuery(100);');
         expect(indexRule).toContain('allow write: if false;');
     });
 
@@ -67,13 +67,13 @@ describe('firestore.rules architecture fixes', () => {
         expect(officialRuleMatches.length).toBeGreaterThan(0);
         officialRuleMatches.forEach((match) => {
             expect(match[1]).toContain('allow get: if isGlobalAdmin() || isTeamOwnerOrAdmin(teamId);');
-            expect(match[1]).toContain('allow list: if isBoundedGlobalAdminListQuery() || isTeamOwnerOrAdmin(teamId);');
+            expect(match[1]).toContain('allow list: if isBoundedGlobalAdminListQuery(100) || isTeamOwnerOrAdmin(teamId);');
             expect(match[1]).not.toContain('allow read: if isGlobalAdmin()');
         });
-        expect(collectionGroupRule).toContain('allow list: if isBoundedGlobalAdminListQuery();');
+        expect(collectionGroupRule).toContain('allow list: if isBoundedGlobalAdminListQuery(100);');
     });
 
-    it('declares collection-group indexes for every filtered officials search field', () => {
+    it('declares collection-group indexes for official directory and canonical UID assignment discovery', () => {
         const indexes = JSON.parse(readFileSync(new URL('../../firestore.indexes.json', import.meta.url), 'utf8'));
         const indexedOfficialFields = indexes.fieldOverrides
             .filter((override) =>
@@ -84,19 +84,71 @@ describe('firestore.rules architecture fixes', () => {
             )
             .map((override) => override.fieldPath);
 
-        expect(indexedOfficialFields).toEqual(expect.arrayContaining(['email', 'name', 'phone']));
+        expect(indexedOfficialFields).toEqual(expect.arrayContaining([
+            'email',
+            'emailLower',
+            'name',
+            'officialUserId',
+            'phone',
+            'phoneDigits'
+        ]));
+        const officialNameIndexes = indexes.fieldOverrides
+            .find((override) =>
+                override.collectionGroup === 'officials' &&
+                override.fieldPath === 'name'
+            )?.indexes || [];
+        expect(officialNameIndexes).toEqual(expect.arrayContaining([
+            { order: 'ASCENDING', queryScope: 'COLLECTION' },
+            { order: 'ASCENDING', queryScope: 'COLLECTION_GROUP' }
+        ]));
+        const collectionGroupAscendingFields = indexes.fieldOverrides
+            .filter((override) => override.indexes.some((index) =>
+                index.order === 'ASCENDING' && index.queryScope === 'COLLECTION_GROUP'
+            ))
+            .map((override) => `${override.collectionGroup}.${override.fieldPath}`);
+        expect(collectionGroupAscendingFields).toEqual(expect.arrayContaining([
+            'games.scheduleNotifications.nextReminderAt',
+            'registrations.paymentReminder.nextReminderAt',
+            'feeRecipients.parentUserId',
+            'feeRecipients.accountUserId',
+            'feeRecipients.userId',
+            'feeRecipients.playerKey'
+        ]));
+        const assignmentIndexes = indexes.indexes
+            .filter((index) => ['games', 'sharedGames'].includes(index.collectionGroup))
+            .map((index) => ({
+                collectionGroup: index.collectionGroup,
+                fields: index.fields.map((field) => `${field.fieldPath}:${field.arrayConfig || field.order}`)
+            }));
+        expect(assignmentIndexes).toEqual(expect.arrayContaining([
+            {
+                collectionGroup: 'games',
+                fields: ['officiatingAuthorizedUserIds:CONTAINS', 'date:ASCENDING']
+            },
+            {
+                collectionGroup: 'sharedGames',
+                fields: ['officiatingAuthorizedUserIds:CONTAINS', 'date:ASCENDING']
+            },
+            {
+                collectionGroup: 'games',
+                fields: ['officiatingAuthorizedEmails:CONTAINS', 'date:ASCENDING']
+            },
+            {
+                collectionGroup: 'sharedGames',
+                fields: ['officiatingAuthorizedEmails:CONTAINS', 'date:ASCENDING']
+            }
+        ]));
     });
 
-    it('preserves unbounded public team list queries while keeping broad admin lists bounded', () => {
+    it('removes public canonical team lists while keeping managed and admin lists bounded', () => {
         const teamsStart = rules.indexOf('match /teams/{teamId}');
         const teamsEnd = rules.indexOf('\n    }', teamsStart) + '\n    }'.length;
         const teamRules = rules.slice(teamsStart, teamsEnd);
 
-        expect(rules).toContain('function canReadPublicTeamDocument(data)');
         expect(rules).toContain('function canListManagedTeamDocument(data)');
-        expect(teamRules).toContain('allow list: if isBoundedGlobalAdminListQuery() ||');
-        expect(teamRules).toContain('canReadPublicTeamDocument(resource.data) ||');
+        expect(teamRules).toContain('allow list: if isBoundedGlobalAdminListQuery(100) ||');
         expect(teamRules).toContain('canListManagedTeamDocument(resource.data);');
+        expect(teamRules).not.toContain('canReadPublicTeamDocument(resource.data)');
         expect(teamRules).not.toContain('(!isGlobalAdmin() && canReadTeamDocument(resource.data));');
     });
 

@@ -48,8 +48,14 @@ const excludedPublicClaimPaths = new Set([
     '.well-known/apple-app-site-association',
     '.well-known/assetlinks.json'
 ]);
+const appleAssociationRelativePath = '.well-known/apple-app-site-association';
+const androidAssociationRelativePath = '.well-known/assetlinks.json';
+const expectedAppleApplicationId = '4CSFFZLL37.ai.allplays.lite';
+const expectedAndroidPackageName = 'ai.allplays.lite';
+const expectedPlaySigningFingerprint = '5A:C2:50:E0:78:32:24:D7:96:12:63:9C:73:AF:93:C7:59:C3:98:86:46:4C:CD:63:FB:5F:29:53:39:D6:C4:94';
 
 const appCheckRuntimeConfigRelativePath = path.join('.well-known', 'allplays-runtime-config.json');
+export const DIAMOND_SCOREBOOK_UI_META_NAME = 'allplays-diamond-scorebook-ui-enabled';
 const primaryFirebaseRuntimeConfig = {
     apiKey: 'AIzaSyDoixIoKJuUVWdmImwjYRTthjKOv2mU0Jc',
     authDomain: 'game-flow-c6311.firebaseapp.com',
@@ -84,6 +90,96 @@ function normalizePublicSiteKey(value) {
 export function isAppCheckEnforcementReady(value) {
     if (value === true) return true;
     return typeof value === 'string' && ['true', '1'].includes(value.trim().toLowerCase());
+}
+
+export function isDiamondScorebookUiRolloutEnabled(value) {
+    return value === true || value === 'true';
+}
+
+export function isMobileAssociationPublishingEnabled(value) {
+    if (value === true) return true;
+    return typeof value === 'string' && ['true', '1'].includes(value.trim().toLowerCase());
+}
+
+function readJsonFile(filePath, label) {
+    try {
+        return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    } catch (error) {
+        throw new Error(`${label} must be present and valid JSON: ${error.message}`);
+    }
+}
+
+export function validateMobileAssociationFiles(rootDir = defaultRootDir) {
+    const resolvedRoot = path.resolve(rootDir);
+    const applePath = path.join(resolvedRoot, appleAssociationRelativePath);
+    const androidPath = path.join(resolvedRoot, androidAssociationRelativePath);
+    const apple = readJsonFile(applePath, 'Apple app-site association');
+    const android = readJsonFile(androidPath, 'Android Digital Asset Links association');
+
+    const appleDetails = apple?.applinks?.details;
+    const appleEntry = Array.isArray(appleDetails) && appleDetails.length === 1
+        ? appleDetails[0]
+        : null;
+    const appleComponentPaths = Array.isArray(appleEntry?.components)
+        ? appleEntry.components.map((component) => component?.['/'])
+        : [];
+    if (
+        !Array.isArray(apple?.applinks?.apps)
+        || apple.applinks.apps.length !== 0
+        || !appleEntry
+        || !Array.isArray(appleEntry.appIDs)
+        || appleEntry.appIDs.length !== 1
+        || appleEntry.appIDs[0] !== expectedAppleApplicationId
+        || appleComponentPaths.length !== 2
+        || !appleComponentPaths.includes('/app')
+        || !appleComponentPaths.includes('/app/*')
+    ) {
+        throw new Error(
+            `Apple app-site association must bind only /app and /app/* links to ${expectedAppleApplicationId}.`
+        );
+    }
+
+    const androidEntry = Array.isArray(android) && android.length === 1
+        ? android[0]
+        : null;
+    if (
+        !androidEntry
+        || !Array.isArray(androidEntry.relation)
+        || androidEntry.relation.length !== 1
+        || androidEntry.relation[0] !== 'delegate_permission/common.handle_all_urls'
+        || androidEntry.target?.namespace !== 'android_app'
+        || androidEntry.target?.package_name !== expectedAndroidPackageName
+        || !Array.isArray(androidEntry.target?.sha256_cert_fingerprints)
+        || androidEntry.target.sha256_cert_fingerprints.length !== 1
+        || androidEntry.target.sha256_cert_fingerprints[0] !== expectedPlaySigningFingerprint
+    ) {
+        throw new Error(
+            `Android Digital Asset Links association must bind ${expectedAndroidPackageName} to the verified Google Play signing certificate.`
+        );
+    }
+
+    return {
+        applePath,
+        androidPath,
+        appleApplicationId: expectedAppleApplicationId,
+        androidPackageName: expectedAndroidPackageName,
+        playSigningFingerprint: expectedPlaySigningFingerprint
+    };
+}
+
+function stageMobileAssociationFiles(rootDir, destinationDir, publish) {
+    if (!isMobileAssociationPublishingEnabled(publish)) return [];
+
+    const validated = validateMobileAssociationFiles(rootDir);
+    const stagedPaths = [];
+    for (const sourcePath of [validated.applePath, validated.androidPath]) {
+        const relativePath = path.relative(rootDir, sourcePath);
+        const destinationPath = path.join(destinationDir, relativePath);
+        fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+        fs.copyFileSync(sourcePath, destinationPath);
+        stagedPaths.push(destinationPath);
+    }
+    return stagedPaths;
 }
 
 function readFirebaseHostingHeader(firebaseConfig, source, key) {
@@ -180,9 +276,18 @@ function listHtmlFiles(rootDir, currentDir = rootDir, files = []) {
     return files;
 }
 
-export function injectPagesSecurityMeta(destinationDir, { rootDir = defaultRootDir } = {}) {
+export function injectPagesSecurityMeta(
+    destinationDir,
+    {
+        rootDir = defaultRootDir,
+        diamondScorebookUiEnabled = false
+    } = {}
+) {
     const resolvedDestination = path.resolve(destinationDir);
     const policies = readPagesSecurityMetaPolicies(rootDir);
+    const stagedDiamondScorebookUiEnabled = isDiamondScorebookUiRolloutEnabled(
+        diamondScorebookUiEnabled
+    );
     const htmlFiles = listHtmlFiles(resolvedDestination).filter((htmlPath) => (
         !toRelativePath(resolvedDestination, htmlPath).startsWith('app/assets/')
     ));
@@ -200,8 +305,32 @@ export function injectPagesSecurityMeta(destinationDir, { rootDir = defaultRootD
         if (/<meta\b[^>]*http-equiv\s*=\s*["']?content-security-policy\b/i.test(html)) {
             throw new Error(`Staged HTML already contains a CSP meta tag: ${relativePath}`);
         }
-        if (/<meta\b[^>]*name\s*=\s*["']?referrer\b/i.test(html)) {
-            throw new Error(`Staged HTML already contains a referrer meta tag: ${relativePath}`);
+        const referrerMetaMatches = [...html.matchAll(
+            /<meta\b[^>]*name\s*=\s*["']?referrer["']?[^>]*>/gi
+        )];
+        if (referrerMetaMatches.length > 1) {
+            throw new Error(`Staged HTML already contains multiple referrer meta tags: ${relativePath}`);
+        }
+        const diamondLaunchMetaMatches = [...html.matchAll(
+            new RegExp(`<meta\\b[^>]*name\\s*=\\s*["']?${DIAMOND_SCOREBOOK_UI_META_NAME}["']?[^>]*>`, 'gi')
+        )];
+        if (diamondLaunchMetaMatches.length > 0) {
+            throw new Error(`Staged HTML already contains a Diamond launch meta tag: ${relativePath}`);
+        }
+        let hasApprovedReferrerMeta = false;
+        if (referrerMetaMatches.length === 1) {
+            const contentMatch = referrerMetaMatches[0][0].match(
+                /\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i
+            );
+            const existingPolicy = String(contentMatch?.[1] ?? contentMatch?.[2] ?? contentMatch?.[3] ?? '')
+                .trim()
+                .toLowerCase();
+            if (![policies.referrerPolicy, 'no-referrer'].includes(existingPolicy)) {
+                throw new Error(
+                    `Staged HTML already contains a referrer meta tag that is not an approved policy: ${relativePath}`
+                );
+            }
+            hasApprovedReferrerMeta = true;
         }
 
         const headMatch = /<head\b[^>]*>/i.exec(html);
@@ -211,7 +340,10 @@ export function injectPagesSecurityMeta(destinationDir, { rootDir = defaultRootD
 
         const securityMeta = [
             `<meta http-equiv="Content-Security-Policy" content="${escapeHtmlAttribute(csp)}">`,
-            `<meta name="referrer" content="${escapeHtmlAttribute(policies.referrerPolicy)}">`
+            ...(!hasApprovedReferrerMeta
+                ? [`<meta name="referrer" content="${escapeHtmlAttribute(policies.referrerPolicy)}">`]
+                : []),
+            `<meta name="${DIAMOND_SCOREBOOK_UI_META_NAME}" content="${stagedDiamondScorebookUiEnabled ? 'true' : 'false'}">`
         ].join('\n    ');
         const afterHead = headMatch.index + headMatch[0].length;
         const headCloseIndex = html.search(/<\/head\s*>/i);
@@ -243,17 +375,29 @@ export function injectPagesSecurityMeta(destinationDir, { rootDir = defaultRootD
 
     return {
         htmlFileCount: htmlFiles.length,
+        diamondScorebookUiEnabled: stagedDiamondScorebookUiEnabled,
         ...policies
     };
 }
 
 export function createAppCheckRuntimeConfig(
     siteKey,
-    { enforcementReady = false, firebaseConfig = primaryFirebaseRuntimeConfig } = {}
+    {
+        enforcementReady = false,
+        firebaseConfig = primaryFirebaseRuntimeConfig,
+        diamondScorebookUiEnabled = false
+    } = {}
 ) {
+    const runtimeConfig = {
+        firebase: firebaseConfig,
+        diamondScorebookUiEnabled: isDiamondScorebookUiRolloutEnabled(
+            diamondScorebookUiEnabled
+        )
+    };
+
     if (!isAppCheckEnforcementReady(enforcementReady)) {
         return {
-            firebase: firebaseConfig,
+            ...runtimeConfig,
             appCheck: {
                 enabled: false,
                 isTokenAutoRefreshEnabled: true
@@ -269,7 +413,7 @@ export function createAppCheckRuntimeConfig(
     }
 
     return {
-        firebase: firebaseConfig,
+        ...runtimeConfig,
         appCheck: {
             enabled: true,
             recaptchaEnterpriseSiteKey: normalizedSiteKey,
@@ -281,7 +425,11 @@ export function createAppCheckRuntimeConfig(
 export function writeAppCheckRuntimeConfig(
     destinationDir,
     siteKey,
-    { enforcementReady = false, firebaseConfig = primaryFirebaseRuntimeConfig } = {}
+    {
+        enforcementReady = false,
+        firebaseConfig = primaryFirebaseRuntimeConfig,
+        diamondScorebookUiEnabled = false
+    } = {}
 ) {
     const outputPath = path.join(destinationDir, appCheckRuntimeConfigRelativePath);
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -289,7 +437,7 @@ export function writeAppCheckRuntimeConfig(
         outputPath,
         `${JSON.stringify(createAppCheckRuntimeConfig(
             siteKey,
-            { enforcementReady, firebaseConfig }
+            { enforcementReady, firebaseConfig, diamondScorebookUiEnabled }
         ), null, 2)}\n`
     );
     return outputPath;
@@ -345,14 +493,23 @@ function copyPublicRoot(rootDir, destinationDir, currentDir = rootDir) {
     }
 }
 
-export function stagePagesBundle(destinationDir, { rootDir = defaultRootDir } = {}) {
+export function stagePagesBundle(
+    destinationDir,
+    {
+        rootDir = defaultRootDir,
+        appDistDir: appDistDirOverride = null,
+        publishMobileAssociations = process.env.ALLPLAYS_PUBLISH_MOBILE_ASSOCIATIONS
+    } = {}
+) {
     if (!destinationDir) {
         throw new Error('Destination directory is required.');
     }
 
     const resolvedRoot = path.resolve(rootDir);
     const resolvedDestination = path.resolve(destinationDir);
-    const appDistDir = path.join(resolvedRoot, 'apps', 'app', 'dist');
+    const appDistDir = appDistDirOverride
+        ? path.resolve(appDistDirOverride)
+        : path.join(resolvedRoot, 'apps', 'app', 'dist');
     const appDestinationDir = path.join(resolvedDestination, 'app');
 
     if (!fs.existsSync(appDistDir)) {
@@ -363,12 +520,20 @@ export function stagePagesBundle(destinationDir, { rootDir = defaultRootDir } = 
     fs.mkdirSync(resolvedDestination, { recursive: true });
 
     copyPublicRoot(resolvedRoot, resolvedDestination);
+    const mobileAssociationPaths = stageMobileAssociationFiles(
+        resolvedRoot,
+        resolvedDestination,
+        publishMobileAssociations
+    );
 
     fs.rmSync(appDestinationDir, { recursive: true, force: true });
     fs.mkdirSync(appDestinationDir, { recursive: true });
     fs.cpSync(appDistDir, appDestinationDir, { recursive: true });
     fs.writeFileSync(path.join(resolvedDestination, '.nojekyll'), '');
     assertNoUnpublishableRootDevelopmentArtifacts(resolvedDestination, 'Staged public site');
+    const diamondScorebookUiEnabled = isDiamondScorebookUiRolloutEnabled(
+        process.env.ALLPLAYS_DIAMOND_SCOREBOOK_UI_ENABLED
+    );
     const appCheckRuntimeConfigPath = writeAppCheckRuntimeConfig(
         resolvedDestination,
         process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY,
@@ -378,10 +543,14 @@ export function stagePagesBundle(destinationDir, { rootDir = defaultRootDir } = 
             ),
             firebaseConfig: resolveStagedFirebaseRuntimeConfig(
                 process.env.ALLPLAYS_FIREBASE_RUNTIME_TARGET
-            )
+            ),
+            diamondScorebookUiEnabled
         }
     );
-    const securityMeta = injectPagesSecurityMeta(resolvedDestination, { rootDir: resolvedRoot });
+    const securityMeta = injectPagesSecurityMeta(resolvedDestination, {
+        rootDir: resolvedRoot,
+        diamondScorebookUiEnabled
+    });
 
     const rootIndexPath = path.join(resolvedDestination, 'index.html');
     const appIndexPath = path.join(appDestinationDir, 'index.html');
@@ -397,6 +566,7 @@ export function stagePagesBundle(destinationDir, { rootDir = defaultRootDir } = 
         rootIndexPath,
         appIndexPath,
         appCheckRuntimeConfigPath,
+        mobileAssociationPaths,
         securityMeta
     };
 }

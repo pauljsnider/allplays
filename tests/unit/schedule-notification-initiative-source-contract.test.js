@@ -6,7 +6,7 @@ const scheduleServiceSource = readFileSync(new URL('../../apps/app/src/lib/sched
 
 describe('schedule notification initiative source contract', () => {
     it('registers created-event pushes and routes large imports to summary batching', () => {
-        expect(functionsSource).toContain('const notifyGameCreated = functions.firestore');
+        expect(functionsSource).toContain('const notifyGameCreated = retryableNotificationFunctions.firestore');
         expect(functionsSource).toContain('exports.notifyGameCreated = notifyGameCreated;');
         expect(functionsSource).toContain('if (importBatch && importBatch.totalCount > 3) {');
         expect(functionsSource).toContain('return registerScheduleImportBatchEvent({ teamId, gameId, game, batch: importBatch });');

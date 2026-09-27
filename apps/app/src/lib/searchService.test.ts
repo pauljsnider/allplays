@@ -31,6 +31,7 @@ vi.mock('./helpKnowledgeService', () => ({
 vi.mock('./publicTeamsService', () => publicTeamsServiceMocks);
 
 import {
+  createAppSearchHelpLoader,
   resetAppSearchCache,
   searchAppPlayers,
   searchAppTeams
@@ -107,6 +108,54 @@ describe('searchService app search caches', () => {
     publicTeamsServiceMocks.getPublicTeamsPage.mockImplementation(async ({ searchText }: { searchText: string }) => (
       buildPublicTeamsResult(searchText)
     ));
+  });
+
+  it('loads help lazily once for meaningful queries and preserves role-filtered results', async () => {
+    const searchHelpKnowledge = vi.fn(() => [{
+      id: 'parent-fees',
+      title: 'Parent fee guide',
+      file: 'help-parent-fees.html',
+      url: 'https://allplays.ai/help-parent-fees.html',
+      roles: ['parent'],
+      summary: 'Pay and track team fees.',
+      snippet: 'Pay and track team fees.',
+      score: 42
+    }]);
+    const loadModule = vi.fn(async () => ({ searchHelpKnowledge }));
+    const loadHelpResults = createAppSearchHelpLoader(loadModule);
+    const helpAuth = {
+      user: null,
+      isAdmin: false,
+      isPlatformAdmin: false,
+      roles: ['parent' as const],
+      isParent: true,
+      isCoach: false
+    };
+
+    await expect(loadHelpResults({ queryText: '', auth: helpAuth, helpRoleFilter: 'parent' })).resolves.toEqual([]);
+    await expect(loadHelpResults({ queryText: ' p ', auth: helpAuth, helpRoleFilter: 'parent' })).resolves.toEqual([]);
+    expect(loadModule).not.toHaveBeenCalled();
+
+    const [firstResults, concurrentResults] = await Promise.all([
+      loadHelpResults({ queryText: 'fees', auth: helpAuth, helpRoleFilter: 'parent' }),
+      loadHelpResults({ queryText: 'fees', auth: helpAuth, helpRoleFilter: 'parent' })
+    ]);
+    const repeatedResults = await loadHelpResults({ queryText: 'fees', auth: helpAuth, helpRoleFilter: 'parent' });
+
+    expect(loadModule).toHaveBeenCalledTimes(1);
+    expect(searchHelpKnowledge).toHaveBeenCalledWith({
+      query: 'fees',
+      roles: ['parent'],
+      roleFilter: 'parent',
+      limit: 5
+    });
+    expect(firstResults).toEqual([expect.objectContaining({
+      id: 'help:parent-fees',
+      title: 'Parent fee guide',
+      roles: ['parent']
+    })]);
+    expect(concurrentResults).toEqual(firstResults);
+    expect(repeatedResults).toEqual(firstResults);
   });
 
   it('evicts older completed player cache entries while keeping newer queries reusable', async () => {

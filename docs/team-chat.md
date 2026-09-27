@@ -18,6 +18,7 @@ Goal: Add persistent team chat for anyone who has access to a team (owner, admin
 - Coach/admin recipient picker for full team, staff-only, or selected roster/community members
 - Lightweight conversations list for the default team-wide channel plus targeted direct/group conversation records
 - Coach/admin-only team email draft composer with eligible roster recipient picker, saved drafts, and reopen/edit support
+- Durable team email rate limits: by default, 3 sends per sender per team and 10 sends per team in each 10-minute window (`TEAM_EMAIL_SENDER_SEND_LIMIT`, `TEAM_EMAIL_TEAM_SEND_LIMIT`, and `TEAM_EMAIL_RATE_LIMIT_WINDOW_MS` override these deployment values)
 
 ### Deferred Features
 - Real-time updates (Firestore onSnapshot) - using manual refresh instead

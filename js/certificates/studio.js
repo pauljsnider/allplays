@@ -1,4 +1,4 @@
-import { checkAuth } from '../auth.js?v=135';
+import { checkAuth } from '../auth.js?v=4433203';
 import {
     getTeam,
     getUserProfile,
@@ -22,19 +22,21 @@ import {
     archiveCertificate,
     canAccessCertificates,
     canViewSavedCertificate
-} from '../db.js?v=127';
-import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=18';
-import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=6';
+} from '../db.js?v=4433199';
+import { loadCompleteCertificateNarrativeStats } from '../diamond-legacy-game-context.js?v=1';
+import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443375';
+import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=443350';
 import { TEMPLATES } from './templates.js?v=2';
 import { CERTIFICATE_FONT_OPTIONS, renderCertificate, createPreviewDraft, resolveColors, getContrastWarning } from './renderer.js?v=2';
-import { buildDefaultSigners, normalizeSigners } from './signers.js?v=1';
+import { buildDefaultSigners, normalizeSigners } from './signers.js?v=2';
+import { certificateDefaultsMatch } from './defaultsReconciliation.js?v=1';
 import {
     CERTIFICATE_DESCRIPTION_CHAR_LIMIT,
     generateCertificateDescription,
     generateDescriptionsForDrafts,
     selectRecentCompletedGames,
     truncateCertificateDescription
-} from './aiDescriptions.js?v=4';
+} from './aiDescriptions.js?v=5';
 import {
     downloadCertificatePng,
     downloadCertificateZip,
@@ -76,6 +78,23 @@ const state = {
 };
 
 renderFooter(document.getElementById('footer-container'));
+
+async function persistCertificateDefaults() {
+    try {
+        await setCertificateDefaults(state.teamId, state.shared);
+    } catch (error) {
+        const persistenceError = error instanceof Error ? error : new Error(String(error || 'Unable to save certificate defaults.'));
+        const authoritativeDefaults = await getCertificateDefaults(state.teamId).catch(() => null);
+        if (!authoritativeDefaults) {
+            persistenceError.certificateDefaultsPersistenceState = 'unknown';
+            throw persistenceError;
+        }
+        if (!certificateDefaultsMatch(state.shared, authoritativeDefaults)) {
+            persistenceError.certificateDefaultsPersistenceState = 'not-committed';
+            throw persistenceError;
+        }
+    }
+}
 
 function escapeAttr(value) {
     return String(value ?? '')
@@ -908,21 +927,14 @@ function bindSetupEvents() {
                 renderSetup();
                 schedulePreviewRender();
 
-                const { uploadCertificateAsset } = await import('./assets.js?v=2');
+                const { uploadCertificateAsset } = await import('./assets.js?v=13');
                 const asset = await uploadCertificateAsset(state.teamId, file, kind, state.user?.uid || null);
                 state.assets.unshift(asset);
                 state.shared[slot] = asset;
-                state.imageUploadStatus[slot] = asset.firestoreSaveFailed
-                    ? { state: 'ready', message: 'Uploaded for this run.' }
-                    : { state: 'ready', message: `Uploaded ${asset.originalFilename || file.name || 'image'}.` };
+                state.imageUploadStatus[slot] = { state: 'ready', message: `Uploaded ${asset.originalFilename || file.name || 'image'}.` };
                 renderSetup();
                 schedulePreviewRender();
-                showAlert(
-                    asset.firestoreSaveFailed
-                        ? 'Image uploaded for this certificate run.'
-                        : 'Image uploaded.',
-                    'success'
-                );
+                showAlert('Image uploaded.', 'success');
             } catch (error) {
                 state.imageUploadStatus[slot] = { state: 'warning', message: `Local preview only. ${formatImageUploadError(error)}` };
                 renderSetup();
@@ -938,6 +950,10 @@ function bindSetupEvents() {
         input.addEventListener('input', () => {
             const index = Number(input.dataset.signerIndex);
             const field = input.dataset.signerField;
+            if (field === 'signatureStyle' && input.value !== 'image') {
+                state.shared.signers[index].signatureImageUrl = null;
+                state.shared.signers[index].signatureImagePath = null;
+            }
             state.shared.signers[index][field] = input.value;
             schedulePreviewRender();
         });
@@ -954,11 +970,25 @@ function bindSetupEvents() {
             const file = input.files?.[0];
             if (!file) return;
             const index = Number(input.dataset.signatureUpload);
+            const previousSigner = { ...state.shared.signers[index] };
             try {
-                const { uploadSignatureImage } = await import('./assets.js?v=2');
-                const result = await uploadSignatureImage(state.user?.uid, file);
+                const { deleteSignatureImage, uploadSignatureImage } = await import('./assets.js?v=13');
+                const result = await uploadSignatureImage(state.teamId, file);
                 state.shared.signers[index].signatureStyle = 'image';
                 state.shared.signers[index].signatureImageUrl = result.url;
+                state.shared.signers[index].signatureImagePath = result.path;
+                try {
+                    await persistCertificateDefaults();
+                } catch (persistenceError) {
+                    if (persistenceError?.certificateDefaultsPersistenceState === 'unknown') {
+                        renderSetup();
+                        schedulePreviewRender();
+                        throw new Error('The signature save status is unknown. Both images were preserved; refresh before retrying.');
+                    }
+                    await deleteSignatureImage(state.teamId, result.path).catch(() => undefined);
+                    state.shared.signers[index] = previousSigner;
+                    throw persistenceError;
+                }
                 renderSetup();
                 schedulePreviewRender();
                 showAlert('Signature image uploaded.', 'success');
@@ -970,7 +1000,8 @@ function bindSetupEvents() {
 
     document.querySelectorAll('[data-signer-remove]').forEach((button) => {
         button.addEventListener('click', () => {
-            state.shared.signers.splice(Number(button.dataset.signerRemove), 1);
+            const index = Number(button.dataset.signerRemove);
+            state.shared.signers.splice(index, 1);
             renderSetup();
             schedulePreviewRender();
         });
@@ -1001,7 +1032,8 @@ function bindSetupEvents() {
             name: 'Assistant Coach',
             role: 'Assistant Coach',
             signatureStyle: 'script',
-            signatureImageUrl: null
+            signatureImageUrl: null,
+            signatureImagePath: null
         });
         renderSetup();
         schedulePreviewRender();
@@ -1017,7 +1049,7 @@ async function saveTeamDefaults() {
         return;
     }
     try {
-        await setCertificateDefaults(state.teamId, state.shared);
+        await persistCertificateDefaults();
         showAlert('Certificate defaults saved for this team.', 'success');
     } catch (error) {
         showAlert(error?.message || 'Unable to save certificate defaults.', 'error');
@@ -1135,17 +1167,26 @@ async function generateTeamCertificates() {
         showAlert(`Generating descriptions for ${state.drafts.length} certificates. Completed rows will fill in as they finish.`, 'info');
 
         const descriptionRun = (async () => {
-            const recentGames = selectRecentCompletedGames(state.games, state.shared.statsWindow);
-            const totalsByPlayer = state.demoMode
-                ? getDemoData().totalsByPlayer
-                : await getAggregatedStatsForGames(state.teamId, recentGames.map((game) => game.id));
+            const narrativeGames = state.demoMode
+                ? state.games
+                : await getGames(state.teamId, { requireCompleteSharedGames: true });
+            const recentGames = selectRecentCompletedGames(narrativeGames, state.shared.statsWindow);
+            const narrativeStats = state.demoMode
+                ? { totalsByPlayer: getDemoData().totalsByPlayer, statsEvidenceByPlayer: {}, promptEvidence: null }
+                : await loadCompleteCertificateNarrativeStats({
+                    teamId: state.teamId,
+                    games: recentGames,
+                    loadClassicAggregatedStats: getAggregatedStatsForGames
+                });
             const demoDescription = "proved to be a composed and reliable mid-fielder who reads the game exceptionally well. Her smart positioning, hustle in midfield, and support in transition made her a dependable two-way player and a key part of the team's defensive success!";
             return generateDescriptionsForDrafts({
                 drafts: state.drafts,
                 team: state.team,
                 shared: state.shared,
-                games: state.games,
-                totalsByPlayer,
+                games: narrativeGames,
+                totalsByPlayer: narrativeStats.totalsByPlayer,
+                statsEvidenceByPlayer: narrativeStats.statsEvidenceByPlayer,
+                statsPromptEvidence: narrativeStats.promptEvidence,
                 generator: state.demoMode
                     ? async ({ player }) => player.name === 'Vivian Karpuk' ? demoDescription : `${player.name} showed commitment, energy, and a team-first approach throughout the season while making important contributions in key moments.`
                     : generateCertificateDescription,
@@ -1929,17 +1970,26 @@ async function runDraftRegeneration(draftIds) {
     renderReviewGrid();
 
     try {
-        const recentGames = selectRecentCompletedGames(state.games, state.shared.statsWindow);
-        const totalsByPlayer = state.demoMode
-            ? getDemoData().totalsByPlayer
-            : await getAggregatedStatsForGames(state.teamId, recentGames.map((game) => game.id));
+        const narrativeGames = state.demoMode
+            ? state.games
+            : await getGames(state.teamId, { requireCompleteSharedGames: true });
+        const recentGames = selectRecentCompletedGames(narrativeGames, state.shared.statsWindow);
+        const narrativeStats = state.demoMode
+            ? { totalsByPlayer: getDemoData().totalsByPlayer, statsEvidenceByPlayer: {}, promptEvidence: null }
+            : await loadCompleteCertificateNarrativeStats({
+                teamId: state.teamId,
+                games: recentGames,
+                loadClassicAggregatedStats: getAggregatedStatsForGames
+            });
         const progressLabel = drafts.length === 1 ? 'Regenerating description' : 'Regenerating descriptions';
         const results = await generateDescriptionsForDrafts({
             drafts,
             team: state.team,
             shared: state.shared,
-            games: state.games,
-            totalsByPlayer,
+            games: narrativeGames,
+            totalsByPlayer: narrativeStats.totalsByPlayer,
+            statsEvidenceByPlayer: narrativeStats.statsEvidenceByPlayer,
+            statsPromptEvidence: narrativeStats.promptEvidence,
             generator: state.demoMode
                 ? async ({ player }) => `${player.name} continued to stand out with reliable effort, smart decisions, and a team-first attitude that made a clear impact throughout the season.`
                 : generateCertificateDescription,

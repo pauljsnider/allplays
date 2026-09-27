@@ -137,4 +137,55 @@ describe('app GameDetail route resolution', () => {
             root.unmount();
         });
     });
+
+    it('carries an opaque shared-game path through route resolution and the final detail URL', async () => {
+        const sharedGamePath = `organizations/${'o'.repeat(90)}/sharedGames/${'g'.repeat(90)}`;
+        const opaqueGameId = 'sharedh_bounded-route-id';
+        const sharedEvent = {
+            id: opaqueGameId,
+            teamId: 'team-baseball',
+            childId: 'player-1',
+            type: 'game',
+            isDbGame: true,
+            isCancelled: false,
+            myRsvp: 'not_responded',
+            assignments: [],
+            rideshareSummary: null,
+            isTeamStaff: true,
+            isTeamAdmin: false,
+            canUpdateScore: false
+        };
+        scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue({
+            teamId: 'team-baseball',
+            eventId: opaqueGameId,
+            childId: 'player-1'
+        });
+        scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({ children: [], events: [sharedEvent] });
+
+        const { root, router } = await renderGameDetail(
+            `/games/${opaqueGameId}?teamId=team-baseball&sharedGamePath=${encodeURIComponent(sharedGamePath)}`
+        );
+
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        expect(scheduleServiceMocks.resolveParentGameRoute).toHaveBeenCalledWith(coachAuth.user, opaqueGameId, {
+            expandStaffPlayers: false,
+            targetTeamId: 'team-baseball',
+            sharedGamePath
+        });
+        expect(scheduleServiceMocks.loadParentScheduleEventDetail).toHaveBeenCalledWith(coachAuth.user, {
+            teamId: 'team-baseball',
+            eventId: opaqueGameId,
+            expandStaffPlayers: false,
+            sharedGamePath
+        });
+        expect(router.state.location.pathname).toBe(`/schedule/team-baseball/${opaqueGameId}`);
+        expect(new URLSearchParams(router.state.location.search).get('sharedGamePath')).toBe(sharedGamePath);
+
+        await act(async () => {
+            root.unmount();
+        });
+    });
 });

@@ -1,4 +1,5 @@
 name: pr-fast
+run-name: "pr-fast #${{ github.event.pull_request.number }} -> ${{ github.event.pull_request.base.ref }} @ ${{ github.event.pull_request.head.sha }}"
 
 on:
   pull_request:
@@ -6,6 +7,7 @@ on:
       - opened
       - synchronize
       - reopened
+      - ready_for_review
 
 permissions: {}
 
@@ -14,12 +16,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  change-impact:
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      lane: ${{ steps.classify.outputs.lane }}
+      spec_only: ${{ steps.classify.outputs.spec_only }}
+
+    steps:
+      - name: Checkout complete change history
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+
+      - name: Classify exact pull-request impact
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          node scripts/classify-change-impact.mjs
+          --base "$BASE_SHA"
+          --head "$HEAD_SHA"
+          --github-output "$GITHUB_OUTPUT"
+
   cache-bust-guard:
+    needs: change-impact
+    if: ${{ always() && github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
 
     steps:
+      - name: Require successful change classification
+        env:
+          IMPACT_RESULT: ${{ needs.change-impact.result }}
+        run: test "$IMPACT_RESULT" = success
+
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -38,14 +79,22 @@ jobs:
           GITHUB_BASE_REF: ${{ github.base_ref }}
 
   unit-tests:
+    needs: change-impact
+    if: ${{ always() && github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
 
     steps:
+      - name: Require successful change classification
+        env:
+          IMPACT_RESULT: ${{ needs.change-impact.result }}
+        run: test "$IMPACT_RESULT" = success
+
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Node
@@ -55,18 +104,22 @@ jobs:
           cache: npm
 
       - name: Setup Java
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
           distribution: temurin
           java-version: 21
 
       - name: Install dependencies
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: npm ci
 
       - name: Install Functions dependencies
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: npm ci --prefix functions
 
       - name: Install app dependencies
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: |
           npm config set fetch-retries 5
           npm config set fetch-retry-factor 2
@@ -82,6 +135,7 @@ jobs:
           done
 
       - name: Validate app performance evidence when present
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: |
           if [ -f docs/app-performance-measurements.json ]; then
             npm run app:validate-performance-measurements -- docs/app-performance-measurements.json
@@ -89,24 +143,53 @@ jobs:
             echo "No app performance measurement artifact to validate."
           fi
 
+      - name: Run Diamond scorebook acceptance gate
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
+        run: npm run test:diamond:ci
+
       - name: Run unit tests
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: npm run test:unit:ci
 
       - name: Run notification functions coverage
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: npm run test:functions:notifications
 
       - name: Run authentication email functions coverage
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: npm run test:functions:auth-email
 
       - name: Run team email functions coverage
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: npm run test:functions:team-email
 
+      - name: Run Functions security boundary coverage
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
+        run: npm run test:functions:security-boundaries
+
+      - name: Validate changed product specifications
+        if: ${{ needs.change-impact.outputs.lane == 'spec-only' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          node scripts/validate-spec-docs.mjs
+          --base "$BASE_SHA"
+          --head "$HEAD_SHA"
+
   app-quality:
+    needs: change-impact
+    if: ${{ always() && github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
 
     steps:
+      - name: Require successful change classification
+        env:
+          IMPACT_RESULT: ${{ needs.change-impact.result }}
+        run: test "$IMPACT_RESULT" = success
+
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -114,12 +197,14 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
 
       - name: Install app dependencies
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: |
           npm config set fetch-retries 5
           npm config set fetch-retry-factor 2
@@ -135,15 +220,23 @@ jobs:
           done
 
       - name: Audit app dependencies
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: node scripts/audit-app-dependencies.mjs
 
       - name: Typecheck app
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: npm --prefix apps/app run typecheck
 
       - name: Lint app
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: node scripts/lint-app-ci.mjs
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
 
       - name: Test app
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: npm --prefix apps/app run test:ci
+
+      - name: Confirm app checks are intentionally not applicable
+        if: ${{ needs.change-impact.outputs.lane == 'spec-only' }}
+        run: echo "Product specifications do not change the application bundle."

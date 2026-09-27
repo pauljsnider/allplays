@@ -5,6 +5,9 @@ const require = createRequire(import.meta.url);
 const {
     normalizeTeamPassCheckoutInput,
     isEligibleTeamPassPurchaser,
+    buildTeamPassCheckoutAttemptId,
+    buildTeamPassCheckoutIdempotencyKey,
+    isTeamPassEntitlementActive,
     shouldUnlockTeamPassFromEvent,
     buildTeamPassEntitlement
 } = require('../../functions/team-pass-core.cjs');
@@ -46,6 +49,43 @@ describe('team pass function helpers', () => {
             uid: 'parent_1'
         })).toBe(true);
         expect(isEligibleTeamPassPurchaser({ team, uid: 'fan_1', email: 'fan@example.com' })).toBe(false);
+        expect(isEligibleTeamPassPurchaser({
+            team,
+            user: { email: 'coach@example.com', profileEmail: 'coach@example.com' },
+            uid: 'former_admin',
+            email: ''
+        })).toBe(false);
+    });
+
+    it('builds a team-entitlement-scoped attempt id and reservation-scoped idempotency key', () => {
+        const input = {
+            teamId: 'team_123',
+            seasonId: '2026',
+            tier: 'team-pass',
+            uid: 'parent_123',
+            checkoutCreationReservationId: 'reservation_123'
+        };
+        const attemptId = buildTeamPassCheckoutAttemptId(input);
+        const anotherPurchaserAttemptId = buildTeamPassCheckoutAttemptId({
+            ...input,
+            uid: 'another_parent'
+        });
+        const first = buildTeamPassCheckoutIdempotencyKey(input);
+        const second = buildTeamPassCheckoutIdempotencyKey({ ...input });
+        const anotherSeason = buildTeamPassCheckoutIdempotencyKey({ ...input, seasonId: '2027' });
+        const anotherReservation = buildTeamPassCheckoutIdempotencyKey({
+            ...input,
+            checkoutCreationReservationId: 'reservation_456'
+        });
+
+        expect(attemptId).toMatch(/^team_pass_attempt_[a-f0-9]{64}$/);
+        expect(anotherPurchaserAttemptId).toBe(attemptId);
+        expect(first).toMatch(/^team_pass_checkout_[a-f0-9]{64}$/);
+        expect(second).toBe(first);
+        expect(anotherSeason).not.toBe(first);
+        expect(anotherReservation).not.toBe(first);
+        expect(first).not.toContain('team_123');
+        expect(first).not.toContain('parent_123');
     });
 
     it('unlocks only paid completed checkout events with team pass metadata', () => {
@@ -72,6 +112,31 @@ describe('team pass function helpers', () => {
         expect(shouldUnlockTeamPassFromEvent({
             type: 'checkout.session.expired',
             data: { object: teamPassSession }
+        })).toBe(false);
+    });
+
+    it('exposes only current exact-scope Team Pass entitlements as active', () => {
+        const active = {
+            status: 'active',
+            tier: 'team-pass',
+            teamId: 'team_123',
+            seasonId: '2026',
+            startsAt: '2026-01-01T00:00:00.000Z',
+            expiresAt: '2026-12-31T23:59:59.000Z'
+        };
+
+        expect(isTeamPassEntitlementActive(active, {
+            teamId: 'team_123',
+            seasonId: '2026',
+            now: '2026-05-05T00:00:00.000Z'
+        })).toBe(true);
+        expect(isTeamPassEntitlementActive({ ...active, teamId: 'other' }, { teamId: 'team_123', seasonId: '2026' })).toBe(false);
+        expect(isTeamPassEntitlementActive({ ...active, seasonId: '2025' }, { teamId: 'team_123', seasonId: '2026' })).toBe(false);
+        expect(isTeamPassEntitlementActive({ ...active, status: 'revoked' }, { teamId: 'team_123', seasonId: '2026' })).toBe(false);
+        expect(isTeamPassEntitlementActive(active, {
+            teamId: 'team_123',
+            seasonId: '2026',
+            now: '2027-01-01T00:00:00.000Z'
         })).toBe(false);
     });
 

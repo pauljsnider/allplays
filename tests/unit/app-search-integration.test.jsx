@@ -10,8 +10,7 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 const homeMocks = vi.hoisted(() => ({
-    loadParentHome: vi.fn(),
-    loadParentHomeSummary: vi.fn()
+    loadParentSearchTeamsSummary: vi.fn()
 }));
 
 const firebaseMocks = vi.hoisted(() => ({
@@ -200,8 +199,7 @@ beforeEach(() => {
         }
         return { teams: [], nextCursor: null };
     });
-    homeMocks.loadParentHomeSummary.mockImplementation((...args) => homeMocks.loadParentHome(...args));
-    homeMocks.loadParentHome.mockResolvedValue({
+    homeMocks.loadParentSearchTeamsSummary.mockResolvedValue({
         teams: [{
             teamId: 'team-home',
             teamName: 'Home Rockets',
@@ -258,7 +256,7 @@ describe('React app shell search', () => {
 
     it('opens mobile search results from the shell trigger', async () => {
         const { container } = await renderShell();
-        const initialHydrationCalls = homeMocks.loadParentHomeSummary.mock.calls.length;
+        const initialHydrationCalls = homeMocks.loadParentSearchTeamsSummary.mock.calls.length;
         const initialFirestoreCalls = firebaseMocks.getDocs.mock.calls.length;
         const initialPublicSearchCalls = dbMocks.discoverPublicTeams.mock.calls.length;
 
@@ -268,13 +266,13 @@ describe('React app shell search', () => {
         expect(container.textContent).not.toContain('Bears');
         expect(container.textContent).not.toContain('PrivateSoccer');
         expect(container.textContent).toContain('Type at least 2 characters to search players');
-        expect(homeMocks.loadParentHomeSummary).toHaveBeenCalledTimes(initialHydrationCalls);
+        expect(homeMocks.loadParentSearchTeamsSummary).toHaveBeenCalledTimes(initialHydrationCalls);
         expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(initialFirestoreCalls);
         expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(initialPublicSearchCalls);
 
         await fillSearch(container, 'bea');
         expect(container.textContent).toContain('Bears');
-        expect(homeMocks.loadParentHomeSummary.mock.calls.length).toBeGreaterThan(initialHydrationCalls);
+        expect(homeMocks.loadParentSearchTeamsSummary.mock.calls.length).toBeGreaterThan(initialHydrationCalls);
         expect(firebaseMocks.getDocs.mock.calls.length).toBeGreaterThan(initialFirestoreCalls);
         expect(dbMocks.discoverPublicTeams.mock.calls.length).toBeGreaterThan(initialPublicSearchCalls);
 
@@ -317,7 +315,7 @@ describe('React app shell search', () => {
 
     it('lets player search start before slow team hydration finishes and merges team results afterward', async () => {
         let resolveParentHome;
-        homeMocks.loadParentHome.mockImplementationOnce(() => new Promise((resolve) => {
+        homeMocks.loadParentSearchTeamsSummary.mockImplementationOnce(() => new Promise((resolve) => {
             resolveParentHome = resolve;
         }));
         firebaseMocks.getDocs.mockImplementation(async (request) => {
@@ -690,7 +688,7 @@ describe('React app shell search', () => {
         expect(container.textContent).toContain('Sign In');
         expect(container.textContent).toContain('Get Started');
         expect(container.textContent).not.toContain('Bears');
-        expect(homeMocks.loadParentHomeSummary).not.toHaveBeenCalled();
+        expect(homeMocks.loadParentSearchTeamsSummary).not.toHaveBeenCalled();
 
         await clickButton(container, 'Get Started');
         expect(routePreloadMocks.preloadSearchRoute).toHaveBeenCalledWith('/auth?mode=signup');
@@ -698,7 +696,7 @@ describe('React app shell search', () => {
     });
 
     it('keeps one-character player searches local and shows empty result states', async () => {
-        homeMocks.loadParentHome.mockResolvedValueOnce({ teams: [] });
+        homeMocks.loadParentSearchTeamsSummary.mockResolvedValueOnce({ teams: [] });
         dbMocks.discoverPublicTeams.mockResolvedValueOnce({ teams: [], nextCursor: null });
         firebaseMocks.getDocs.mockResolvedValueOnce({ docs: [] });
         const { container } = await renderShell();
@@ -718,7 +716,7 @@ describe('React app shell search', () => {
 
     it('shows team and player search errors in the dialog', async () => {
         dbMocks.discoverPublicTeams.mockRejectedValue(new Error('Team search unavailable'));
-        homeMocks.loadParentHome.mockRejectedValueOnce(new Error('Home teams unavailable'));
+        homeMocks.loadParentSearchTeamsSummary.mockRejectedValueOnce(new Error('Home teams unavailable'));
         const { container } = await renderShell();
 
         await clickButton(container, 'Search');
@@ -729,7 +727,7 @@ describe('React app shell search', () => {
 
         await clickButton(container, 'Close search');
         resetAppSearchCache();
-        homeMocks.loadParentHome.mockResolvedValueOnce({ teams: [] });
+        homeMocks.loadParentSearchTeamsSummary.mockResolvedValueOnce({ teams: [] });
         firebaseMocks.getDocs.mockRejectedValue(Object.assign(new Error('Permission denied'), { code: 'permission-denied' }));
 
         await clickButton(container, 'Search');
@@ -738,7 +736,7 @@ describe('React app shell search', () => {
 
         await clickButton(container, 'Close search');
         resetAppSearchCache();
-        homeMocks.loadParentHome.mockResolvedValueOnce({ teams: [] });
+        homeMocks.loadParentSearchTeamsSummary.mockResolvedValueOnce({ teams: [] });
         firebaseMocks.getDocs.mockRejectedValue(Object.assign(new Error('not ready yet: create index'), { code: 'failed-precondition' }));
 
         await clickButton(container, 'Search');

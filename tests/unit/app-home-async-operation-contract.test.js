@@ -22,8 +22,10 @@ describe('Home async operation contract', () => {
         expect(homeSource).toContain("import { useAsyncOperation } from '../lib/useAsyncOperation';");
         expect(homeSource).toContain('const { loading, error, clearError, run: runPrimaryLoad } = useAsyncOperation();');
         expect(homeSource).toContain('const { loading: socialLoading, run: runSecondaryLoad } = useAsyncOperation();');
-        expect(refreshHomeSource).toContain('return runPrimaryLoad(');
-        expect(refreshHomeSource).toContain('void runSecondaryLoad(');
+        expect(refreshHomeSource).toContain('const summary = await runPrimaryLoad(');
+        expect(refreshHomeSource).toContain('secondaryLoadPromise = runSecondaryLoad(');
+        expect(refreshHomeSource).toContain('await secondaryLoadPromise;');
+        expect(refreshHomeSource).toContain('return summary;');
         expect(refreshHomeSource).toContain('getErrorMessage: (loadError)');
         expect(refreshHomeSource).toContain('getErrorMessage: (secondaryError)');
         expect(refreshHomeSource).not.toContain('finally {');
@@ -41,22 +43,36 @@ describe('Home async operation contract', () => {
         expect(refreshHomeSource).toContain('setHome(summary.home);');
         expect(refreshHomeSource).toContain('const secondaryHome = await loadParentHomeWithSecondaryData(user, {');
         expect(refreshHomeSource).toContain('schedule: summary.schedule');
-        expect(refreshHomeSource).toContain('onPartial: (partial) => setHome(partial)');
-        expect(refreshHomeSource).toContain("getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome || receivedHomePreview)");
+        expect(refreshHomeSource).toContain('let latestSecondaryHome = summary.home;');
+        expect(refreshHomeSource).toContain('latestSecondaryHome = partial;');
+        expect(refreshHomeSource).toContain('setHome(partial);');
+        expect(refreshHomeSource).toContain("getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome)");
         expect(refreshHomeSource).toContain("const appError = toAppServiceError(loadError, 'Unable to load Home.');");
-        expect(refreshHomeSource).toContain('if (!hasExistingHome) {');
+        expect(refreshHomeSource).toContain('setFailedHomeDetailsUserId(user.uid);');
         expect(refreshHomeSource).toContain('setHome(emptyHome());');
         expect(refreshHomeSource).toContain('setSocial(emptySocialHome());');
         expect(refreshHomeSource).toContain("getErrorMessage: (secondaryError) => getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.'))");
         expect(refreshHomeSource).toContain("const appError = toAppServiceError(secondaryError, 'Unable to refresh Home details.');");
+        expect(refreshHomeSource).toContain('const socialHomePromise = loadSocialHome(user, summary.home)');
+        expect(refreshHomeSource).toContain('? await socialHomePromise');
+        expect(refreshHomeSource).toContain('const isCurrentHomeLoad = () => (');
+        expect(refreshHomeSource).toContain('currentAuthUserIdRef.current === user.uid');
+        expect(refreshHomeSource).toContain('if (!isCurrentHomeLoad()) return;');
+        expect(refreshHomeSource).toContain('if (summaryResultReturned || hasExistingHome) return;');
+        expect(refreshHomeSource).toContain('onRefresh: (refreshedSummary) => {');
+        expect(refreshHomeSource).toContain('void refreshHome({ forceSecondary: true, preserveCurrentHome: true });');
+        expect(refreshHomeSource).toContain('force: force || forceSecondary');
+        expect(refreshHomeSource).toContain('requestId !== latestSocialRequestId');
+        expect(refreshHomeSource).toContain('partialTeamScope !== latestRequestedSocialScope');
+        expect(refreshHomeSource).toContain('setSocial(socialResult.socialHome);');
         expect(refreshHomeSource).toContain("setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });");
     });
 
     it('surfaces typed, retryable Home load copy for network and permission failures', () => {
         expect(homeSource).toContain("import { toAppServiceError, type AppServiceError } from '../lib/appErrors';");
-        expect(homeSource).toContain("if (error.type === 'network') return 'Unable to load Home while offline. Check your connection and try again.';");
+        expect(homeSource).toContain("if (error.type === 'network') return 'Unable to load Home. The request failed or timed out. Try again.';");
         expect(homeSource).toContain("if (error.type === 'permission') return 'You do not have permission to load this Home data.';");
-        expect(homeSource).toContain("if (error.type === 'network') return 'Unable to refresh Home while offline. Showing the last loaded Home.';");
+        expect(homeSource).toContain("if (error.type === 'network') return 'Unable to refresh Home. The request failed or timed out. Showing the last loaded Home. Try again.';");
         expect(homeSource).toContain("if (error.type === 'permission') return 'Unable to refresh Home because access was denied. Showing the last loaded Home.';");
         expect(homeSource).toContain('function HomeLoadErrorState({ error, onRetry, retrying }');
         expect(homeSource).toContain('aria-label="Retry loading Home"');
@@ -68,14 +84,15 @@ describe('Home async operation contract', () => {
         expect(homeServiceSource).toContain("logger.warn('Schedule hydration failed.', { error: appError });");
         expect(homeServiceSource).toContain("logger.warn('Chat inbox failed.', { error: appError });");
         expect(homeServiceSource).toContain("logger.warn('Fees failed.', { error: appError });");
-        expect(homeServiceSource).toContain('throwIfAllSecondarySlicesFailed(secondaryErrors);');
+        expect(homeServiceSource).toContain("const failedSlice = results.find((result) => result.status === 'rejected');");
+        expect(homeServiceSource).toContain('throw failedSlice.reason;');
         expect(homeServiceSource).toContain('onPartial?.(buildParentHomeModel(partialState));');
     });
 
     it('treats fully swallowed schedule and fee loader failures as real secondary failures', () => {
         expect(scheduleServiceSource).toContain('const results = await Promise.allSettled([');
-        expect(scheduleServiceSource).toContain("if (firstRejected && results.every((result) => result.status === 'rejected')) {");
-        expect(scheduleServiceSource).toContain('throw firstRejected.reason;');
+        expect(scheduleServiceSource).toContain("if (rsvpsResult.status === 'rejected' && (!includeOptionalDetails || results.every((result) => result.status === 'rejected'))) {");
+        expect(scheduleServiceSource).toContain('throw (rsvpsResult as PromiseRejectedResult).reason;');
         expect(legacyDbSource).toContain("if (results.length > 0 && results.every((result) => result.status === 'rejected')) {");
         expect(legacyDbSource).toContain('throw results[0].reason;');
     });

@@ -8,7 +8,9 @@ import {
 import {
     collectionGroup,
     deleteDoc,
+    deleteField,
     doc,
+    getDoc,
     getDocs,
     query,
     serverTimestamp,
@@ -20,6 +22,7 @@ import {
 import { extractMatchBlock } from '../../scripts/validate-firebase-rules-ci.mjs';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+const firestoreIndexes = JSON.parse(readFileSync(new URL('../../firestore.indexes.json', import.meta.url), 'utf8'));
 const collectionGroupBlock = extractMatchBlock(rules, 'match /{path=**}/feeRecipients/{recipientId} {');
 const feeBatchesBlock = extractMatchBlock(rules, 'match /feeBatches/{batchId} {');
 const nestedRecipientBlock = extractMatchBlock(feeBatchesBlock, 'match /feeRecipients/{recipientId} {');
@@ -45,6 +48,18 @@ describe('team fee recipient Firestore rules', () => {
         expect(collectionGroupBlock).not.toContain('request.resource');
     });
 
+    it('declares the native indirect-parent collection-group indexes', () => {
+        const feeRecipientIndexes = firestoreIndexes.indexes
+            .filter((index) => index.collectionGroup === 'feeRecipients')
+            .map((index) => index.fields.map((field) => `${field.fieldPath}:${field.order || field.arrayConfig}`).join(','));
+
+        expect(feeRecipientIndexes).toContain('teamId:ASCENDING,playerKey:ASCENDING');
+        expect(feeRecipientIndexes).toContain('teamId:ASCENDING,playerId:ASCENDING');
+        expect(feeRecipientIndexes).toContain('teamId:ASCENDING,parentUserId:ASCENDING');
+        expect(feeRecipientIndexes).toContain('teamId:ASCENDING,accountUserId:ASCENDING');
+        expect(feeRecipientIndexes).toContain('teamId:ASCENDING,userId:ASCENDING');
+    });
+
     it('requires nested recipient payload identity to match the team and batch path', () => {
         expect(nestedRecipientBlock).toContain('request.resource.data.teamId == teamId');
         expect(nestedRecipientBlock).toContain('request.resource.data.batchId == batchId');
@@ -52,12 +67,27 @@ describe('team fee recipient Firestore rules', () => {
         expect(nestedRecipientBlock).toContain('resource.data.batchId == batchId');
         expect(nestedRecipientBlock).toContain('hasNoPrivateTeamFeeBillingFields(request.resource.data)');
         expect(nestedRecipientBlock).toContain('hasNoIntroducedPrivateTeamFeeBillingFields()');
+        expect(nestedRecipientBlock).toContain('hasNoServerOwnedTeamFeeCheckoutFields(request.resource.data)');
+        expect(nestedRecipientBlock).toContain('hasNoChangedServerOwnedTeamFeeCheckoutFields()');
+        expect(nestedRecipientBlock).toContain('hasNoServerOwnedTeamFeeCheckoutFields(resource.data)');
     });
 
     it('uses the owner/admin-only fee financial state guard for recipient updates', () => {
         expect(rules).toContain('function canWriteTeamFeeFinancialState(teamId)');
         expect(rules).toContain('return isTeamOwnerOrAdmin(teamId);');
         expect(nestedRecipientBlock).toContain('allow update: if canWriteTeamFeeFinancialState(teamId)');
+    });
+
+    it('keeps fee recipient assignment fields immutable after creation', () => {
+        expect(rules).toContain('function hasUnchangedTeamFeeRecipientAssignment()');
+        expect(rules).toContain("'playerId'");
+        expect(rules).toContain("'childId'");
+        expect(rules).toContain("'playerKey'");
+        expect(rules).toContain("'parentUserId'");
+        expect(rules).toContain("'accountUserId'");
+        expect(rules).toContain("'userId'");
+        expect(rules).toContain('affectedKeys().hasAny(assignmentFields)');
+        expect(nestedRecipientBlock).toContain('hasUnchangedTeamFeeRecipientAssignment()');
     });
 
     it('requires financial recipient updates to create a matching actor-attributed audit', () => {
@@ -78,9 +108,21 @@ describe('team fee recipient Firestore rules', () => {
         expect(rules).toContain("'latestAuditActorId'");
         expect(rules).toContain('hasNoPrivateTeamFeeBillingFields(request.resource.data)');
         expect(rules).toContain('hasNoIntroducedPrivateTeamFeeBillingFields()');
-        expect(rules).toContain("request.resource.data.get('stripePaymentIntentId', null) == null");
+        expect(rules).toContain("'adminBilling'");
+        expect(rules).toContain("'adminBillingEntries'");
+        expect(rules).toContain("!request.resource.data.diff(resource.data).affectedKeys().hasAny(privateFields)");
+        expect(rules).toContain('function isClientWritableTeamFeeAdminBilling(data, teamId, batchId, recipientId)');
+        expect(rules).toContain('function hasOnlyClientWritableTeamFeeAdminBillingChanges(teamId, batchId, recipientId)');
         expect(rules).toContain('match /adminBilling/{billingId} {');
-        expect(rules).toContain('allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);');
+        expect(nestedRecipientBlock).toContain('allow read: if isTeamOwnerOrAdmin(teamId);');
+        expect(nestedRecipientBlock).toContain('isClientWritableTeamFeeAdminBilling(request.resource.data, teamId, batchId, recipientId)');
+        expect(nestedRecipientBlock).toContain('hasOnlyClientWritableTeamFeeAdminBillingChanges(teamId, batchId, recipientId)');
+        expect(nestedRecipientBlock).toContain('isClientWritableTeamFeeAdminBilling(resource.data, teamId, batchId, recipientId)');
+    });
+
+    it('keeps exact checkout requests in an Admin-SDK-only attempt document', () => {
+        expect(nestedRecipientBlock).toContain('match /checkoutAttempts/{attemptId} {');
+        expect(nestedRecipientBlock).toContain('allow read, create, update, delete: if false;');
     });
 
     it('allows atomic append-only fee audit entries from the authenticated team admin', () => {
@@ -123,6 +165,17 @@ describe('team fee recipient Firestore rules', () => {
                     parentTeamIds: ['team-a'],
                     parentPlayerKeys: ['team-a::player-a']
                 });
+                await setDoc(doc(firestore, 'users/indirect-parent'), {
+                    email: 'indirect-parent@example.com',
+                    isAdmin: false,
+                    parentPlayerKeys: ['team-a::player-a']
+                });
+                await setDoc(doc(firestore, 'users/parent-b'), {
+                    email: 'parent-b@example.com',
+                    isAdmin: false,
+                    parentTeamIds: ['team-a'],
+                    parentPlayerKeys: ['team-a::player-b']
+                });
             });
         });
 
@@ -131,7 +184,7 @@ describe('team fee recipient Firestore rules', () => {
         });
 
         function authedFirestore(uid, email) {
-            return testEnv.authenticatedContext(uid, { email }).firestore();
+            return testEnv.authenticatedContext(uid, { email, email_verified: true }).firestore();
         }
 
         function recipientRef(firestore, teamId, batchId, recipientId) {
@@ -143,12 +196,38 @@ describe('team fee recipient Firestore rules', () => {
                 teamId,
                 batchId,
                 parentUserId: 'parent-a',
+                accountUserId: 'parent-a',
+                userId: 'parent-a',
                 playerId: 'player-a',
+                childId: 'player-a',
                 playerKey: 'team-a::player-a',
                 status: 'unpaid',
                 amountDueCents: 2500
             };
         }
+
+        const serverOwnedCheckoutFields = {
+            checkoutUrl: 'https://checkout.stripe.com/c/pay/cs_test_123',
+            checkoutURL: 'https://checkout.stripe.com/c/pay/cs_test_123',
+            paymentLink: 'https://checkout.stripe.com/c/pay/cs_test_123',
+            paymentLinkUrl: 'https://checkout.stripe.com/c/pay/cs_test_123',
+            paymentUrl: 'https://checkout.stripe.com/c/pay/cs_test_123',
+            checkoutStatus: 'open',
+            checkoutAttemptToken: 'tok_1234567890abcdef',
+            checkoutAmountCents: 2500,
+            checkoutCreatedAt: 'client-time',
+            checkoutCreationReservationId: 'reservation_1234567890',
+            checkoutCreationStartedAt: 'client-time',
+            checkoutCreationPayerUid: 'parent-a',
+            checkoutCreationAmountCents: 2500,
+            checkoutCreationRequest: { version: 1, idempotencyKey: 'forged' },
+            paymentProvider: 'stripe',
+            stripePaymentStatus: 'unpaid',
+            stripePaymentAmountCents: 2500,
+            stripeCheckoutSessionId: 'cs_test_123',
+            checkoutSessionId: 'cs_test_123',
+            lastPaidStripeCheckoutSessionId: 'cs_test_paid'
+        };
 
         async function writeAuditedUpdate(firestore, teamId, batchId, recipientId, actorId, update, auditOverrides = {}) {
             const batch = writeBatch(firestore);
@@ -177,6 +256,60 @@ describe('team fee recipient Firestore rules', () => {
             });
         }
 
+        it('denies nested and subcollection provider references while preserving bounded offline reconciliation', async () => {
+            const adminDb = authedFirestore('admin-a', 'admin-a@example.com');
+            const recipientId = 'provider-boundary';
+            const parentRef = recipientRef(adminDb, 'team-a', 'batch-a', recipientId);
+            const billingRef = doc(adminDb, `teams/team-a/feeBatches/batch-a/feeRecipients/${recipientId}/adminBilling/latest`);
+
+            await assertFails(setDoc(parentRef, {
+                ...recipientPayload(),
+                adminBilling: { stripePaymentIntentId: 'provider-reference' }
+            }));
+            await seedRecipient(parentRef.path, recipientPayload());
+            await assertFails(updateDoc(parentRef, {
+                adminBilling: { stripePaymentIntentId: 'provider-reference' }
+            }));
+
+            await assertSucceeds(setDoc(billingRef, {
+                type: 'offline_payment',
+                teamId: 'team-a',
+                batchId: 'batch-a',
+                recipientId,
+                amountPaidCents: 2500,
+                paidAt: '2026-08-21',
+                note: 'Check received',
+                recordedBy: 'admin-a',
+                updatedAt: serverTimestamp()
+            }));
+            await assertSucceeds(updateDoc(billingRef, { note: 'Check reconciled' }));
+
+            for (const field of [
+                'stripePaymentIntentId',
+                'stripeChargeId',
+                'stripeCheckoutSessionId',
+                'stripeCustomerId',
+                'stripeEventId',
+                'stripeRefundId'
+            ]) {
+                await assertFails(updateDoc(billingRef, { [field]: 'provider-reference' }));
+            }
+            await assertFails(updateDoc(billingRef, {
+                note: { stripePaymentIntentId: 'nested-provider-reference' }
+            }));
+
+            await seedRecipient(billingRef.path, {
+                type: 'stripe_checkout_paid',
+                provider: 'stripe',
+                teamId: 'team-a',
+                batchId: 'batch-a',
+                recipientId,
+                stripePaymentIntentId: 'server-reference'
+            });
+            await assertFails(updateDoc(billingRef, { note: 'Client mutation denied' }));
+            await assertFails(deleteDoc(billingRef));
+        });
+
         it('denies cross-team create, update, and delete even when embedded teamId names the attacker team', async () => {
             const attackerDb = authedFirestore('admin-b', 'admin-b@example.com');
             const targetRef = recipientRef(attackerDb, 'team-a', 'batch-a', 'cross-team');
@@ -203,6 +336,242 @@ describe('team fee recipient Firestore rules', () => {
             await assertFails(updateDoc(validRef, { status: 'paid' }));
             await assertSucceeds(writeAuditedUpdate(ownerDb, 'team-a', 'batch-a', 'valid', 'owner-a', { status: 'paid' }));
             await assertSucceeds(deleteDoc(validRef));
+        });
+
+        it('keeps checkout lifecycle and Stripe session fields server-owned for every client actor', async () => {
+            const actors = [
+                ['owner-a', 'owner-a@example.com'],
+                ['admin-a', 'admin-a@example.com'],
+                ['parent-a', 'parent-a@example.com'],
+                ['unrelated-a', 'unrelated-a@example.com']
+            ];
+
+            for (const [field, value] of Object.entries(serverOwnedCheckoutFields)) {
+                for (const [uid, email] of actors) {
+                    const actorDb = authedFirestore(uid, email);
+                    const createId = `create-${field}-${uid}`;
+                    await assertFails(setDoc(
+                        recipientRef(actorDb, 'team-a', 'batch-a', createId),
+                        { ...recipientPayload(), [field]: value }
+                    ));
+
+                    const updateId = `update-${field}-${uid}`;
+                    await seedRecipient(
+                        `teams/team-a/feeBatches/batch-a/feeRecipients/${updateId}`,
+                        recipientPayload()
+                    );
+                    await assertFails(updateDoc(
+                        recipientRef(actorDb, 'team-a', 'batch-a', updateId),
+                        { [field]: value }
+                    ));
+
+                    const legacyId = `legacy-${field}-${uid}`;
+                    await seedRecipient(
+                        `teams/team-a/feeBatches/batch-a/feeRecipients/${legacyId}`,
+                        { ...recipientPayload(), [field]: value }
+                    );
+                    await assertFails(updateDoc(
+                        recipientRef(actorDb, 'team-a', 'batch-a', legacyId),
+                        { [field]: null }
+                    ));
+                    await assertFails(updateDoc(
+                        recipientRef(actorDb, 'team-a', 'batch-a', legacyId),
+                        { [field]: deleteField() }
+                    ));
+                }
+            }
+        }, 30000);
+
+        it('denies every client role access to exact team-fee checkout attempts', async () => {
+            const attemptPath = 'teams/team-a/feeBatches/batch-a/feeRecipients/private-attempt/checkoutAttempts/current';
+            await seedRecipient(
+                'teams/team-a/feeBatches/batch-a/feeRecipients/private-attempt',
+                recipientPayload()
+            );
+            await seedRecipient(attemptPath, {
+                reservationId: 'reservation-private',
+                payerUid: 'parent-a',
+                amountCents: 2500,
+                checkoutCreationRequest: {
+                    idempotencyKey: 'private-key',
+                    stripeParams: { customer_email: 'parent-a@example.com' }
+                }
+            });
+
+            for (const [uid, email] of [
+                ['owner-a', 'owner-a@example.com'],
+                ['admin-a', 'admin-a@example.com'],
+                ['parent-a', 'parent-a@example.com'],
+                ['unrelated-a', 'unrelated-a@example.com']
+            ]) {
+                const attemptRef = doc(authedFirestore(uid, email), attemptPath);
+                await assertFails(getDoc(attemptRef));
+                await assertFails(setDoc(attemptRef, { reservationId: 'forged' }));
+                await assertFails(updateDoc(attemptRef, { payerUid: uid }));
+                await assertFails(deleteDoc(attemptRef));
+            }
+        });
+
+        it('denies owner and admin deletion while an active checkout session is present', async () => {
+            for (const [uid, email] of [
+                ['owner-a', 'owner-a@example.com'],
+                ['admin-a', 'admin-a@example.com']
+            ]) {
+                const recipientId = `active-checkout-${uid}`;
+                await seedRecipient(
+                    `teams/team-a/feeBatches/batch-a/feeRecipients/${recipientId}`,
+                    {
+                        ...recipientPayload(),
+                        checkoutStatus: 'open',
+                        checkoutUrl: 'https://checkout.stripe.com/c/pay/cs_test_active',
+                        stripeCheckoutSessionId: 'cs_test_active'
+                    }
+                );
+
+                await assertFails(deleteDoc(recipientRef(
+                    authedFirestore(uid, email),
+                    'team-a',
+                    'batch-a',
+                    recipientId
+                )));
+            }
+        });
+
+        it('preserves owner/admin fee creation and non-checkout mutations', async () => {
+            for (const [uid, email] of [
+                ['owner-a', 'owner-a@example.com'],
+                ['admin-a', 'admin-a@example.com']
+            ]) {
+                const actorDb = authedFirestore(uid, email);
+                const recipientId = `normal-${uid}`;
+                await assertSucceeds(setDoc(
+                    recipientRef(actorDb, 'team-a', 'batch-a', recipientId),
+                    recipientPayload()
+                ));
+                await assertSucceeds(updateDoc(
+                    recipientRef(actorDb, 'team-a', 'batch-a', recipientId),
+                    { note: 'Allowed non-checkout update' }
+                ));
+                await assertSucceeds(writeAuditedUpdate(
+                    actorDb,
+                    'team-a',
+                    'batch-a',
+                    recipientId,
+                    uid,
+                    { amountDueCents: 2000, status: 'partial' }
+                ));
+
+                const legacyId = `legacy-compatible-${uid}`;
+                await seedRecipient(
+                    `teams/team-a/feeBatches/batch-a/feeRecipients/${legacyId}`,
+                    { ...recipientPayload(), ...serverOwnedCheckoutFields }
+                );
+                await assertSucceeds(updateDoc(
+                    recipientRef(actorDb, 'team-a', 'batch-a', legacyId),
+                    { note: 'Protected legacy state remains unchanged' }
+                ));
+            }
+        });
+
+        it('denies owner and admin changes or removals of every recipient assignment field', async () => {
+            const assignmentFields = {
+                playerId: 'player-b',
+                childId: 'player-b',
+                playerKey: 'team-a::player-b',
+                parentUserId: 'parent-b',
+                accountUserId: 'parent-b',
+                userId: 'parent-b'
+            };
+
+            for (const [uid, email] of [
+                ['owner-a', 'owner-a@example.com'],
+                ['admin-a', 'admin-a@example.com']
+            ]) {
+                const actorDb = authedFirestore(uid, email);
+                for (const [field, retargetedValue] of Object.entries(assignmentFields)) {
+                    const recipientId = `immutable-${uid}-${field}`;
+                    await seedRecipient(
+                        `teams/team-a/feeBatches/batch-a/feeRecipients/${recipientId}`,
+                        recipientPayload()
+                    );
+                    const targetRef = recipientRef(actorDb, 'team-a', 'batch-a', recipientId);
+
+                    await assertFails(updateDoc(targetRef, { [field]: retargetedValue }));
+                    await assertFails(updateDoc(targetRef, { [field]: deleteField() }));
+                }
+            }
+
+            const legacyRecipientId = 'immutable-new-assignment-field';
+            const { accountUserId: omittedAccountUserId, ...legacyPayload } = recipientPayload();
+            await seedRecipient(
+                `teams/team-a/feeBatches/batch-a/feeRecipients/${legacyRecipientId}`,
+                legacyPayload
+            );
+            await assertFails(updateDoc(
+                recipientRef(
+                    authedFirestore('owner-a', 'owner-a@example.com'),
+                    'team-a',
+                    'batch-a',
+                    legacyRecipientId
+                ),
+                { accountUserId: omittedAccountUserId }
+            ));
+        });
+
+        it('denies reassignment mixed with an otherwise valid audited balance update', async () => {
+            for (const [uid, email] of [
+                ['owner-a', 'owner-a@example.com'],
+                ['admin-a', 'admin-a@example.com']
+            ]) {
+                const recipientId = `audited-reassignment-${uid}`;
+                await seedRecipient(
+                    `teams/team-a/feeBatches/batch-a/feeRecipients/${recipientId}`,
+                    recipientPayload()
+                );
+
+                await assertFails(writeAuditedUpdate(
+                    authedFirestore(uid, email),
+                    'team-a',
+                    'batch-a',
+                    recipientId,
+                    uid,
+                    { parentUserId: 'parent-b', amountDueCents: 2000 },
+                    { changedFields: ['amountDueCents'] }
+                ));
+            }
+        });
+
+        it('preserves the original parent boundary after a rejected reassignment', async () => {
+            const recipientId = 'parent-boundary-after-denial';
+            await seedRecipient(
+                `teams/team-a/feeBatches/batch-a/feeRecipients/${recipientId}`,
+                recipientPayload()
+            );
+            const ownerRef = recipientRef(
+                authedFirestore('owner-a', 'owner-a@example.com'),
+                'team-a',
+                'batch-a',
+                recipientId
+            );
+
+            await assertFails(updateDoc(ownerRef, {
+                parentUserId: 'parent-b',
+                playerId: 'player-b',
+                childId: 'player-b',
+                playerKey: 'team-a::player-b'
+            }));
+            await assertSucceeds(getDoc(recipientRef(
+                authedFirestore('parent-a', 'parent-a@example.com'),
+                'team-a',
+                'batch-a',
+                recipientId
+            )));
+            await assertFails(getDoc(recipientRef(
+                authedFirestore('parent-b', 'parent-b@example.com'),
+                'team-a',
+                'batch-a',
+                recipientId
+            )));
         });
 
         it('denies parent fee amount/status tampering while allowing owner and admin updates', async () => {
@@ -358,6 +727,13 @@ describe('team fee recipient Firestore rules', () => {
                 collectionGroup(parentDb, 'feeRecipients'),
                 where('teamId', '==', 'team-a'),
                 where('parentUserId', '==', 'parent-a')
+            )));
+
+            const indirectParentDb = authedFirestore('indirect-parent', 'indirect-parent@example.com');
+            await assertSucceeds(getDocs(query(
+                collectionGroup(indirectParentDb, 'feeRecipients'),
+                where('teamId', '==', 'team-a'),
+                where('playerKey', '==', 'team-a::player-a')
             )));
 
             const adminDb = authedFirestore('admin-a', 'admin-a@example.com');

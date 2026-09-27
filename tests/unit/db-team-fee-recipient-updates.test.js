@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { assertTeamFeeRecipientLimit, normalizeTeamFeeRecipientRecords } from '../../js/team-fee-batch-limits.js';
 
 const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
 
@@ -35,12 +36,14 @@ function buildCreateTeamFeeBatch({ db = {}, doc, collection, writeBatch, serverT
         .slice(start, end)
         .replace('export async function createTeamFeeBatch', 'return async function createTeamFeeBatch');
 
-    return new Function('db', 'doc', 'collection', 'writeBatch', 'serverTimestamp', functionSource)(
+    return new Function('db', 'doc', 'collection', 'writeBatch', 'serverTimestamp', 'assertTeamFeeRecipientLimit', 'normalizeTeamFeeRecipientRecords', functionSource)(
         db,
         doc,
         collection,
         writeBatch,
-        serverTimestamp
+        serverTimestamp,
+        assertTeamFeeRecipientLimit,
+        normalizeTeamFeeRecipientRecords
     );
 }
 
@@ -116,6 +119,59 @@ describe('createTeamFeeBatch collection mode persistence', () => {
         await expect(createTeamFeeBatch('team-1', { ...feeDraft, collectionMode: 'online_stripe' }, [{ playerName: 'Missing player id' }]))
             .rejects.toThrow('Online Stripe collection requires roster recipients with player IDs.');
         expect(commit).not.toHaveBeenCalled();
+    });
+
+    it('commits one batch document plus 499 distinct recipient documents', async () => {
+        const recipientsAtLimit = Array.from({ length: 499 }, (_, index) => ({
+            playerId: `player-${index + 1}`,
+            playerName: `Player ${index + 1}`
+        }));
+        const { createTeamFeeBatch, setCalls, commit, writeBatch } = buildCreateTeamFeeBatchHarness();
+
+        await expect(createTeamFeeBatch('team-1', feeDraft, recipientsAtLimit, { uid: 'admin-1' }))
+            .resolves.toEqual({ id: 'batch-1' });
+
+        expect(writeBatch).toHaveBeenCalledTimes(1);
+        expect(commit).toHaveBeenCalledTimes(1);
+        expect(setCalls).toHaveLength(500);
+        expect(setCalls[0].payload.recipientCount).toBe(499);
+        expect(new Set(setCalls.slice(1).map(({ ref }) => ref.path))).toHaveLength(499);
+    });
+
+    it('rejects 500 distinct recipients before allocating a Firestore batch', async () => {
+        const oversizedRecipients = Array.from({ length: 500 }, (_, index) => ({
+            playerId: `player-${index + 1}`
+        }));
+        const { createTeamFeeBatch, setCalls, commit, doc, collection, writeBatch } = buildCreateTeamFeeBatchHarness();
+
+        await expect(createTeamFeeBatch('team-1', feeDraft, oversizedRecipients, { uid: 'admin-1' }))
+            .rejects.toThrow('A fee batch can include at most 499 recipients. Split the roster into smaller fee batches and try again.');
+
+        expect(collection).not.toHaveBeenCalled();
+        expect(doc).not.toHaveBeenCalled();
+        expect(writeBatch).not.toHaveBeenCalled();
+        expect(setCalls).toHaveLength(0);
+        expect(commit).not.toHaveBeenCalled();
+    });
+
+    it('normalizes and deduplicates recipient IDs before evaluating the limit', async () => {
+        const recipientsWithDuplicate = Array.from({ length: 499 }, (_, index) => ({
+            playerId: `player-${index + 1}`,
+            playerName: `Player ${index + 1}`
+        }));
+        recipientsWithDuplicate.push({ playerId: '  player-1  ', playerName: 'Duplicate Player' });
+        const { createTeamFeeBatch, setCalls, commit } = buildCreateTeamFeeBatchHarness();
+
+        await expect(createTeamFeeBatch('team-1', feeDraft, recipientsWithDuplicate, { uid: 'admin-1' }))
+            .resolves.toEqual({ id: 'batch-1' });
+
+        expect(commit).toHaveBeenCalledTimes(1);
+        expect(setCalls).toHaveLength(500);
+        expect(setCalls[0].payload.recipientCount).toBe(499);
+        expect(setCalls[1].payload).toEqual(expect.objectContaining({
+            playerId: 'player-1',
+            playerName: 'Player 1'
+        }));
     });
 });
 

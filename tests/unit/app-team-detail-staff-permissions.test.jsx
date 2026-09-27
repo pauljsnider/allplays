@@ -20,7 +20,7 @@ const teamDetailMocks = vi.hoisted(() => ({
     revokeVideographerAccessForApp: vi.fn(),
     inviteTeamAdminForApp: vi.fn(),
     saveTeamScheduleNotificationsForApp: vi.fn(),
-    buildPublicTeamGamesIcsUrl: vi.fn((teamId) => `https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs?teamId=${encodeURIComponent(teamId)}`),
+    buildPublicTeamGamesIcsUrl: vi.fn((teamId) => `https://us-central1-game-flow-c6311.cloudfunctions.net/publicTeamGamesIcs?teamId=${encodeURIComponent(teamId)}`),
     canExposePublicFanFeed: vi.fn(() => false)
 }));
 const publicActionMocks = vi.hoisted(() => ({
@@ -146,6 +146,11 @@ async function clickButton(container, text) {
     await act(async () => {
         button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     });
+    if (text === 'More') {
+        await act(async () => {
+            await vi.dynamicImportSettled();
+        });
+    }
     await flush();
 }
 

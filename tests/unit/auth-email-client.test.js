@@ -6,7 +6,7 @@ const callableMocks = vi.hoisted(() => ({
     queueInviteSignInEmail: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=22', () => ({
+vi.mock('../../js/firebase.js?v=33', () => ({
     functions: { project: 'test' },
     httpsCallable: vi.fn((_functions, name) => callableMocks[name])
 }));
@@ -36,6 +36,18 @@ describe('Resend-backed authentication email client', () => {
         await queueCurrentUserVerificationEmail('native-id-token');
 
         expect(callableMocks.queueEmailVerification).toHaveBeenCalledWith({ idToken: 'native-id-token' });
+    });
+
+    it('passes an allowlisted verification continuation separately from the native token', async () => {
+        callableMocks.queueEmailVerification.mockResolvedValue({ data: { queued: true } });
+        const viewerRoute = '/live-game-diamond-v2.html?teamId=team%2Fone&gameId=game+one&replay=true';
+
+        await queueCurrentUserVerificationEmail('native-id-token', viewerRoute);
+
+        expect(callableMocks.queueEmailVerification).toHaveBeenCalledWith({
+            idToken: 'native-id-token',
+            next: viewerRoute
+        });
     });
 
     it('normalizes invite codes for server-side ownership validation', async () => {

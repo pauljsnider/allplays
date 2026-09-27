@@ -2,7 +2,7 @@ import {
     sanitizeTelemetryKey,
     sanitizeTelemetryProperties,
     sanitizeTelemetryRoute
-} from './telemetry-utils.js?v=2';
+} from './telemetry-utils.js?v=3';
 import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
 
 const TELEMETRY_VERSION = '2.0.0';

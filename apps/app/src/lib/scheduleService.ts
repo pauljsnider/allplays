@@ -1,3 +1,5 @@
+import { CapacitorHttp } from '@capacitor/core';
+
 import {
   getAssignmentClaims,
   claimOpenOfficiatingSlot,
@@ -8,12 +10,15 @@ import {
   getPracticeSession,
   getPracticeSessionByEvent,
   getPracticeSessions,
+  getPublicTeamCalendarEvents,
   getPlayers,
   getMyRsvps,
   getRsvps,
   getRsvpBreakdownByPlayer,
   getTeam,
+  getDelegatedTeamContext,
   getStaffTeams,
+  getOfficialLinkedTeamIds,
   addGame,
   addPractice,
   buildLegacyTournamentGameDocuments,
@@ -44,7 +49,6 @@ import {
   db,
   doc,
   collection,
-  collectionGroup,
   getDoc,
   getDocs,
   query,
@@ -59,10 +63,11 @@ import {
   Timestamp
 } from './adapters/legacyScheduleDb';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
+import { isRetryableReadTransportError, raceFirstSuccessfulRead } from './adapters/legacyHedgedRead';
+import { getCalendarOccurrenceTrackingId, isCalendarOccurrenceTracked } from './calendarOccurrence';
 import {
   sendPublicRsvpReminderEmails,
   normalizeOfficialLinkEmail,
-  normalizeOfficialLinkPhone,
   getAssignedOfficiatingSlots,
   getOpenOfficiatingSlots,
   expandRecurrence,
@@ -93,9 +98,12 @@ import {
   matchesTournamentScheduleGroup,
   type TournamentScheduleGroupQuery
 } from './tournamentScheduleStandings';
-import { loadProfileDocument, saveProfileDocument } from './profileService';
+import { loadManagedTeamsFromNativeCallable, loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import { callNativeFirebaseFunction } from './nativeCallable';
 import { startUxTimer } from './uxTiming';
+import { isNativeRuntime } from './nativeRuntime';
+import { listNativeFirestoreCollectionPages } from './nativeFirestoreListPager';
 import {
   countOpenScheduleAssignments,
   getCalendarLocationDetail,
@@ -140,17 +148,45 @@ import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeR
 import { mapFirestoreDocument, mapScheduleEventDocument, mapScheduleEventDocuments, mapScheduleEventRecord, mapScheduleEventRecords } from './firestore/mappers';
 import type { FirestoreDecodedDocument, FirestoreDocument as NativeFirestoreDocument, ScheduleEventFirestoreRecord } from './firestore/types';
 import type { AuthUser } from './types';
+import {
+  getReplayArchiveState,
+  getReplayTimestampComponents,
+  hasReplayArchiveEvidence,
+  hasReplayVideoSourceEvidence,
+  isCompletedGameForReplay,
+  legacyReplayArchiveFieldNames,
+  normalizeStoredYouTubeReplay,
+  normalizeYouTubeReplayUrl,
+  type ReplayArchiveState,
+  type YouTubeReplayVideo
+} from './youtubeReplay';
 
 const buildPracticePacketCompletionPayloadBase = buildPracticePacketCompletionPayload;
 
 const primaryDataTimeoutMs = 5000;
+const restReadHedgeDelayMs = 750;
+// Managed-team discovery can fan out across owner, admin, and legacy coach
+// grants. Cold production fixture audits take about 11 seconds, so keep this
+// one operation inside the 25-second chooser contract without raising the
+// timeout for every schedule read.
+const staffTeamDiscoveryTimeoutMs = 15000;
+const staffTeamHttpHedgeDelayMs = 2000;
+const officialTeamDiscoveryTimeoutMs = 12000;
 const MAX_SCHEDULE_TRACKER_CONFIG_OPTIONS = 100;
+const MAX_ACTIVE_GAME_LIVE_EVENTS = 20;
 // Per-team schedule builds are network-bound (team + games + practiceSessions
 // reads each); 3 workers made a 5-team account load in two serialized waves
 // (~18 sequential-ish Firestore round trips measured via the parent schedule
 // service load timer). 6 covers typical multi-team accounts in one wave.
 const parentScheduleTeamConcurrency = 6;
 const parentSchedulePlayerConcurrency = 8;
+// Keep React schedule fan-out aligned with the shared external calendar
+// importer. The importer queues work above this active limit, so callers must
+// not turn queued feeds into local failures by starting an unbounded burst
+// across multiple teams.
+const calendarImportConcurrency = 50;
+const calendarImportWaiters: Array<() => void> = [];
+let activeCalendarImports = 0;
 const scheduleHydrationCacheTtlMs = 30 * 1000;
 const parentHomeHydrationLookAheadMs = 14 * 24 * 60 * 60 * 1000;
 const parentHomeHydrationLookBehindMs = 12 * 60 * 60 * 1000;
@@ -304,6 +340,49 @@ function getScheduleEventHydrationCacheKey(teamId: string, eventId: string) {
   return `event-details:${teamId}:${eventId}`;
 }
 
+type RideRequestReadScope = {
+  requesterUserId: string;
+  childIds: string[];
+  canManageTeamRequests: boolean;
+};
+
+const rideOfferCacheKeysByEvent = new Map<string, Set<string>>();
+
+function normalizeRideRequestReadScope(scope: Partial<RideRequestReadScope> = {}): RideRequestReadScope {
+  return {
+    requesterUserId: compactString(scope.requesterUserId),
+    childIds: uniqueNonEmptyStrings(scope.childIds || []).sort(),
+    canManageTeamRequests: scope.canManageTeamRequests === true
+  };
+}
+
+function getScheduleEventRideOffersCacheKey(teamId: string, eventId: string, scope?: Partial<RideRequestReadScope>) {
+  const baseKey = `${getScheduleEventHydrationCacheKey(teamId, eventId)}:ride-offers`;
+  if (!scope) return baseKey;
+  const normalized = normalizeRideRequestReadScope(scope);
+  return `${baseKey}:${normalized.canManageTeamRequests ? 'manager' : 'parent'}:${normalized.requesterUserId}:${normalized.childIds.join(',')}`;
+}
+
+function getScheduleEventAssignmentClaimsCacheKey(teamId: string, eventId: string) {
+  return `${getScheduleEventHydrationCacheKey(teamId, eventId)}:assignment-claims`;
+}
+
+function invalidateScheduleEventRideOffersCache(event: Pick<ParentScheduleEvent, 'teamId' | 'id'>) {
+  const baseKey = getScheduleEventRideOffersCacheKey(event.teamId, event.id);
+  invalidateCachedAppData(baseKey);
+  (rideOfferCacheKeysByEvent.get(baseKey) || new Set()).forEach((cacheKey) => invalidateCachedAppData(cacheKey));
+  rideOfferCacheKeysByEvent.delete(baseKey);
+}
+
+function invalidateScheduleEventAssignmentClaimsCache(event: Pick<ParentScheduleEvent, 'teamId' | 'id'>) {
+  invalidateCachedAppData(getScheduleEventAssignmentClaimsCacheKey(event.teamId, event.id));
+}
+
+function invalidateScheduleEventOptionalCaches(event: Pick<ParentScheduleEvent, 'teamId' | 'id'>) {
+  invalidateScheduleEventRideOffersCache(event);
+  invalidateScheduleEventAssignmentClaimsCache(event);
+}
+
 function invalidateParentScheduleCaches(
   user: AuthUser | null | undefined,
   event?: Pick<ParentScheduleEvent, 'teamId' | 'id'> | null
@@ -317,12 +396,14 @@ function invalidateParentScheduleCaches(
   const eventId = compactString(event?.id);
   if (teamId && eventId) {
     invalidateCachedAppData(getScheduleEventHydrationCacheKey(teamId, eventId));
+    invalidateScheduleEventOptionalCaches({ teamId, id: eventId });
   }
 }
 // Default games window for schedule views: ~13 months covers the current and
 // previous season so the "Past Events" filter still shows recent history before
 // an explicit full-history load. Tune here if season length assumptions change.
 const defaultScheduleHistoryWindowMs = 400 * 24 * 60 * 60 * 1000;
+const defaultCalendarLookAheadMs = 730 * 24 * 60 * 60 * 1000;
 const logger = createLogger('schedule-service');
 type GameDayLineupPublishModule = typeof import('./gameDayLineupPublish');
 
@@ -389,10 +470,15 @@ export type ParentScheduleLoadOptions = {
   expandStaffPlayers?: boolean;
   /** Restrict access resolution and event loading to one explicitly requested team. */
   targetTeamId?: string;
+  /** Internal game scope used to verify a delegated all-confirmed grant. */
+  delegatedGameId?: string;
   /** Load the team's full game history instead of the default recent window (#2034). */
   includePastGames?: boolean;
   scheduleRangeByTeam?: ScheduleDateRangeByTeam;
   parentScope?: ParentScheduleScope;
+  /** Request-scoped native Home loaders shared with chat to avoid duplicate profile/access reads. */
+  nativeProfileLoader?: () => Promise<Record<string, unknown>>;
+  nativeStaffTeamsLoader?: () => Promise<{ teams: any[]; isPartial: boolean }>;
   /** Stream the resolved player/team shell and completed team schedules while the full load continues. */
   onPartial?: (result: ParentScheduleLoadResult) => void;
 };
@@ -401,6 +487,7 @@ export type OfficialAssignmentsAccess = {
   hasAccess: boolean;
   teamIds: string[];
   teamCount: number;
+  isPartial: boolean;
 };
 
 export type OfficialAssignmentItem = {
@@ -408,6 +495,7 @@ export type OfficialAssignmentItem = {
   teamId: string;
   teamName: string;
   gameId: string;
+  sharedGamePath?: string;
   slotId: string;
   position: string;
   status: string;
@@ -425,6 +513,8 @@ export type OfficialAssignmentsResult = OfficialAssignmentsAccess & {
 export type ParentScheduleEventDetailLoadOptions = ParentScheduleLoadOptions & {
   teamId: string;
   eventId: string;
+  /** Exact bounded shared-game document path for opaque sharedh_ route ids. */
+  sharedGamePath?: string;
 };
 
 export type ParentPlayerScheduleLoadOptions = ParentScheduleLoadOptions & {
@@ -570,7 +660,10 @@ type LiveScoreUpdateResult = GameScoreSnapshot & {
   createdBy: string;
   createdByName: string;
   createdAt: Date;
+  committedLifecycle: { liveStatus: 'live' } | null;
 };
+
+type LiveScoreEventPayload = Omit<LiveScoreUpdateResult, 'committedLifecycle'>;
 
 export type ScheduleHomeScoringPlayer = {
   id: string;
@@ -608,6 +701,7 @@ export type PlayerGameStatResult = GameScoreSnapshot & {
   trackerEventId: string;
   liveEventId: string;
   liveEvent: Record<string, unknown>;
+  committedLifecycle: { liveStatus: 'live' } | null;
 };
 
 export type UndoPlayerGameStatInput = {
@@ -646,6 +740,7 @@ export type PlayerScoringStatResult = GameScoreSnapshot & {
   value: 2;
   playerPoints: number;
   liveEvent: Record<string, unknown>;
+  committedLifecycle: { liveStatus: 'live' } | null;
 };
 
 export type CancelScheduledGameResult = {
@@ -958,10 +1053,6 @@ function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryD
   });
 }
 
-function isNativeRuntime() {
-  return typeof window !== 'undefined' && window.location.protocol === 'capacitor:';
-}
-
 function getProjectId() {
   const projectId = firebaseAuth.app?.options?.projectId;
   if (!projectId) {
@@ -974,8 +1065,8 @@ function getFirestoreBaseUrl() {
   return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(getProjectId())}/databases/(default)/documents`;
 }
 
-async function getNativeHeaders(requestUrl: string) {
-  const token = await getNativeAuthIdToken(true);
+async function getNativeHeaders(requestUrl: string, forceRefresh = false) {
+  const token = await getNativeAuthIdToken(forceRefresh);
   if (!token) {
     throw new Error('Native auth token is unavailable.');
   }
@@ -989,13 +1080,19 @@ async function getNativeHeaders(requestUrl: string) {
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
   const url = `${getFirestoreBaseUrl()}${path}`;
   const runRequest = async () => {
-    const response = await withTimeout(fetch(url, {
+    const method = String(init.method || 'GET').toUpperCase();
+    const isReadOnly = method === 'GET' || path.includes(':runQuery');
+    const execute = async (forceRefresh: boolean) => withTimeout(fetch(url, {
       ...init,
       headers: {
-        ...(await getNativeHeaders(url)),
+        ...(await getNativeHeaders(url, forceRefresh)),
         ...(init.headers || {})
       }
     }), 'Firestore REST request');
+    let response = await execute(!isReadOnly);
+    if (response.status === 401) {
+      response = await execute(true);
+    }
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
@@ -1033,25 +1130,33 @@ async function nativeGetDocument(path: string) {
   try {
     return mapFirestoreDocument(await nativeFirestoreRequest(`/${path}`) as NativeFirestoreDocument);
   } catch (error: any) {
-    const message = String(error?.message || '').toLowerCase();
-    if (error?.status === 404 || message.includes('not_found') || message.includes('not found')) {
+    if (isNativeDocumentNotFound(error)) {
       return null;
     }
     throw error;
   }
 }
 
-async function nativeListCollection(path: string, options: { pageSize?: number; orderBy?: string } = {}) {
+function isNativeDocumentNotFound(error: unknown) {
+  const message = String((error as any)?.message || '').toLowerCase();
+  return (error as any)?.status === 404 || message.includes('not_found') || message.includes('not found');
+}
+
+async function nativeListCollection(path: string, options: { pageSize?: number; orderBy?: string; stopAfterFullPage?: boolean } = {}) {
   const requestedPageSize = Number(options.pageSize);
   const pageSize = Number.isFinite(requestedPageSize)
     ? Math.min(Math.max(Math.floor(requestedPageSize), 1), 100)
     : null;
-  const params = new URLSearchParams();
-  if (pageSize) params.set('pageSize', String(pageSize));
-  if (options.orderBy) params.set('orderBy', options.orderBy);
-  const queryString = params.size ? `?${params.toString()}` : '';
-  const payload = await nativeFirestoreRequest(`/${path}${queryString}`);
-  return ((payload.documents || []) as NativeFirestoreDocument[])
+  const documents = await listNativeFirestoreCollectionPages<NativeFirestoreDocument>(
+    path,
+    nativeFirestoreRequest,
+    {
+      ...(pageSize ? { pageSize } : {}),
+      ...(options.stopAfterFullPage ? { stopAfterFullPage: true } : {}),
+      ...(options.orderBy ? { orderBy: options.orderBy } : {})
+    }
+  );
+  return documents
     .map((document) => mapFirestoreDocument(document))
     .filter(Boolean) as FirestoreDocument[];
 }
@@ -1091,8 +1196,11 @@ async function nativeGetScheduleEventDocument(path: string): Promise<ScheduleEve
 }
 
 async function nativeListScheduleEventDocuments(path: string): Promise<ScheduleEventFirestoreRecord[]> {
-  const payload = await nativeFirestoreRequest(`/${path}`);
-  return mapScheduleEventDocuments((payload.documents || []) as NativeFirestoreDocument[]);
+  const documents = await listNativeFirestoreCollectionPages<NativeFirestoreDocument>(
+    path,
+    nativeFirestoreRequest
+  );
+  return mapScheduleEventDocuments(documents);
 }
 
 async function nativeQueryScheduleEventDocuments(teamId: string, range: ScheduleDateRange): Promise<ScheduleEventFirestoreRecord[]> {
@@ -1138,6 +1246,48 @@ async function nativeQueryScheduleEventDocuments(teamId: string, range: Schedule
     : [];
 }
 
+async function nativeQueryPracticeSessionDocuments(teamId: string, range: ScheduleDateRange): Promise<FirestoreDocument[]> {
+  const filters = [
+    range.startDate
+      ? {
+          fieldFilter: {
+            field: { fieldPath: 'date' },
+            op: 'GREATER_THAN_OR_EQUAL',
+            value: encodeFirestoreValue(range.startDate)
+          }
+        }
+      : null,
+    range.endDate
+      ? {
+          fieldFilter: {
+            field: { fieldPath: 'date' },
+            op: 'LESS_THAN_OR_EQUAL',
+            value: encodeFirestoreValue(range.endDate)
+          }
+        }
+      : null
+  ].filter(Boolean) as Array<Record<string, unknown>>;
+  const payload = await nativeFirestoreRequest(`/teams/${encodeURIComponent(teamId)}:runQuery`, {
+    method: 'POST',
+    body: JSON.stringify({
+      structuredQuery: {
+        from: [{ collectionId: 'practiceSessions' }],
+        where: {
+          compositeFilter: {
+            op: 'AND',
+            filters
+          }
+        },
+        orderBy: [{ field: { fieldPath: 'date' }, direction: 'DESCENDING' }]
+      }
+    })
+  });
+
+  return Array.isArray(payload)
+    ? payload.map((entry) => mapFirestoreDocument(entry?.document as NativeFirestoreDocument)).filter(Boolean) as FirestoreDocument[]
+    : [];
+}
+
 async function nativeQuerySharedTournamentScheduleDocuments(
   teamId: string,
   groups: TournamentScheduleGroupQuery[]
@@ -1176,7 +1326,9 @@ async function nativeQuerySharedTournamentScheduleDocuments(
       const projected = decoded
         ? projectSharedGameForTeam({ ...decoded, _sharedGamePath: documentPath }, teamId)
         : null;
-      const game = projected ? mapScheduleEventRecord(projected, compactString(projected.id)) : null;
+      const game = projected
+        ? mapScheduleEventRecord({ ...projected, isPublicProjection: false }, compactString(projected.id))
+        : null;
       if (!game || !groups.some((group) => matchesTournamentScheduleGroup(game, group))) return;
       const gameId = compactString(game.id || game.gameId);
       if (gameId && !gamesById.has(gameId)) gamesById.set(gameId, game);
@@ -1580,14 +1732,29 @@ function resolveScoreFromIntegrityState(game: Record<string, any> | null | undef
   };
 }
 
-async function readWithNativeFallback<T>(label: string, primary: () => Promise<T>, fallback: () => Promise<T>): Promise<T> {
-  try {
-    return await withTimeout(Promise.resolve(primary()), label);
-  } catch (error) {
-    if (!isNativeRuntime()) throw error;
-    logScheduleWarning(`Falling back to REST for ${label}.`, 'native-read-fallback', error, { fallback: 'rest', label });
-    return fallback();
+async function readWithNativeFallback<T>(
+  label: string,
+  primary: () => Promise<T>,
+  fallback: () => Promise<T>,
+  timeoutMs = primaryDataTimeoutMs
+): Promise<T> {
+  const result = await raceFirstSuccessfulRead({
+    primary,
+    fallback,
+    label,
+    fallbackDelayMs: restReadHedgeDelayMs,
+    primaryTimeoutMs: timeoutMs,
+    shouldFallbackAfterPrimaryError: (error) => isNativeRuntime() || isRetryableReadTransportError(error)
+  });
+  if (result.source === 'fallback') {
+    logScheduleWarning(
+      `Falling back to REST for ${label}.`,
+      'read-fallback',
+      result.primaryError || new Error(`${label} SDK read exceeded the REST hedge delay.`),
+      { fallback: 'rest', label }
+    );
   }
+  return result.value;
 }
 
 function compactString(value: unknown) {
@@ -1627,6 +1794,21 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
+async function withCalendarImportSlot<T>(work: () => Promise<T>): Promise<T> {
+  if (activeCalendarImports >= calendarImportConcurrency) {
+    await new Promise<void>((resolve) => calendarImportWaiters.push(resolve));
+  } else {
+    activeCalendarImports += 1;
+  }
+  try {
+    return await work();
+  } finally {
+    const next = calendarImportWaiters.shift();
+    if (next) next();
+    else activeCalendarImports -= 1;
+  }
+}
+
 export function normalizeGameScoreValue(value: unknown) {
   const parsed = Number.parseInt(String(value ?? 0), 10);
   if (!Number.isFinite(parsed)) return 0;
@@ -1641,6 +1823,18 @@ function formatCancelledGameDate(value: unknown) {
     month: 'short',
     day: 'numeric'
   });
+}
+
+function isTerminalScheduleRecord(game: Pick<ScheduleEventFirestoreRecord, 'status' | 'liveStatus' | 'isCancelled' | 'deleted' | 'isDeleted'>) {
+  const status = compactString(game.status).toLowerCase();
+  const liveStatus = compactString(game.liveStatus).toLowerCase();
+  return status === 'cancelled'
+    || status === 'canceled'
+    || liveStatus === 'cancelled'
+    || liveStatus === 'canceled'
+    || game.isCancelled === true
+    || game.deleted === true
+    || game.isDeleted === true;
 }
 
 export function buildCancelScheduledGameChatMessage(event: Pick<ParentScheduleEvent, 'opponent' | 'title' | 'date'>, titleOverride?: string | null) {
@@ -1658,7 +1852,9 @@ function isPublicRsvpReminderManager(team: any, user: AuthUser | null) {
   if (!team || !user?.uid) return false;
   if (team.ownerId === user.uid || (user as any).isAdmin === true) return true;
   const email = normalizeEmail(user.email);
-  if (email && (normalizeEmail(team.ownerEmailLower) === email || normalizeEmail(team.ownerEmail) === email)) return true;
+  const hasCanonicalOwner = Boolean(compactString(team.ownerId));
+  const ownerEmails = [...new Set([team.ownerEmailLower, team.ownerEmail].map(normalizeEmail).filter(Boolean))];
+  if (!hasCanonicalOwner && ownerEmails.length === 1 && email === ownerEmails[0]) return true;
   const adminEmails = Array.isArray(team.adminEmails) ? team.adminEmails.map(normalizeEmail) : [];
   return Boolean(email && adminEmails.includes(email));
 }
@@ -1670,55 +1866,142 @@ function isTeamStaff(team: any, user: AuthUser | null) {
   return false;
 }
 
+type GameReplayManagerAccessLevel = 'full' | 'selected';
+
+function markDelegatedTeamContext(team: unknown): Record<string, unknown> | null {
+  if (!team || typeof team !== 'object' || Array.isArray(team)) return null;
+  return { ...(team as Record<string, unknown>), isDelegatedTeamContext: true };
+}
+
+function getGameReplayManagerAccessLevel(team: any, user: AuthUser | null): GameReplayManagerAccessLevel | null {
+  if (!team || !user?.uid) return null;
+  if (isPublicRsvpReminderManager(team, user)) return 'full';
+  if (team.isDelegatedTeamContext === true && team?.delegatedAccess?.full === true) return 'full';
+  const permission = team?.teamPermissions?.videography;
+  if (permission?.mode !== 'selected') return null;
+  const memberIds = Array.isArray(permission.memberIds)
+    ? permission.memberIds.map(compactString).filter(Boolean)
+    : [];
+  return memberIds.includes(user.uid) ? 'selected' : null;
+}
+
+function canManageGameReplayVideo(team: any, user: AuthUser | null) {
+  return getGameReplayManagerAccessLevel(team, user) !== null;
+}
+
 type StaffTeamsLoadResult = {
   teams: any[];
   isPartial: boolean;
+  verifiedByHttp?: boolean;
+  httpAttempted?: boolean;
 };
 
-async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
-  return readWithNativeFallback(
-    'staff teams',
-    async () => {
-      const coachTeamIds = Array.isArray(user.coachOf) ? user.coachOf.map(compactString).filter(Boolean) : [];
-      const staffTeamResult = await getStaffTeams({
-        userId: user.uid,
-        email: user.email,
-        coachTeamIds
-      });
-      const teamsById = new Map<string, any>();
-      staffTeamResult.teams.filter(Boolean).forEach((team: any) => {
-        if (team?.id && isTeamActive(team) && isTeamStaff(team, user)) teamsById.set(team.id, team);
-      });
-      return { teams: [...teamsById.values()], isPartial: staffTeamResult.isPartial };
-    },
-    async () => {
-      const coachTeamIds = Array.isArray(user.coachOf) ? user.coachOf.map(compactString).filter(Boolean) : [];
-      const normalizedEmail = normalizeEmail(user.email);
-      const ownerEmailCandidates = Array.from(new Set([compactString(user.email), normalizedEmail].filter(Boolean)));
-      const ownerEmailLookups = ownerEmailCandidates.map((ownerEmail) =>
-        nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail)
-      );
-      const queryResults = await Promise.allSettled([
-        nativeRunQuery('teams', 'ownerId', 'EQUAL', user.uid),
-        ...(normalizedEmail ? [
-          nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', normalizedEmail),
-          nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail)
-        ] : []),
-        ...ownerEmailLookups
-      ]);
-      const coachTeamResults = await Promise.allSettled(
-        coachTeamIds.map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`))
-      );
-      const isPartial = [...queryResults, ...coachTeamResults].some((result) => result.status === 'rejected');
-      const teamsById = new Map<string, any>();
-      const queryTeams = queryResults.flatMap((result) => result.status === 'fulfilled' ? result.value : []);
-      const coachTeams = coachTeamResults.flatMap((result) => result.status === 'fulfilled' && result.value ? [result.value] : []);
-      [...queryTeams, ...coachTeams].forEach((team) => {
-        if (team?.id && isTeamActive(team) && isTeamStaff(team, user)) teamsById.set(team.id, team);
-      });
-      return { teams: [...teamsById.values()], isPartial };
+async function loadStaffTeamsFromRest(): Promise<StaffTeamsLoadResult> {
+  const result = await loadManagedTeamsFromNativeCallable({ timeoutMs: staffTeamDiscoveryTimeoutMs });
+  return {
+    // The callable already applies the server-side ownership, admin, and coach
+    // checks; its serialized team profiles intentionally omit some of those fields.
+    teams: result.teams.filter((team: any) => team?.id && isTeamActive(team)),
+    isPartial: result.isPartial,
+    verifiedByHttp: true,
+    httpAttempted: true
+  };
+}
+
+async function loadStaffTeamsFromRestWithRetry(maxAttempts: number): Promise<StaffTeamsLoadResult> {
+  let lastError: unknown = new Error('Managed team verification failed.');
+  let lastPartialResult: StaffTeamsLoadResult | null = null;
+  const partialTeamsById = new Map<string, any>();
+  for (let attempt = 0; attempt < Math.max(1, maxAttempts); attempt += 1) {
+    try {
+      const result = await loadStaffTeamsFromRest();
+      if (!result.isPartial) return result;
+      result.teams.forEach((team: any) => partialTeamsById.set(team.id, team));
+      lastPartialResult = result;
+    } catch (error) {
+      lastError = error;
     }
-  );
+  }
+  if (lastPartialResult) {
+    return { ...lastPartialResult, teams: [...partialTeamsById.values()] };
+  }
+  throw lastError;
+}
+
+async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
+  const coachTeamIds = Array.isArray(user.coachOf) ? user.coachOf.map(compactString).filter(Boolean) : [];
+  const timers = getTimerScope();
+  let httpHedgeTimer: ReturnType<typeof setTimeout> | undefined;
+  let httpHedgePromise: Promise<StaffTeamsLoadResult> | null = null;
+  const startHttpHedge = () => {
+    if (!httpHedgePromise) httpHedgePromise = loadStaffTeamsFromRest();
+    return httpHedgePromise;
+  };
+  const cancelHttpHedge = () => {
+    if (httpHedgeTimer !== undefined) timers.clearTimeout(httpHedgeTimer);
+    httpHedgeTimer = undefined;
+  };
+  if (!isNativeRuntime()) {
+    // Start the equivalent authenticated HTTP transport while a cold SDK
+    // callable is still inside its timeout. If the SDK succeeds quickly the
+    // normal exact-result verification below remains unchanged; if it stalls,
+    // fallback latency overlaps instead of serializing two long waits.
+    httpHedgeTimer = timers.setTimeout(() => {
+      httpHedgeTimer = undefined;
+      void startHttpHedge().catch(() => {});
+    }, staffTeamHttpHedgeDelayMs);
+  }
+  try {
+    const staffTeamResult = await withTimeout(Promise.resolve(getStaffTeams({
+      userId: user.uid,
+      email: user.email,
+      coachTeamIds
+    })), 'staff teams', staffTeamDiscoveryTimeoutMs);
+    const teamsById = new Map<string, any>();
+    staffTeamResult.teams.filter(Boolean).forEach((team: any) => {
+      if (team?.id && isTeamActive(team)) teamsById.set(team.id, team);
+    });
+    const pendingHttpHedge = httpHedgePromise as Promise<StaffTeamsLoadResult> | null;
+    if (pendingHttpHedge) {
+      try {
+        const httpResult = await pendingHttpHedge;
+        httpResult.teams.forEach((team: any) => {
+          const teamId = compactString(team?.id);
+          if (teamId) teamsById.set(teamId, team);
+        });
+        return {
+          teams: [...teamsById.values()],
+          isPartial: httpResult.isPartial,
+          verifiedByHttp: true,
+          httpAttempted: true
+        };
+      } catch {
+        // Preserve the successful SDK projection and let the caller's existing
+        // authoritative verification path retry the failed HTTP transport.
+      }
+    }
+    return {
+      teams: [...teamsById.values()],
+      isPartial: staffTeamResult.isPartial,
+      verifiedByHttp: false,
+      httpAttempted: false
+    };
+  } catch (error) {
+    // The SDK callable and the authenticated HTTP callable reach the same
+    // server-authorized listManagedTeams function. Keep the HTTP transport as
+    // a web fallback too: a transient SDK/App Check transport failure must not
+    // erase an otherwise valid staff team from the chooser.
+    logScheduleWarning('Falling back to authenticated HTTP for staff teams.', 'staff-team-callable-fallback', error, {
+      fallback: 'authenticated-http'
+    });
+    try {
+      return await startHttpHedge();
+    } catch {
+      return { teams: [], isPartial: true, verifiedByHttp: false, httpAttempted: true };
+    }
+  } finally {
+    cancelHttpHedge();
+  }
 }
 
 async function saveTeamCalendarUrls(teamId: string, calendarUrls: string[]) {
@@ -1765,6 +2048,10 @@ export type ScheduleGameFormInput = {
   opponentTeamId?: string | null;
   opponentTeamName?: string | null;
   opponentTeamPhoto?: string | null;
+};
+
+export type ScheduleGameUpdateOptions = {
+  preservePinnedDiamondFields?: boolean;
 };
 
 export type ScheduleTournamentGameFormInput = ScheduleGameFormInput;
@@ -1830,6 +2117,45 @@ function requireScheduleImportStaff(teamId: string, user: AuthUser | null) {
     const teamWithId = team ? { ...team, id: team.id || teamId } : null;
     if (!teamWithId || !isTeamStaff(teamWithId, user)) {
       throw new Error('You do not have permission to manage this team schedule.');
+    }
+    return teamWithId;
+  });
+}
+
+async function requireGameReplayManager(teamId: string, gameId: string, user: AuthUser | null) {
+  if (!user?.uid) {
+    throw new Error('Sign in before managing a game replay.');
+  }
+
+  // The server projection is authoritative for selected videographers, while
+  // the direct team read preserves the established full-manager path if the
+  // callable transport is temporarily unavailable.
+  const [delegatedResult, teamResult] = await Promise.allSettled([
+    getDelegatedTeamContext(teamId, gameId),
+    loadTeam(teamId)
+  ]);
+  const delegatedTeam = delegatedResult.status === 'fulfilled'
+    ? markDelegatedTeamContext(delegatedResult.value)
+    : null;
+  const team = teamResult.status === 'fulfilled' ? teamResult.value : null;
+  const teamWithId = team ? { ...team, id: team.id || teamId, isDelegatedTeamContext: false } : null;
+  const candidates = [teamWithId, delegatedTeam && compactString(delegatedTeam.id) === teamId ? delegatedTeam : null]
+    .filter(Boolean);
+  for (const accessLevel of ['full', 'selected'] as const) {
+    const authorizedTeam = candidates.find((candidate) => getGameReplayManagerAccessLevel(candidate, user) === accessLevel);
+    if (authorizedTeam) return { team: authorizedTeam, accessLevel };
+  }
+  throw new Error('You do not have permission to manage this game replay.');
+}
+
+function requireScheduleMaterializationManager(teamId: string, user: AuthUser | null) {
+  if (!user?.uid) {
+    throw new Error('You need to sign in before enabling RSVP for an imported event.');
+  }
+  return loadTeam(teamId).then((team) => {
+    const teamWithId = team ? { ...team, id: team.id || teamId } : null;
+    if (!teamWithId || !isPublicRsvpReminderManager(teamWithId, user)) {
+      throw new Error('You do not have permission to enable RSVP for this team schedule.');
     }
     return teamWithId;
   });
@@ -1939,18 +2265,24 @@ export function buildSingleGameTournamentLegacySchedulePayload(
   return buildSingleLegacyTournamentGameDocument([payload], tournament);
 }
 
-function buildScheduledGameUpdatePayload(input: ScheduleGameFormInput, user: AuthUser) {
+function buildScheduledGameUpdatePayload(input: ScheduleGameFormInput, user: AuthUser, options: ScheduleGameUpdateOptions = {}) {
   const { assignments, status, homeScore, awayScore, createdBy, ...payload } = buildScheduledGamePayload(input, user) as Record<string, unknown>;
   void assignments;
   void status;
   void homeScore;
   void awayScore;
   void createdBy;
-  return {
+  const updatePayload: Record<string, unknown> = {
     ...payload,
     updatedAt: new Date(),
     updatedBy: user.uid
   };
+  if (options.preservePinnedDiamondFields === true) {
+    delete updatePayload.isHome;
+    delete updatePayload.statTrackerConfigId;
+    delete updatePayload.opponentTeamId;
+  }
+  return updatePayload;
 }
 
 function buildScheduleImportPracticePayload(row: ScheduleImportNormalizedRow, user: AuthUser) {
@@ -2155,13 +2487,19 @@ export async function createScheduledTournamentBlockForApp(teamId: string, input
   return createdIds;
 }
 
-export async function updateScheduledGameForApp(teamId: string, gameId: string, input: ScheduleGameFormInput, user: AuthUser | null) {
+export async function updateScheduledGameForApp(
+  teamId: string,
+  gameId: string,
+  input: ScheduleGameFormInput,
+  user: AuthUser | null,
+  options: ScheduleGameUpdateOptions = {}
+) {
   const normalizedTeamId = compactString(teamId);
   const normalizedGameId = compactString(gameId);
   if (!normalizedTeamId) throw new Error('Team is required.');
   if (!normalizedGameId) throw new Error('Game is required.');
   await requireScheduleImportStaff(normalizedTeamId, user);
-  const payload = buildScheduledGameUpdatePayload(input, user as AuthUser);
+  const payload = buildScheduledGameUpdatePayload(input, user as AuthUser, options);
 
   try {
     await withTimeout(Promise.resolve(updateGame(normalizedTeamId, normalizedGameId, payload)), 'Scheduled game update');
@@ -2172,6 +2510,234 @@ export async function updateScheduledGameForApp(teamId: string, gameId: string, 
   }
   invalidateParentScheduleCaches(user);
   return { updated: true, eventId: normalizedGameId };
+}
+
+class GameReplayPreconditionError extends Error {}
+
+function toTimestampFingerprint(secondsValue: unknown, nanosecondsValue: unknown) {
+  const seconds = Number(secondsValue);
+  const nanoseconds = Number(nanosecondsValue);
+  if (!Number.isSafeInteger(seconds)
+    || !Number.isInteger(nanoseconds)
+    || nanoseconds < 0
+    || nanoseconds >= 1_000_000_000) {
+    return null;
+  }
+  return { timestampSeconds: seconds, timestampNanoseconds: nanoseconds };
+}
+
+function toMillisecondTimestampFingerprint(milliseconds: number) {
+  if (!Number.isFinite(milliseconds)) return { invalidTimestamp: String(milliseconds) };
+  let seconds = Math.floor(milliseconds / 1000);
+  let nanoseconds = Math.round((milliseconds - (seconds * 1000)) * 1_000_000);
+  if (nanoseconds >= 1_000_000_000) {
+    seconds += 1;
+    nanoseconds -= 1_000_000_000;
+  }
+  return { timestampSeconds: seconds, timestampNanoseconds: nanoseconds };
+}
+
+function toReplayFingerprintValue(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return toMillisecondTimestampFingerprint(value.getTime());
+  if (typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') {
+    if (Number.isNaN(value)) return ['number', 'NaN'];
+    if (value === Number.POSITIVE_INFINITY) return ['number', 'Infinity'];
+    if (value === Number.NEGATIVE_INFINITY) return ['number', '-Infinity'];
+    if (Object.is(value, -0)) return ['number', '-0'];
+    return ['number', value];
+  }
+  if (typeof value !== 'object') return String(value);
+
+  const replayTimestamp = getReplayTimestampComponents(value);
+  if (replayTimestamp) {
+    return toTimestampFingerprint(replayTimestamp.seconds, replayTimestamp.nanoseconds);
+  }
+
+  const timestampValue = value as {
+    seconds?: unknown;
+    nanoseconds?: unknown;
+    _seconds?: unknown;
+    _nanoseconds?: unknown;
+    toMillis?: () => unknown;
+    toDate?: () => unknown;
+  };
+  const hasTimestampMethod = typeof timestampValue.toMillis === 'function'
+    || typeof timestampValue.toDate === 'function';
+  if (hasTimestampMethod) {
+    const exactTimestamp = toTimestampFingerprint(
+      timestampValue.seconds ?? timestampValue._seconds,
+      timestampValue.nanoseconds ?? timestampValue._nanoseconds
+    );
+    if (exactTimestamp) return exactTimestamp;
+  }
+  if (typeof timestampValue.toMillis === 'function') {
+    return toMillisecondTimestampFingerprint(Number(timestampValue.toMillis()));
+  }
+  if (typeof timestampValue.toDate === 'function') {
+    const date = timestampValue.toDate();
+    if (date instanceof Date) return toMillisecondTimestampFingerprint(date.getTime());
+  }
+  if (seen.has(value)) throw new Error('Replay metadata cannot contain a circular value.');
+  seen.add(value);
+  if (Array.isArray(value)) {
+    const normalized = value.map((entry) => toReplayFingerprintValue(entry, seen));
+    seen.delete(value);
+    return normalized;
+  }
+
+  const normalized = Object.keys(value as Record<string, unknown>)
+    .sort()
+    .reduce<Record<string, unknown>>((result, key) => {
+      const fieldValue = (value as Record<string, unknown>)[key];
+      if (fieldValue !== undefined) result[key] = toReplayFingerprintValue(fieldValue, seen);
+      return result;
+    }, {});
+  seen.delete(value);
+  return normalized;
+}
+
+function getReplayArchiveFingerprint(value: unknown) {
+  return JSON.stringify(toReplayFingerprintValue(value));
+}
+
+function isSharedReplayMutationTarget(gameId: string, game: Record<string, unknown>) {
+  const hasShareMarker = (value: unknown) => value !== null && value !== undefined && value !== '';
+  return gameId.startsWith('shared_')
+    || gameId.startsWith('sharedh_')
+    || gameId.startsWith('shared::')
+    || game.isSharedGame === true
+    || hasShareMarker(game.sharedGameId)
+    || hasShareMarker(game.sharedGamePath)
+    || hasShareMarker(game._sharedGamePath)
+    || hasShareMarker(game.sharedScheduleId)
+    || hasShareMarker(game.sharedScheduleSourceTeamId)
+    || hasShareMarker(game.sharedScheduleOpponentTeamId)
+    || hasShareMarker(game.sharedScheduleOpponentGameId);
+}
+
+async function persistGameReplayVideo(
+  teamId: string,
+  gameId: string,
+  replayVideo: YouTubeReplayVideo | null,
+  updatedAt: Date,
+  expectedReplayState: ReplayArchiveState,
+  managerAccessLevel: GameReplayManagerAccessLevel
+) {
+  const payload: Record<string, unknown> = { replayVideo, updatedAt };
+  legacyReplayArchiveFieldNames.forEach((field) => {
+    payload[field] = deleteField();
+  });
+  if (!replayVideo) payload.replayVideoFallbackDisabled = true;
+  const unconfirmedError = (cause: unknown) => {
+    const replayError = new Error('The replay update could not be confirmed. Refresh this game before trying again.');
+    (replayError as Error & { cause?: unknown }).cause = cause;
+    return replayError;
+  };
+  try {
+    const gameRef = doc(db, `teams/${teamId}/games/${gameId}`);
+    await withTimeout(runTransaction(db, async (transaction: any) => {
+      const snapshot = await transaction.get(gameRef);
+      if (!snapshot.exists()) {
+        throw new GameReplayPreconditionError('This game is no longer available. Refresh Schedule and try again.');
+      }
+      const currentGame = snapshot.data() || {};
+      if (isSharedReplayMutationTarget(gameId, currentGame)) {
+        throw new GameReplayPreconditionError('Replay links must be managed from the original team game, not a shared schedule copy.');
+      }
+      const currentReplayState = getReplayArchiveState(currentGame);
+      if (getReplayArchiveFingerprint(currentReplayState) !== getReplayArchiveFingerprint(expectedReplayState)) {
+        throw new GameReplayPreconditionError('The linked replay changed since this game loaded. Refresh the game and review it before trying again.');
+      }
+      const isFinalLifecycle = isCompletedGameForReplay(currentGame);
+      if (replayVideo && !isFinalLifecycle) {
+        throw new GameReplayPreconditionError('Mark the game final before linking its replay.');
+      }
+      const hasRemovableReplay = hasReplayArchiveEvidence(currentReplayState)
+        || (isFinalLifecycle && hasReplayVideoSourceEvidence({ ...currentGame, rawReplayState: currentReplayState }));
+      if (!replayVideo && !hasRemovableReplay) {
+        throw new GameReplayPreconditionError('This game no longer has a replay to remove. Refresh the game before trying again.');
+      }
+      if (!replayVideo && !isFinalLifecycle && managerAccessLevel !== 'full') {
+        throw new GameReplayPreconditionError('Only a full team manager can remove a replay while this game is not final.');
+      }
+      transaction.set(gameRef, payload, { merge: true });
+    }), 'Game replay update');
+  } catch (error) {
+    if (error instanceof GameReplayPreconditionError) throw error;
+    throw unconfirmedError(error);
+  }
+}
+
+export type GameReplayMutationOptions = {
+  expectedReplayState?: ReplayArchiveState;
+  title?: string;
+};
+
+export async function linkGameYouTubeReplayForApp(
+  teamId: string,
+  gameId: string,
+  replayUrl: string,
+  user: AuthUser | null,
+  options: GameReplayMutationOptions = {}
+) {
+  const normalizedTeamId = compactString(teamId);
+  const normalizedGameId = compactString(gameId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  if (!normalizedGameId) throw new Error('Game is required.');
+  const normalizedReplay = normalizeYouTubeReplayUrl(replayUrl);
+  if (!normalizedReplay) {
+    throw new Error('Paste a complete YouTube video link. Channel and live-feed links cannot be used as a game replay.');
+  }
+
+  const managerAccess = await requireGameReplayManager(normalizedTeamId, normalizedGameId, user);
+
+  const linkedAt = new Date();
+  const normalizedTitle = compactString(options.title).replace(/\s+/g, ' ').slice(0, 120);
+  const replayVideo: YouTubeReplayVideo = {
+    ...normalizedReplay,
+    ...(normalizedTitle ? { title: normalizedTitle } : {}),
+    status: 'ready',
+    linkedBy: user!.uid,
+    linkedAt
+  };
+  await persistGameReplayVideo(
+    normalizedTeamId,
+    normalizedGameId,
+    replayVideo,
+    linkedAt,
+    getReplayArchiveState(options.expectedReplayState),
+    managerAccess.accessLevel
+  );
+  invalidateParentScheduleCaches(user, { teamId: normalizedTeamId, id: normalizedGameId });
+  return replayVideo;
+}
+
+export async function removeGameReplayForApp(
+  teamId: string,
+  gameId: string,
+  user: AuthUser | null,
+  expectedReplayState: ReplayArchiveState = {}
+) {
+  const normalizedTeamId = compactString(teamId);
+  const normalizedGameId = compactString(gameId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  if (!normalizedGameId) throw new Error('Game is required.');
+
+  const managerAccess = await requireGameReplayManager(normalizedTeamId, normalizedGameId, user);
+
+  const updatedAt = new Date();
+  await persistGameReplayVideo(
+    normalizedTeamId,
+    normalizedGameId,
+    null,
+    updatedAt,
+    getReplayArchiveState(expectedReplayState),
+    managerAccess.accessLevel
+  );
+  invalidateParentScheduleCaches(user, { teamId: normalizedTeamId, id: normalizedGameId });
+  return { removed: true, updatedAt };
 }
 
 function sanitizePracticeRecurrenceInput(input?: PracticeRecurrenceFormInput | null) {
@@ -2537,6 +3103,77 @@ async function createIdempotentScheduleImportEvent(
   return eventId;
 }
 
+async function getCalendarMaterializationDigest(teamId: string, calendarEventId: string, startsAt: Date) {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error('This device cannot safely create a stable tracked event ID.');
+  }
+  const input = new TextEncoder().encode(`${teamId}:${calendarEventId}:${startsAt.toISOString()}`);
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', input);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export async function enableRsvpForImportedCalendarEvent(event: ParentScheduleEvent, user: AuthUser | null) {
+  const teamId = compactString(event.teamId);
+  const calendarEventId = compactString(event.id);
+  if (!teamId || !calendarEventId) throw new Error('The imported calendar event is missing its team or event ID.');
+  if (event.isDbGame) throw new Error('RSVP is already enabled for this event.');
+  if (event.isCancelled) throw new Error('RSVP cannot be enabled for a cancelled event.');
+  if (!event.isImported || event.sourceType !== 'calendar') {
+    throw new Error('Only imported calendar events can be converted to tracked events.');
+  }
+  if (!(event.date instanceof Date) || Number.isNaN(event.date.getTime())) {
+    throw new Error('The imported calendar event has an invalid start time.');
+  }
+  const opponent = compactString(event.opponent);
+  const title = compactString(event.title) || 'Practice';
+  if (event.type === 'game' && !opponent) throw new Error('The imported game needs an opponent before RSVP can be enabled.');
+
+  await requireScheduleMaterializationManager(teamId, user);
+  const calendarOccurrenceId = getCalendarOccurrenceTrackingId(calendarEventId, event.date);
+  const digest = await getCalendarMaterializationDigest(teamId, calendarEventId, event.date);
+  const actionId = `calendar-materialize:${digest}`;
+  const trackedEventId = `calendar_${digest}`;
+  const importedAt = new Date().toISOString();
+  const importBatch = {
+    batchId: actionId,
+    totalCount: 1,
+    rowNumber: 1,
+    importedAt,
+    importedBy: user?.uid || null,
+    actionId
+  };
+  const payload = {
+    type: event.type,
+    date: event.date,
+    end: event.endDate || null,
+    opponent: event.type === 'game' ? opponent : null,
+    title: event.type === 'practice' ? title : null,
+    location: compactString(event.location),
+    isHome: event.type === 'game' ? (event.isHome ?? null) : null,
+    arrivalTime: event.arrivalTime || null,
+    notes: compactString(event.notes),
+    assignments: [],
+    status: 'scheduled',
+    homeScore: 0,
+    awayScore: 0,
+    competitionType: event.type === 'game' ? (compactString(event.competitionType) || 'league') : null,
+    countsTowardSeasonRecord: event.type === 'game' ? (event.countsTowardSeasonRecord ?? true) : null,
+    statTrackerConfigId: null,
+    calendarEventUid: calendarOccurrenceId,
+    source: 'calendar',
+    sourceMetadata: {
+      sourceType: 'calendar',
+      sourceLabel: compactString(event.sourceLabel) || 'Imported calendar'
+    },
+    importBatch,
+    createdBy: user?.uid || null
+  };
+
+  await createIdempotentScheduleImportEvent(teamId, trackedEventId, payload, actionId);
+  invalidateParentScheduleCaches(user);
+  return trackedEventId;
+}
+
 export async function addTeamCalendarUrl(teamId: string, url: string, user: AuthUser | null) {
   const normalizedTeamId = compactString(teamId);
   if (!normalizedTeamId) {
@@ -2605,7 +3242,15 @@ async function loadPlayers(teamId: string) {
   return readWithNativeFallback(
     `players ${teamId}`,
     () => Promise.resolve(getPlayers(teamId, { includeInactive: true })),
-    () => nativeListCollection(`teams/${encodeURIComponent(teamId)}/players`)
+    async () => {
+      const documents = await listNativeFirestoreCollectionPages<NativeFirestoreDocument>(
+        `teams/${encodeURIComponent(teamId)}/players`,
+        nativeFirestoreRequest
+      );
+      return documents
+        .map((document) => mapFirestoreDocument(document))
+        .filter(Boolean) as FirestoreDocument[];
+    }
   );
 }
 
@@ -2896,18 +3541,82 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
       staffTeams: []
     };
   }
-  let isPartial = false;
-  const [profile, staffTeamResult] = await Promise.all([
+  let profileLoadPartial = false;
+  const [profile, initialStaffTeamResult] = await Promise.all([
     loadProfileDocument(user.uid).catch(() => {
-      isPartial = true;
+      profileLoadPartial = true;
       return {};
     }),
     loadStaffTeams(user).catch(() => {
-      isPartial = true;
-      return { teams: [], isPartial: true };
+      return { teams: [], isPartial: true, verifiedByHttp: false, httpAttempted: true };
     })
   ]);
-  if (staffTeamResult.isPartial) isPartial = true;
+  let staffTeamResult = initialStaffTeamResult;
+  const declaredCoachTeamIds = [
+    ...(Array.isArray(user.coachOf) ? user.coachOf : []),
+    ...(Array.isArray((profile as any).coachOf) ? (profile as any).coachOf : [])
+  ].map(compactString).filter(Boolean);
+  const uniqueDeclaredCoachTeamIds = [...new Set(declaredCoachTeamIds)];
+  const staffUser = {
+    ...user,
+    coachOf: uniqueDeclaredCoachTeamIds
+  };
+  if (staffTeamResult.isPartial) {
+    try {
+      const retryResult = await loadStaffTeams(staffUser);
+      const teamsById = new Map<string, any>();
+      [...staffTeamResult.teams, ...retryResult.teams].forEach((team: any) => {
+        const teamId = compactString(team?.id);
+        if (teamId) teamsById.set(teamId, team);
+      });
+      staffTeamResult = {
+        teams: [...teamsById.values()],
+        isPartial: retryResult.isPartial,
+        verifiedByHttp: retryResult.verifiedByHttp,
+        httpAttempted: retryResult.httpAttempted
+      };
+    } catch {
+      staffTeamResult = { ...staffTeamResult, isPartial: true };
+    }
+  }
+  const discoveredStaffTeamIds = new Set(staffTeamResult.teams.map((team: any) => compactString(team?.id)).filter(Boolean));
+  const hasMissingDeclaredCoachTeam = uniqueDeclaredCoachTeamIds.some((teamId) => !discoveredStaffTeamIds.has(teamId));
+  const hasStaffRole = Array.isArray(user.roles) && user.roles.some((role) => (
+    role === 'coach' || role === 'admin' || role === 'platformAdmin'
+  ));
+  const shouldVerifyEmptyStaffResult = staffTeamResult.teams.length === 0
+    && (hasStaffRole || uniqueDeclaredCoachTeamIds.length > 0 || user.isAdmin === true || user.isPlatformAdmin === true);
+  const nativeRuntime = isNativeRuntime();
+  const shouldVerifyStaffResultWithHttp = nativeRuntime
+    ? (staffTeamResult.isPartial || hasMissingDeclaredCoachTeam || shouldVerifyEmptyStaffResult)
+    // Browser callable results have proved nondeterministically incomplete in
+    // production even when they are nonempty and claim to be complete. Merge
+    // every result with the bounded authenticated HTTP projection so a team
+    // that is not duplicated in profile role hints cannot disappear.
+    : staffTeamResult.verifiedByHttp !== true && staffTeamResult.httpAttempted !== true;
+  if (shouldVerifyStaffResultWithHttp) {
+    try {
+      // A production function deployment or cold start can outlive the first
+      // browser request even when the SDK returns a nonempty (but incomplete)
+      // result. Give the authoritative projection one bounded retry before
+      // allowing a partial chooser to render.
+      const restResult = await loadStaffTeamsFromRestWithRetry(nativeRuntime ? 1 : 2);
+      const teamsById = new Map<string, any>();
+      [...staffTeamResult.teams, ...restResult.teams].forEach((team: any) => {
+        const teamId = compactString(team?.id);
+        if (teamId) teamsById.set(teamId, team);
+      });
+      staffTeamResult = {
+        teams: [...teamsById.values()],
+        isPartial: restResult.isPartial,
+        verifiedByHttp: true,
+        httpAttempted: true
+      };
+    } catch {
+      staffTeamResult = { ...staffTeamResult, isPartial: true };
+    }
+  }
+  let isPartial = profileLoadPartial || staffTeamResult.isPartial;
   const childResult = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
   if (childResult.isPartial) isPartial = true;
   return {
@@ -3052,6 +3761,23 @@ function isEventWithinRange(game: any, range: ScheduleDateRange) {
   return true;
 }
 
+function getPublicCalendarProjectionRange(range: ScheduleDateRange): Required<ScheduleDateRange> {
+  const now = Date.now();
+  if (range.startDate && range.endDate) {
+    return { startDate: range.startDate, endDate: range.endDate };
+  }
+  if (range.endDate) {
+    return {
+      startDate: new Date(range.endDate.getTime() - defaultScheduleHistoryWindowMs),
+      endDate: range.endDate
+    };
+  }
+  return {
+    startDate: range.startDate || new Date(now - defaultScheduleHistoryWindowMs),
+    endDate: new Date(now + defaultCalendarLookAheadMs)
+  };
+}
+
 async function loadGames(teamId: string, range: ScheduleGamesQuery = {}): Promise<ScheduleEventFirestoreRecord[]> {
   return readWithNativeFallback(
     `games ${teamId}`,
@@ -3075,7 +3801,33 @@ async function loadGames(teamId: string, range: ScheduleGamesQuery = {}): Promis
   );
 }
 
-async function loadGameById(teamId: string, gameId: string): Promise<ScheduleEventFirestoreRecord | null> {
+async function loadGameById(teamId: string, gameId: string, sharedGamePath = ''): Promise<ScheduleEventFirestoreRecord | null> {
+  const normalizedSharedGamePath = normalizeSharedGameDocumentPath(sharedGamePath);
+  if (sharedGamePath && !normalizedSharedGamePath) {
+    throw new Error('The shared game path is invalid.');
+  }
+  if (normalizedSharedGamePath) {
+    const reversibleGameId = `shared_${encodeURIComponent(normalizedSharedGamePath)}`;
+    const preserveRouteIdentity = (game: ScheduleEventFirestoreRecord | null) => game
+      ? { ...game, id: gameId }
+      : null;
+    return readWithNativeFallback(
+      `shared game ${teamId}/${gameId}`,
+      async () => preserveRouteIdentity(mapScheduleEventRecord(await getGame(teamId, reversibleGameId), gameId)),
+      async () => {
+        const encodedPath = normalizedSharedGamePath.split('/').map(encodeURIComponent).join('/');
+        const decoded = await nativeGetDocument(encodedPath);
+        if (!decoded) return null;
+        const projected = projectSharedGameForTeam({
+          ...decoded,
+          id: normalizedSharedGamePath.split('/').pop() || '',
+          _sharedGamePath: normalizedSharedGamePath
+        }, teamId);
+        if (!projected) return null;
+        return preserveRouteIdentity(mapScheduleEventRecord({ ...projected, isPublicProjection: false }, gameId));
+      }
+    );
+  }
   return readWithNativeFallback(
     `game ${teamId}/${gameId}`,
     async () => mapScheduleEventRecord(await getGame(teamId, gameId), gameId),
@@ -3088,7 +3840,9 @@ async function loadPracticeSessions(teamId: string, range: ScheduleDateRange = {
     `practice sessions ${teamId}`,
     () => Promise.resolve(getPracticeSessions(teamId, range)),
     async () => {
-      const docs = await nativeListCollection(`teams/${encodeURIComponent(teamId)}/practiceSessions`);
+      const docs = (range.startDate || range.endDate)
+        ? await nativeQueryPracticeSessionDocuments(teamId, range)
+        : await nativeListCollection(`teams/${encodeURIComponent(teamId)}/practiceSessions`);
       const windowed = (range.startDate || range.endDate)
         ? docs.filter((doc) => isEventWithinRange(doc, range))
         : docs;
@@ -3194,10 +3948,45 @@ async function mergeOwnRsvpNotes(teamId: string, gameId: string, rsvps: any[], u
   };
 }
 
-async function loadRideOffers(teamId: string, gameId: string, fallbackGameIds: string[] = []) {
+function isRideRequestReadDenied(error: unknown) {
+  const status = Number((error as any)?.status);
+  const code = compactString((error as any)?.code).toLowerCase();
+  const message = compactString((error as any)?.message).toLowerCase();
+  return status === 403 || code.includes('permission-denied') || message.includes('permission denied') || message.includes('missing or insufficient permissions');
+}
+
+async function loadNativeRideRequestsForOffer(teamId: string, gameId: string, offer: FirestoreDocument, scope: RideRequestReadScope) {
+  const requestsPath = `teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/rideOffers/${encodeURIComponent(offer.id)}/requests`;
+  if (scope.canManageTeamRequests || compactString(offer.driverUserId) === scope.requesterUserId) {
+    return nativeListCollection(requestsPath);
+  }
+  if (!scope.requesterUserId || scope.childIds.length === 0) return [];
+
+  const requests = await Promise.all(scope.childIds.map(async (childId) => {
+    const requestId = `${scope.requesterUserId}__${childId}`;
+    try {
+      return await nativeGetDocument(`${requestsPath}/${encodeURIComponent(requestId)}`);
+    } catch (error) {
+      if (isNativeDocumentNotFound(error)) return null;
+      // A stale or no-longer-linked child scope can be denied. Treat that exact
+      // probe as unavailable; never fall back to a collection list.
+      if (isRideRequestReadDenied(error)) return null;
+      throw error;
+    }
+  }));
+  return requests.filter(Boolean) as FirestoreDocument[];
+}
+
+async function loadRideOffers(teamId: string, gameId: string, fallbackGameIds: string[] = [], readScope: Partial<RideRequestReadScope> = {}) {
+  const scope = normalizeRideRequestReadScope(readScope);
   return readWithNativeFallback(
     `ride offers ${teamId}/${gameId}`,
-    () => Promise.resolve(listRideOffersForEvent(teamId, gameId, { fallbackGameIds })),
+    () => Promise.resolve(listRideOffersForEvent(teamId, gameId, {
+      fallbackGameIds,
+      requesterUserId: scope.requesterUserId,
+      childIds: scope.childIds,
+      canManageTeamRequests: scope.canManageTeamRequests
+    })),
     async () => {
       const candidateIds = [gameId, ...fallbackGameIds].filter(Boolean);
       for (const candidateId of candidateIds) {
@@ -3205,7 +3994,7 @@ async function loadRideOffers(teamId: string, gameId: string, fallbackGameIds: s
         const withRequests = await Promise.all(offers.map(async (offer) => ({
           ...offer,
           sourceGameId: candidateId,
-          requests: await nativeListCollection(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(candidateId)}/rideOffers/${encodeURIComponent(offer.id)}/requests`).catch(() => [])
+          requests: await loadNativeRideRequestsForOffer(teamId, candidateId, offer, scope)
         })));
         if (withRequests.length > 0 || candidateId === candidateIds[candidateIds.length - 1]) {
           return withRequests;
@@ -3370,7 +4159,7 @@ function toNullableScore(value: unknown) {
 
 function getScheduleSourceLabel(game: any) {
   const metadata = game?.sourceMetadata || game?.registrationSource || {};
-  const provider = compactString(metadata.providerName || metadata.provider || metadata.sourceName || metadata.sourceType || game?.source);
+  const provider = compactString(metadata.sourceLabel || metadata.providerName || metadata.provider || metadata.sourceName || metadata.sourceType || game?.source);
   if (provider) return provider;
   if (game?.source === 'calendar') return 'Imported calendar';
   if (game?.source === 'registration') return 'Registration import';
@@ -3393,7 +4182,11 @@ function createScheduleEvent(input: {
   opponentTeamId?: string | null;
   opponentTeamName?: string | null;
   opponentTeamPhoto?: string | null;
+  sharedScheduleId?: string | null;
+  sharedScheduleSourceTeamId?: string | null;
   sharedScheduleOpponentTeamId?: string | null;
+  sharedScheduleOpponentGameId?: string | null;
+  hasReplayShareMarker?: boolean;
   counterpartTitle?: string | null;
   title?: string | null;
   isDbGame: boolean;
@@ -3408,7 +4201,16 @@ function createScheduleEvent(input: {
   awayScore?: unknown;
   postGameNotes?: string | null;
   summary?: string | null;
+  videoUrl?: string | null;
+  replayVideo?: unknown;
+  rawReplayState?: ReplayArchiveState;
+  rawReplayLifecycle?: {
+    type?: unknown;
+    status?: unknown;
+    liveStatus?: unknown;
+  };
   practiceFeedItems?: any[];
+  isSharedGame?: boolean;
   isHome?: boolean | null;
   kitColor?: string | null;
   arrivalTime?: unknown;
@@ -3417,7 +4219,17 @@ function createScheduleEvent(input: {
   competitionType?: string | null;
   countsTowardSeasonRecord?: boolean | null;
   tournament?: Record<string, any> | null;
+  trackingEngine?: string | null;
+  diamondScorebookInstanceId?: unknown;
+  diamondRevision?: unknown;
+  diamondProjectionStatus?: string | null;
+  diamondProjectionComplete?: boolean;
+  diamondProjectionRevision?: unknown;
+  diamondProjectionCheckpointHash?: string | null;
   statTrackerConfigId?: string | null;
+  diamondStatConfigSnapshotHash?: string | null;
+  diamondProjectionHash?: string | null;
+  isPublicProjection?: boolean;
   sourceType?: string | null;
   sourceLabel?: string | null;
   isImported?: boolean;
@@ -3431,6 +4243,8 @@ function createScheduleEvent(input: {
   availabilityPreferences?: any;
   isTeamAdmin?: boolean;
   isTeamStaff?: boolean;
+  canManageReplayVideo?: boolean;
+  canManageReplayVideoAsFullManager?: boolean;
   isTeamRsvpReminderManager?: boolean;
   gamePlan?: Record<string, any> | null;
   rotationPlan?: Record<string, any> | null;
@@ -3444,6 +4258,9 @@ function createScheduleEvent(input: {
   const attendanceSummary = getPracticeAttendanceSummary(input.practiceAttendance);
   const packetSummary = getPracticePacketSummary(input.practiceHomePacket);
   const availabilityNotesVisible = canViewAvailabilityNotes(availabilityPreferences, input.isTeamAdmin === true);
+  const rawReplayState = input.rawReplayState !== undefined
+    ? getReplayArchiveState(input.rawReplayState)
+    : getReplayArchiveState({ replayVideo: input.replayVideo });
   return {
     eventKey: makeEventKey(input.teamId, input.id, input.child.playerId, input.date, input.type),
     id: input.id,
@@ -3460,7 +4277,11 @@ function createScheduleEvent(input: {
     opponentTeamId: compactString(input.opponentTeamId) || null,
     opponentTeamName: input.opponentTeamName || null,
     opponentTeamPhoto: input.opponentTeamPhoto || null,
+    sharedScheduleId: compactString(input.sharedScheduleId) || null,
+    sharedScheduleSourceTeamId: compactString(input.sharedScheduleSourceTeamId) || null,
     sharedScheduleOpponentTeamId: compactString(input.sharedScheduleOpponentTeamId) || null,
+    sharedScheduleOpponentGameId: compactString(input.sharedScheduleOpponentGameId) || null,
+    hasReplayShareMarker: input.hasReplayShareMarker === true,
     counterpartTitle: compactString(input.counterpartTitle) || null,
     title: input.title || null,
     childId: input.child.playerId,
@@ -3478,6 +4299,10 @@ function createScheduleEvent(input: {
     awayScore: toNullableScore(input.awayScore),
     postGameNotes: input.postGameNotes || null,
     summary: input.summary || null,
+    videoUrl: input.videoUrl || null,
+    replayVideo: normalizeStoredYouTubeReplay(rawReplayState.replayVideo),
+    rawReplayState,
+    rawReplayLifecycle: input.rawReplayLifecycle,
     practiceFeedItems: Array.isArray(input.practiceFeedItems) ? input.practiceFeedItems : [],
     canUpdateScore: input.canUpdateScore === true,
     isHome: input.isHome ?? null,
@@ -3488,7 +4313,20 @@ function createScheduleEvent(input: {
     competitionType: input.competitionType || null,
     countsTowardSeasonRecord: input.countsTowardSeasonRecord ?? null,
     tournament: input.tournament && typeof input.tournament === 'object' ? input.tournament : null,
+    trackingEngine: compactString(input.trackingEngine) || null,
+    diamondScorebookInstanceId:
+      compactString(input.diamondScorebookInstanceId) || null,
+    diamondRevision: toNullableScore(input.diamondRevision),
+    diamondProjectionStatus: compactString(input.diamondProjectionStatus) || null,
+    diamondProjectionComplete: input.diamondProjectionComplete === true,
+    diamondProjectionRevision: toNullableScore(input.diamondProjectionRevision),
+    diamondProjectionCheckpointHash:
+      compactString(input.diamondProjectionCheckpointHash) || null,
     statTrackerConfigId: input.statTrackerConfigId || null,
+    diamondStatConfigSnapshotHash:
+      compactString(input.diamondStatConfigSnapshotHash) || null,
+    diamondProjectionHash: compactString(input.diamondProjectionHash) || null,
+    isPublicProjection: input.isPublicProjection === true,
     sourceType: input.sourceType || (input.isDbGame ? 'db' : 'calendar'),
     sourceLabel: input.sourceLabel || (input.isDbGame ? 'ALL PLAYS schedule' : 'Team calendar'),
     isImported: input.isImported === true || !input.isDbGame,
@@ -3514,6 +4352,9 @@ function createScheduleEvent(input: {
     practicePacketCompletions: [],
     isTeamAdmin: input.isTeamAdmin === true,
     isTeamStaff: input.isTeamStaff === true,
+    canManageReplayVideo: input.canManageReplayVideo === true,
+    canManageReplayVideoAsFullManager: input.canManageReplayVideoAsFullManager === true,
+    isSharedGame: input.isSharedGame === true,
     isTeamRsvpReminderManager: input.isTeamRsvpReminderManager === true,
     gamePlan: input.gamePlan || null,
     rotationPlan: input.rotationPlan || null,
@@ -3523,7 +4364,12 @@ function createScheduleEvent(input: {
   };
 }
 
-async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChild[], user: AuthUser, options: { includePastGames?: boolean; range?: ScheduleDateRange } = {}) {
+async function buildTeamSchedule(
+  teamId: string,
+  teamChildren: ParentScheduleChild[],
+  user: AuthUser,
+  options: { includePastGames?: boolean; range?: ScheduleDateRange; onSourcePartial?: () => void } = {}
+) {
   const events: ParentScheduleEvent[] = [];
   // Default schedule views only need upcoming + recent games; window the games
   // query so teams with several seasons of history don't read hundreds of docs
@@ -3531,8 +4377,50 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
   const gamesRange: ScheduleDateRange = options.range || (options.includePastGames
     ? {}
     : { startDate: new Date(Date.now() - defaultScheduleHistoryWindowMs) });
+  const teamPromise = loadTeam(teamId);
+  const calendarLoadPromise: Promise<{
+    calendarUrls: string[];
+    calendarResults: Array<Awaited<ReturnType<typeof fetchAndParseCalendar>>>;
+  }> = teamPromise.then(async (team) => {
+    if (!team) {
+      return { calendarUrls: [], calendarResults: [] };
+    }
+    const calendarUrls = Array.isArray(team.calendarUrls) ? team.calendarUrls.map(compactString).filter(Boolean) : [];
+    if (calendarUrls.length > 0) {
+      const calendarResults = await Promise.all(calendarUrls.map(async (calendarUrl: string) => {
+        try {
+          return await withCalendarImportSlot(() => fetchAndParseCalendar(calendarUrl));
+        } catch (error) {
+          logScheduleWarning('Unable to load team calendar.', 'team-calendar-load', error, { teamId, calendarUrl });
+          options.onSourcePartial?.();
+          return [];
+        }
+      }));
+      return { calendarUrls, calendarResults };
+    }
+    if (team.hasCalendarSources === true) {
+      try {
+        return {
+          calendarUrls,
+          calendarResults: [await getPublicTeamCalendarEvents(
+            teamId,
+            getPublicCalendarProjectionRange(gamesRange)
+          )]
+        };
+      } catch (error) {
+        logScheduleWarning('Unable to load projected team calendar.', 'team-calendar-projection-load', error, { teamId });
+        throw error;
+      }
+    }
+    return { calendarUrls, calendarResults: [] };
+  });
+  // The calendar request starts as soon as the team document is available, but
+  // remains part of the same complete team result. Attach a handler immediately
+  // so a fast calendar rejection cannot become unhandled while stored schedule
+  // reads finish; awaiting the original promise below still preserves the error.
+  void calendarLoadPromise.catch(() => {});
   const [team, dbGames, practiceSessions] = await Promise.all([
-    loadTeam(teamId),
+    teamPromise,
     loadGames(teamId, gamesRange),
     loadPracticeSessions(teamId, gamesRange)
   ]);
@@ -3553,7 +4441,6 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
 
   const teamName = compactString(team.name) || teamId;
   const teamWithId = { ...team, id: team.id || teamId };
-  const calendarUrls = Array.isArray(team.calendarUrls) ? team.calendarUrls.map(compactString).filter(Boolean) : [];
   const isStaff = isTeamStaff(teamWithId, user);
   const isRsvpReminderManager = isPublicRsvpReminderManager(teamWithId, user);
   teamChildren.forEach((child) => {
@@ -3573,7 +4460,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
   for (const game of scheduleGames) {
     const isPractice = game.type === 'practice';
     const type = isPractice ? 'practice' : 'game';
-    const isCancelled = game.status === 'cancelled';
+    const isCancelled = isTerminalScheduleRecord(game);
 
     if (isPractice && game.isSeriesMaster && game.recurrence) {
       for (const occurrence of expandRecurrence(game)) {
@@ -3613,7 +4500,17 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
             competitionType: game.competitionType || null,
             countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
             tournament: game.tournament || null,
+            trackingEngine: game.trackingEngine || null,
+            diamondScorebookInstanceId: game.diamondScorebookInstanceId || null,
+            diamondRevision: game.diamondRevision ?? null,
+            diamondProjectionStatus: game.diamondProjectionStatus || null,
+            diamondProjectionComplete: game.diamondProjectionComplete === true,
+            diamondProjectionRevision: game.diamondProjectionRevision ?? null,
+            diamondProjectionCheckpointHash: game.diamondProjectionCheckpointHash || null,
             statTrackerConfigId: game.statTrackerConfigId || null,
+            diamondStatConfigSnapshotHash: game.diamondStatConfigSnapshotHash || null,
+            diamondProjectionHash: game.diamondProjectionHash || null,
+            isPublicProjection: game.isPublicProjection === true,
             sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
             sourceLabel: getScheduleSourceLabel(game),
             isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -3655,7 +4552,11 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           opponentTeamId: game.opponentTeamId || null,
           opponentTeamName: game.opponentTeamName || game.awayTeamName || null,
           opponentTeamPhoto: game.opponentTeamPhoto || null,
+          sharedScheduleId: game.sharedScheduleId || null,
+          sharedScheduleSourceTeamId: game.sharedScheduleSourceTeamId || null,
           sharedScheduleOpponentTeamId: game.sharedScheduleOpponentTeamId || null,
+          sharedScheduleOpponentGameId: game.sharedScheduleOpponentGameId || null,
+          hasReplayShareMarker: game.hasReplayShareMarker === true,
           counterpartTitle: teamName ? `vs. ${teamName}` : null,
           title: game.title || null,
           isDbGame: true,
@@ -3670,7 +4571,12 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           awayScore: game.awayScore ?? null,
           postGameNotes: game.postGameNotes || null,
           summary: game.summary || null,
+          videoUrl: game.videoUrl || null,
+          replayVideo: game.replayVideo || null,
+          rawReplayState: game.rawReplayState,
+          rawReplayLifecycle: game.rawReplayLifecycle,
           practiceFeedItems: Array.isArray(game.practiceFeedItems) ? game.practiceFeedItems : [],
+          isSharedGame: game.isSharedGame === true,
           canUpdateScore: type === 'game' && hasScorekeepingTeamAccess(user, teamWithId, game, null),
           isHome: game.isHome ?? null,
           kitColor: game.kitColor || null,
@@ -3680,7 +4586,18 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           competitionType: game.competitionType || null,
           countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
           tournament: game.tournament || null,
+          trackingEngine: game.trackingEngine || null,
+          diamondScorebookInstanceId:
+            compactString(game.diamondScorebookInstanceId) || null,
+          diamondRevision: game.diamondRevision ?? null,
+          diamondProjectionStatus: game.diamondProjectionStatus || null,
+          diamondProjectionComplete: game.diamondProjectionComplete === true,
+          diamondProjectionRevision: game.diamondProjectionRevision ?? null,
+          diamondProjectionCheckpointHash: game.diamondProjectionCheckpointHash || null,
           statTrackerConfigId: game.statTrackerConfigId || null,
+          diamondStatConfigSnapshotHash: game.diamondStatConfigSnapshotHash || null,
+          diamondProjectionHash: game.diamondProjectionHash || null,
+          isPublicProjection: game.isPublicProjection === true,
           sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
           sourceLabel: getScheduleSourceLabel(game),
           isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -3693,6 +4610,8 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           availabilityPreferences,
           isTeamAdmin: isRsvpReminderManager,
           isTeamStaff: isStaff,
+          canManageReplayVideo: canManageGameReplayVideo(teamWithId, user),
+          canManageReplayVideoAsFullManager: getGameReplayManagerAccessLevel(teamWithId, user) === 'full',
           isTeamRsvpReminderManager: isRsvpReminderManager,
           gamePlan: game.gamePlan || null,
           rotationPlan: game.rotationPlan || null,
@@ -3703,26 +4622,24 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
     }
   }
 
-  if (calendarUrls.length > 0) {
-    const calendarResults = await Promise.all(calendarUrls.map(async (calendarUrl: string) => {
-      try {
-        return await fetchAndParseCalendar(calendarUrl);
-      } catch (error) {
-        logScheduleWarning('Unable to load team calendar.', 'team-calendar-load', error, { teamId, calendarUrl });
-        return [];
-      }
-    }));
-
+  const { calendarUrls, calendarResults } = await calendarLoadPromise;
+  if (calendarResults.length > 0) {
     calendarResults.flat().forEach((calendarEvent: any) => {
-      if (isTrackedCalendarEvent(calendarEvent, trackedUids)) return;
+      const calendarEventTrackingId = getCalendarEventTrackingId(calendarEvent);
+      if (
+        isCalendarOccurrenceTracked(calendarEventTrackingId, calendarEvent.dtstart, trackedUids)
+        || isTrackedCalendarEvent(calendarEvent, trackedUids)
+      ) return;
       const date = normalizeScheduleDate(calendarEvent.dtstart);
       if (!date) return;
       const hasConflict = scheduleGames.some((dbGame: any) => Math.abs(toEventDate(dbGame.date).getTime() - date.getTime()) < 60000);
       if (hasConflict) return;
-      const isPractice = isPracticeEvent(calendarEvent.summary);
+      const isPractice = calendarEvent.isPublicProjection === true
+        ? calendarEvent.type === 'practice'
+        : isPracticeEvent(calendarEvent.summary);
       const type = isPractice ? 'practice' : 'game';
       const cleanSummary = calendarEvent.summary?.replace(/\[CANCELED\]\s*/gi, '') || '';
-      const id = getCalendarEventTrackingId(calendarEvent) || `ics-${date.getTime()}`;
+      const id = calendarEventTrackingId || `ics-${date.getTime()}`;
       const session = isPractice ? resolvePracticeSessionForEvent(calendarEvent, date, sessionsByEventId, sessions, matchedSessionIds) : null;
       teamChildren.forEach((child) => {
         events.push(createScheduleEvent({
@@ -3813,11 +4730,18 @@ export async function loadTeamOverviewSchedule(teamId: string, teamName: string,
   }], user);
 }
 
-async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, teamChildren: ParentScheduleChild[], user: AuthUser) {
+async function buildTargetedTeamScheduleEvent(
+  teamId: string,
+  eventId: string,
+  teamChildren: ParentScheduleChild[],
+  user: AuthUser,
+  delegatedTeamContext: Record<string, unknown> | null = null,
+  sharedGamePath = ''
+) {
   const occurrenceMatch = eventId.match(/^(.*)__([0-9]{4}-[0-9]{2}-[0-9]{2})$/);
   const [team, initialGame] = await Promise.all([
-    loadTeam(teamId),
-    loadGameById(teamId, eventId)
+    delegatedTeamContext ? Promise.resolve(delegatedTeamContext) : loadTeam(teamId),
+    loadGameById(teamId, eventId, sharedGamePath)
   ]);
   if (!team) return [];
 
@@ -3852,7 +4776,7 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
   const session = isPractice ? await loadPracticeSessionByEventId(teamId, eventId).catch(() => null) : null;
   const date = toEventDate(game.date);
   const normalizedId = compactString(game.id || game.gameId || eventId);
-  const isCancelled = game.status === 'cancelled';
+  const isCancelled = isTerminalScheduleRecord(game);
   if (!normalizedId) return [];
 
   if (isPractice && game.isSeriesMaster && game.recurrence) {
@@ -3897,7 +4821,17 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
       competitionType: game.competitionType || null,
       countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
       tournament: game.tournament || null,
+      trackingEngine: game.trackingEngine || null,
+      diamondScorebookInstanceId: game.diamondScorebookInstanceId || null,
+      diamondRevision: game.diamondRevision ?? null,
+      diamondProjectionStatus: game.diamondProjectionStatus || null,
+      diamondProjectionComplete: game.diamondProjectionComplete === true,
+      diamondProjectionRevision: game.diamondProjectionRevision ?? null,
+      diamondProjectionCheckpointHash: game.diamondProjectionCheckpointHash || null,
       statTrackerConfigId: game.statTrackerConfigId || null,
+      diamondStatConfigSnapshotHash: game.diamondStatConfigSnapshotHash || null,
+      diamondProjectionHash: game.diamondProjectionHash || null,
+      isPublicProjection: game.isPublicProjection === true,
       sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
       sourceLabel: getScheduleSourceLabel(game),
       isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -3938,7 +4872,11 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
     opponentTeamId: game.opponentTeamId || null,
     opponentTeamName: game.opponentTeamName || game.awayTeamName || null,
     opponentTeamPhoto: game.opponentTeamPhoto || null,
+    sharedScheduleId: game.sharedScheduleId || null,
+    sharedScheduleSourceTeamId: game.sharedScheduleSourceTeamId || null,
     sharedScheduleOpponentTeamId: game.sharedScheduleOpponentTeamId || null,
+    sharedScheduleOpponentGameId: game.sharedScheduleOpponentGameId || null,
+    hasReplayShareMarker: game.hasReplayShareMarker === true,
     counterpartTitle: teamName ? `vs. ${teamName}` : null,
     title: game.title || null,
     isDbGame: true,
@@ -3951,6 +4889,11 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
     liveClockUpdatedAt: game.liveClockUpdatedAt || null,
     homeScore: game.homeScore ?? null,
     awayScore: game.awayScore ?? null,
+    videoUrl: game.videoUrl || null,
+    replayVideo: game.replayVideo || null,
+    rawReplayState: game.rawReplayState,
+    rawReplayLifecycle: game.rawReplayLifecycle,
+    isSharedGame: game.isSharedGame === true,
     canUpdateScore: type === 'game' && hasScorekeepingTeamAccess(user, teamWithId, game, null),
     isHome: game.isHome ?? null,
     kitColor: game.kitColor || null,
@@ -3960,7 +4903,18 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
     competitionType: game.competitionType || null,
     countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
     tournament: game.tournament || null,
+    trackingEngine: game.trackingEngine || null,
+    diamondScorebookInstanceId:
+      compactString(game.diamondScorebookInstanceId) || null,
+    diamondRevision: game.diamondRevision ?? null,
+    diamondProjectionStatus: game.diamondProjectionStatus || null,
+    diamondProjectionComplete: game.diamondProjectionComplete === true,
+    diamondProjectionRevision: game.diamondProjectionRevision ?? null,
+    diamondProjectionCheckpointHash: game.diamondProjectionCheckpointHash || null,
     statTrackerConfigId: game.statTrackerConfigId || null,
+    diamondStatConfigSnapshotHash: game.diamondStatConfigSnapshotHash || null,
+    diamondProjectionHash: game.diamondProjectionHash || null,
+    isPublicProjection: game.isPublicProjection === true,
     sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
     sourceLabel: getScheduleSourceLabel(game),
     isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -3973,6 +4927,8 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
     availabilityPreferences,
     isTeamAdmin: isRsvpReminderManager,
     isTeamStaff: isStaff,
+    canManageReplayVideo: canManageGameReplayVideo(teamWithId, user),
+    canManageReplayVideoAsFullManager: getGameReplayManagerAccessLevel(teamWithId, user) === 'full',
     isTeamRsvpReminderManager: isRsvpReminderManager,
     gamePlan: game.gamePlan || null,
     rotationPlan: game.rotationPlan || null,
@@ -4033,7 +4989,7 @@ function resolveMyRsvpNotesByChildForGame(allScheduleEvents: ParentScheduleEvent
   return Object.fromEntries([...byChild.entries()].map(([playerId, value]) => [playerId, value.note]));
 }
 
-async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser) {
+async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser, includeOptionalDetails = true) {
   const uniqueEventKeys = [...new Set(
     events
       .filter((event) => event.isDbGame && !event.isCancelled && event.teamId && event.id)
@@ -4049,9 +5005,18 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
     if (!firstEvent) return;
 
     const isTeamStaff = matchingEvents.some((event) => event.isTeamStaff === true || event.isTeamAdmin === true);
-    const { rsvps: loadedRsvps, rsvpsLoaded, offers, claims, claimsLoaded } = isTeamStaff
-      ? await loadCachedEventHydrationDetails(teamId, gameId)
-      : await loadCachedOwnEventHydrationDetails(matchingEvents, user.uid);
+    const canManageTeamRequests = matchingEvents.some((event) => event.isTeamAdmin === true);
+    const hydration = isTeamStaff
+      ? await loadCachedEventHydrationDetails(
+        teamId,
+        gameId,
+        user.uid,
+        matchingEvents.map((event) => event.childId),
+        canManageTeamRequests,
+        includeOptionalDetails
+      )
+      : await loadCachedOwnEventHydrationDetails(matchingEvents, user.uid, includeOptionalDetails);
+    const { rsvps: loadedRsvps, rsvpsLoaded } = hydration;
     const ownRsvpNotes = rsvpsLoaded
       ? await mergeOwnRsvpNotes(teamId, gameId, loadedRsvps, user.uid)
       : { rsvps: loadedRsvps, noteReadsComplete: false };
@@ -4059,9 +5024,12 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
     const myRsvpByChild = resolveMyRsvpByChildForGame(events, teamId, gameId, rsvps, user.uid);
     const myRsvpNotesByChild = resolveMyRsvpNotesByChildForGame(events, teamId, gameId, rsvps, user.uid);
     const summary = firstEvent.rsvpSummary || summarizeRsvps(rsvps);
-    const rideshareSummary = getEventRideshareSummary(offers) as ScheduleRideSummary;
-    const assignments = mergeAssignmentsWithClaims(firstEvent.assignments, claims) as ScheduleAssignment[];
-    const openAssignmentCount = countOpenScheduleAssignments(assignments);
+    const rideshareSummary = hydration.offersLoaded
+      ? getEventRideshareSummary(hydration.offers) as ScheduleRideSummary
+      : null;
+    const assignments = hydration.claimsLoaded
+      ? mergeAssignmentsWithClaims(firstEvent.assignments, hydration.claims) as ScheduleAssignment[]
+      : null;
     const preferences = firstEvent.availabilityPreferences || {};
     const isTeamAdmin = matchingEvents.some((event) => event.isTeamAdmin === true);
     const availabilityNotesVisible = canViewAvailabilityNotes(preferences, isTeamAdmin);
@@ -4080,10 +5048,14 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
         authoritativeRsvpEvents.push(event);
       }
       event.rsvpSummary = summary;
-      event.rideshareSummary = rideshareSummary;
-      event.assignments = assignments;
-      event.openAssignmentCount = openAssignmentCount;
-      event.assignmentClaimsHydrated = claimsLoaded;
+      if (hydration.offersLoaded) {
+        event.rideshareSummary = rideshareSummary;
+      }
+      if (assignments) {
+        event.assignments = assignments;
+        event.openAssignmentCount = countOpenScheduleAssignments(assignments);
+        event.assignmentClaimsHydrated = true;
+      }
       event.availabilityNotesVisible = availabilityNotesVisible;
       event.availabilityNotes = availabilityNotes;
     });
@@ -4100,61 +5072,127 @@ function shouldEagerlyHydrateParentHomeEvent(event: ParentScheduleEvent, nowMs =
     && eventTime <= nowMs + parentHomeHydrationLookAheadMs;
 }
 
-function loadCachedEventHydrationDetails(teamId: string, gameId: string) {
+function loadCachedRideOffers(teamId: string, gameId: string, readScope: Partial<RideRequestReadScope>) {
+  const scope = normalizeRideRequestReadScope(readScope);
+  const baseKey = getScheduleEventRideOffersCacheKey(teamId, gameId);
+  const cacheKey = getScheduleEventRideOffersCacheKey(teamId, gameId, scope);
+  if (!rideOfferCacheKeysByEvent.has(baseKey)) rideOfferCacheKeysByEvent.set(baseKey, new Set());
+  rideOfferCacheKeysByEvent.get(baseKey)?.add(cacheKey);
   return loadCachedAppData(
-    getScheduleEventHydrationCacheKey(teamId, gameId),
-    async () => {
-      const results = await Promise.allSettled([
-        loadRsvps(teamId, gameId),
-        loadRideOffers(teamId, gameId),
-        loadAssignmentClaims(teamId, gameId)
-      ]);
-      const firstRejected = results.find((result) => result.status === 'rejected');
-      if (firstRejected && results.every((result) => result.status === 'rejected')) {
-        throw firstRejected.reason;
-      }
-      const [rsvpsResult, offersResult, claimsResult] = results;
-      return {
-        rsvps: rsvpsResult.status === 'fulfilled' ? rsvpsResult.value : [],
-        rsvpsLoaded: rsvpsResult.status === 'fulfilled',
-        offers: offersResult.status === 'fulfilled' ? offersResult.value : [],
-        claims: claimsResult.status === 'fulfilled' ? claimsResult.value : {},
-        claimsLoaded: claimsResult.status === 'fulfilled'
-      };
-    },
-    {
-      ttlMs: scheduleHydrationCacheTtlMs,
-      persist: false
-    }
+    cacheKey,
+    () => loadRideOffers(teamId, gameId, [], scope),
+    { ttlMs: scheduleHydrationCacheTtlMs, persist: false }
   );
 }
 
-function loadCachedOwnEventHydrationDetails(events: ParentScheduleEvent[], userId: string) {
+function loadCachedAssignmentClaims(teamId: string, gameId: string) {
+  return loadCachedAppData(
+    getScheduleEventAssignmentClaimsCacheKey(teamId, gameId),
+    () => loadAssignmentClaims(teamId, gameId),
+    { ttlMs: scheduleHydrationCacheTtlMs, persist: false }
+  );
+}
+
+async function loadCachedEventHydrationDetails(
+  teamId: string,
+  gameId: string,
+  userId: string,
+  childIds: string[],
+  canManageTeamRequests: boolean,
+  includeOptionalDetails = true
+) {
+  const rsvpsPromise = loadCachedAppData(
+    getScheduleEventHydrationCacheKey(teamId, gameId),
+    () => loadRsvps(teamId, gameId),
+    { ttlMs: scheduleHydrationCacheTtlMs, persist: false }
+  );
+  const results = await Promise.allSettled([
+    rsvpsPromise,
+    ...(includeOptionalDetails ? [loadCachedRideOffers(teamId, gameId, {
+      requesterUserId: userId,
+      childIds,
+      canManageTeamRequests
+    }), loadCachedAssignmentClaims(teamId, gameId)] : [])
+  ]);
+  const [rsvpsResult, offersResult, claimsResult] = results;
+  if (rsvpsResult.status === 'rejected' && (!includeOptionalDetails || results.every((result) => result.status === 'rejected'))) {
+    throw (rsvpsResult as PromiseRejectedResult).reason;
+  }
+  return {
+    rsvps: rsvpsResult.status === 'fulfilled' ? rsvpsResult.value : [],
+    rsvpsLoaded: rsvpsResult.status === 'fulfilled',
+    offers: offersResult?.status === 'fulfilled' ? offersResult.value : [],
+    offersLoaded: offersResult?.status === 'fulfilled',
+    claims: claimsResult?.status === 'fulfilled' ? claimsResult.value : {},
+    claimsLoaded: claimsResult?.status === 'fulfilled'
+  };
+}
+
+async function loadCachedOwnEventHydrationDetails(events: ParentScheduleEvent[], userId: string, includeOptionalDetails = true) {
   const firstEvent = events[0];
   const teamId = firstEvent?.teamId || '';
   const gameId = firstEvent?.id || '';
   const normalizedPlayerIds = uniqueNonEmptyStrings(events.map((event) => event.childId)).sort();
-  return loadCachedAppData(
+  const rsvpsPromise = loadCachedAppData(
     `${getScheduleEventHydrationCacheKey(teamId, gameId)}:own:${userId}:${normalizedPlayerIds.join(',')}`,
-    async () => {
-      const results = await Promise.allSettled([
-        loadOwnRsvps(teamId, gameId, userId, normalizedPlayerIds),
-        loadRideOffers(teamId, gameId),
-        loadAssignmentClaims(teamId, gameId)
-      ]);
-      const firstRejected = results.find((result) => result.status === 'rejected');
-      if (firstRejected && results.every((result) => result.status === 'rejected')) throw firstRejected.reason;
-      const [rsvpsResult, offersResult, claimsResult] = results;
-      return {
-        rsvps: rsvpsResult.status === 'fulfilled' ? rsvpsResult.value : [],
-        rsvpsLoaded: rsvpsResult.status === 'fulfilled',
-        offers: offersResult.status === 'fulfilled' ? offersResult.value : [],
-        claims: claimsResult.status === 'fulfilled' ? claimsResult.value : {},
-        claimsLoaded: claimsResult.status === 'fulfilled'
-      };
-    },
+    () => loadOwnRsvps(teamId, gameId, userId, normalizedPlayerIds),
     { ttlMs: scheduleHydrationCacheTtlMs, persist: false }
   );
+  const results = await Promise.allSettled([
+    rsvpsPromise,
+    ...(includeOptionalDetails ? [loadCachedRideOffers(teamId, gameId, {
+      requesterUserId: userId,
+      childIds: normalizedPlayerIds,
+      canManageTeamRequests: false
+    }), loadCachedAssignmentClaims(teamId, gameId)] : [])
+  ]);
+  const [rsvpsResult, offersResult, claimsResult] = results;
+  if (rsvpsResult.status === 'rejected' && (!includeOptionalDetails || results.every((result) => result.status === 'rejected'))) {
+    throw (rsvpsResult as PromiseRejectedResult).reason;
+  }
+  return {
+    rsvps: rsvpsResult.status === 'fulfilled' ? rsvpsResult.value : [],
+    rsvpsLoaded: rsvpsResult.status === 'fulfilled',
+    offers: offersResult?.status === 'fulfilled' ? offersResult.value : [],
+    offersLoaded: offersResult?.status === 'fulfilled',
+    claims: claimsResult?.status === 'fulfilled' ? claimsResult.value : {},
+    claimsLoaded: claimsResult?.status === 'fulfilled'
+  };
+}
+
+export async function hydrateParentScheduleEventOptionalDetails(schedule: ParentScheduleLoadResult): Promise<ParentScheduleLoadResult> {
+  const hydratedSchedule = {
+    ...schedule,
+    events: schedule.events.map((event) => ({ ...event }))
+  };
+  const uniqueEvents = [...new Map(hydratedSchedule.events
+    .filter((event) => event.isDbGame && !event.isCancelled && event.teamId && event.id)
+    .map((event) => [`${event.teamId}::${event.id}`, event])).values()];
+
+  await Promise.all(uniqueEvents.map(async (firstEvent) => {
+    const matchingEvents = hydratedSchedule.events.filter((event) => event.teamId === firstEvent.teamId && event.id === firstEvent.id);
+    const userId = compactString(firebaseAuth.currentUser?.uid);
+    const canManageTeamRequests = matchingEvents.some((event) => event.isTeamAdmin === true);
+    const [offersResult, claimsResult] = await Promise.allSettled([
+      loadCachedRideOffers(firstEvent.teamId, firstEvent.id, {
+        requesterUserId: userId,
+        childIds: matchingEvents.map((event) => event.childId),
+        canManageTeamRequests
+      }),
+      loadCachedAssignmentClaims(firstEvent.teamId, firstEvent.id)
+    ]);
+    matchingEvents.forEach((event) => {
+      if (offersResult.status === 'fulfilled') {
+        event.rideshareSummary = getEventRideshareSummary(offersResult.value) as ScheduleRideSummary;
+      }
+      if (claimsResult.status === 'fulfilled') {
+        event.assignments = mergeAssignmentsWithClaims(event.assignments, claimsResult.value) as ScheduleAssignment[];
+        event.openAssignmentCount = countOpenScheduleAssignments(event.assignments);
+        event.assignmentClaimsHydrated = true;
+      }
+    });
+  }));
+  return hydratedSchedule;
 }
 
 export async function hydrateParentScheduleDetails(schedule: ParentScheduleLoadResult, user: AuthUser | null): Promise<ParentScheduleLoadResult> {
@@ -4170,6 +5208,7 @@ export async function hydrateParentScheduleDetails(schedule: ParentScheduleLoadR
 async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<string, unknown>, options: ParentScheduleLoadOptions = {}) {
   const expandStaffPlayers = options.expandStaffPlayers !== false;
   const targetTeamId = compactString(options.targetTeamId);
+  const delegatedGameId = compactString(options.delegatedGameId);
   const childResult: ParentScheduleChildrenResult = options.parentScope?.children
     ? {
         children: options.parentScope.children.filter((child) => !targetTeamId || child.teamId === targetTeamId),
@@ -4178,14 +5217,42 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
     : await resolveParentScheduleChildren(user, profile as Record<string, unknown>, { targetTeamId });
   const children = childResult.children;
   const byTeam = new Map<string, ParentScheduleChild[]>();
+  const delegatedTeamContexts = new Map<string, Record<string, unknown>>();
   children.forEach((child) => {
     if (!byTeam.has(child.teamId)) byTeam.set(child.teamId, []);
     byTeam.get(child.teamId)?.push(child);
   });
 
-  const staffTeamResult: StaffTeamsLoadResult = options.parentScope?.staffTeams
-    ? { teams: options.parentScope.staffTeams, isPartial: options.parentScope.isPartial === true }
-    : await loadStaffTeams(user).catch(() => ({ teams: [], isPartial: true }));
+  let staffTeamResult: StaffTeamsLoadResult;
+  if (options.parentScope?.staffTeams) {
+    staffTeamResult = { teams: options.parentScope.staffTeams, isPartial: options.parentScope.isPartial === true };
+  } else if (options.nativeStaffTeamsLoader) {
+    try {
+      const sharedResult = await options.nativeStaffTeamsLoader();
+      staffTeamResult = {
+        teams: sharedResult.teams.filter((team: any) => team?.id && isTeamActive(team)),
+        isPartial: sharedResult.isPartial,
+        verifiedByHttp: true,
+        httpAttempted: true
+      };
+      if (staffTeamResult.isPartial) {
+        const retryResult = await loadStaffTeams(user);
+        const teamsById = new Map<string, any>();
+        [...staffTeamResult.teams, ...retryResult.teams].forEach((team: any) => {
+          const teamId = compactString(team?.id || team?.teamId);
+          if (teamId) teamsById.set(teamId, team);
+        });
+        staffTeamResult = {
+          ...retryResult,
+          teams: [...teamsById.values()]
+        };
+      }
+    } catch {
+      staffTeamResult = await loadStaffTeams(user).catch(() => ({ teams: [], isPartial: true }));
+    }
+  } else {
+    staffTeamResult = await loadStaffTeams(user).catch(() => ({ teams: [], isPartial: true }));
+  }
   const staffTeams = staffTeamResult.teams.filter((team: any) => (
     !targetTeamId || compactString(team?.id || team?.teamId) === targetTeamId
   ));
@@ -4221,9 +5288,44 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
     }
   });
 
-  const targetAccessVerified = !targetTeamId
+  const hasParentOrStaffTargetAccess = !targetTeamId
     || children.some((child) => child.teamId === targetTeamId)
     || staffTeams.some((team: any) => compactString(team?.id || team?.teamId) === targetTeamId);
+  if (targetTeamId && delegatedGameId && !hasParentOrStaffTargetAccess) {
+    const delegatedTeam = markDelegatedTeamContext(
+      await getDelegatedTeamContext(targetTeamId, delegatedGameId).catch(() => null)
+    );
+    const delegatedAccess = delegatedTeam?.delegatedAccess;
+    const hasDelegatedScheduleEventAccess = Boolean(
+      delegatedTeam
+      && compactString(delegatedTeam.id) === targetTeamId
+      && delegatedAccess
+      && typeof delegatedAccess === 'object'
+      && !Array.isArray(delegatedAccess)
+      && (
+        (delegatedAccess as Record<string, unknown>).full === true
+        || (delegatedAccess as Record<string, unknown>).parent === true
+        || (delegatedAccess as Record<string, unknown>).scorekeeping === true
+        || canManageGameReplayVideo(delegatedTeam, user)
+      )
+    );
+    if (hasDelegatedScheduleEventAccess && delegatedTeam) {
+      delegatedTeamContexts.set(targetTeamId, delegatedTeam);
+      const teamName = compactString(delegatedTeam.name || delegatedTeam.teamName) || targetTeamId;
+      byTeam.set(targetTeamId, [{
+        teamId: targetTeamId,
+        teamName,
+        playerId: `delegated-team-${targetTeamId}`,
+        playerName: 'Game Day',
+        isLinkedParentChild: false
+      }]);
+    }
+  }
+
+  const targetAccessVerified = !targetTeamId
+    || children.some((child) => child.teamId === targetTeamId)
+    || staffTeams.some((team: any) => compactString(team?.id || team?.teamId) === targetTeamId)
+    || delegatedTeamContexts.has(targetTeamId);
   if (targetTeamId && !targetAccessVerified && childResult.isPartial !== true && staffTeamResult.isPartial !== true) {
     throw new Error('You do not have permission to load this team schedule.');
   }
@@ -4231,6 +5333,7 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
     children,
     byTeam,
     staffTeams,
+    delegatedTeamContexts,
     targetAccessVerified,
     isParentScopePartial: targetTeamId && targetAccessVerified
       ? false
@@ -4266,6 +5369,11 @@ export function resolveCachedParentScheduleEvents(
 export async function loadParentScheduleEventDetail(user: AuthUser | null, options: ParentScheduleEventDetailLoadOptions): Promise<ParentScheduleLoadResult> {
   const requestedTeamId = compactString(options?.teamId);
   const requestedEventId = compactString(options?.eventId);
+  const sharedGamePath = normalizeSharedGameDocumentPath(options?.sharedGamePath);
+
+  if (options?.sharedGamePath && !sharedGamePath) {
+    throw new Error('The shared game path is invalid.');
+  }
 
   if (!user?.uid || !requestedTeamId || !requestedEventId) {
     return { children: [], events: [] };
@@ -4277,7 +5385,11 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
 
   try {
     const profile = await loadProfileDocument(user.uid);
-    const { children, byTeam, staffTeams } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, { expandStaffPlayers });
+    const { children, byTeam, staffTeams, delegatedTeamContexts } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
+      expandStaffPlayers,
+      targetTeamId: requestedTeamId,
+      delegatedGameId: requestedEventId
+    });
     const teamChildren = byTeam.get(requestedTeamId) || [];
 
     if (!teamChildren.length) {
@@ -4286,18 +5398,48 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
     }
 
     let fallback = false;
+    let sourcePartial = false;
     let teamEventRows: number | undefined;
-    let events = await buildTargetedTeamScheduleEvent(requestedTeamId, requestedEventId, teamChildren, user);
-    if (!events.length) {
+    const delegatedTeamContext = delegatedTeamContexts.get(requestedTeamId) || null;
+    let events = await buildTargetedTeamScheduleEvent(
+      requestedTeamId,
+      requestedEventId,
+      teamChildren,
+      user,
+      delegatedTeamContext,
+      sharedGamePath
+    );
+    if (!events.length && !delegatedTeamContext) {
       fallback = true;
       // Full history here so a deep-linked past event outside the default window is still found.
-      const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user, { includePastGames: true });
+      const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user, {
+        includePastGames: true,
+        onSourcePartial: () => {
+          sourcePartial = true;
+        }
+      });
       teamEventRows = teamEvents.length;
       events = teamEvents.filter((event) => event.id === requestedEventId);
     }
-    const authoritativeEvents = hydrateDetails && events.length
-      ? await hydrateEventDetails(events, user)
-      : [];
+    let authoritativeEvents: ParentScheduleEvent[] = [];
+    if (hydrateDetails && events.length) {
+      const routeEventIds = sharedGamePath
+        ? events.map((event) => event.id)
+        : [];
+      if (sharedGamePath) {
+        const reversibleGameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+        events.forEach((event) => {
+          event.id = reversibleGameId;
+        });
+      }
+      try {
+        authoritativeEvents = await hydrateEventDetails(events, user, false);
+      } finally {
+        routeEventIds.forEach((eventId, index) => {
+          if (events[index]) events[index].id = eventId;
+        });
+      }
+    }
     finalizeSessionRsvpHydration(events, authoritativeEvents, user.uid);
     timer.end({
       hydrateDetails,
@@ -4311,7 +5453,7 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
       eventRows: events.length,
       fallback
     });
-    return { children, events };
+    return { children, events, isPartial: sourcePartial };
   } catch (error: any) {
     timer.end({ hydrateDetails, expandStaffPlayers, teamId: requestedTeamId, eventId: requestedEventId, error: error?.message || 'Unable to load schedule event detail.' });
     throw error;
@@ -4362,7 +5504,12 @@ export async function loadParentPlayerSchedule(user: AuthUser | null, options: P
     // The player view only renders upcoming events plus a small recent-history
     // window. Keep this read bounded so long-lived teams do not scan every game
     // document before the player profile can open.
-    const events = await buildTeamSchedule(child.teamId, [child], user);
+    let sourcePartial = false;
+    const events = await buildTeamSchedule(child.teamId, [child], user, {
+      onSourcePartial: () => {
+        sourcePartial = true;
+      }
+    });
     const authoritativeEvents = hydrateDetails && events.length
       ? await hydrateEventDetails(events, user)
       : [];
@@ -4375,15 +5522,21 @@ export async function loadParentPlayerSchedule(user: AuthUser | null, options: P
       childLinks: children.length,
       eventRows: events.length
     });
-    return { children, events };
+    return { children, events, isPartial: sourcePartial };
   } catch (error: any) {
     timer.end({ hydrateDetails, teamId: requestedTeamId || null, playerId: requestedPlayerId, error: error?.message || 'Unable to load player schedule.' });
     throw error;
   }
 }
 
-export async function resolveParentGameRoute(user: AuthUser | null, gameId: string, options: ParentScheduleLoadOptions = {}): Promise<ParentGameRouteResolution | null> {
+export async function resolveParentGameRoute(user: AuthUser | null, gameId: string, options: ParentScheduleLoadOptions & { sharedGamePath?: string } = {}): Promise<ParentGameRouteResolution | null> {
   const requestedGameId = compactString(gameId);
+  const requestedTeamId = compactString(options.targetTeamId);
+  const sharedGamePath = normalizeSharedGameDocumentPath(options.sharedGamePath);
+
+  if (options.sharedGamePath && (!sharedGamePath || !requestedTeamId)) {
+    throw new Error('The shared game route is invalid.');
+  }
 
   if (!user?.uid || !requestedGameId) {
     return null;
@@ -4396,6 +5549,7 @@ export async function resolveParentGameRoute(user: AuthUser | null, gameId: stri
     compactString(event?.id) === requestedGameId
     && event?.type === 'game'
     && compactString(event?.teamId)
+    && (!requestedTeamId || compactString(event?.teamId) === requestedTeamId)
   ));
 
   if (cachedMatch) {
@@ -4412,12 +5566,16 @@ export async function resolveParentGameRoute(user: AuthUser | null, gameId: stri
 
   try {
     const profile = await loadProfileDocument(user.uid);
-    const { children, byTeam, staffTeams } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, { expandStaffPlayers });
+    const { children, byTeam, staffTeams } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
+      expandStaffPlayers,
+      targetTeamId: requestedTeamId || undefined,
+      delegatedGameId: requestedGameId
+    });
     const teamEntries = [...byTeam.entries()];
 
     const matches = await mapWithConcurrency(teamEntries, parentScheduleTeamConcurrency, async ([teamId, teamChildren]) => {
       try {
-        const game = await loadGameById(teamId, requestedGameId);
+        const game = await loadGameById(teamId, requestedGameId, sharedGamePath);
         const eventId = compactString(game?.id || game?.gameId || requestedGameId);
         if (!game || eventId !== requestedGameId) return null;
         const childId = (teamChildren || [])
@@ -4461,7 +5619,9 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     const canReuseParentScope = Boolean(options.parentScope && options.parentScope.isPartial !== true);
     const profile = canReuseParentScope
       ? options.parentScope!.profile
-      : await loadProfileDocument(user.uid);
+      : options.nativeProfileLoader
+        ? await options.nativeProfileLoader()
+        : await loadProfileDocument(user.uid);
     const { children, byTeam, staffTeams, isParentScopePartial, targetAccessVerified } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
       ...options,
       expandStaffPlayers,
@@ -4481,6 +5641,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
       teamId: string;
       events: ParentScheduleEvent[];
       error: ReturnType<typeof toAppServiceError> | null;
+      isPartial: boolean;
     }> = [];
     const emitPartial = () => {
       if (!options.onPartial) return;
@@ -4510,15 +5671,22 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
         teamId: string;
         events: ParentScheduleEvent[];
         error: ReturnType<typeof toAppServiceError> | null;
+        isPartial: boolean;
       };
       try {
+        let sourcePartial = false;
+        const teamEvents = await buildTeamSchedule(teamId, teamChildren, user, {
+          includePastGames,
+          range: scheduleRangeByTeam?.[teamId],
+          onSourcePartial: () => {
+            sourcePartial = true;
+          }
+        });
         result = {
           teamId,
-          events: await buildTeamSchedule(teamId, teamChildren, user, {
-            includePastGames,
-            range: scheduleRangeByTeam?.[teamId]
-          }),
-          error: null
+          events: teamEvents,
+          error: null,
+          isPartial: sourcePartial
         };
       } catch (error) {
         const appError = toAppServiceError(error, 'Unable to load schedule.');
@@ -4526,7 +5694,8 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
         result = {
           teamId,
           events: [] as ParentScheduleEvent[],
-          error: appError
+          error: appError,
+          isPartial: true
         };
       }
       completedTeamResults.push(result);
@@ -4551,7 +5720,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
       ? await hydrateEventDetails(events, user)
       : [];
     finalizeSessionRsvpHydration(events, authoritativeEvents, user.uid);
-    const isPartial = isParentScopePartial || failedTeamLoads.length > 0;
+    const isPartial = isParentScopePartial || teamResults.some((result) => result.isPartial);
     timer.end({
       hydrateDetails,
       expandStaffPlayers,
@@ -5266,7 +6435,7 @@ function assertGameAllowsLivePublishing(game: Record<string, any> | null | undef
 
 function buildLiveTrackingGamePatch(game: Record<string, any> | null | undefined, _user: AuthUser, now: Date) {
   const payload: Record<string, unknown> = {};
-  if (String(game?.liveStatus || '').trim().toLowerCase() !== 'live') {
+  if (game?.liveStatus !== 'live') {
     payload.liveStatus = 'live';
   }
   if (game?.liveHasData !== true) {
@@ -5339,7 +6508,10 @@ async function runNativeScoreUpdatePublish(
         homeScore: payload.homeScore,
         awayScore: payload.awayScore
       }));
-      return payload;
+      return {
+        ...payload,
+        committedLifecycle: { liveStatus: 'live' as const }
+      };
     } catch (error) {
       if (isNativeConflictError(error) && attempt < 2) continue;
       throw error;
@@ -5425,7 +6597,7 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
       }
 
       const gamePath = `teams/${teamId}/games/${gameId}`;
-      const payload: LiveScoreUpdateResult = await withTimeout(runTransaction(db, async (transaction: any) => {
+      const payload = await withTimeout(runTransaction(db, async (transaction: any) => {
         const gameRef = doc(db, gamePath);
         const gameSnap = await transaction.get(gameRef);
         const gameData = (gameSnap.exists?.() ? gameSnap.data() || {} : {}) as Record<string, unknown>;
@@ -5454,13 +6626,16 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
         }, { merge: true });
         transaction.set(doc(db, `${gamePath}/liveEvents/${nextPayload.eventId}`), nextPayload);
         return nextPayload;
-      }) as Promise<LiveScoreUpdateResult>, 'Live score event');
+      }) as Promise<LiveScoreEventPayload>, 'Live score event');
       updateLocalLiveGameSnapshot(teamId, gameId, (local) => ({
         ...local,
         homeScore: payload.homeScore,
         awayScore: payload.awayScore
       }));
-      return payload;
+      return {
+        ...payload,
+        committedLifecycle: { liveStatus: 'live' as const }
+      };
     } catch (error) {
       if (!isNativeRuntime()) throw error;
       logScheduleWarning('Queueing native live score event publish.', 'live-score-publish-queue', error, { fallback: 'queue', teamId, gameId });
@@ -5500,7 +6675,8 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
         previousAwayScore: previousScore?.awayScore !== undefined ? normalizeGameScoreValue(previousScore.awayScore) : null,
         createdBy: user.uid,
         createdByName: user.displayName || user.email || 'Staff',
-        createdAt
+        createdAt,
+        committedLifecycle: null
       };
     }
   });
@@ -5513,8 +6689,11 @@ export async function loadGameDayLiveEventsForApp(teamId: string, gameId: string
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST game day live events.', 'game-day-live-events-load', error, { fallback: 'rest', teamId, gameId });
-    const events = await nativeListCollection(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/liveEvents`);
-    return Array.isArray(events) ? events : [];
+    const events = await nativeListCollection(
+      `teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/liveEvents`,
+      { pageSize: MAX_ACTIVE_GAME_LIVE_EVENTS, stopAfterFullPage: true }
+    );
+    return Array.isArray(events) ? events.slice(0, MAX_ACTIVE_GAME_LIVE_EVENTS) : [];
   }
 }
 
@@ -5794,7 +6973,8 @@ async function runNativePlayerGameStatWrite(
           ...liveEvent,
           eventId: liveEventId,
           createdAt: scoreUpdatedAt
-        }
+        },
+        committedLifecycle: { liveStatus: 'live' }
       };
     } catch (error) {
       if (isNativeConflictError(error) && attempt < 2) continue;
@@ -5904,7 +7084,8 @@ export async function recordPlayerGameStat(teamId: string, gameId: string, playe
         playerStatTotal,
         trackerEventId,
         liveEventId,
-        liveEvent
+        liveEvent,
+        committedLifecycle: { liveStatus: 'live' }
       };
     }) as Promise<PlayerGameStatResult>, 'Player game stat');
 
@@ -5984,7 +7165,8 @@ export async function recordPlayerGameStat(teamId: string, gameId: string, playe
         playerStatTotal: optimisticPlayerStatTotal,
         trackerEventId,
         liveEventId,
-        liveEvent
+        liveEvent,
+        committedLifecycle: null
       };
     }
   });
@@ -6183,7 +7365,8 @@ export async function recordPlayerScoringStat(teamId: string, gameId: string, pl
     statKey: 'pts',
     value: 2,
     playerPoints: result.playerStatTotal,
-    liveEvent: result.liveEvent
+    liveEvent: result.liveEvent,
+    committedLifecycle: result.committedLifecycle
   };
 }
 
@@ -6419,44 +7602,56 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
   if (!user?.uid) {
     throw new Error('Sign in before cancelling the game.');
   }
-  if (!event.canUpdateScore) {
+  const isDiamondGame = compactString(event.trackingEngine) === 'diamond-v2';
+  if (isDiamondGame && !event.isTeamAdmin) {
+    throw new Error('Team owner or admin access is required to cancel a Diamond game.');
+  }
+  if (!isDiamondGame && !event.canUpdateScore) {
     throw new Error('Coach or admin access is required to cancel this game.');
   }
 
-  const payload: Record<string, unknown> = {
-    status: 'cancelled',
-    liveStatus: 'cancelled',
-    cancelledAt: new Date(),
-    cancelledBy: user.uid
-  };
-
-  try {
-    await withTimeout(Promise.resolve(updateGame(event.teamId, event.id, payload)), 'Game cancellation');
-  } catch (error) {
-    if (!isNativeRuntime()) throw error;
-    logScheduleWarning('Falling back to REST game cancellation.', 'game-cancel', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id });
-    const sourceGame = await nativeGetDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`);
-    if (!sourceGame) {
-      throw new Error('Scheduled game not found.');
-    }
-    const counterpartTeamId = compactString(sourceGame.sharedScheduleOpponentTeamId);
-    const counterpartGameId = compactString(sourceGame.sharedScheduleOpponentGameId);
-    const isSharedGame = Boolean(sourceGame.sharedScheduleId);
-    await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`, payload);
-    if (isSharedGame && counterpartTeamId && counterpartGameId) {
-      try {
-        const counterpartPath = `teams/${encodeURIComponent(counterpartTeamId)}/games/${encodeURIComponent(counterpartGameId)}`;
-        const counterpartGame = await nativeGetDocument(counterpartPath);
-        if (!counterpartGame) throw new Error('Shared scheduled game counterpart not found.');
-        await nativePatchDocument(counterpartPath, payload);
-      } catch (counterpartError) {
-        logScheduleWarning('Unable to synchronize shared game cancellation.', 'game-cancel-counterpart', counterpartError, {
-          fallback: 'rest',
-          teamId: event.teamId,
-          gameId: event.id,
-          counterpartTeamId,
-          counterpartGameId
-        });
+  if (isDiamondGame) {
+    const { cancelDiamondGame } = await import('./diamondScorebookService');
+    await cancelDiamondGame({
+      teamId: event.teamId,
+      gameId: event.id,
+      reason: 'Cancelled from schedule management.'
+    });
+  } else {
+    const payload: Record<string, unknown> = {
+      status: 'cancelled',
+      liveStatus: 'cancelled',
+      cancelledAt: new Date(),
+      cancelledBy: user.uid
+    };
+    try {
+      await withTimeout(Promise.resolve(updateGame(event.teamId, event.id, payload)), 'Game cancellation');
+    } catch (error) {
+      if (!isNativeRuntime()) throw error;
+      logScheduleWarning('Falling back to REST game cancellation.', 'game-cancel', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id });
+      const sourceGame = await nativeGetDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`);
+      if (!sourceGame) {
+        throw new Error('Scheduled game not found.');
+      }
+      const counterpartTeamId = compactString(sourceGame.sharedScheduleOpponentTeamId);
+      const counterpartGameId = compactString(sourceGame.sharedScheduleOpponentGameId);
+      const isSharedGame = Boolean(sourceGame.sharedScheduleId);
+      await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`, payload);
+      if (isSharedGame && counterpartTeamId && counterpartGameId) {
+        try {
+          const counterpartPath = `teams/${encodeURIComponent(counterpartTeamId)}/games/${encodeURIComponent(counterpartGameId)}`;
+          const counterpartGame = await nativeGetDocument(counterpartPath);
+          if (!counterpartGame) throw new Error('Shared scheduled game counterpart not found.');
+          await nativePatchDocument(counterpartPath, payload);
+        } catch (counterpartError) {
+          logScheduleWarning('Unable to synchronize shared game cancellation.', 'game-cancel-counterpart', counterpartError, {
+            fallback: 'rest',
+            teamId: event.teamId,
+            gameId: event.id,
+            counterpartTeamId,
+            counterpartGameId
+          });
+        }
       }
     }
   }
@@ -6464,7 +7659,7 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
   const notificationFailures: string[] = [];
   const senderName = user.displayName || user.email;
   const senderEmail = user.email;
-  const counterpartTeamId = compactString(event.sharedScheduleOpponentTeamId) || null;
+  const counterpartTeamId = isDiamondGame ? null : compactString(event.sharedScheduleOpponentTeamId) || null;
 
   try {
     await postChatMessage(event.teamId, {
@@ -6563,20 +7758,30 @@ async function nativeReleaseAssignment(event: ParentScheduleEvent, role: string)
   await nativeDeleteDocument(path);
 }
 
-function extractTeamIdFromOfficialRefPath(path: string) {
-  const parts = String(path || '').split('/').filter(Boolean);
-  const teamIndex = parts.indexOf('teams');
-  return teamIndex >= 0 ? compactString(parts[teamIndex + 1]) : '';
-}
-
 // Look-behind buffer for the officials game query so same-day / in-progress games stay
 // in range while still bounding the read (avoids scanning a team's full game history).
 const officialAssignmentsLookBehindMs = 24 * 60 * 60 * 1000;
+const officialGameActiveFallbackMs = 3 * 60 * 60 * 1000;
 
-function isUpcomingOfficialGame(game: any, now = new Date()) {
-  const date = normalizeScheduleDate(game?.date);
-  const status = compactString(game?.status).toLowerCase();
-  return Boolean(date && date.getTime() >= now.getTime() && status !== 'cancelled' && status !== 'canceled');
+function isCurrentOrUpcomingOfficialGame(game: any, now = new Date()) {
+  const startDate = normalizeScheduleDate(game?.date);
+  if (!startDate) return false;
+  const statuses = [game?.status, game?.liveStatus]
+    .map((value) => compactString(value).toLowerCase())
+    .filter(Boolean);
+  if (statuses.some((value) => ['cancelled', 'canceled', 'deleted', 'completed', 'complete', 'final', 'finished', 'ended'].includes(value))) {
+    return false;
+  }
+  const explicitEndValue = [game?.endDate, game?.endsAt, game?.end, game?.dtend]
+    .find((value) => value !== null && value !== undefined && value !== '');
+  const explicitEnd = explicitEndValue === undefined ? null : normalizeScheduleDate(explicitEndValue);
+  if (explicitEnd) return explicitEnd.getTime() >= now.getTime();
+
+  const durationMinutes = Number(game?.durationMinutes || game?.duration || 0);
+  const activeWindowMs = Number.isFinite(durationMinutes) && durationMinutes > 0
+    ? durationMinutes * 60 * 1000
+    : officialGameActiveFallbackMs;
+  return startDate.getTime() + activeWindowMs >= now.getTime();
 }
 
 function isEligibleOpenOfficiatingSlotParticipant(
@@ -6595,50 +7800,197 @@ function isEligibleOpenOfficiatingSlotParticipant(
   return false;
 }
 
-async function loadOfficialLinkedTeamIds(user: AuthUser, userProfile?: Record<string, any> | null) {
-  const email = normalizeOfficialLinkEmail(user?.email || '');
-  const phone = normalizeOfficialLinkPhone(userProfile?.phone || '');
-  const officialsRef = collectionGroup(db, 'officials');
-  const requests: Promise<any>[] = [];
+type OfficialLinkedTeamDiscoveryResult = {
+  teamIds: string[];
+  isPartial: false;
+  assignments: OfficialAssignmentItem[];
+  assignmentsComplete: boolean;
+};
 
-  if (email) {
-    requests.push(getDocs(query(officialsRef, where('email', '==', email))));
-  }
-  if (phone) {
-    requests.push(getDocs(query(officialsRef, where('phone', '==', phone))));
-  }
-
-  if (!requests.length) {
-    return [];
-  }
-
-  const teamIds = new Set<string>();
-  const results = await Promise.allSettled(requests);
-  results.forEach((result) => {
-    if (result.status !== 'fulfilled') return;
-    result.value.docs.forEach((docSnap: any) => {
-      const teamId = extractTeamIdFromOfficialRefPath(docSnap?.ref?.path || '');
-      if (teamId) teamIds.add(teamId);
-    });
-  });
-  return Array.from(teamIds);
+function normalizeSharedGameDocumentPath(value: unknown) {
+  const path = compactString(value);
+  if (!path || path.length > 6144) return '';
+  const parts = path.split('/');
+  return parts.length === 4 && ['organizations', 'tournaments'].includes(parts[0]) && parts[2] === 'sharedGames' &&
+    parts.every((part) => part && part !== '.' && part !== '..' && part.length <= 1500)
+    ? path
+    : '';
 }
 
-export async function loadOfficialAssignmentsAccess(user: AuthUser): Promise<OfficialAssignmentsAccess> {
-  const userProfile = await loadProfileDocument(user.uid).catch(() => ({}));
-  const teamIds = await loadOfficialLinkedTeamIds(user, userProfile as Record<string, any>);
+function normalizeOfficialLinkedTeamIdsResponse(source: any, options: { requireAssignments?: boolean } = {}): OfficialLinkedTeamDiscoveryResult {
+  if (!source || source.isPartial !== false || !Array.isArray(source.teamIds)) {
+    throw new Error('Official team discovery returned an incomplete response.');
+  }
+  const teamIds = source.teamIds.map(compactString);
+  if (teamIds.some((teamId: string) => !teamId || teamId.length > 128 || teamId.includes('/'))) {
+    throw new Error('Official team discovery returned an invalid response.');
+  }
+  const normalizedTeamIds = [...new Set<string>(teamIds)].sort();
+  const assignmentsComplete = source.assignmentsComplete === true;
+  if (options.requireAssignments && (!assignmentsComplete || !Array.isArray(source.assignments))) {
+    throw new Error('Official assignment discovery returned an incomplete response.');
+  }
+  const assignments = assignmentsComplete && Array.isArray(source.assignments)
+    ? source.assignments.map((item: any) => {
+      const kind = compactString(item?.kind);
+      const teamId = compactString(item?.teamId);
+      const gameId = compactString(item?.gameId);
+      const sharedGamePath = normalizeSharedGameDocumentPath(item?.sharedGamePath);
+      const slotId = compactString(item?.slotId);
+      const date = normalizeScheduleDate(item?.date);
+      if (!['assigned', 'open'].includes(kind) ||
+        !teamId || !normalizedTeamIds.includes(teamId) || teamId.length > 128 || teamId.includes('/') ||
+        !gameId || gameId.length > 128 || gameId.includes('/') ||
+        (gameId.startsWith('sharedh_') && !sharedGamePath) ||
+        (item?.sharedGamePath && !sharedGamePath) ||
+        (sharedGamePath && !gameId.startsWith('shared_') && !gameId.startsWith('sharedh_') && !gameId.startsWith('shared::')) ||
+        !slotId || slotId.length > 128 || slotId.includes('/') ||
+        !date) {
+        throw new Error('Official assignment discovery returned an invalid response.');
+      }
+      return {
+        kind: kind as 'assigned' | 'open',
+        teamId,
+        teamName: compactString(item.teamName) || 'Team',
+        gameId,
+        ...(sharedGamePath ? { sharedGamePath } : {}),
+        slotId,
+        position: compactString(item.position) || 'Official',
+        status: kind === 'open' ? 'open' : (compactString(item.status) || 'pending'),
+        opponent: compactString(item.opponent) || 'TBD',
+        location: compactString(item.location) || 'Location TBD',
+        date,
+        canClaim: kind === 'open' && item.canClaim === true,
+        scheduleReviewRequired: kind === 'assigned' && item.scheduleReviewRequired === true
+      } satisfies OfficialAssignmentItem;
+    })
+    : [];
+  return {
+    teamIds: normalizedTeamIds,
+    isPartial: false,
+    assignments,
+    assignmentsComplete
+  };
+}
+
+async function loadOfficialLinkedTeamIdsFromNativeCallable(options: { includeAssignments?: boolean; requestedTeamId?: string } = {}) {
+  const requestUrl = `https://us-central1-${getProjectId()}.cloudfunctions.net/listOfficialLinkedTeamIds`;
+  const response = await withTimeout(CapacitorHttp.post({
+    url: requestUrl,
+    headers: await getNativeHeaders(requestUrl) as Record<string, string>,
+    data: {
+      data: {
+        includeAssignments: options.includeAssignments === true,
+        ...(compactString(options.requestedTeamId) ? { requestedTeamId: compactString(options.requestedTeamId) } : {})
+      }
+    },
+    connectTimeout: officialTeamDiscoveryTimeoutMs,
+    readTimeout: officialTeamDiscoveryTimeoutMs
+  }), 'Official team discovery', officialTeamDiscoveryTimeoutMs);
+  const payload = response.data && typeof response.data === 'object' ? response.data : {};
+  const result = payload?.result || payload?.data;
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(payload?.error?.message || 'Official team access could not be verified.');
+  }
+  return normalizeOfficialLinkedTeamIdsResponse(result, {
+    requireAssignments: options.includeAssignments === true
+  });
+}
+
+async function loadOfficialLinkedTeamIds(options: { includeAssignments?: boolean; requestedTeamId?: string } = {}): Promise<OfficialLinkedTeamDiscoveryResult> {
+  if (isNativeRuntime()) {
+    return loadOfficialLinkedTeamIdsFromNativeCallable(options);
+  }
+  if (options.includeAssignments) {
+    try {
+      return await loadOfficialLinkedTeamIdsFromNativeCallable(options);
+    } catch (error) {
+      logScheduleWarning(
+        'Falling back to browser official assignment reads.',
+        'official-assignment-callable-fallback',
+        error,
+        { fallback: 'browser-sdk' }
+      );
+    }
+  }
+  return normalizeOfficialLinkedTeamIdsResponse(await getOfficialLinkedTeamIds());
+}
+
+async function loadOfficialTeamGames(teamId: string, startDate: Date) {
+  return readWithNativeFallback(
+    `official games ${teamId}`,
+    () => Promise.resolve(getGames(teamId, { startDate })),
+    async () => {
+      const payload = await nativeFirestoreRequest(`/teams/${encodeURIComponent(teamId)}:runQuery`, {
+        method: 'POST',
+        body: JSON.stringify({
+          structuredQuery: {
+            from: [{ collectionId: 'games' }],
+            where: {
+              fieldFilter: {
+                field: { fieldPath: 'date' },
+                op: 'GREATER_THAN_OR_EQUAL',
+                value: encodeFirestoreValue(startDate)
+              }
+            },
+            orderBy: [{ field: { fieldPath: 'date' }, direction: 'ASCENDING' }]
+          }
+        })
+      });
+      return (Array.isArray(payload) ? payload : [])
+        .map((entry) => mapFirestoreDocument(entry?.document as NativeFirestoreDocument))
+        .filter(Boolean) as FirestoreDocument[];
+    }
+  );
+}
+
+export async function loadOfficialAssignmentsAccess(_user: AuthUser): Promise<OfficialAssignmentsAccess> {
+  const result = await loadOfficialLinkedTeamIds();
+  const teamIds = result.teamIds;
   return {
     hasAccess: teamIds.length > 0,
     teamIds,
-    teamCount: teamIds.length
+    teamCount: teamIds.length,
+    isPartial: result.isPartial
   };
 }
 
 export async function loadOfficialAssignments(user: AuthUser, options: { teamId?: string } = {}): Promise<OfficialAssignmentsResult> {
-  const userProfile = await loadProfileDocument(user.uid).catch(() => ({}));
-  const linkedTeamIds = await loadOfficialLinkedTeamIds(user, userProfile as Record<string, any>);
   const requestedTeamId = compactString(options.teamId);
+  const nativeRuntime = isNativeRuntime();
+  const userProfile = await loadProfileDocument(user.uid).catch(() => ({}));
+  let linkedAssignments: OfficialAssignmentItem[] = [];
+  let linkedAssignmentsComplete = false;
+  let linkedTeamIds: string[] = [];
+  let linkedTeamIdsPartial = false;
+  let discoveryError: unknown = null;
+  try {
+    const linkedTeamResult = await loadOfficialLinkedTeamIds({
+      includeAssignments: true,
+      ...(requestedTeamId ? { requestedTeamId } : {})
+    });
+    linkedTeamIds = linkedTeamResult.teamIds;
+    linkedTeamIdsPartial = linkedTeamResult.isPartial;
+    linkedAssignments = linkedTeamResult.assignments;
+    linkedAssignmentsComplete = linkedTeamResult.assignmentsComplete;
+  } catch (error) {
+    if (nativeRuntime || !requestedTeamId) throw error;
+    discoveryError = error;
+  }
   const linkedRequestedTeamIds = requestedTeamId ? linkedTeamIds.filter((teamId) => teamId === requestedTeamId) : linkedTeamIds;
+  if (linkedAssignmentsComplete) {
+    const projectedTeamIds = requestedTeamId ? linkedRequestedTeamIds : linkedTeamIds;
+    const projectedAssignments = linkedAssignments
+      .filter((item) => projectedTeamIds.includes(item.teamId))
+      .sort((left, right) => left.date.getTime() - right.date.getTime());
+    return {
+      hasAccess: projectedTeamIds.length > 0,
+      teamIds: projectedTeamIds,
+      teamCount: projectedTeamIds.length,
+      isPartial: false,
+      assignments: projectedAssignments
+    };
+  }
   const teamIds = linkedRequestedTeamIds.length
     ? linkedRequestedTeamIds
     : (requestedTeamId ? [requestedTeamId] : linkedTeamIds);
@@ -6648,21 +8000,29 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
       hasAccess: false,
       teamIds: [],
       teamCount: 0,
+      isPartial: false,
       assignments: []
     };
   }
 
   const now = new Date();
-  // Only upcoming games are ever surfaced (isUpcomingOfficialGame requires date >= now),
-  // so bound the read to a small look-behind window instead of scanning the team's entire
-  // game history on every officials load. The look-behind keeps in-progress / same-day games
-  // (whose stored date is the start time) in range; the filter below still trims to upcoming.
+  // Bound the read to a small look-behind window instead of scanning the team's entire
+  // game history on every officials load. The filter below preserves games still in progress
+  // using their explicit end, configured duration, or the shared three-hour fallback.
+  // A live status never bypasses that bounded window.
   const officialGamesSince = new Date(now.getTime() - officialAssignmentsLookBehindMs);
   const teamResults = await Promise.all(teamIds.map(async (teamId) => {
-    const [team, games] = await Promise.all([
-      getTeam(teamId, { includeInactive: true }).catch(() => null),
-      getGames(teamId, { startDate: officialGamesSince }).catch(() => [])
+    const [teamResult, gamesResult] = await Promise.allSettled([
+      readWithNativeFallback(
+        `official team ${teamId}`,
+        () => Promise.resolve(getTeam(teamId, { includeInactive: true })),
+        () => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`)
+      ),
+      loadOfficialTeamGames(teamId, officialGamesSince)
     ]);
+    const team = teamResult.status === 'fulfilled' ? teamResult.value : null;
+    const games = gamesResult.status === 'fulfilled' ? gamesResult.value : [];
+    const isPartial = teamResult.status === 'rejected' || gamesResult.status === 'rejected';
     const canClaim = isEligibleOpenOfficiatingSlotParticipant(
       team || {},
       userProfile as Record<string, any>,
@@ -6672,7 +8032,7 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
     const teamName = compactString(team?.name) || 'Team';
 
     const assignments = (Array.isArray(games) ? games : [])
-      .filter((game) => isUpcomingOfficialGame(game, now))
+      .filter((game) => isCurrentOrUpcomingOfficialGame(game, now))
       .flatMap((game) => {
         const eventDate = normalizeScheduleDate(game?.date);
         if (!eventDate) return [] as OfficialAssignmentItem[];
@@ -6718,6 +8078,7 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
         requestedTeamId === teamId &&
         (canClaim || assignments.some((item) => item.kind === 'assigned'))
       ),
+      isPartial,
       assignments
     };
   }));
@@ -6727,10 +8088,15 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
     .map((result) => result.teamId);
 
   if (!accessibleTeamIds.length) {
+    if (discoveryError) throw discoveryError;
+    if (teamResults.some((result) => result.isPartial)) {
+      throw new Error('Official assignment details could not be completely loaded. Try again.');
+    }
     return {
       hasAccess: false,
       teamIds: [],
       teamCount: 0,
+      isPartial: false,
       assignments: []
     };
   }
@@ -6739,6 +8105,9 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
     hasAccess: true,
     teamIds: accessibleTeamIds,
     teamCount: accessibleTeamIds.length,
+    isPartial: linkedTeamIdsPartial
+      || discoveryError !== null
+      || teamResults.some((result) => result.hasAccess && result.isPartial),
     assignments: teamResults
       .filter((result) => result.hasAccess)
       .flatMap((result) => result.assignments)
@@ -6747,10 +8116,29 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
 }
 
 export async function respondToOfficialAssignmentItem(item: OfficialAssignmentItem, status: 'accepted' | 'declined') {
+  if (isNativeRuntime() || item.sharedGamePath) {
+    await callNativeFirebaseFunction('respondToOfficiatingAssignment', {
+      teamId: item.teamId,
+      gameId: item.gameId,
+      ...(item.sharedGamePath ? { sharedGamePath: item.sharedGamePath } : {}),
+      slotId: item.slotId,
+      status
+    }, { errorLabel: 'Officiating response' });
+    return;
+  }
   await withTimeout(Promise.resolve(respondToOfficiatingAssignment(item.teamId, item.gameId, item.slotId, status)), 'Officiating response');
 }
 
 export async function claimOfficialAssignmentItem(item: OfficialAssignmentItem, user: AuthUser) {
+  if (isNativeRuntime() || item.sharedGamePath) {
+    await callNativeFirebaseFunction('claimOpenOfficiatingSlot', {
+      teamId: item.teamId,
+      gameId: item.gameId,
+      ...(item.sharedGamePath ? { sharedGamePath: item.sharedGamePath } : {}),
+      slotId: item.slotId
+    }, { errorLabel: 'Officiating claim' });
+    return;
+  }
   await withTimeout(Promise.resolve(claimOpenOfficiatingSlot(item.teamId, item.gameId, item.slotId, user)), 'Officiating claim');
 }
 
@@ -6759,7 +8147,7 @@ export async function loadParentScheduleAssignments(event: ParentScheduleEvent) 
   if (!assignments.length || !event.isDbGame || event.isCancelled) {
     return assignments;
   }
-  const claims = await loadAssignmentClaims(event.teamId, event.id).catch(() => ({}));
+  const claims = await loadCachedAssignmentClaims(event.teamId, event.id).catch(() => ({}));
   return normalizeAssignments(mergeAssignmentsWithClaims(assignments, claims) as ScheduleAssignment[]);
 }
 
@@ -6812,6 +8200,7 @@ export async function createScheduleAssignment(event: ParentScheduleEvent, user:
 
   const persistedAssignments = await persistScheduleAssignments(event, [...currentAssignments, nextAssignment]);
   await clearScheduleAssignmentClaim(event, nextRole, 'assignment-create-claim-cleanup');
+  invalidateScheduleEventAssignmentClaimsCache(event);
   return reloadPersistedScheduleAssignments(event, persistedAssignments);
 }
 
@@ -6842,6 +8231,7 @@ export async function updateScheduleAssignment(event: ParentScheduleEvent, user:
     await clearScheduleAssignmentClaim(event, nextRole, 'assignment-update-claim-cleanup');
   }
 
+  invalidateScheduleEventAssignmentClaimsCache(event);
   return reloadPersistedScheduleAssignments(event, persistedAssignments);
 }
 
@@ -6856,6 +8246,7 @@ export async function removeScheduleAssignment(event: ParentScheduleEvent, user:
 
   const persistedAssignments = await persistScheduleAssignments(event, nextAssignments);
   await clearScheduleAssignmentClaim(event, role, 'assignment-remove-claim-cleanup');
+  invalidateScheduleEventAssignmentClaimsCache(event);
   return reloadPersistedScheduleAssignments(event, persistedAssignments);
 }
 
@@ -6878,6 +8269,7 @@ export async function claimParentScheduleAssignmentSlot(event: ParentScheduleEve
     logScheduleWarning('Falling back to REST assignment claim.', 'assignment-claim', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id, role });
     await nativeClaimAssignment(event, user, trimmedRole, name);
   }
+  invalidateScheduleEventAssignmentClaimsCache(event);
 }
 
 export async function releaseParentScheduleAssignmentClaim(event: ParentScheduleEvent, role: string) {
@@ -6895,6 +8287,7 @@ export async function releaseParentScheduleAssignmentClaim(event: ParentSchedule
     logScheduleWarning('Falling back to REST assignment release.', 'assignment-release', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id, role });
     await nativeReleaseAssignment(event, trimmedRole);
   }
+  invalidateScheduleEventAssignmentClaimsCache(event);
 }
 
 function getPracticePacketSessionId(event: ParentScheduleEvent) {
@@ -7459,9 +8852,17 @@ async function nativeCancelRideRequestForChild(event: ParentScheduleEvent, offer
   });
 }
 
-export async function loadParentScheduleRideOffers(event: ParentScheduleEvent) {
+export async function loadParentScheduleRideOffers(
+  event: ParentScheduleEvent,
+  user: AuthUser | null = firebaseAuth.currentUser as AuthUser | null,
+  childEvents: ParentScheduleEvent[] = [event]
+) {
   if (!event.isDbGame || event.isCancelled) return [];
-  return normalizeRideOffers(await loadRideOffers(event.teamId, event.id));
+  return normalizeRideOffers(await loadCachedRideOffers(event.teamId, event.id, {
+    requesterUserId: compactString(user?.uid),
+    childIds: childEvents.filter((entry) => entry.teamId === event.teamId).map((entry) => entry.childId),
+    canManageTeamRequests: event.isTeamAdmin === true
+  }));
 }
 
 export async function createParentScheduleRideOffer(event: ParentScheduleEvent, user: AuthUser, input: RideOfferInput) {
@@ -7479,13 +8880,16 @@ export async function createParentScheduleRideOffer(event: ParentScheduleEvent, 
     driverName: user.displayName || user.email || 'Parent Driver'
   };
 
+  let result;
   try {
-    return await withTimeout(Promise.resolve(createRideOffer(event.teamId, event.id, payload)), 'Ride offer create');
+    result = await withTimeout(Promise.resolve(createRideOffer(event.teamId, event.id, payload)), 'Ride offer create');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST ride offer create.', 'ride-offer-create', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id });
-    return nativeCreateRideOfferForEvent(event, user, payload);
+    result = await nativeCreateRideOfferForEvent(event, user, payload);
   }
+  invalidateScheduleEventRideOffersCache(event);
+  return result;
 }
 
 export async function requestParentScheduleRideSpot(event: ParentScheduleEvent, offer: ScheduleRideOffer, user: AuthUser, child: RideRequestChildInput) {
@@ -7499,13 +8903,16 @@ export async function requestParentScheduleRideSpot(event: ParentScheduleEvent, 
     childName: child.childName || 'Player'
   };
 
+  let result;
   try {
-    return await withTimeout(Promise.resolve(requestRideSpot(event.teamId, gameId, offer.id, payload)), 'Ride request create');
+    result = await withTimeout(Promise.resolve(requestRideSpot(event.teamId, gameId, offer.id, payload)), 'Ride request create');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST ride request create.', 'ride-request-create', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id, offerId: offer.id });
-    return nativeRequestRideSpotForChild(event, offer, user, payload);
+    result = await nativeRequestRideSpotForChild(event, offer, user, payload);
   }
+  invalidateScheduleEventRideOffersCache(event);
+  return result;
 }
 
 export async function updateParentScheduleRideRequestStatus(event: ParentScheduleEvent, offer: ScheduleRideOffer, requestId: string, status: RideRequestStatus) {
@@ -7516,13 +8923,16 @@ export async function updateParentScheduleRideRequestStatus(event: ParentSchedul
   }
   const gameId = getRideOfferGameId(event, offer);
 
+  let result;
   try {
-    return await withTimeout(Promise.resolve(updateRideRequestStatus(event.teamId, gameId, offer.id, requestId, normalizedStatus)), 'Ride request update');
+    result = await withTimeout(Promise.resolve(updateRideRequestStatus(event.teamId, gameId, offer.id, requestId, normalizedStatus)), 'Ride request update');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST ride request update.', 'ride-request-update', error, { fallback: 'rest', teamId: event.teamId, gameId, offerId: offer.id, requestId });
-    return nativeUpdateRideRequestDecision(event, offer, requestId, normalizedStatus);
+    result = await nativeUpdateRideRequestDecision(event, offer, requestId, normalizedStatus);
   }
+  invalidateScheduleEventRideOffersCache(event);
+  return result;
 }
 
 export async function setParentScheduleRideOfferStatus(event: ParentScheduleEvent, offer: ScheduleRideOffer, status: RideOfferStatus) {
@@ -7537,6 +8947,7 @@ export async function setParentScheduleRideOfferStatus(event: ParentScheduleEven
     logScheduleWarning('Falling back to REST ride offer status update.', 'ride-offer-status-update', error, { fallback: 'rest', teamId: event.teamId, gameId, offerId: offer.id });
     await nativeSetRideOfferStatus(event, offer, normalizedStatus);
   }
+  invalidateScheduleEventRideOffersCache(event);
 }
 
 export async function cancelParentScheduleRideRequest(event: ParentScheduleEvent, offer: ScheduleRideOffer, requestId: string) {
@@ -7550,6 +8961,7 @@ export async function cancelParentScheduleRideRequest(event: ParentScheduleEvent
     logScheduleWarning('Falling back to REST ride request cancel.', 'ride-request-cancel', error, { fallback: 'rest', teamId: event.teamId, gameId, offerId: offer.id, requestId });
     await nativeCancelRideRequestForChild(event, offer, requestId);
   }
+  invalidateScheduleEventRideOffersCache(event);
 }
 
 export function summarizeParentScheduleRideOffers(offers: ScheduleRideOffer[]) {

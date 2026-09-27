@@ -72,7 +72,10 @@ export type ParentHomeTeam = {
   publicRosterCountCapped?: boolean;
   players: ParentScheduleChild[];
   nextEvent: ParentScheduleEvent | null;
+  /** Distinct schedule events present in the loaded history window. */
   eventCount: number;
+  /** Distinct, non-cancelled events on or after today. */
+  upcomingEventCount: number;
   unreadCount: number;
   openActions: number;
 };
@@ -81,6 +84,7 @@ export type ParentHomeModel = {
   players: ParentHomePlayer[];
   teams: ParentHomeTeam[];
   upcomingEvents: ParentScheduleEvent[];
+  feedGames?: ParentScheduleEvent[];
   actionItems: ParentHomeAction[];
   fees: ParentHomeFee[];
   metrics: {
@@ -118,6 +122,26 @@ export function getUpcomingHomeEvents(events: ParentScheduleEvent[], limit = 5, 
     .slice(0, limit);
 }
 
+export function getHomeFeedGames(events: ParentScheduleEvent[], limit = 20, now = new Date()) {
+  const games = dedupeEvents(events.filter((event) => event.type === 'game' && !event.isCancelled));
+  return sortHomeFeedGames(games, limit, now);
+}
+
+function sortHomeFeedGames(games: ParentScheduleEvent[], limit: number, now: Date) {
+  const past = games
+    .filter((event) => event.date.getTime() < now.getTime())
+    .sort((left, right) => right.date.getTime() - left.date.getTime());
+  const upcoming = games
+    .filter((event) => event.date.getTime() >= now.getTime())
+    .sort((left, right) => left.date.getTime() - right.date.getTime());
+  const upcomingLimit = Math.min(upcoming.length, Math.ceil(limit / 2));
+  const pastLimit = Math.min(past.length, limit - upcomingLimit);
+  return [
+    ...past.slice(0, pastLimit),
+    ...upcoming.slice(0, limit - pastLimit)
+  ];
+}
+
 type HomePlayerAggregate = {
   nextEvent: ParentScheduleEvent | null;
   rsvpNeeded: number;
@@ -128,12 +152,14 @@ type HomePlayerAggregate = {
 type HomeTeamAggregate = {
   nextEvent: ParentScheduleEvent | null;
   eventCount: number;
+  upcomingEventCount: number;
   openActions: number;
 };
 
 type HomeEventIndex = {
   upcomingEventRows: ParentScheduleEvent[];
   upcomingEvents: ParentScheduleEvent[];
+  feedGames: ParentScheduleEvent[];
   playerAggregates: Map<string, HomePlayerAggregate>;
   teamAggregates: Map<string, HomeTeamAggregate>;
 };
@@ -163,6 +189,7 @@ export function buildParentHomeModel({
     players,
     teams,
     upcomingEvents,
+    feedGames: eventIndex.feedGames,
     actionItems,
     fees: openFees,
     metrics: {
@@ -323,6 +350,7 @@ function buildHomeTeams(children: ParentScheduleChild[], eventIndex: HomeEventIn
         players: [],
         nextEvent: aggregate?.nextEvent || null,
         eventCount: aggregate?.eventCount || 0,
+        upcomingEventCount: aggregate?.upcomingEventCount || 0,
         unreadCount: Number(inbox?.unreadCount || 0),
         openActions: 0
       });
@@ -342,6 +370,7 @@ function buildHomeTeams(children: ParentScheduleChild[], eventIndex: HomeEventIn
       players: [],
       nextEvent: null,
       eventCount: 0,
+      upcomingEventCount: 0,
       unreadCount: Number(inbox.unreadCount || 0),
       openActions: Number(inbox.unreadCount || 0) > 0 ? 1 : 0
     });
@@ -390,12 +419,16 @@ function buildHomeEventIndex(events: ParentScheduleEvent[], now: Date): HomeEven
     upcomingByKey: Map<string, ParentScheduleEvent>;
     openActions: number;
   }>();
+  const feedGamesByKey = new Map<string, ParentScheduleEvent>();
   const upcomingByKey = new Map<string, ParentScheduleEvent>();
   const upcomingEventRows: ParentScheduleEvent[] = [];
 
   events.forEach((event) => {
     const teamBucket = getOrCreateTeamBucket(teamBuckets, event.teamId);
     const eventKey = getHomeEventDedupeKey(event);
+    if (event.type === 'game' && !event.isCancelled && !feedGamesByKey.has(eventKey)) {
+      feedGamesByKey.set(eventKey, event);
+    }
     if (!teamBucket.allByKey.has(eventKey)) {
       teamBucket.allByKey.set(eventKey, event);
     }
@@ -455,6 +488,7 @@ function buildHomeEventIndex(events: ParentScheduleEvent[], now: Date): HomeEven
     teamAggregates.set(teamId, {
       nextEvent: sortEventsByDate([...bucket.upcomingByKey.values()])[0] || null,
       eventCount: bucket.allByKey.size,
+      upcomingEventCount: bucket.upcomingByKey.size,
       openActions: bucket.openActions
     });
   });
@@ -462,6 +496,7 @@ function buildHomeEventIndex(events: ParentScheduleEvent[], now: Date): HomeEven
   return {
     upcomingEventRows,
     upcomingEvents: sortEventsByDate([...upcomingByKey.values()]),
+    feedGames: sortHomeFeedGames([...feedGamesByKey.values()], 20, now),
     playerAggregates,
     teamAggregates
   };

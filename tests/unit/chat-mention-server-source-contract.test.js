@@ -28,7 +28,7 @@ describe('server-side chat mention notification contract', () => {
     });
 
     it('wires the same handler for default and per-conversation chat messages', () => {
-        expect(functionsSource).toContain("exports.notifyTeamChatMessageCreated = functions.firestore\n  .document('teams/{teamId}/chatMessages/{messageId}')\n  .onCreate(handleTeamChatMessageCreated);");
-        expect(functionsSource).toContain("exports.notifyConversationChatMessageCreated = functions.firestore\n  .document('teams/{teamId}/chatConversations/{conversationId}/chatMessages/{messageId}')\n  .onCreate(handleTeamChatMessageCreated);");
+        expect(functionsSource).toContain("exports.notifyTeamChatMessageCreated = retryableNotificationFunctions.firestore\n  .document('teams/{teamId}/chatMessages/{messageId}')\n  .onCreate(handleTeamChatMessageCreated);");
+        expect(functionsSource).toContain("exports.notifyConversationChatMessageCreated = retryableNotificationFunctions.firestore\n  .document('teams/{teamId}/chatConversations/{conversationId}/chatMessages/{messageId}')\n  .onCreate(handleTeamChatMessageCreated);");
     });
 });
