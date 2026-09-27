@@ -252,9 +252,13 @@ describe('legacyScheduleDb live-event reads', () => {
         }));
         vi.mocked(getDocs).mockResolvedValueOnce({
             docs: events
-                .toReversed()
+                .slice()
+                .reverse()
                 .slice(0, 20)
-                .map((event) => ({ id: event.id, data: () => ({ createdAt: event.createdAt }) }))
+                .map((event: { id: string; createdAt: number }) => ({
+                    id: event.id,
+                    data: () => ({ createdAt: event.createdAt })
+                }))
         } as never);
 
         await expect(getLiveEvents('team-1', 'game-1')).resolves.toEqual(events.slice(5));
