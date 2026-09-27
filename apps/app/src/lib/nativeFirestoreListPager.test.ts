@@ -26,6 +26,31 @@ describe('listNativeFirestoreCollectionPages', () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
+  it('stops before requesting another page when the current page is full', async () => {
+    const request = vi.fn().mockResolvedValue({
+      documents: ['first', 'second'],
+      nextPageToken: 'more'
+    });
+
+    await expect(listNativeFirestoreCollectionPages('teams/team-1/liveEvents', request, {
+      pageSize: 2,
+      stopAfterFullPage: true
+    })).resolves.toEqual(['first', 'second']);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('continues pagination when the current page is not full', async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce({ documents: ['first'], nextPageToken: 'more' })
+      .mockResolvedValueOnce({ documents: ['second'] });
+
+    await expect(listNativeFirestoreCollectionPages('teams/team-1/liveEvents', request, {
+      pageSize: 2,
+      stopAfterFullPage: true
+    })).resolves.toEqual(['first', 'second']);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
   it('rejects repeated page tokens instead of returning a partial collection', async () => {
     const request = vi.fn()
       .mockResolvedValueOnce({ documents: ['first'], nextPageToken: 'repeat' })
