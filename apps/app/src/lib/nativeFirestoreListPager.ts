@@ -9,6 +9,7 @@ type NativeFirestoreListResponse<T> = {
 
 type NativeFirestoreListPagerOptions = {
   pageSize?: number;
+  stopAfterFullPage?: boolean;
   orderBy?: string;
   maxPages?: number;
   maxDocuments?: number;
@@ -54,6 +55,10 @@ export async function listNativeFirestoreCollectionPages<T>(
       throw new Error(`Native Firestore roster pager exceeded the ${maxDocuments}-document safety cap.`);
     }
     documents.push(...pageDocuments);
+
+    if (options.stopAfterFullPage && pageDocuments.length >= pageSize) {
+      return documents;
+    }
 
     const nextPageToken = payload?.nextPageToken;
     if (nextPageToken === undefined || nextPageToken === null || nextPageToken === '') {

@@ -332,6 +332,66 @@ describe('native scoring roster fallback', () => {
       expect(events.map((event: any) => event.id)).toEqual(
         Array.from({ length: 20 }, (_, index) => `event-${index + 1}`)
       );
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/liveEvents?pageSize=20'),
+        expect.anything()
+      );
+    } finally {
+      (globalThis as any).window = previousWindow;
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it('does not request another native fallback page when the current page has 20 events', async () => {
+    const previousWindow = (globalThis as any).window;
+    const previousFetch = globalThis.fetch;
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(getLiveEvents).mockRejectedValueOnce(new Error('SDK live events unavailable'));
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    (globalThis as any).fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        documents: Array.from({ length: 20 }, (_, index) => ({
+          name: `projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/liveEvents/event-${index + 1}`,
+          fields: { sequence: { integerValue: String(index + 1) } }
+        })),
+        nextPageToken: 'unexpected-second-page'
+      })
+    });
+
+    try {
+      await expect(loadGameDayLiveEventsForApp('team-1', 'game-1')).resolves.toHaveLength(20);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      (globalThis as any).window = previousWindow;
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it('keeps native fallback pagination for a page with fewer than 20 events', async () => {
+    const previousWindow = (globalThis as any).window;
+    const previousFetch = globalThis.fetch;
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(getLiveEvents).mockRejectedValueOnce(new Error('SDK live events unavailable'));
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    const page = (start: number, count: number) => ({
+      ok: true,
+      json: async () => ({
+        documents: Array.from({ length: count }, (_, index) => ({
+          name: `projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/liveEvents/event-${start + index}`,
+          fields: { sequence: { integerValue: String(start + index) } }
+        })),
+        ...(start === 1 ? { nextPageToken: 'second-page' } : {})
+      })
+    });
+    (globalThis as any).fetch = vi.fn()
+      .mockResolvedValueOnce(page(1, 10))
+      .mockResolvedValueOnce(page(11, 2));
+
+    try {
+      await expect(loadGameDayLiveEventsForApp('team-1', 'game-1')).resolves.toHaveLength(12);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
     } finally {
       (globalThis as any).window = previousWindow;
       globalThis.fetch = previousFetch;
