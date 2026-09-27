@@ -26,7 +26,7 @@ describe('repository security guardrails', () => {
         expect(securityPolicy).toContain('information about minors');
         expect(securityPolicy).toContain('[REDACTED_TOKEN]');
 
-        expect(issueConfig.blank_issues_enabled).toBe(true);
+        expect(issueConfig.blank_issues_enabled).toBe(false);
         expect(issueConfig.contact_links).toContainEqual(
             expect.objectContaining({
                 url: 'https://github.com/pauljsnider/allplays/security/advisories/new'
