@@ -1,0 +1,64 @@
+name: Bug report
+description: Report a reproducible product defect that is safe to discuss publicly.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping improve AllPlays.
+
+        **Stop here if this may involve a security or privacy vulnerability.**
+        Use the [private vulnerability reporting form](https://github.com/pauljsnider/allplays/security/advisories/new) instead.
+
+        Never include credentials, invite or access codes, signed links, real user contact information, information about minors, production records, private support conversations, or unredacted logs and screenshots.
+
+  - type: checkboxes
+    id: public-safety
+    attributes:
+      label: Public-report safety
+      options:
+        - label: This is not a suspected security or privacy vulnerability.
+          required: true
+        - label: I used synthetic or redacted data and removed credentials, codes, tokens, signed links, personal data, and production identifiers.
+          required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the defect without including sensitive or production data.
+      placeholder: A concise description using synthetic names and identifiers.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Safe reproduction steps
+      description: Use test accounts and synthetic data only.
+      placeholder: |
+        1. Open...
+        2. Select...
+        3. Observe...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser, device, and app version only. Do not paste account identifiers, tokens, URLs containing codes, or raw logs.
+      placeholder: Safari 18, iPhone, AllPlays app version...
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional redacted context
+      description: Optional. Remove personal data and protected identifiers before attaching screenshots or logs.
