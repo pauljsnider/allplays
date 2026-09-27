@@ -10,7 +10,7 @@ describe('edit team rollover cache delivery', () => {
     it('loads rollover writes from the current cache-busted db module', () => {
         const source = readEditTeamSource();
 
-        expect(source).toContain("from './js/db.js?v=4433195';");
+        expect(source).toContain("from './js/db.js?v=4433199';");
         expect(source).not.toContain("from './js/db.js?v=103';");
     });
 });
@@ -248,6 +248,9 @@ async function loadEditTeamHarness({ copyRejects = false } = {}) {
         getAllUsers: vi.fn(async () => []),
         getRegistrationSources: vi.fn(async () => []),
         getDefaultStatConfigForSport: vi.fn(() => ({ name: 'Basketball defaults' })),
+        configureDiamondTeamForSport: vi.fn(async () => ({ configured: false, enabled: false })),
+        listDiamondRulesProfilesForSport: vi.fn(() => []),
+        isDiamondScorebookUiEnabled: vi.fn(() => false),
         renderHeader: vi.fn(),
         renderFooter: vi.fn(),
         getUrlParams: vi.fn(() => ({})),

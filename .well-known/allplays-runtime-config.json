@@ -8,6 +8,7 @@
     "appId": "1:982493478258:web:1f942c420cef6c40e8b1eb",
     "measurementId": "G-VTLSFV4PHW"
   },
+  "diamondScorebookUiEnabled": false,
   "appCheck": {
     "enabled": false,
     "isTokenAutoRefreshEnabled": true

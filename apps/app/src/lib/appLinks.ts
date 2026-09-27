@@ -1,13 +1,10 @@
 const defaultPublicOrigin = 'https://allplays.ai';
 
-export const firebaseActionParameterNames = [
-  'mode',
-  'oobCode',
-  'apiKey',
-  'continueUrl',
-  'lang',
-  'tenantId'
-] as const;
+export function getCanonicalPublicOrigin() {
+  return defaultPublicOrigin;
+}
+
+export const firebaseActionParameterNames = ['mode', 'oobCode', 'apiKey', 'continueUrl', 'lang', 'tenantId'] as const;
 
 type AppLinkParams = Record<string, string | number | boolean | null | undefined> | URLSearchParams;
 
@@ -20,7 +17,9 @@ function normalizeOrigin(origin = defaultPublicOrigin) {
 }
 
 export function normalizeAppRoute(route = '/') {
-  const value = String(route || '/').trim().replace(/^#/, '');
+  const value = String(route || '/')
+    .trim()
+    .replace(/^#/, '');
   const normalized = value.startsWith('/') ? value : `/${value}`;
   if (normalized.startsWith('//') || normalized.includes('\\')) {
     throw new Error('App routes must be origin-relative.');
@@ -85,13 +84,8 @@ export function normalizeFirebaseActionHref(href: string) {
     return url.toString();
   }
 
-  const continueRoute = getContinueAppRoute(
-    outerParams.get('continueUrl') || currentHashParams.get('continueUrl') || '',
-    url.origin
-  );
-  let targetRoute = currentHashPathname && currentHashPathname !== '/auth'
-    ? currentHashRoute
-    : continueRoute;
+  const continueRoute = getContinueAppRoute(outerParams.get('continueUrl') || currentHashParams.get('continueUrl') || '', url.origin);
+  let targetRoute = currentHashPathname && currentHashPathname !== '/auth' ? currentHashRoute : continueRoute;
   if (mode === 'signIn') {
     targetRoute = targetRoute || '/accept-invite';
   } else {

@@ -488,6 +488,39 @@ describe('StandardTracker', () => {
     expect(within(screen.getByRole('button', { name: '#12 Avery Smith GOALS add one' })).getByText('+1 / 0')).toBeTruthy();
   });
 
+  it.each([
+    ['Soccer', 'legacy'],
+    ['Basketball', 'standard'],
+    ['Baseball', 'legacy-v1'],
+    ['Baseball', 'classic']
+  ])('keeps the %s standard tracker available for the %s engine alias', async (sport, trackingEngine) => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ sport, trackingEngine })],
+      children: []
+    });
+
+    renderTracker();
+
+    expect(await screen.findByTestId('standard-tracker-grid')).toBeTruthy();
+    expect(scheduleServiceMocks.loadScorekeeperStatTrackerConfigsForApp).toHaveBeenCalled();
+    expect(scheduleServiceMocks.loadHomeScoringPlayers).toHaveBeenCalled();
+  });
+
+  it.each(['diamond-v2', 'future-engine'])('fails the %s engine closed before loading mutable tracker state', async (trackingEngine) => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ trackingEngine })],
+      children: []
+    });
+
+    renderTracker();
+
+    expect(await screen.findByText('Tracker access is limited to staff scorekeepers for scheduled games.')).toBeTruthy();
+    expect(screen.queryByTestId('standard-tracker-grid')).toBeNull();
+    expect(scheduleServiceMocks.loadScorekeeperStatTrackerConfigsForApp).not.toHaveBeenCalled();
+    expect(scheduleServiceMocks.loadHomeScoringPlayers).not.toHaveBeenCalled();
+    expect(statTrackingMocks.createDefaultStatTrackingService).not.toHaveBeenCalled();
+  });
+
   it('blocks parent-only access before loading tracker config or roster', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({ canUpdateScore: false })],

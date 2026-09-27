@@ -223,6 +223,7 @@
                 <div class="h-1 w-8 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
                 <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Insights</h2>
             </div>
+            <div id="published-diamond-ai-recap" class="hidden mb-6"></div>
             <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
                 <div class="xl:col-span-1">
                     <div class="bg-white shadow-lg rounded-2xl p-6 border border-gray-200 h-full">
@@ -252,10 +253,16 @@
                     <div class="h-1 w-8 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
                     <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Player Performance</h2>
                 </div>
-                <button id="edit-stats-btn"
-                    class="hidden px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-semibold text-sm">
-                    Edit Stats
-                </button>
+                <div class="flex flex-wrap items-center gap-2">
+                    <button id="diamond-stats-export-btn" type="button"
+                        class="hidden px-4 py-2 border border-primary-200 bg-primary-50 text-primary-700 rounded-lg hover:bg-primary-100 font-semibold text-sm">
+                        Export stats CSV
+                    </button>
+                    <button id="edit-stats-btn"
+                        class="hidden px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-semibold text-sm">
+                        Edit Stats
+                    </button>
+                </div>
             </div>
             <div id="stats-editor-admin" class="hidden mb-4 bg-white shadow-sm rounded-xl p-4 border border-gray-200">
                 <div class="flex flex-wrap items-center justify-between gap-3">
@@ -438,31 +445,143 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getDelegatedTeamContext, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433195';
+        import { getTeam, getDelegatedTeamContext, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433199';
         import { generateGameInsights } from './js/post-game-insights.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=443371';
-        import { checkAuth } from './js/auth.js?v=4433199';
-        import { collection, deleteField, doc, getDocs, query, orderBy, runTransaction } from "./js/firebase.js?v=33";
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=443375';
+        import { checkAuth } from './js/auth.js?v=4433203';
+        import { collection, deleteField, doc, functions, getDocs, httpsCallable, query, orderBy, runTransaction } from "./js/firebase.js?v=33";
         import { db } from './js/firebase.js?v=33';
-        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443347';
-        import { resolveLiveStatConfig } from './js/live-game-state.js?v=43';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443350';
+        import { resolveLiveStatConfig } from './js/live-game-state.js?v=46';
         import { splitPlayerStatsByVisibility } from './js/stat-leaderboards.js?v=4';
-        import { formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=2';
-        import { normalizeStatKey, resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=5';
+        import { formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=8';
+        import { normalizeStatKey, resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=11';
+        import { getActivationPinnedDiamondStatCatalog, getCoverageAwareStatValue, getDiamondProjectionIdentity, getDiamondPublicPlayerStatsCollectionPath, isDiamondV2Game, readCoverageAwareOpponentStats, readCoverageAwareStatDocument, resolveDiamondManagerStatDocuments, resolveDiamondManagerTeamStatDocument, resolveDiamondProjectionState, resolveDiamondPublicStatDocuments, resolveDiamondPublicTeamStatDocument, resolveDiamondStatConfigsForGames } from './js/diamond-stat-presentation.js?v=7';
+        import { buildDiamondReportPlayers, loadCompleteDiamondManagerStats } from './js/diamond-manager-stats.js?v=5';
+        import { buildDiamondStatsCsv, downloadDiamondStatsCsv, getDiamondStatsExportFilename } from './js/diamond-stat-export.js?v=7';
         import { buildHighlightShareUrl, normalizeGameRecapHighlightClips, resolveReplayVideoOptions } from './js/live-game-video.js?v=443319';
         import { buildGameReportShareUrl } from './js/game-share-links.js?v=1';
+        import { normalizePublishedDiamondAiArtifact } from './js/diamond-ai-presentation.js?v=1';
         import { GAME_REPLAY_ARCHIVE_FIELDS, GAME_REPLAY_CLEAR_FIELDS, buildYouTubeReplayVideo, fingerprintGameReplayArchiveState, getGameReplayArchiveState, getGameReplayLifecycle, hasGameReplayArchiveEvidence, normalizeYouTubeReplayUrl } from './js/game-replay-video.js?v=3';
+        import { loadCompleteDiamondReportEvents } from './js/diamond-report-events.js?v=1';
 
         let currentUser = null;
         let canManageStatSheet = false;
         let canEditSummary = false;
         let canEditStats = false;
+        let canViewDiamondPrivateStats = false;
         let canManageReplayVideo = false;
         let canRemoveReplayVideoOutsideFinal = false;
         let authResolved = false;
         let gameLoaded = false;
         let gameLoadedForAuthenticatedUser = false;
         let gameLoadPromise = null;
+        let gameLoadGeneration = 0;
+        let authBoundActionController = new AbortController();
+
+        function isCurrentGameLoad(generation, uid) {
+            return generation === gameLoadGeneration && (currentUser?.uid || '') === uid;
+        }
+
+        function renewAuthBoundActionLifecycle() {
+            authBoundActionController.abort();
+            authBoundActionController = new AbortController();
+        }
+
+        function captureAuthBoundActionContext() {
+            return Object.freeze({
+                generation: gameLoadGeneration,
+                uid: currentUser?.uid || '',
+                signal: authBoundActionController.signal
+            });
+        }
+
+        function isAuthBoundActionCurrent(context) {
+            return Boolean(
+                context
+                && !context.signal.aborted
+                && context.uid
+                && isCurrentGameLoad(context.generation, context.uid)
+            );
+        }
+
+        function addAuthBoundEventListener(target, type, listener, context) {
+            if (!target || !context || context.signal.aborted) return;
+            target.addEventListener(type, listener, { signal: context.signal });
+        }
+
+        function clearManagerGameReportOnAuthChange() {
+            canManageStatSheet = false;
+            canEditSummary = false;
+            canEditStats = false;
+            canViewDiamondPrivateStats = false;
+            canManageReplayVideo = false;
+            canRemoveReplayVideoOutsideFinal = false;
+
+            const exportButton = document.getElementById('diamond-stats-export-btn');
+            if (exportButton) {
+                exportButton.classList.add('hidden');
+                exportButton.onclick = null;
+                exportButton.textContent = 'Export stats CSV';
+            }
+
+            ['team-nav-banner', 'stats-header-row', 'stats-body', 'team-stats-body', 'team-insights-body',
+                'player-insights-body', 'published-diamond-ai-recap', 'game-log',
+                'playing-time-meta', 'playing-time-body', 'stats-editor-status',
+                'stats-editor-player-name', 'stats-editor-player-meta', 'stats-editor-fields',
+                'team-stats-editor-status', 'team-stats-editor-fields', 'stat-sheet-status',
+                'replay-video-current', 'replay-video-status'].forEach((id) => {
+                const element = document.getElementById(id);
+                if (element) element.innerHTML = '';
+            });
+            document.getElementById('insights-section')?.classList.add('hidden');
+            document.getElementById('playing-time-insights')?.classList.add('hidden');
+            const playingTimeContent = document.getElementById('playing-time-content');
+            if (playingTimeContent) playingTimeContent.style.maxHeight = '0px';
+            document.getElementById('team-stats-section')?.classList.add('hidden');
+            document.getElementById('diamond-report-status')?.remove();
+
+            ['summary-admin', 'summary-editor', 'stats-editor-admin', 'stats-editor-panel',
+                'team-stats-editor-admin', 'team-stats-editor-panel', 'stat-sheet-admin',
+                'replay-video-admin', 'edit-stats-btn', 'edit-team-stats-btn'].forEach((id) => {
+                document.getElementById(id)?.classList.add('hidden');
+            });
+            const summaryStatus = document.getElementById('summary-edit-status');
+            if (summaryStatus) summaryStatus.textContent = '';
+            const summaryTextarea = document.getElementById('summary-textarea');
+            if (summaryTextarea) {
+                summaryTextarea.value = '';
+                summaryTextarea.defaultValue = '';
+                summaryTextarea.textContent = '';
+            }
+            ['replay-video-url', 'replay-video-title'].forEach((id) => {
+                const input = document.getElementById(id);
+                if (input) input.value = '';
+            });
+            const statSheetFileInput = document.getElementById('stat-sheet-file-input');
+            if (statSheetFileInput) statSheetFileInput.value = '';
+            document.getElementById('stat-sheet-upload-preview')?.classList.add('hidden');
+            document.getElementById('stat-sheet-upload-img')?.removeAttribute('src');
+            const replayForm = document.getElementById('replay-video-form');
+            if (replayForm) replayForm.setAttribute('aria-busy', 'false');
+            ['summary-save-btn', 'summary-generate-btn', 'stat-sheet-upload-btn', 'stat-sheet-save',
+                'stat-sheet-cancel', 'stat-sheet-remove', 'replay-video-url', 'replay-video-title',
+                'replay-video-save', 'replay-video-remove', 'edit-stats-btn', 'stats-prev-btn',
+                'stats-next-btn', 'stats-dnp-toggle', 'stats-save-btn', 'stats-save-prev-btn',
+                'stats-save-next-btn', 'stats-cancel-btn', 'edit-team-stats-btn',
+                'team-stats-save-btn', 'team-stats-cancel-btn'].forEach((id) => {
+                const control = document.getElementById(id);
+                if (control) control.disabled = false;
+            });
+
+            // Drop every closure that was authorized for the prior UID. The next
+            // completed load binds fresh handlers to these equivalent controls.
+            ['summary-edit-status', 'summary-textarea', 'summary-edit-btn', 'summary-save-btn',
+                'summary-cancel-btn', 'summary-generate-btn'].forEach((id) => {
+                const control = document.getElementById(id);
+                if (control?.parentNode) control.replaceWith(control.cloneNode(true));
+            });
+        }
 
         const authTimeout = setTimeout(() => {
             if (authResolved || gameLoaded) return;
@@ -474,10 +593,21 @@
             authResolved = true;
             clearTimeout(authTimeout);
             // Allow viewing without login - user can be null
-            const shouldRefreshPermissions = gameLoaded && !gameLoadedForAuthenticatedUser && !!user;
+            const previousUid = currentUser?.uid || '';
+            const nextUid = user?.uid || '';
+            const identityChanged = previousUid !== nextUid;
+            const shouldRefreshPermissions = identityChanged || (gameLoaded && !gameLoadedForAuthenticatedUser && !!user);
+            if (identityChanged) {
+                gameLoadGeneration += 1;
+                renewAuthBoundActionLifecycle();
+                gameLoaded = false;
+                gameLoadedForAuthenticatedUser = false;
+                gameLoadPromise = null;
+                clearManagerGameReportOnAuthChange();
+            }
             currentUser = user;
             renderHeader(document.getElementById('header-container'), user);
-            loadGame({ forceAuthenticatedReload: shouldRefreshPermissions });
+            loadGame({ forceAuthenticatedReload: shouldRefreshPermissions, generation: gameLoadGeneration, expectedUid: nextUid });
         });
 
         renderFooter(document.getElementById('footer-container'));
@@ -611,6 +741,7 @@
         }
 
         function setupReplayVideoControls({ teamId, gameId, game, team }) {
+            const actionContext = captureAuthBoundActionContext();
             const section = document.getElementById('replay-video-admin');
             const form = document.getElementById('replay-video-form');
             const heading = document.getElementById('replay-video-heading');
@@ -694,11 +825,14 @@
             }
 
             async function persistReplayVideo(nextReplayVideo) {
+                if (!isAuthBoundActionCurrent(actionContext)) return false;
                 const expectedFingerprint = fingerprintGameReplayArchiveState(game);
+                let transactionPrepared = false;
                 try {
                     await runTransaction(db, async (transaction) => {
                         const gameRef = doc(db, 'teams', teamId, 'games', gameId);
                         const snapshot = await transaction.get(gameRef);
+                        if (!isAuthBoundActionCurrent(actionContext)) return;
                         if (!snapshot.exists()) {
                             const error = new Error('This game is no longer available.');
                             error.code = 'replay-game-missing';
@@ -732,8 +866,10 @@
                         });
                         replayUpdate.replayVideoFallbackDisabled = nextReplayVideo ? deleteField() : true;
                         transaction.update(gameRef, replayUpdate);
+                        transactionPrepared = true;
                     });
                 } catch (error) {
+                    if (!isAuthBoundActionCurrent(actionContext)) return false;
                     if (error?.code === 'replay-conflict') {
                         applyGameReplayArchiveState(game, error.latestReplayArchiveState);
                         renderCurrentReplay();
@@ -747,13 +883,14 @@
                     }
                     throw error;
                 }
-                return true;
+                return transactionPrepared && isAuthBoundActionCurrent(actionContext);
             }
 
             renderCurrentReplay();
 
-            form.addEventListener('submit', async (event) => {
+            addAuthBoundEventListener(form, 'submit', async (event) => {
                 event.preventDefault();
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 const rawUrl = urlInput.value.trim();
                 if (rawUrl.length > 2048) {
                     setReplayVideoStatus(status, 'Use a YouTube link shorter than 2,048 characters.', { error: true });
@@ -775,7 +912,7 @@
 
                 const replayVideo = buildYouTubeReplayVideo(rawUrl, {
                     title: replayTitle,
-                    linkedBy: currentUser.uid,
+                    linkedBy: actionContext.uid,
                     linkedAt: new Date()
                 });
                 if (!replayVideo) {
@@ -788,12 +925,13 @@
                 if (replacesOtherProvider && !window.confirm('Replace the existing non-YouTube replay with this YouTube video?')) {
                     return;
                 }
+                if (!isAuthBoundActionCurrent(actionContext)) return;
 
                 setBusy(true);
                 setReplayVideoStatus(status, 'Saving replay…');
                 try {
                     const saved = await persistReplayVideo(replayVideo);
-                    if (!saved) return;
+                    if (!saved || !isAuthBoundActionCurrent(actionContext)) return;
                     applyGameReplayArchiveState(game, {
                         replayVideo,
                         ...(Object.hasOwn(game, 'videoUrl') ? { videoUrl: game.videoUrl } : {})
@@ -802,22 +940,25 @@
                     updateReplayReportAction({ teamId, gameId, game, team });
                     setReplayVideoStatus(status, 'Replay linked. The Watch Replay button now opens this video.');
                 } catch (error) {
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     console.error('Error linking YouTube replay:', error);
                     setReplayVideoStatus(status, 'Could not confirm whether the replay was saved. Refresh this report and check the linked replay before trying again.', { error: true });
                 } finally {
-                    setBusy(false);
+                    if (isAuthBoundActionCurrent(actionContext)) setBusy(false);
                 }
-            });
+            }, actionContext);
 
-            removeButton.addEventListener('click', async () => {
+            addAuthBoundEventListener(removeButton, 'click', async () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 if (!canRemoveCurrentReplay()) return;
                 if (!window.confirm('Remove the replay from this game? The source video will remain with its provider.')) return;
+                if (!isAuthBoundActionCurrent(actionContext)) return;
 
                 setBusy(true);
                 setReplayVideoStatus(status, 'Removing replay…');
                 try {
                     const removed = await persistReplayVideo(null);
-                    if (!removed) return;
+                    if (!removed || !isAuthBoundActionCurrent(actionContext)) return;
                     applyGameReplayArchiveState(game, {
                         replayVideo: null,
                         replayVideoFallbackDisabled: true,
@@ -828,12 +969,13 @@
                     setReplayVideoStatus(status, 'Replay removed from this game. The source video was not deleted.');
                     if (!canLinkReplayVideo) heading.focus();
                 } catch (error) {
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     console.error('Error removing YouTube replay:', error);
                     setReplayVideoStatus(status, 'Could not confirm whether the replay was removed. Refresh this report and check the linked replay before trying again.', { error: true });
                 } finally {
-                    setBusy(false);
+                    if (isAuthBoundActionCurrent(actionContext)) setBusy(false);
                 }
-            });
+            }, actionContext);
         }
 
         function insightToneClasses(tone) {
@@ -912,15 +1054,59 @@
             }).join('');
         }
 
-        function renderInsightsSection({ teamInsights, playerInsightsById, emptyMessage }, players, teamId, gameId) {
+        function renderInsightsSection({ teamInsights, playerInsightsById, emptyMessage }, players, teamId, gameId, game) {
             const section = document.getElementById('insights-section');
             const teamBody = document.getElementById('team-insights-body');
             const playerBody = document.getElementById('player-insights-body');
-            if (!section || !teamBody || !playerBody) return;
+            const aiRecapBody = document.getElementById('published-diamond-ai-recap');
+            if (!section || !teamBody || !playerBody || !aiRecapBody) return;
 
             const playerLookup = new Map((players || []).map((player) => [player.id, player]));
             const playerEntries = Object.entries(playerInsightsById || {});
-            const hasInsights = (teamInsights || []).length || playerEntries.length;
+            const authoritativeRevision = game?.diamondProjectionRevision ?? game?.trackingEngineRevision ?? null;
+            const publishedAiRecap = normalizePublishedDiamondAiArtifact(game?.aiRecap, authoritativeRevision);
+            const hasInsights = publishedAiRecap || (teamInsights || []).length || playerEntries.length;
+
+            if (publishedAiRecap) {
+                aiRecapBody.classList.remove('hidden');
+                if (!publishedAiRecap.current) {
+                    aiRecapBody.innerHTML = `
+                        <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-950">
+                            <div class="text-xs font-bold uppercase tracking-wider">AI recap needs regeneration</div>
+                            <p class="mt-1 text-sm">A scorebook correction changed revision ${publishedAiRecap.sourceRevision}. The old recap is hidden until a manager publishes a new cited draft.</p>
+                        </div>
+                    `;
+                } else {
+                    const renderEvidence = (block) => block.citations
+                        .map((citation) => `<span class="rounded-full border border-violet-200 bg-violet-100 px-2 py-1 text-xs font-semibold text-violet-800">Play rev ${citation.revision}</span>`)
+                        .join('');
+                    const coverage = Object.entries(publishedAiRecap.coverage)
+                        .map(([family, status]) => `${family}: ${String(status).replace('_', ' ')}`)
+                        .join(' • ');
+                    aiRecapBody.innerHTML = `
+                        <article class="rounded-2xl border border-violet-200 bg-violet-50 p-5">
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                                <h3 class="text-lg font-bold text-violet-950">Published AI recap</h3>
+                                <span class="rounded-full bg-white px-2.5 py-1 text-xs font-bold uppercase tracking-wide text-violet-700">Source rev ${publishedAiRecap.sourceRevision}</span>
+                            </div>
+                            <p class="mt-3 text-sm leading-relaxed text-gray-800">${escapeHtml(publishedAiRecap.recap.text)}</p>
+                            <div class="mt-2 flex flex-wrap gap-1">${renderEvidence(publishedAiRecap.recap)}</div>
+                            ${publishedAiRecap.insights.map((insight, index) => `
+                                <div class="mt-3 rounded-xl border border-violet-100 bg-white p-3">
+                                    <div class="text-xs font-bold uppercase tracking-wide text-violet-700">AI insight ${index + 1}</div>
+                                    <p class="mt-1 text-sm text-gray-800">${escapeHtml(insight.text)}</p>
+                                    <div class="mt-2 flex flex-wrap gap-1">${renderEvidence(insight)}</div>
+                                </div>
+                            `).join('')}
+                            ${coverage ? `<p class="mt-3 text-xs font-semibold text-violet-800">Coverage • ${escapeHtml(coverage)}</p>` : ''}
+                            ${publishedAiRecap.dataQualityNotes.length ? `<ul class="mt-2 list-disc space-y-1 pl-5 text-xs text-violet-800">${publishedAiRecap.dataQualityNotes.map((note) => `<li>${escapeHtml(note)}</li>`).join('')}</ul>` : ''}
+                        </article>
+                    `;
+                }
+            } else {
+                aiRecapBody.classList.add('hidden');
+                aiRecapBody.innerHTML = '';
+            }
 
             if (!hasInsights) {
                 section.classList.remove('hidden');
@@ -951,14 +1137,17 @@
 
             playerBody.innerHTML = playerEntries.map(([playerId, insights]) => {
                 const player = playerLookup.get(playerId) || {};
+                const playerHeading = player.canOpenProfile === false
+                    ? `<span class="text-base font-bold text-gray-900">${escapeHtml(player.name || 'Recorded player')}</span>`
+                    : `<a href="player.html#teamId=${teamId}&gameId=${gameId}&playerId=${playerId}"
+                           class="text-base font-bold text-primary-700 hover:text-primary-800 hover:underline">
+                            ${escapeHtml(player.name || 'Player')}
+                       </a>`;
                 return `
                     <div class="rounded-xl border border-gray-200 p-4 bg-gray-50">
                         <div class="flex items-center justify-between gap-3 mb-3">
                             <div class="min-w-0">
-                                <a href="player.html#teamId=${teamId}&gameId=${gameId}&playerId=${playerId}"
-                                   class="text-base font-bold text-primary-700 hover:text-primary-800 hover:underline">
-                                    ${escapeHtml(player.name || 'Player')}
-                                </a>
+                                ${playerHeading}
                                 <div class="text-xs font-semibold uppercase tracking-wider text-gray-400">
                                     #${escapeHtml(player.number || '-')}
                                 </div>
@@ -1016,6 +1205,7 @@
         });
 
         function setupStatSheetControls(teamId, gameId, game) {
+            const actionContext = captureAuthBoundActionContext();
             const section = document.getElementById('stat-sheet-section');
             const link = document.getElementById('stat-sheet-link');
             const img = document.getElementById('stat-sheet-img');
@@ -1027,6 +1217,7 @@
             const previewImg = document.getElementById('stat-sheet-upload-img');
             const saveBtn = document.getElementById('stat-sheet-save');
             const cancelBtn = document.getElementById('stat-sheet-cancel');
+            const removeBtn = document.getElementById('stat-sheet-remove');
             const status = document.getElementById('stat-sheet-status');
 
             if (!section || !link || !img || !empty || !admin) return;
@@ -1053,7 +1244,58 @@
 
             admin.classList.remove('hidden');
 
-            uploadBtn?.addEventListener('click', () => {
+            const normalizeStatSheetPhotoUrl = (value) => {
+                if (value === undefined || value === null || value === '') return null;
+                return typeof value === 'string' ? value : undefined;
+            };
+
+            async function readAuthoritativeStatSheetPhotoState(expectedUrl, previousUrl) {
+                try {
+                    const authoritativeGame = await getGame(teamId, gameId);
+                    if (!authoritativeGame || typeof authoritativeGame !== 'object') {
+                        return { state: 'unknown', game: null };
+                    }
+                    const authoritativeUrl = normalizeStatSheetPhotoUrl(authoritativeGame.statSheetPhotoUrl);
+                    if (authoritativeUrl === undefined) {
+                        return { state: 'unknown', game: authoritativeGame };
+                    }
+                    if (authoritativeUrl === expectedUrl) {
+                        return { state: 'committed', game: authoritativeGame };
+                    }
+                    if (authoritativeUrl === previousUrl) {
+                        return { state: 'not-committed', game: authoritativeGame };
+                    }
+                    return { state: 'unknown', game: authoritativeGame };
+                } catch (_error) {
+                    return { state: 'unknown', game: null };
+                }
+            }
+
+            function renderStatSheetPhoto(nextUrl, message) {
+                game.statSheetPhotoUrl = nextUrl;
+                if (nextUrl) {
+                    section.classList.remove('hidden');
+                    img.src = nextUrl;
+                    img.classList.remove('hidden');
+                    link.href = nextUrl;
+                    empty.classList.add('hidden');
+                    uploadBtn.classList.add('hidden');
+                    removeBtn?.classList.remove('hidden');
+                } else {
+                    img.classList.add('hidden');
+                    img.removeAttribute('src');
+                    link.removeAttribute('href');
+                    empty.classList.remove('hidden');
+                    uploadBtn.classList.remove('hidden');
+                    removeBtn?.classList.add('hidden');
+                }
+                preview.classList.add('hidden');
+                fileInput.value = '';
+                status.textContent = message;
+            }
+
+            addAuthBoundEventListener(uploadBtn, 'click', () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 if (status) status.textContent = '';
                 if (!fileInput) {
                     if (status) status.textContent = 'Upload input unavailable. Please refresh.';
@@ -1064,26 +1306,30 @@
                 } else {
                     fileInput.click();
                 }
-            });
+            }, actionContext);
 
-            fileInput?.addEventListener('change', () => {
+            addAuthBoundEventListener(fileInput, 'change', () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 const file = fileInput.files?.[0];
                 if (!file) return;
                 const reader = new FileReader();
                 reader.onload = (event) => {
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     previewImg.src = event.target.result;
                     preview.classList.remove('hidden');
                 };
                 reader.readAsDataURL(file);
-            });
+            }, actionContext);
 
-            cancelBtn?.addEventListener('click', () => {
+            addAuthBoundEventListener(cancelBtn, 'click', () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 fileInput.value = '';
                 preview.classList.add('hidden');
                 status.textContent = '';
-            });
+            }, actionContext);
 
-            saveBtn?.addEventListener('click', async () => {
+            addAuthBoundEventListener(saveBtn, 'click', async () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 const file = fileInput.files?.[0];
                 if (!file) {
                     status.textContent = 'Choose an image first.';
@@ -1093,38 +1339,65 @@
                 uploadBtn.disabled = true;
                 status.textContent = 'Uploading...';
                 let newlyUploadedStatSheet = null;
+                let uploadedUrl = null;
                 let statSheetPersisted = false;
+                let updateAttempted = false;
+                let persistenceState = 'not-attempted';
+                const previousUrl = normalizeStatSheetPhotoUrl(game.statSheetPhotoUrl);
                 try {
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     const upload = await uploadStatSheetPhoto(teamId, gameId, file, { returnUpload: true });
-                    const url = typeof upload === 'string' ? upload : upload.url;
-                    newlyUploadedStatSheet = typeof upload === 'string'
-                        ? null
-                        : { path: upload.path, storage: upload.storage };
-                    await updateGame(teamId, gameId, { statSheetPhotoUrl: url });
+                    if (!upload || typeof upload.url !== 'string' || !upload.url || typeof upload.path !== 'string' || !upload.path) {
+                        throw new Error('Stat sheet upload did not return a complete storage reference.');
+                    }
+                    const url = upload.url;
+                    uploadedUrl = url;
+                    newlyUploadedStatSheet = { path: upload.path, storage: upload.storage };
+                    if (!isAuthBoundActionCurrent(actionContext)) {
+                        await deleteUploadedMediaObjects([newlyUploadedStatSheet]).catch(() => undefined);
+                        return;
+                    }
+                    updateAttempted = true;
+                    const updateResult = await updateGame(teamId, gameId, { statSheetPhotoUrl: url });
+                    if (updateResult === false) {
+                        throw new Error('The stat sheet reference could not be saved.');
+                    }
                     statSheetPersisted = true;
-                    game.statSheetPhotoUrl = url;
-                    img.src = url;
-                    img.classList.remove('hidden');
-                    link.href = url;
-                    empty.classList.add('hidden');
-                    preview.classList.add('hidden');
-                    fileInput.value = '';
-                    uploadBtn.classList.add('hidden');
-                    removeBtn?.classList.remove('hidden');
-                    status.textContent = 'Saved.';
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
+                    renderStatSheetPhoto(url, 'Saved.');
                 } catch (error) {
                     if (newlyUploadedStatSheet && !statSheetPersisted) {
-                        await deleteUploadedMediaObjects([newlyUploadedStatSheet]).catch(() => undefined);
+                        if (updateAttempted) {
+                            const reconciliation = await readAuthoritativeStatSheetPhotoState(
+                                uploadedUrl,
+                                previousUrl
+                            );
+                            persistenceState = reconciliation.state;
+                            statSheetPersisted = persistenceState === 'committed';
+                        } else {
+                            persistenceState = 'not-committed';
+                        }
+                        if (persistenceState === 'not-committed') {
+                            await deleteUploadedMediaObjects([newlyUploadedStatSheet]).catch(() => undefined);
+                        }
+                    }
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
+                    if (statSheetPersisted) {
+                        renderStatSheetPhoto(uploadedUrl, 'Saved.');
+                        return;
                     }
                     console.error('Stat sheet upload failed:', error);
-                    status.textContent = `Error: ${error.message}`;
+                    status.textContent = persistenceState === 'unknown'
+                        ? 'Could not confirm whether the stat sheet was saved. The uploaded image was retained. Refresh this report before trying again.'
+                        : `Error: ${error.message}`;
                 } finally {
-                    saveBtn.disabled = false;
-                    uploadBtn.disabled = false;
+                    if (isAuthBoundActionCurrent(actionContext)) {
+                        saveBtn.disabled = false;
+                        uploadBtn.disabled = false;
+                    }
                 }
-            });
+            }, actionContext);
 
-            const removeBtn = document.getElementById('stat-sheet-remove');
             if (game.statSheetPhotoUrl) {
                 uploadBtn.classList.add('hidden');
                 if (removeBtn) removeBtn.classList.remove('hidden');
@@ -1133,34 +1406,47 @@
                 if (removeBtn) removeBtn.classList.add('hidden');
             }
 
-            removeBtn?.addEventListener('click', async () => {
+            addAuthBoundEventListener(removeBtn, 'click', async () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 if (!game.statSheetPhotoUrl) return;
                 const confirmRemove = confirm('Remove the stat sheet image from this game?');
                 if (!confirmRemove) return;
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 removeBtn.disabled = true;
                 status.textContent = 'Removing...';
+                const previousUrl = normalizeStatSheetPhotoUrl(game.statSheetPhotoUrl);
+                let removalState = 'not-attempted';
                 try {
-                    await updateGame(teamId, gameId, { statSheetPhotoUrl: null });
-                    game.statSheetPhotoUrl = null;
-                    img.classList.add('hidden');
-                    link.removeAttribute('href');
-                    empty.classList.remove('hidden');
-                    preview.classList.add('hidden');
-                    fileInput.value = '';
-                    status.textContent = 'Removed.';
-                    uploadBtn.classList.remove('hidden');
-                    removeBtn.classList.add('hidden');
+                    const updateResult = await updateGame(teamId, gameId, { statSheetPhotoUrl: null });
+                    if (updateResult === false) {
+                        throw new Error('The stat sheet reference could not be removed.');
+                    }
+                    removalState = 'committed';
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
+                    renderStatSheetPhoto(null, 'Removed.');
                 } catch (error) {
+                    const reconciliation = await readAuthoritativeStatSheetPhotoState(null, previousUrl);
+                    removalState = reconciliation.state;
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
+                    if (removalState === 'committed') {
+                        renderStatSheetPhoto(null, 'Removed.');
+                        return;
+                    }
                     console.error('Stat sheet remove failed:', error);
-                    status.textContent = `Error: ${error.message}`;
+                    status.textContent = removalState === 'unknown'
+                        ? 'Could not confirm whether the stat sheet was removed. Refresh this report before trying again.'
+                        : `Error: ${error.message}`;
                 } finally {
-                    removeBtn.disabled = false;
-                    uploadBtn.disabled = false; // Re-enable upload button after removal
+                    if (isAuthBoundActionCurrent(actionContext)) {
+                        removeBtn.disabled = false;
+                        uploadBtn.disabled = false; // Re-enable upload button after removal
+                    }
                 }
-            });
+            }, actionContext);
         }
 
         async function setupSummaryControls(teamId, gameId, game, team, players, statsMap, statKeys, statLabels) {
+            const actionContext = captureAuthBoundActionContext();
             const admin = document.getElementById('summary-admin');
             const editBtn = document.getElementById('summary-edit-btn');
             const status = document.getElementById('summary-edit-status');
@@ -1168,12 +1454,44 @@
             const textarea = document.getElementById('summary-textarea');
             const saveBtn = document.getElementById('summary-save-btn');
             const cancelBtn = document.getElementById('summary-cancel-btn');
-            const generateBtn = document.getElementById('summary-generate-btn');
+            let generateBtn = document.getElementById('summary-generate-btn');
             const summaryDiv = document.getElementById('game-summary');
 
             if (!admin || !editBtn || !status || !editor || !textarea || !saveBtn || !cancelBtn || !generateBtn || !summaryDiv) {
                 return;
             }
+
+            const diamondGame = isDiamondV2Game(game);
+            let generatedSummary = '';
+            let isSavingSummary = false;
+
+            const blockLegacySummaryEditorForDiamond = ({ detach = false } = {}) => {
+                if (!isDiamondV2Game(game)) return false;
+
+                admin.classList.add('hidden');
+                editor.classList.add('hidden');
+                editBtn.classList.add('hidden');
+                summaryDiv.classList.remove('hidden');
+                textarea.value = '';
+                status.textContent = '';
+                generatedSummary = '';
+                isSavingSummary = false;
+
+                [editBtn, saveBtn, cancelBtn, generateBtn].forEach((control) => {
+                    control.disabled = true;
+                    if (detach && control.parentNode) {
+                        control.replaceWith(control.cloneNode(true));
+                    }
+                });
+                return true;
+            };
+
+            if (blockLegacySummaryEditorForDiamond({ detach: true })) {
+                return;
+            }
+
+            generateBtn.classList.remove('hidden');
+            generateBtn.disabled = false;
 
             if (!canEditSummary) {
                 admin.classList.add('hidden');
@@ -1182,10 +1500,8 @@
 
             admin.classList.remove('hidden');
 
-            let generatedSummary = '';
-            let isSavingSummary = false;
-
             const openEditor = (auto = false) => {
+                if (!isAuthBoundActionCurrent(actionContext) || blockLegacySummaryEditorForDiamond()) return;
                 editor.classList.remove('hidden');
                 editBtn.classList.add('hidden');
                 summaryDiv.classList.add('hidden');
@@ -1196,6 +1512,7 @@
             };
 
             const closeEditor = () => {
+                if (!isAuthBoundActionCurrent(actionContext) || blockLegacySummaryEditorForDiamond()) return;
                 editor.classList.add('hidden');
                 editBtn.classList.remove('hidden');
                 summaryDiv.classList.remove('hidden');
@@ -1204,16 +1521,19 @@
                 status.textContent = '';
             };
 
-            editBtn.addEventListener('click', () => {
+            addAuthBoundEventListener(editBtn, 'click', () => {
+                if (!isAuthBoundActionCurrent(actionContext) || blockLegacySummaryEditorForDiamond()) return;
                 textarea.value = game.summary || '';
                 openEditor(false);
-            });
+            }, actionContext);
 
             if (!game.summary) {
                 openEditor(true);
             }
 
-            generateBtn.addEventListener('click', async () => {
+            if (!diamondGame) {
+                addAuthBoundEventListener(generateBtn, 'click', async () => {
+                if (!isAuthBoundActionCurrent(actionContext) || blockLegacySummaryEditorForDiamond()) return;
                 generateBtn.disabled = true;
                 status.textContent = 'Generating AI summary…';
 
@@ -1262,19 +1582,24 @@ Write the match report now:`;
                     const firebaseApp = getApp();
                     const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
                     const model = getGenerativeModel(ai, { model: "gemini-2.5-flash" });
+                    if (!isAuthBoundActionCurrent(actionContext) || blockLegacySummaryEditorForDiamond()) return;
                     const result = await model.generateContent(prompt);
+                    if (!isAuthBoundActionCurrent(actionContext) || blockLegacySummaryEditorForDiamond()) return;
                     generatedSummary = result.response.text();
                     textarea.value = generatedSummary;
                     status.textContent = 'Summary added to text area. You can edit it before saving.';
                 } catch (error) {
+                    if (!isAuthBoundActionCurrent(actionContext) || blockLegacySummaryEditorForDiamond()) return;
                     console.error('AI summary error:', error);
                     status.textContent = `Error: ${error.message}`;
                 } finally {
-                    generateBtn.disabled = false;
+                    if (isAuthBoundActionCurrent(actionContext) && !isDiamondV2Game(game)) generateBtn.disabled = false;
                 }
-            });
+                }, actionContext);
+            }
 
-            saveBtn.addEventListener('click', async () => {
+            addAuthBoundEventListener(saveBtn, 'click', async () => {
+                if (!isAuthBoundActionCurrent(actionContext) || blockLegacySummaryEditorForDiamond()) return;
                 if (isSavingSummary) {
                     return;
                 }
@@ -1290,23 +1615,33 @@ Write the match report now:`;
                 status.textContent = 'Saving summary…';
                 try {
                     const finalSummary = summaryText || generatedSummary;
+                    if (!isAuthBoundActionCurrent(actionContext) || blockLegacySummaryEditorForDiamond()) {
+                        if (isAuthBoundActionCurrent(actionContext)) {
+                            isSavingSummary = false;
+                            saveBtn.disabled = false;
+                        }
+                        return;
+                    }
                     await updateGame(teamId, gameId, { summary: finalSummary });
+                    if (!isAuthBoundActionCurrent(actionContext) || blockLegacySummaryEditorForDiamond()) return;
                     game.summary = finalSummary;
                     summaryDiv.innerHTML = `<div class="prose prose-gray max-w-none">${escapeHtml(finalSummary).replace(/\n/g, '<br>')}</div>`;
                     setTimeout(() => {
+                        if (!isAuthBoundActionCurrent(actionContext)) return;
                         summaryDiv.style.maxHeight = summaryDiv.scrollHeight + 'px';
                     }, 100);
                     isSavingSummary = false;
                     closeEditor();
                 } catch (error) {
+                    if (!isAuthBoundActionCurrent(actionContext) || blockLegacySummaryEditorForDiamond()) return;
                     console.error('Error saving summary:', error);
                     status.textContent = `Error: ${error.message}`;
                     isSavingSummary = false;
                     saveBtn.disabled = false;
                 }
-            });
+            }, actionContext);
 
-            cancelBtn.addEventListener('click', closeEditor);
+            addAuthBoundEventListener(cancelBtn, 'click', closeEditor, actionContext);
         }
 
         function resolveGameReportScoreView(game = {}) {
@@ -1333,7 +1668,202 @@ Write the match report now:`;
             return Object.prototype.hasOwnProperty.call(stats || {}, key);
         }
 
-        function renderPlayerStatsTable({ teamId, gameId, players, statsMap, didNotPlayMap, timeMap, statKeys, hasPlayingTime }) {
+        function filterStatsMapToKeys(statsMap, keys) {
+            const allowedKeys = new Set(keys || []);
+            return Object.fromEntries(Object.entries(statsMap || {}).map(([playerId, stats]) => [
+                playerId,
+                Object.fromEntries(Object.entries(stats || {}).filter(([key]) => allowedKeys.has(key)))
+            ]));
+        }
+
+        function buildDiamondReportColumns(definitions = []) {
+            return {
+                statKeys: definitions.map(({ id }) => id),
+                statLabels: Object.fromEntries(definitions.map((definition) => [
+                    definition.id,
+                    definition.label || definition.acronym || definition.id.toUpperCase()
+                ])),
+                statDefinitions: Object.fromEntries(definitions.map((definition) => [definition.id, definition]))
+            };
+        }
+
+        function buildDiamondConfigUnavailableError() {
+            const error = new Error('Diamond statistic definitions are temporarily unavailable.');
+            error.code = 'allplays/diamond-stat-config-unavailable';
+            return error;
+        }
+
+        function resolveDiamondReportReadTarget({ teamId, gameId, game } = {}) {
+            let readTeamId = teamId;
+            let readGameId = gameId;
+            let reportGame = game;
+            if (
+                game?.isSharedGame === true
+                && typeof game?.diamondSourceTeamId === 'string'
+                && game.diamondSourceTeamId !== teamId
+            ) {
+                const error = new Error('Diamond statistics for this shared-game side are unavailable.');
+                error.code = 'allplays/diamond-shared-source-inaccessible';
+                throw error;
+            }
+            if (game?.isPublicProjection === true && game?.isSharedGame === true) {
+                const sourceTeamId = game.diamondSourceTeamId;
+                const sourceGameId = game.diamondSourceGameId;
+                if (
+                    game.id !== gameId
+                    || typeof sourceTeamId !== 'string'
+                    || sourceTeamId !== teamId
+                    || typeof sourceGameId !== 'string'
+                    || !sourceGameId
+                    || sourceGameId !== sourceGameId.trim()
+                    || sourceGameId.length > 128
+                    || sourceGameId.includes('/')
+                ) {
+                    const error = new Error('Diamond statistics for this shared-game side are unavailable.');
+                    error.code = 'allplays/diamond-shared-source-inaccessible';
+                    throw error;
+                }
+                readTeamId = sourceTeamId;
+                readGameId = sourceGameId;
+                reportGame = {
+                    ...game,
+                    id: sourceGameId,
+                    gameId: sourceGameId,
+                    teamId: sourceTeamId
+                };
+            }
+            const identity = getDiamondProjectionIdentity(reportGame);
+            const publicPlayerStatsPath = getDiamondPublicPlayerStatsCollectionPath({
+                teamId: readTeamId,
+                gameId: readGameId,
+                game: reportGame
+            });
+            if (!identity || !publicPlayerStatsPath) {
+                const error = new Error('The Diamond public report target is unavailable.');
+                error.code = 'allplays/diamond-report-target-unavailable';
+                throw error;
+            }
+            return Object.freeze({
+                teamId: readTeamId,
+                gameId: readGameId,
+                game: reportGame,
+                publicPlayerStatsPath
+            });
+        }
+
+        function renderCoverageAwareStat({ presentation = null, stats = {}, key, definition = {}, didNotPlay = false, legacyMissingAsZero = false } = {}) {
+            if (didNotPlay) return '&mdash;';
+            if (presentation?.isDiamond !== true) {
+                return hasRecordedStatValue(stats, key) ? escapeHtml(String(stats[key])) : (legacyMissingAsZero ? '0' : '&mdash;');
+            }
+            const displayed = getCoverageAwareStatValue(presentation, stats, key, definition);
+            const value = displayed.available ? escapeHtml(displayed.text) : '&mdash;';
+            return displayed.observed
+                ? `<span class="inline-flex flex-col items-center" title="Observed from partial tracking"><span>${value}</span><span class="text-[9px] font-sans font-bold uppercase tracking-wide text-amber-700">Observed</span></span>`
+                : value;
+        }
+
+        function renderDiamondProjectionNotice(game, sourceRevisions = [], documentsComplete = true, statVisibility = 'public', privateStatsStatus = 'not-requested') {
+            document.getElementById('diamond-report-status')?.remove();
+            if (!isDiamondV2Game(game)) return;
+            const projection = resolveDiamondProjectionState(game, sourceRevisions, {
+                expectDocuments: true,
+                documentsComplete
+            });
+            const notice = document.createElement('div');
+            notice.id = 'diamond-report-status';
+            notice.className = `mb-8 rounded-2xl border px-5 py-4 ${projection.pending ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-sky-200 bg-sky-50 text-sky-950'}`;
+            notice.setAttribute('role', 'status');
+            const authoritativeRevision = projection.authoritativeRevision === null ? 'unavailable' : projection.authoritativeRevision;
+            const statRevisions = projection.sourceRevisions.length ? projection.sourceRevisions.join(', ') : 'unavailable';
+            notice.innerHTML = `
+                <div class="text-xs font-bold uppercase tracking-wider">Diamond scorebook &middot; ${statVisibility === 'manager-internal' ? 'Manager-internal stats' : 'Public stats'} &middot; Read only</div>
+                <div class="mt-1 text-sm font-semibold">${projection.pending
+                    ? 'Stats projection is pending. Unavailable values remain an em dash and are never counted as zero.'
+                    : statVisibility === 'manager-internal'
+                        ? 'Complete internal stats match this authoritative game head. Make corrections in the scorebook.'
+                        : privateStatsStatus === 'partial' || privateStatsStatus === 'unavailable'
+                            ? 'Internal stats could not be verified completely, so this report is using public stats only. Retry to load the internal view.'
+                            : 'Public stats are derived from the authoritative play ledger. Make corrections in the scorebook.'}</div>
+                <div class="mt-1 text-xs font-semibold opacity-75">Ledger rev ${authoritativeRevision} &middot; Stats rev ${statRevisions}</div>
+            `;
+            document.getElementById('game-header')?.insertAdjacentElement('afterend', notice);
+        }
+
+        function setupDiamondStatsExport({ game, team, players, statsMap, statPresentationMap, didNotPlayMap, statKeys, statLabels, statDefinitions, teamStats, teamStatPresentation, teamStatFields, opponentPlayers, opponentKeys, opponentLabels, opponentDefinitions, sourceRevisions, documentsComplete, statVisibility = 'public' }) {
+            const button = document.getElementById('diamond-stats-export-btn');
+            if (!button) return;
+            if (!isDiamondV2Game(game)) {
+                button.classList.add('hidden');
+                button.onclick = null;
+                return;
+            }
+
+            button.classList.remove('hidden');
+            button.textContent = statVisibility === 'manager-internal'
+                ? 'Export internal CSV'
+                : 'Export public CSV';
+            button.onclick = () => {
+                try {
+                    const projection = resolveDiamondProjectionState(game, sourceRevisions, {
+                        expectDocuments: true,
+                        documentsComplete
+                    });
+                    const rawGameDate = game.date?.toDate ? game.date.toDate() : new Date(game.date);
+                    const commonIdentity = {
+                        gameId: game.id || game.gameId || '',
+                        gameDate: !Number.isNaN(rawGameDate.getTime()) ? rawGameDate.toISOString().slice(0, 10) : '',
+                        opponent: game.opponent || ''
+                    };
+                    const rows = [
+                        ...(teamStatPresentation?.isDiamond ? [{
+                            recordType: 'team',
+                            identity: { ...commonIdentity, playerName: team?.name || 'Team' },
+                            stats: teamStats,
+                            presentation: { ...teamStatPresentation, statVisibility }
+                        }] : []),
+                        ...(players || []).map((player) => ({
+                            recordType: didNotPlayMap[player.id] === true ? 'player_dnp' : 'player',
+                            identity: {
+                                ...commonIdentity,
+                                ...(player.canOpenProfile === false ? {} : { playerId: player.id }),
+                                playerName: player.name,
+                                playerNumber: player.number,
+                                participationStatus: didNotPlayMap[player.id] === true ? 'did_not_play' : 'played_or_unknown'
+                            },
+                            stats: statsMap[player.id] || {},
+                            presentation: { ...(statPresentationMap[player.id] || readCoverageAwareStatDocument({}, game)), statVisibility }
+                        })),
+                        ...(statVisibility === 'public' ? (opponentPlayers || []).map((player) => ({
+                            recordType: 'opponent',
+                            identity: {
+                                ...commonIdentity,
+                                playerId: player.id,
+                                playerName: player.name,
+                                playerNumber: player.number
+                            },
+                            stats: player.stats || {},
+                            presentation: { ...(player.statPresentation || readCoverageAwareOpponentStats({}, game)), statVisibility: 'public' }
+                        })) : [])
+                    ];
+                    const definitions = [
+                        ...(statKeys || []).map((id) => ({ ...(statDefinitions[id] || {}), id, label: statLabels[id] || id, visibility: statVisibility })),
+                        ...(statVisibility === 'public' ? (opponentKeys || []).map((id) => ({ ...(opponentDefinitions[id] || {}), id, label: opponentLabels[id] || id, visibility: 'public' })) : []),
+                        ...(teamStatFields || []).map((definition) => ({ ...definition, id: definition.id || definition.fieldName, visibility: statVisibility }))
+                    ];
+                    const csv = buildDiamondStatsCsv({ rows, statDefinitions: definitions, projection, visibility: statVisibility });
+                    const dateLabel = commonIdentity.gameDate || 'game';
+                    const filename = getDiamondStatsExportFilename(`${team?.name || 'team'}-${dateLabel}-diamond-stats`, 'allplays-diamond-stats', statVisibility);
+                    downloadDiamondStatsCsv(filename, csv, { visibility: statVisibility });
+                    showToast(`${statVisibility === 'manager-internal' ? 'Manager-internal' : 'Public'} stats CSV downloaded.`);
+                } catch (error) {
+                    console.error('Diamond stats export failed:', error);
+                    showToast(error?.message || 'Unable to export stats CSV.');
+                }
+            };
+        }
+
+        function renderPlayerStatsTable({ teamId, gameId, players, statsMap, statPresentationMap = {}, statDefinitions = {}, didNotPlayMap, timeMap, statKeys, hasPlayingTime }) {
             const tbody = document.getElementById('stats-body');
             if (!tbody) return;
 
@@ -1347,29 +1877,35 @@ Write the match report now:`;
                 const pTime = timeMap[p.id] || 0;
                 const didNotPlay = didNotPlayMap[p.id] === true;
                 const statCells = statKeys.map((key) => `
-                    <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${didNotPlay ? '&mdash;' : (hasRecordedStatValue(pStats, key) ? pStats[key] : '&mdash;')}</td>
+                    <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${renderCoverageAwareStat({ presentation: statPresentationMap[p.id], stats: pStats, key, definition: statDefinitions[key], didNotPlay })}</td>
                 `).join('');
                 const minutesCell = hasPlayingTime ? `
                     <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${didNotPlay ? '&mdash;' : formatMMSS(pTime)}</td>
                 ` : '';
+                const playerContent = `
+                    <span class="inline-flex h-10 w-10 rounded-full bg-gray-100 overflow-hidden border border-gray-200">
+                        ${p.photoUrl ? `<img loading="lazy" decoding="async" src="${escapeHtml(p.photoUrl)}" alt="${escapeHtml(p.name)}" class="w-full h-full object-cover">` : `
+                            <svg class="w-full h-full text-gray-400 p-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A9 9 0 1119 12.999M15 21v-2a3 3 0 00-3-3H6a3 3 0 00-3 3v2"></path>
+                            </svg>
+                        `}
+                    </span>
+                    <span class="flex items-center gap-2">
+                        <span>${escapeHtml(p.name)}</span>
+                        ${didNotPlay ? '<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">DNP</span>' : ''}
+                    </span>
+                `;
+                const playerCell = p.canOpenProfile === false
+                    ? `<div class="flex items-center gap-3 text-gray-900">${playerContent}</div>`
+                    : `<a href="player.html#teamId=${teamId}&gameId=${gameId}&playerId=${p.id}"
+                           class="flex items-center gap-3 text-primary-600 hover:text-primary-700 hover:underline transition">
+                            ${playerContent}
+                       </a>`;
                 return `
                     <tr class="bg-white hover:bg-gray-50 transition">
                         <td class="px-4 py-4 font-mono text-gray-500 font-semibold">${escapeHtml(p.number || '-')}</td>
                         <td class="px-4 py-4 font-medium">
-                            <a href="player.html#teamId=${teamId}&gameId=${gameId}&playerId=${p.id}"
-                               class="flex items-center gap-3 text-primary-600 hover:text-primary-700 hover:underline transition">
-                                <span class="inline-flex h-10 w-10 rounded-full bg-gray-100 overflow-hidden border border-gray-200">
-                                    ${p.photoUrl ? `<img loading="lazy" decoding="async" src="${escapeHtml(p.photoUrl)}" alt="${escapeHtml(p.name)}" class="w-full h-full object-cover">` : `
-                                        <svg class="w-full h-full text-gray-400 p-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A9 9 0 1119 12.999M15 21v-2a3 3 0 00-3-3H6a3 3 0 00-3 3v2"></path>
-                                        </svg>
-                                    `}
-                                </span>
-                                <span class="flex items-center gap-2">
-                                    <span>${escapeHtml(p.name)}</span>
-                                    ${didNotPlay ? '<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">DNP</span>' : ''}
-                                </span>
-                            </a>
+                            ${playerCell}
                         </td>
                         ${statCells}
                         ${minutesCell}
@@ -1379,13 +1915,13 @@ Write the match report now:`;
         }
 
 
-        function renderTeamStatsSection({ teamStats = {}, teamStatFields = [] } = {}) {
+        function renderTeamStatsSection({ game = {}, teamStats = {}, teamStatFields = [], teamStatPresentation = null } = {}) {
             const section = document.getElementById('team-stats-section');
             const body = document.getElementById('team-stats-body');
             if (!section || !body) return;
 
             const visibleFields = (teamStatFields || []).filter((field) => field?.fieldName);
-            if (!canEditStats || visibleFields.length === 0) {
+            if ((!canEditStats && !isDiamondV2Game(game)) || visibleFields.length === 0) {
                 section.classList.add('hidden');
                 body.innerHTML = '';
                 return;
@@ -1397,7 +1933,7 @@ Write the match report now:`;
                 return `
                     <div class="rounded-xl border border-gray-200 bg-gray-50 p-4">
                         <div class="text-xs font-semibold uppercase tracking-wider text-gray-500">${escapeHtml(field.label || key.toUpperCase())}</div>
-                        <div class="mt-2 text-2xl font-bold font-mono text-gray-900">${escapeHtml(String(teamStats[key] || 0))}</div>
+                        <div class="mt-2 text-2xl font-bold font-mono text-gray-900">${renderCoverageAwareStat({ presentation: teamStatPresentation, stats: teamStats, key, definition: field, legacyMissingAsZero: true })}</div>
                     </div>
                 `;
             }).join('');
@@ -1411,6 +1947,7 @@ Write the match report now:`;
             teamStatFields,
             rerenderTeamStats
         }) {
+            const actionContext = captureAuthBoundActionContext();
             const editBtn = document.getElementById('edit-team-stats-btn');
             const admin = document.getElementById('team-stats-editor-admin');
             const panel = document.getElementById('team-stats-editor-panel');
@@ -1422,13 +1959,14 @@ Write the match report now:`;
             if (!editBtn || !admin || !panel || !status || !fieldsEl || !saveBtn || !cancelBtn) return;
 
             const gameCompleted = game?.status === 'completed' || game?.liveStatus === 'completed';
-            if (!canEditStats || !gameCompleted || !Array.isArray(teamStatFields) || teamStatFields.length === 0) {
+            if (isDiamondV2Game(game) || !canEditStats || !gameCompleted || !Array.isArray(teamStatFields) || teamStatFields.length === 0) {
                 editBtn.classList.add('hidden');
                 admin.classList.add('hidden');
                 return;
             }
 
             function renderEditor() {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 fieldsEl.innerHTML = teamStatFields.map((field) => {
                     const key = normalizeStatKey(field.fieldName);
                     const value = teamStats[key] || 0;
@@ -1449,6 +1987,7 @@ Write the match report now:`;
             }
 
             function openEditor() {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 admin.classList.remove('hidden');
                 panel.classList.remove('hidden');
                 status.textContent = '';
@@ -1456,11 +1995,13 @@ Write the match report now:`;
             }
 
             function closeEditor() {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 panel.classList.add('hidden');
                 status.textContent = '';
             }
 
             async function saveTeamStats() {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 const values = {};
                 fieldsEl.querySelectorAll('[data-team-stat-field]').forEach((input) => {
                     values[input.dataset.teamStatField] = input.value;
@@ -1477,18 +2018,23 @@ Write the match report now:`;
                 status.textContent = 'Saving team stats…';
 
                 try {
+                    if (!isAuthBoundActionCurrent(actionContext) || isDiamondV2Game(game)) return;
                     await setCompletedGameTeamStats(teamId, gameId, payload);
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     Object.keys(teamStats).forEach((key) => delete teamStats[key]);
                     Object.assign(teamStats, payload.stats || {});
                     rerenderTeamStats();
                     closeEditor();
                 } catch (error) {
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     console.error('Error saving team stats:', error);
                     status.textContent = `Error: ${error.message}`;
                 } finally {
-                    [saveBtn, cancelBtn, editBtn].forEach((button) => {
-                        if (button) button.disabled = false;
-                    });
+                    if (isAuthBoundActionCurrent(actionContext)) {
+                        [saveBtn, cancelBtn, editBtn].forEach((button) => {
+                            if (button) button.disabled = false;
+                        });
+                    }
                 }
             }
 
@@ -1496,9 +2042,9 @@ Write the match report now:`;
             admin.classList.remove('hidden');
             panel.classList.add('hidden');
 
-            editBtn.addEventListener('click', openEditor);
-            cancelBtn.addEventListener('click', closeEditor);
-            saveBtn.addEventListener('click', saveTeamStats);
+            addAuthBoundEventListener(editBtn, 'click', openEditor, actionContext);
+            addAuthBoundEventListener(cancelBtn, 'click', closeEditor, actionContext);
+            addAuthBoundEventListener(saveBtn, 'click', saveTeamStats, actionContext);
         }
 
         function setupPostGameStatEditor({
@@ -1513,6 +2059,7 @@ Write the match report now:`;
             resolvedConfig,
             rerenderTable
         }) {
+            const actionContext = captureAuthBoundActionContext();
             const editBtn = document.getElementById('edit-stats-btn');
             const admin = document.getElementById('stats-editor-admin');
             const panel = document.getElementById('stats-editor-panel');
@@ -1533,7 +2080,7 @@ Write the match report now:`;
             }
 
             const gameCompleted = game?.status === 'completed' || game?.liveStatus === 'completed';
-            if (!canEditStats || !gameCompleted || !Array.isArray(players) || players.length === 0) {
+            if (isDiamondV2Game(game) || !canEditStats || !gameCompleted || !Array.isArray(players) || players.length === 0) {
                 editBtn.classList.add('hidden');
                 admin.classList.add('hidden');
                 return;
@@ -1544,6 +2091,7 @@ Write the match report now:`;
             let currentIndex = 0;
 
             function renderEditor() {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 const player = players[currentIndex];
                 if (!player) return;
                 const playerStats = statsMap[player.id] || {};
@@ -1580,6 +2128,7 @@ Write the match report now:`;
             }
 
             function openEditor() {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 Object.keys(pendingDidNotPlayMap).forEach((playerId) => {
                     delete pendingDidNotPlayMap[playerId];
                 });
@@ -1590,11 +2139,13 @@ Write the match report now:`;
             }
 
             function closeEditor() {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 panel.classList.add('hidden');
                 status.textContent = '';
             }
 
             async function saveCurrent(direction = null) {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 const player = players[currentIndex];
                 if (!player) return;
 
@@ -1618,10 +2169,12 @@ Write the match report now:`;
                 status.textContent = 'Saving stats…';
 
                 try {
+                    if (!isAuthBoundActionCurrent(actionContext) || isDiamondV2Game(game)) return;
                     await setCompletedGamePlayerStats(teamId, gameId, player.id, {
                         ...payload,
                         statTrackerConfig: resolvedConfig
                     });
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     const { publicStats } = splitPlayerStatsByVisibility(resolvedConfig || {}, payload.stats || {});
                     tableStatsMap[player.id] = publicStats;
                     statsMap[player.id] = { ...(payload.stats || {}) };
@@ -1638,12 +2191,15 @@ Write the match report now:`;
                         closeEditor();
                     }
                 } catch (error) {
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     console.error('Error saving post-game stats:', error);
                     status.textContent = `Error: ${error.message}`;
                 } finally {
-                    buttons.forEach((button) => {
-                        if (button) button.disabled = false;
-                    });
+                    if (isAuthBoundActionCurrent(actionContext)) {
+                        buttons.forEach((button) => {
+                            if (button) button.disabled = false;
+                        });
+                    }
                 }
             }
 
@@ -1651,44 +2207,49 @@ Write the match report now:`;
             admin.classList.remove('hidden');
             panel.classList.add('hidden');
 
-            editBtn.addEventListener('click', openEditor);
-            cancelBtn?.addEventListener('click', closeEditor);
-            prevBtn?.addEventListener('click', () => {
+            addAuthBoundEventListener(editBtn, 'click', openEditor, actionContext);
+            addAuthBoundEventListener(cancelBtn, 'click', closeEditor, actionContext);
+            addAuthBoundEventListener(prevBtn, 'click', () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 currentIndex = getPostGameEditorNextIndex(currentIndex, 'previous', players.length);
                 renderEditor();
-            });
-            nextBtn?.addEventListener('click', () => {
+            }, actionContext);
+            addAuthBoundEventListener(nextBtn, 'click', () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 currentIndex = getPostGameEditorNextIndex(currentIndex, 'next', players.length);
                 renderEditor();
-            });
-            dnpToggle.addEventListener('change', () => {
+            }, actionContext);
+            addAuthBoundEventListener(dnpToggle, 'change', () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 const player = players[currentIndex];
                 if (player) {
                     pendingDidNotPlayMap[player.id] = dnpToggle.checked;
                 }
                 renderEditor();
-            });
-            saveBtn?.addEventListener('click', () => saveCurrent(null));
-            savePrevBtn?.addEventListener('click', () => saveCurrent('previous'));
-            saveNextBtn?.addEventListener('click', () => saveCurrent('next'));
+            }, actionContext);
+            addAuthBoundEventListener(saveBtn, 'click', () => saveCurrent(null), actionContext);
+            addAuthBoundEventListener(savePrevBtn, 'click', () => saveCurrent('previous'), actionContext);
+            addAuthBoundEventListener(saveNextBtn, 'click', () => saveCurrent('next'), actionContext);
         }
 
-        async function loadGame({ forceAuthenticatedReload = false } = {}) {
+        async function loadGame({ forceAuthenticatedReload = false, generation = gameLoadGeneration, expectedUid = currentUser?.uid || '' } = {}) {
             if (gameLoadPromise) {
                 await gameLoadPromise;
+                if (!isCurrentGameLoad(generation, expectedUid)) return;
                 if (forceAuthenticatedReload && !gameLoadedForAuthenticatedUser) {
-                    return loadGame({ forceAuthenticatedReload: true });
+                    return loadGame({ forceAuthenticatedReload: true, generation, expectedUid });
                 }
                 return;
             }
 
-            gameLoadPromise = (async () => {
+            const pendingLoad = (async () => {
             if (gameLoaded && (!forceAuthenticatedReload || gameLoadedForAuthenticatedUser)) return;
             gameLoaded = true;
             gameLoadedForAuthenticatedUser = !!currentUser;
             canManageStatSheet = false;
             canEditSummary = false;
             canEditStats = false;
+            canViewDiamondPrivateStats = false;
             canManageReplayVideo = false;
             canRemoveReplayVideoOutsideFinal = false;
             const { teamId, gameId } = getUrlParams();
@@ -1717,9 +2278,10 @@ Write the match report now:`;
                 const [team, game, players] = await Promise.all([
                     // Reports are historical and must resolve soft-deleted teams when viewers can access them.
                     teamPromise,
-                    getGame(teamId, gameId),
+                    getGame(teamId, gameId, { exactPublicDiamondReport: true }),
                     playersPromise
                 ]);
+                if (!isCurrentGameLoad(generation, expectedUid)) return;
 
                 if (!game) {
                     document.querySelector('main').innerHTML = '<div class="text-center py-12 text-red-500">Game not found</div>';
@@ -1738,6 +2300,7 @@ Write the match report now:`;
                     // Enrich user profile if needed
                     try {
                         const profile = await getUserProfile(currentUser.uid);
+                        if (!isCurrentGameLoad(generation, expectedUid)) return;
                         if (profile) {
                             if (profile.isAdmin) currentUser.isAdmin = true;
                             if (profile.parentOf) currentUser.parentOf = profile.parentOf;
@@ -1746,6 +2309,7 @@ Write the match report now:`;
                     } catch (e) {
                         console.error('Error loading user profile for banner:', e);
                     }
+                    if (!isCurrentGameLoad(generation, expectedUid)) return;
 
                     let accessTeam = team;
                     let accessInfo = accessTeam
@@ -1754,6 +2318,7 @@ Write the match report now:`;
                     if (!accessInfo.hasAccess) {
                         try {
                             const delegatedTeam = await getDelegatedTeamContext(teamId, gameId, { includeInactive: true });
+                            if (!isCurrentGameLoad(generation, expectedUid)) return;
                             if (delegatedTeam) {
                                 const delegatedAccess = delegatedTeam.isDelegatedTeamContext === true
                                     && delegatedTeam.delegatedAccess?.full === true
@@ -1771,11 +2336,13 @@ Write the match report now:`;
                                 console.warn('Unable to load delegated game-report access:', error);
                             }
                         }
+                        if (!isCurrentGameLoad(generation, expectedUid)) return;
                     }
                     if (accessInfo.hasAccess) {
                         canManageStatSheet = accessInfo.accessLevel === 'full';
                         canEditSummary = accessInfo.accessLevel === 'full';
                         canEditStats = accessInfo.accessLevel === 'full';
+                        canViewDiamondPrivateStats = ['full', 'scorekeep'].includes(accessInfo.accessLevel);
                         canManageReplayVideo = accessInfo.accessLevel === 'full'
                             || (accessInfo.accessLevel === 'videographer' && hasSelectedVideographyGrant(accessTeam, currentUser));
                         canRemoveReplayVideoOutsideFinal = accessInfo.accessLevel === 'full';
@@ -1783,10 +2350,12 @@ Write the match report now:`;
                         let unreadCount = 0;
                         try {
                             const counts = await getUnreadChatCounts(currentUser.uid, [teamId]);
+                            if (!isCurrentGameLoad(generation, expectedUid)) return;
                             unreadCount = counts[teamId] || 0;
                         } catch (e) {
                             console.error('Error fetching unread counts:', e);
                         }
+                        if (!isCurrentGameLoad(generation, expectedUid)) return;
 
                         renderTeamAdminBanner(
                             document.getElementById('team-nav-banner'),
@@ -1810,6 +2379,21 @@ Write the match report now:`;
                     alert('Practice events do not have game reports.');
                     window.location.href = `team.html#teamId=${teamId}`;
                     return;
+                }
+
+                const diamondGame = isDiamondV2Game(game);
+                const diamondReportTarget = diamondGame
+                    ? resolveDiamondReportReadTarget({ teamId, gameId, game })
+                    : null;
+                const diamondReportGame = diamondReportTarget?.game || game;
+                const diamondReadTeamId = diamondReportTarget?.teamId || teamId;
+                const diamondReadGameId = diamondReportTarget?.gameId || gameId;
+                const canReadDiamondPrivateStats = canViewDiamondPrivateStats
+                    && diamondReadTeamId === teamId;
+                if (diamondGame) {
+                    // Diamond projections are corrected through append-only scorebook
+                    // commands, never by mutating legacy aggregate documents.
+                    canEditStats = false;
                 }
 
                 // Render Header
@@ -1925,47 +2509,216 @@ Write the match report now:`;
                 setupReplayVideoControls({ teamId, gameId, game, team: resolvedTeam });
                 setupStatSheetControls(teamId, gameId, game);
 
-                // Fetch Aggregated Stats
-                // We need to fetch from subcollection: teams/{teamId}/games/{gameId}/aggregatedStats
-                const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
+                // Legacy games keep their established aggregate collection.
+                // Diamond player stats are isolated beneath the immutable game generation.
+                const publicPlayerStatsPath = diamondGame
+                    ? diamondReportTarget.publicPlayerStatsPath
+                    : `teams/${teamId}/games/${gameId}/aggregatedStats`;
+                if (!publicPlayerStatsPath) {
+                    throw new Error('The Diamond public stat head is unavailable.');
+                }
+                const statsSnapshot = await getDocs(collection(db, publicPlayerStatsPath));
+                if (!isCurrentGameLoad(generation, expectedUid)) return;
                 const statsMap = {};
+                const completeStatsMap = {};
+                const statPresentationMap = {};
+                const publicStatDocuments = [];
+                const sourceRevisions = [];
+                let diamondDocumentsComplete = true;
+                let statVisibility = 'public';
+                let privateStatsStatus = 'not-requested';
                 const timeMap = {};
                 const didNotPlayMap = {};
-                statsSnapshot.forEach(doc => {
-                    const data = doc.data();
-                    statsMap[doc.id] = data.stats;
-                    timeMap[doc.id] = data.timeMs || 0;
-                    didNotPlayMap[doc.id] = data.didNotPlay === true;
+                const loadedStatDocuments = statsSnapshot.docs.map((doc) => ({ id: doc.id, data: doc.data() || {} }));
+                const publicResolution = diamondGame
+                    ? resolveDiamondPublicStatDocuments({
+                        teamId: diamondReadTeamId,
+                        gameId: diamondReadGameId,
+                        game: diamondReportGame,
+                        documents: loadedStatDocuments
+                    })
+                    : { status: 'complete', documents: loadedStatDocuments };
+                if (publicResolution.status !== 'complete') {
+                    throw new Error('The Diamond public stat projection is incomplete.');
+                }
+                publicResolution.documents.forEach(({ id, data }) => {
+                    publicStatDocuments.push({ id, data });
+                    if (diamondGame) {
+                        const presentation = readCoverageAwareStatDocument(data, diamondReportGame);
+                        statsMap[id] = presentation.values;
+                        completeStatsMap[id] = presentation.completeValues;
+                        statPresentationMap[id] = presentation;
+                        if (presentation.sourceRevision !== null) sourceRevisions.push(presentation.sourceRevision);
+                        if (data.complete !== true) diamondDocumentsComplete = false;
+                    } else {
+                        statsMap[id] = data.stats;
+                        completeStatsMap[id] = data.stats;
+                    }
+                    timeMap[id] = data.timeMs || 0;
+                    didNotPlayMap[id] = data.didNotPlay === true;
                 });
+                if (diamondGame && players.length > 0 && Object.keys(statPresentationMap).length === 0) {
+                    diamondDocumentsComplete = false;
+                }
 
                 let teamStats = {};
-                if (canEditStats) {
+                let teamStatPresentation = null;
+                let managerTeamStatDocument = null;
+                let managerTeamStatLoadStatus = 'not-requested';
+                if (canEditStats && !diamondGame) {
                     try {
                         teamStats = await getTeamStatsForGame(teamId, gameId);
                     } catch (err) {
                         console.error('Error fetching team stats:', err);
                     }
                 }
+                if (!isCurrentGameLoad(generation, expectedUid)) return;
 
-                // Fetch the config used for this game
-                let resolvedConfig = null;
-
-                try {
-                    const configDoc = await getDocs(query(collection(db, `teams/${teamId}/statTrackerConfigs`)));
-                    const configs = configDoc.docs.map(d => ({ id: d.id, ...d.data() }));
-                    resolvedConfig = resolveLiveStatConfig({
-                        configs,
-                        game,
-                        team: resolvedTeam
+                const opponentStatPresentationMap = {};
+                if (diamondGame) {
+                    Object.entries(game.opponentStats || {}).forEach(([playerId, stats]) => {
+                        const presentation = readCoverageAwareOpponentStats(stats, diamondReportGame);
+                        opponentStatPresentationMap[playerId] = presentation;
+                        if (presentation.sourceRevision !== null) sourceRevisions.push(presentation.sourceRevision);
                     });
-                } catch (err) {
-                    console.error('Error fetching config:', err);
+                }
+
+                // Fetch the config used for this game. A Diamond config is
+                // usable only when its canonical visibility material matches
+                // the activation hash; retry once before surfacing unavailable.
+                let resolvedConfig = null;
+                let diamondConfigResolution = null;
+                const configAttempts = diamondGame ? 2 : 1;
+                for (let attempt = 0; attempt < configAttempts; attempt += 1) {
+                    try {
+                        const configDoc = await getDocs(query(collection(db, `teams/${diamondReadTeamId}/statTrackerConfigs`)));
+                        if (!isCurrentGameLoad(generation, expectedUid)) return;
+                        const configs = configDoc.docs.map(d => ({ id: d.id, ...d.data() }));
+                        if (diamondGame) {
+                            diamondConfigResolution = resolveDiamondStatConfigsForGames({
+                                teamId: diamondReadTeamId,
+                                games: [diamondReportGame],
+                                configs
+                            });
+                            if (diamondConfigResolution) {
+                                resolvedConfig = diamondConfigResolution.entries[0]?.config || null;
+                                break;
+                            }
+                            console.warn('Diamond stat config does not match its activation snapshot.', {
+                                attempt: attempt + 1,
+                                fromCache: configDoc?.metadata?.fromCache === true
+                            });
+                        } else {
+                            resolvedConfig = resolveLiveStatConfig({ configs, game, team: resolvedTeam });
+                            break;
+                        }
+                    } catch (err) {
+                        console.error('Error fetching config:', err);
+                    }
+                }
+                if (!isCurrentGameLoad(generation, expectedUid)) return;
+                if (diamondGame && !diamondConfigResolution) {
+                    throw buildDiamondConfigUnavailableError();
+                }
+
+                if (diamondGame && canReadDiamondPrivateStats) {
+                    try {
+                        const managerBatch = await loadCompleteDiamondManagerStats({
+                            teamId: diamondReadTeamId,
+                            games: [{ ...diamondReportGame, id: diamondReadGameId }],
+                            playerIds: publicStatDocuments.map(({ id }) => id),
+                            invoke: httpsCallable(functions, 'getDiamondManagerStats')
+                        });
+                        if (!isCurrentGameLoad(generation, expectedUid)) return;
+                        const resolution = resolveDiamondManagerStatDocuments({
+                            game: diamondReportGame,
+                            expectedPlayerIds: publicStatDocuments.map(({ id }) => id),
+                            privateDocuments: [...(managerBatch.documentsByGameId.get(diamondReadGameId) || [])],
+                            loadStatus: managerBatch.status
+                        });
+                        managerTeamStatDocument = managerBatch.teamDocumentsByGameId.get(diamondReadGameId) || null;
+                        managerTeamStatLoadStatus = managerBatch.status;
+                        privateStatsStatus = resolution.status;
+                        if (resolution.status === 'complete') {
+                            Object.keys(statsMap).forEach((key) => delete statsMap[key]);
+                            Object.keys(completeStatsMap).forEach((key) => delete completeStatsMap[key]);
+                            Object.keys(statPresentationMap).forEach((key) => delete statPresentationMap[key]);
+                            resolution.documents.forEach(({ id, data }) => {
+                                const presentation = readCoverageAwareStatDocument(data, diamondReportGame);
+                                statsMap[id] = presentation.values;
+                                completeStatsMap[id] = presentation.completeValues;
+                                statPresentationMap[id] = { ...presentation, statVisibility: 'manager-internal' };
+                                timeMap[id] = data.timeMs || 0;
+                                didNotPlayMap[id] = data.didNotPlay === true;
+                                if (presentation.sourceRevision !== null) sourceRevisions.push(presentation.sourceRevision);
+                            });
+                            statVisibility = 'manager-internal';
+                        }
+                    } catch (err) {
+                        console.error('Error fetching manager-internal player stats:', err);
+                        privateStatsStatus = 'unavailable';
+                    }
+                }
+                if (!isCurrentGameLoad(generation, expectedUid)) return;
+
+                if (diamondGame && statVisibility === 'manager-internal') {
+                    const teamResolution = resolveDiamondManagerTeamStatDocument({
+                        game: diamondReportGame,
+                        privateDocument: managerTeamStatDocument,
+                        loadStatus: managerTeamStatLoadStatus
+                    });
+                    if (teamResolution.status === 'complete') {
+                        teamStatPresentation = {
+                            ...readCoverageAwareStatDocument(teamResolution.document, diamondReportGame),
+                            statVisibility: 'manager-internal'
+                        };
+                        teamStats = teamStatPresentation.values;
+                        if (teamStatPresentation.sourceRevision !== null) sourceRevisions.push(teamStatPresentation.sourceRevision);
+                    }
+                }
+                if (diamondGame && statVisibility === 'public') {
+                    const publicTeamDefinitions = getActivationPinnedDiamondStatCatalog({
+                        resolution: diamondConfigResolution,
+                        game: diamondReportGame,
+                        scope: 'team',
+                        visibility: 'public'
+                    });
+                    const teamResolution = resolveDiamondPublicTeamStatDocument({
+                        game: diamondReportGame,
+                        allowedStatIds: publicTeamDefinitions.map(({ id }) => id)
+                    });
+                    if (teamResolution.status === 'complete') {
+                        teamStatPresentation = {
+                            ...readCoverageAwareStatDocument(teamResolution.document, diamondReportGame),
+                            statVisibility: 'public'
+                        };
+                        teamStats = teamStatPresentation.values;
+                        if (teamStatPresentation.sourceRevision !== null) sourceRevisions.push(teamStatPresentation.sourceRevision);
+                    } else {
+                        diamondDocumentsComplete = false;
+                        teamStatPresentation = {
+                            ...readCoverageAwareStatDocument({}, diamondReportGame),
+                            projectionPending: true,
+                            statVisibility: 'public'
+                        };
+                    }
+                }
+                if (diamondGame && statVisibility === 'manager-internal' && !teamStatPresentation) {
+                    teamStatPresentation = {
+                        ...readCoverageAwareStatDocument({}, diamondReportGame),
+                        statVisibility: 'manager-internal'
+                    };
+                }
+
+                if (diamondGame) {
+                    renderDiamondProjectionNotice(game, sourceRevisions, diamondDocumentsComplete, statVisibility, privateStatsStatus);
                 }
 
                 const editorStatsMap = { ...statsMap };
-                if (canEditStats) {
+                if (canEditStats && !diamondGame) {
                     try {
                         const privateStatsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/privatePlayerStats`));
+                        if (!isCurrentGameLoad(generation, expectedUid)) return;
                         privateStatsSnapshot.forEach(doc => {
                             const data = doc.data() || {};
                             editorStatsMap[doc.id] = {
@@ -1977,21 +2730,32 @@ Write the match report now:`;
                         console.error('Error fetching private player stats:', err);
                     }
                 }
+                if (!isCurrentGameLoad(generation, expectedUid)) return;
 
-                const { statKeys, statLabels } = resolveReportStatColumns({
-                    statsMap,
-                    resolvedConfig
-                });
+                const reportColumns = diamondGame
+                    ? buildDiamondReportColumns(getActivationPinnedDiamondStatCatalog({
+                        resolution: diamondConfigResolution,
+                        game: diamondReportGame,
+                        scope: 'player',
+                        visibility: statVisibility
+                    }))
+                    : resolveReportStatColumns({ statsMap, resolvedConfig, trackingEngine: game.trackingEngine });
+                const { statKeys, statLabels, statDefinitions = {} } = reportColumns;
+                const publicCompleteStatsMap = diamondGame
+                    ? filterStatsMapToKeys(completeStatsMap, statKeys)
+                    : completeStatsMap;
+                // Keep display identity invariant across auth changes. Manager
+                // documents may enrich values, but never replace public identity.
+                const reportPlayers = diamondGame
+                    ? buildDiamondReportPlayers({ rosterPlayers: players, documents: publicStatDocuments })
+                    : players;
 
                 // Setup summary controls
-                setupSummaryControls(teamId, gameId, game, resolvedTeam, players, statsMap, statKeys, statLabels);
+                setupSummaryControls(teamId, gameId, game, resolvedTeam, reportPlayers, diamondGame ? publicCompleteStatsMap : statsMap, statKeys, statLabels);
                 const headerRow = document.getElementById('stats-header-row');
                 const computeHasPlayingTime = () => Object.values(timeMap).some((t) => t > 0);
                 function renderStatsTable() {
-                    const { statKeys: tableStatKeys, statLabels: tableStatLabels } = resolveReportStatColumns({
-                        statsMap,
-                        resolvedConfig
-                    });
+                    const { statKeys: tableStatKeys, statLabels: tableStatLabels, statDefinitions: tableStatDefinitions = {} } = reportColumns;
                     const hasPlayingTime = computeHasPlayingTime();
 
                     if (headerRow) {
@@ -2017,8 +2781,10 @@ Write the match report now:`;
                     renderPlayerStatsTable({
                         teamId,
                         gameId,
-                        players,
+                        players: reportPlayers,
                         statsMap,
+                        statPresentationMap,
+                        statDefinitions: tableStatDefinitions,
                         didNotPlayMap,
                         timeMap,
                         statKeys: tableStatKeys,
@@ -2028,32 +2794,42 @@ Write the match report now:`;
 
                 renderStatsTable();
 
-                const teamStatFields = resolvePostGameTeamStatFields({ resolvedConfig, teamStats });
+                const teamStatFields = diamondGame
+                    ? getActivationPinnedDiamondStatCatalog({
+                        resolution: diamondConfigResolution,
+                        game: diamondReportGame,
+                        scope: 'team',
+                        visibility: statVisibility
+                    })
+                        .map((definition) => ({ ...definition, fieldName: definition.id }))
+                    : resolvePostGameTeamStatFields({ resolvedConfig, teamStats });
                 function rerenderTeamStats() {
-                    renderTeamStatsSection({ teamStats, teamStatFields });
+                    renderTeamStatsSection({ game, teamStats, teamStatFields, teamStatPresentation });
                 }
                 rerenderTeamStats();
-                setupPostGameTeamStatEditor({
-                    teamId,
-                    gameId,
-                    game,
-                    teamStats,
-                    teamStatFields,
-                    rerenderTeamStats
-                });
+                if (!diamondGame) {
+                    setupPostGameTeamStatEditor({
+                        teamId,
+                        gameId,
+                        game,
+                        teamStats,
+                        teamStatFields,
+                        rerenderTeamStats
+                    });
 
-                setupPostGameStatEditor({
-                    teamId,
-                    gameId,
-                    game,
-                    players,
-                    statsMap: editorStatsMap,
-                    tableStatsMap: statsMap,
-                    didNotPlayMap,
-                    timeMap,
-                    resolvedConfig,
-                    rerenderTable: renderStatsTable
-                });
+                    setupPostGameStatEditor({
+                        teamId,
+                        gameId,
+                        game,
+                        players: reportPlayers,
+                        statsMap: editorStatsMap,
+                        tableStatsMap: statsMap,
+                        didNotPlayMap,
+                        timeMap,
+                        resolvedConfig,
+                        rerenderTable: renderStatsTable
+                    });
+                }
 
                 // Render Playing Time Insights
                 if (computeHasPlayingTime()) {
@@ -2063,12 +2839,13 @@ Write the match report now:`;
                     // Set initial collapsed state
                     playingTimeChevron.style.transform = 'rotate(-90deg)';
 
-                    const roster = players.map(p => ({
+                    const roster = reportPlayers.map(p => ({
                         id: p.id,
                         name: p.name || '',
                         number: p.number || '-',
                         timeMs: timeMap[p.id] || 0,
-                        photoUrl: p.photoUrl
+                        photoUrl: p.photoUrl,
+                        canOpenProfile: p.canOpenProfile !== false
                     }));
 
                     const maxTime = Math.max(...roster.map(p => p.timeMs), 1);
@@ -2105,9 +2882,7 @@ Write the match report now:`;
                                 <div class="space-y-3">
                                     ${sorted.map(p => {
                                         const pct = Math.round((p.timeMs / maxTime) * 100);
-                                        const href = `player.html#teamId=${teamId}&gameId=${gameId}&playerId=${p.id}`;
-                                        return `
-                                            <a href="${href}" class="block group/item">
+                                        const playerBody = `
                                                 <div class="flex items-center justify-between gap-3 mb-1.5">
                                                     <div class="flex items-center gap-3 min-w-0 flex-1">
                                                         <span class="inline-flex h-8 w-8 rounded-full bg-gray-100 overflow-hidden border border-gray-200 flex-shrink-0">
@@ -2126,8 +2901,10 @@ Write the match report now:`;
                                                 <div class="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
                                                     <div class="h-full rounded-full bg-gradient-to-r from-primary-500 to-primary-700 transition-all" style="width:${pct}%"></div>
                                                 </div>
-                                            </a>
                                         `;
+                                        return p.canOpenProfile
+                                            ? `<a href="player.html#teamId=${teamId}&gameId=${gameId}&playerId=${p.id}" class="block group/item">${playerBody}</a>`
+                                            : `<div class="block">${playerBody}</div>`;
                                     }).join('')}
                                 </div>
                             </div>
@@ -2155,14 +2932,33 @@ Write the match report now:`;
                 }
 
                 // Render Opponent Stats
+                let opponentPlayersForExport = [];
+                let opponentKeysForExport = [];
+                let opponentLabelsForExport = {};
+                let opponentDefinitionsForExport = {};
                 if (game.opponentStats && Object.keys(game.opponentStats).length > 0) {
                     const opponentHeaderRow = document.getElementById('opponent-stats-header-row');
                     const opponentTbody = document.getElementById('opponent-stats-body');
 
-                    const { oppKeys, oppLabels } = resolveOpponentReportStatColumns({
-                        opponentStats: game.opponentStats,
-                        resolvedConfig
-                    });
+                    const opponentColumns = diamondGame
+                        ? buildDiamondReportColumns(getActivationPinnedDiamondStatCatalog({
+                            resolution: diamondConfigResolution,
+                            game: diamondReportGame,
+                            scope: 'player',
+                            visibility: 'public'
+                        }))
+                        : resolveOpponentReportStatColumns({
+                            opponentStats: game.opponentStats,
+                            resolvedConfig,
+                            trackingEngine: game.trackingEngine
+                        });
+                    const { statKeys: diamondOpponentKeys, statLabels: diamondOpponentLabels, statDefinitions: diamondOpponentDefinitions } = opponentColumns;
+                    const oppKeys = diamondGame ? diamondOpponentKeys : opponentColumns.oppKeys;
+                    const oppLabels = diamondGame ? diamondOpponentLabels : opponentColumns.oppLabels;
+                    const oppDefinitions = diamondGame ? diamondOpponentDefinitions : (opponentColumns.oppDefinitions || {});
+                    opponentKeysForExport = oppKeys;
+                    opponentLabelsForExport = oppLabels;
+                    opponentDefinitionsForExport = oppDefinitions;
 
                     // Render header
                     opponentHeaderRow.innerHTML = `
@@ -2178,19 +2974,25 @@ Write the match report now:`;
 
                     // Render rows
                     const opponentPlayers = Object.entries(game.opponentStats).map(([id, stats]) => {
-                        const { name, number, notes, photoUrl, ...statValues } = stats;
+                        const { name, number, notes, photoUrl, playerId, diamondCoverage, diamondSourceRevision, ...statValues } = stats;
+                        void notes;
+                        void playerId;
+                        void diamondCoverage;
+                        void diamondSourceRevision;
                         return {
                             id,
                             number: number || '-',
                             name: name || 'Opponent Player',
                             photoUrl: photoUrl || '',
-                            stats: statValues
+                            stats: diamondGame ? (opponentStatPresentationMap[id]?.values || {}) : statValues,
+                            statPresentation: opponentStatPresentationMap[id] || null
                         };
                     });
+                    opponentPlayersForExport = opponentPlayers;
 
                     opponentTbody.innerHTML = opponentPlayers.map(p => {
                         const statCells = oppKeys.map(key => `
-                            <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${hasRecordedStatValue(p.stats, key) ? p.stats[key] : '&mdash;'}</td>
+                            <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${renderCoverageAwareStat({ presentation: p.statPresentation, stats: p.stats, key, definition: oppDefinitions[key] })}</td>
                         `).join('');
                         return `
                             <tr class="bg-white hover:bg-gray-50 transition">
@@ -2210,29 +3012,78 @@ Write the match report now:`;
                         '<tr><td colspan="100%" class="p-8 text-center"><div class="text-gray-400 text-sm">No opponent stats available.</div></td></tr>';
                 }
 
-                // Fetch and render game log (events)
-                const eventsQuery = query(collection(db, `teams/${teamId}/games/${gameId}/events`), orderBy('timestamp', 'asc'));
-                const eventsSnapshot = await getDocs(eventsQuery);
-                const events = eventsSnapshot.docs.map(doc => {
-                    const data = doc.data();
-                    return {
-                        ...data,
-                        clock: data.clock || data.gameTime || ''
-                    };
+                setupDiamondStatsExport({
+                    game,
+                    team: resolvedTeam,
+                    players: reportPlayers,
+                    statsMap,
+                    statPresentationMap,
+                    didNotPlayMap,
+                    statKeys,
+                    statLabels,
+                    statDefinitions,
+                    teamStats,
+                    teamStatPresentation,
+                    teamStatFields,
+                    opponentPlayers: opponentPlayersForExport,
+                    opponentKeys: opponentKeysForExport,
+                    opponentLabels: opponentLabelsForExport,
+                    opponentDefinitions: opponentDefinitionsForExport,
+                    sourceRevisions,
+                    documentsComplete: diamondDocumentsComplete,
+                    statVisibility
                 });
+
+                // Fetch and render game log (events). Diamond's raw ledger is
+                // server-only; reports consume a complete sanitized replay.
+                let events = [];
+                let eventsLoadStatus = 'complete';
+                try {
+                    if (diamondGame) {
+                        const diamondReplay = await loadCompleteDiamondReportEvents({
+                            teamId: diamondReadTeamId,
+                            gameId: diamondReadGameId,
+                            game: diamondReportGame,
+                            requestedVisibility: canReadDiamondPrivateStats ? 'manager-internal' : 'public',
+                            invoke: async (name, payload) => {
+                                const response = await httpsCallable(functions, name)(payload);
+                                return response?.data;
+                            }
+                        });
+                        if (!isCurrentGameLoad(generation, expectedUid)) return;
+                        events = [...diamondReplay.events];
+                    } else {
+                        const eventsQuery = query(collection(db, `teams/${teamId}/games/${gameId}/events`), orderBy('timestamp', 'asc'));
+                        const eventsSnapshot = await getDocs(eventsQuery);
+                        if (!isCurrentGameLoad(generation, expectedUid)) return;
+                        events = eventsSnapshot.docs.map(doc => {
+                            const data = doc.data();
+                            return {
+                                ...data,
+                                clock: data.clock || data.gameTime || ''
+                            };
+                        });
+                    }
+                } catch (error) {
+                    if (!diamondGame) throw error;
+                    console.warn('Diamond play-by-play unavailable for game report:', error);
+                    eventsLoadStatus = 'unavailable';
+                }
+                if (!isCurrentGameLoad(generation, expectedUid)) return;
 
                 renderInsightsSection(
                     generateGameInsights({
                         team,
                         game,
-                        players,
-                        statsMap,
+                        players: reportPlayers,
+                        statsMap: diamondGame ? publicCompleteStatsMap : statsMap,
                         timeMap,
                         events
                     }),
-                    players,
+                    reportPlayers,
                     teamId,
-                    gameId
+                    gameId,
+                    game
                 );
 
                 if (events.length > 0) {
@@ -2260,6 +3111,16 @@ Write the match report now:`;
                     }).join('')}
                         </div>
                     `;
+                } else if (diamondGame && eventsLoadStatus !== 'complete') {
+                    document.getElementById('game-log').innerHTML = `
+                        <div class="flex flex-col items-center justify-center h-full text-center py-12">
+                            <svg class="w-16 h-16 text-amber-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z"></path>
+                            </svg>
+                            <p class="text-gray-700 font-medium">Diamond play-by-play could not be refreshed completely.</p>
+                            <p class="text-gray-500 text-sm mt-1">Refresh this report to retry.</p>
+                        </div>
+                    `;
                 } else {
                     document.getElementById('game-log').innerHTML = `
                         <div class="flex flex-col items-center justify-center h-full text-center py-12">
@@ -2273,23 +3134,32 @@ Write the match report now:`;
                 }
 
             } catch (error) {
+                if (!isCurrentGameLoad(generation, expectedUid)) return;
                 console.error(error);
                 const main = document.querySelector('main');
                 if (main) {
                     const needsAuth = error?.code === 'permission-denied';
+                    const needsConfigRetry = error?.code === 'allplays/diamond-stat-config-unavailable';
                     main.innerHTML = `
                         <div class="text-center py-12 text-red-500">
-                            ${needsAuth ? 'Please sign in to view this game.' : 'Error loading game.'}
+                            <p>${needsAuth
+                                ? 'Please sign in to view this game.'
+                                : needsConfigRetry
+                                    ? 'Diamond statistic definitions could not be verified.'
+                                    : 'Error loading game.'}</p>
+                            ${needsConfigRetry ? '<button id="retry-diamond-config" type="button" aria-label="Retry loading Diamond statistic definitions" class="mt-4 min-h-11 rounded-lg bg-primary-600 px-4 py-2 font-semibold text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2">Retry</button>' : ''}
                         </div>
                     `;
+                    document.getElementById('retry-diamond-config')?.addEventListener('click', () => window.location.reload());
                 }
             }
             })();
+            gameLoadPromise = pendingLoad;
 
             try {
-                return await gameLoadPromise;
+                return await pendingLoad;
             } finally {
-                gameLoadPromise = null;
+                if (gameLoadPromise === pendingLoad) gameLoadPromise = null;
             }
         }
     </script>

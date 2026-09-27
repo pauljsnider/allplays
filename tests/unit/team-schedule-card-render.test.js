@@ -43,7 +43,7 @@ describe('team page schedule card rendering', () => {
 
         expect(source).toContain('window.sendAvailabilityReminderFromButton = sendAvailabilityReminderFromButton;');
         expect(source).toContain('onclick="sendAvailabilityReminderFromButton(this)"');
-        expect(source).toContain('buildAvailabilityReminderRecipients(currentPlayers, rsvps)');
+        expect(source).toContain('buildAvailabilityReminderRecipients(players, rsvps)');
         expect(source).toContain('window.confirm(`Send an availability reminder for this event to ${recipients.recipientCount}');
         expect(source).toContain('Reminder sent to ${recipients.recipientCount} no-response');
     });

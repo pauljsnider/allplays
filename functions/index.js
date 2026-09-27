@@ -1,5 +1,9 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
+const adminFirestore = require('firebase-admin/firestore');
+const FirestoreFieldPath = admin.firestore.FieldPath || adminFirestore.FieldPath;
+const FirestoreFieldValue = admin.firestore.FieldValue || adminFirestore.FieldValue;
+const FirestoreTimestamp = admin.firestore.Timestamp || adminFirestore.Timestamp;
 const Stripe = require('stripe');
 const { Resend } = require('resend');
 const crypto = require('node:crypto');
@@ -155,10 +159,13 @@ const {
   parsePublicGamesQuery,
   scanBoundedPublicCalendarTrackingEvents,
   serializePublicCalendarEvent,
+  serializePublicDiamondGameIdentity,
+  serializePublicDiamondOpponentStats,
   serializePublicGame,
   serializePublicTeamDiscovery,
   serializePublicTeamProfile
 } = require('./public-team-api-core.cjs');
+const { createDiamondStatConfigSnapshot } = require('./diamond-stat-config.cjs');
 const {
   buildGameReportShareHtml,
   buildGameReportShareMetadata,
@@ -252,7 +259,8 @@ const {
   getAuthEmailActionSettings,
   getInviteContinueUrl,
   isValidAuthEmail,
-  normalizeAuthEmail
+  normalizeAuthEmail,
+  normalizeVerificationNextRoute
 } = require('./auth-email-core.cjs');
 const { createAuthEmailCallableHandlers } = require('./auth-email-callables.cjs');
 const { createAuthEmailDeliveryStore } = require('./auth-email-delivery-store.cjs');
@@ -386,6 +394,31 @@ const {
   createDelegatedTeamContextHandler,
   resolveDelegatedAccess
 } = require('./delegated-team-context-core.cjs');
+const { createDiamondScorebookHandlers } = require('./diamond-scorebook-handlers.cjs');
+const {
+  sanitizeDiamondPublicTeamStatDocument,
+  serializeDiamondPublicStatsResponse
+} = require('./diamond-scorebook-projections.cjs');
+const {
+  createDiamondLiveEngagementHandlers
+} = require('./diamond-live-engagement-handlers.cjs');
+const {
+  createDiamondScorebookProjectorHandlers
+} = require('./diamond-scorebook-projector-handlers.cjs');
+const {
+  loadDiamondClipTimings,
+  resolveDiamondSharedGame
+} = require('./diamond-scorebook-runtime.cjs');
+const {
+  createDiamondScorebookEffectHandlers
+} = require('./diamond-scorebook-effect-handlers.cjs');
+const {
+  createDiamondScorebookNotificationSender,
+  diamondNotificationProviderReceiptId
+} = require('./diamond-scorebook-notification-sender.cjs');
+const {
+  createDiamondScorebookAiHandlers
+} = require('./diamond-scorebook-ai-handlers.cjs');
 const {
   REPLAY_ARCHIVE_MIGRATION_CONTROL_PATH,
   buildReplayClipScrubUpdate,
@@ -447,8 +480,11 @@ const {
   collectAccountRosterScopes,
   collectAccountTeamIds,
   cleanupAccountCalendarCredentials,
+  cleanupAccountDiamondPrivateNotes,
+  createAccountDiamondPrivateNoteAuthDeleteHandler,
   createAccountDeletionRequestHandler,
   deleteAccountMediaStoragePages,
+  deleteAccountQueryPages,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   getAccountEmailQueryCandidates,
@@ -520,17 +556,150 @@ const statConfigManagementHandlers = createStatConfigManagementHandlers({
   hasTeamAdminAccess,
   HttpsError: functions.https.HttpsError
 });
+const diamondScorebookHandlers = createDiamondScorebookHandlers({
+  firestore,
+  auth: {
+    getUser: (...args) => admin.auth().getUser(...args),
+    getUsers: (...args) => admin.auth().getUsers(...args)
+  },
+  HttpsError: functions.https.HttpsError,
+  logger: functions.logger,
+  random: crypto,
+  resolveDelegatedAccess,
+  isPublicGame: canProjectPublicGame
+});
+const diamondLiveEngagementHandlers = createDiamondLiveEngagementHandlers({
+  firestore,
+  auth: {
+    getUser: (...args) => admin.auth().getUser(...args)
+  },
+  FieldValue: FirestoreFieldValue,
+  HttpsError: functions.https.HttpsError,
+  assertSensitiveWrite: assertSensitiveEmailVerified,
+  resolveDelegatedAccess,
+  isPublicGame: canProjectPublicGame,
+  logger: functions.logger
+});
+// Keep unrelated callable-loader tests and partial Firebase adapters from
+// eagerly requiring the projector's write-only batch surface. A real projector
+// invocation still fails before any work when the underlying SDK lacks it.
+const diamondProjectorFirestore = {
+  doc: (...args) => firestore.doc(...args),
+  collection: (...args) => firestore.collection(...args),
+  runTransaction: (...args) => firestore.runTransaction(...args),
+  batch: (...args) => {
+    if (typeof firestore.batch !== 'function') {
+      throw new TypeError('Firestore batch writes are unavailable for the Diamond projector.');
+    }
+    return firestore.batch(...args);
+  }
+};
+const diamondScorebookProjectorHandlers = createDiamondScorebookProjectorHandlers({
+  firestore: diamondProjectorFirestore,
+  logger: functions.logger,
+  random: crypto,
+  loadClipTimings: loadDiamondClipTimings,
+  resolveSharedGame: resolveDiamondSharedGame
+});
+function buildDiamondSharedGameNotificationAppRoute(request) {
+  const sharedGamePath = request?.sharedGamePath;
+  if (sharedGamePath === null || sharedGamePath === undefined || sharedGamePath === '') {
+    return null;
+  }
+  if (
+    typeof sharedGamePath !== 'string' ||
+    sharedGamePath !== sharedGamePath.trim() ||
+    sharedGamePath.length > 512 ||
+    /[\u0000-\u001f\u007f]/.test(sharedGamePath)
+  ) {
+    throw new TypeError('The Diamond notification shared-game path is invalid.');
+  }
+  const segments = sharedGamePath.split('/');
+  if (
+    segments.length !== 4 ||
+    !['organizations', 'tournaments'].includes(segments[0]) ||
+    segments[2] !== 'sharedGames' ||
+    segments.some((segment) => !segment || segment === '.' || segment === '..' || segment.length > 128)
+  ) {
+    throw new TypeError('The Diamond notification shared-game path is invalid.');
+  }
+  const teamId = normalizeFirestoreId(request.teamId, 'teamId');
+  normalizeFirestoreId(request.gameId, 'gameId');
+  const gameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+  const query = new URLSearchParams();
+  query.set('section', 'game');
+  query.set('sharedGamePath', sharedGamePath);
+  return {
+    teamId,
+    gameId,
+    appRoute: `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}?${query.toString()}`
+  };
+}
+function deliverDiamondScorebookNotification(request, delivery, hooks = {}) {
+  if (
+    delivery?.instanceId !== request.instanceId ||
+    delivery?.idempotencyKey !== request.idempotencyKey ||
+    delivery?.providerRequestId !== diamondNotificationProviderReceiptId(request)
+  ) {
+    throw new TypeError('The Diamond notification delivery generation is inconsistent.');
+  }
+  if (typeof hooks.beforeProviderDispatch !== 'function') {
+    throw new TypeError('The Diamond notification provider-dispatch boundary is required.');
+  }
+  const sharedRoute = buildDiamondSharedGameNotificationAppRoute(request);
+  return sendCategoryNotification({
+    teamId: request.teamId,
+    gameId: request.gameId,
+    eventId: request.sourceEventId,
+    category: request.category,
+    title: request.title,
+    body: request.body,
+    linkOverride: request.link,
+    appRouteOverride: sharedRoute?.appRoute || null,
+    navigationTeamId: sharedRoute?.teamId || null,
+    navigationGameId: sharedRoute?.gameId || null,
+    viewerTeamId: request.viewerTeamId || null,
+    viewerGameId: request.viewerGameId || null,
+    dedupKey: request.dedupKey,
+    deliveryIdempotencyKey: delivery.providerRequestId,
+    beforeProviderDispatch: hooks.beforeProviderDispatch,
+    suppressResourceTelemetry: true,
+    // The Diamond sender owns the durable receipt and writes an irreversible
+    // dispatch fence after the deterministic inbox is ready but before FCM.
+    dedupKeys: []
+  });
+}
+const diamondScorebookNotificationSender = createDiamondScorebookNotificationSender({
+  firestore,
+  logger: functions.logger,
+  deliverNotification: deliverDiamondScorebookNotification
+});
+const diamondScorebookEffectHandlers = createDiamondScorebookEffectHandlers({
+  firestore,
+  logger: functions.logger,
+  random: crypto,
+  sendNotification: diamondScorebookNotificationSender.sendDiamondNotification
+});
+const diamondScorebookAiHandlers = createDiamondScorebookAiHandlers({
+  firestore,
+  auth: {
+    getUser: (...args) => admin.auth().getUser(...args)
+  },
+  HttpsError: functions.https.HttpsError,
+  logger: functions.logger,
+  resolveDelegatedAccess
+});
 const saveAthleteProfileProjectionHandler = createAthleteProfileProjectionSaveHandler({
   firestore,
   auth: admin.auth(),
-  FieldValue: admin.firestore.FieldValue,
+  FieldValue: FirestoreFieldValue,
   HttpsError: functions.https.HttpsError,
   assertSensitiveWrite: assertSensitiveEmailVerified
 });
 const mutateStructuredMediaIdentityHandler = createStructuredMediaWriteHandler({
   firestore,
   auth: admin.auth(),
-  FieldValue: admin.firestore.FieldValue,
+  FieldValue: FirestoreFieldValue,
   HttpsError: functions.https.HttpsError,
   hasTeamAdminAccess,
   assertSensitiveWrite: assertSensitiveEmailVerified
@@ -3812,7 +3981,7 @@ function getResendAuthEmailDelivery() {
   if (!apiKey) throw new Error('RESEND_API_KEY is not configured.');
   resendAuthEmailDelivery = createResendAuthEmailDelivery({
     firestore,
-    FieldValue: admin.firestore.FieldValue,
+    FieldValue: FirestoreFieldValue,
     logger: functions.logger,
     resend: new Resend(apiKey),
     webhookSecret: String(process.env.RESEND_WEBHOOK_SECRET || '').trim(),
@@ -3823,8 +3992,8 @@ function getResendAuthEmailDelivery() {
 
 const authEmailDeliveryStore = createAuthEmailDeliveryStore({
   firestore,
-  Timestamp: admin.firestore.Timestamp,
-  FieldValue: admin.firestore.FieldValue,
+  Timestamp: FirestoreTimestamp,
+  FieldValue: FirestoreFieldValue,
   logger: functions.logger,
   cooldownMs: AUTH_EMAIL_COOLDOWN_MS,
   buildRateLimitId: buildAuthEmailRateLimitId,
@@ -3924,6 +4093,7 @@ const authEmailCallableHandlers = createAuthEmailCallableHandlers({
   enqueuePasswordResetRequest,
   getActionSettings: getAuthEmailActionSettings,
   canonicalizeActionUrl: buildCanonicalAuthActionUrl,
+  normalizeVerificationNextRoute,
   getInviteContinueUrl,
   findOwnedInviteCode,
   allowedInviteTypes: EMAIL_LINK_INVITE_TYPES,
@@ -4057,7 +4227,7 @@ exports.queueInviteEmail = functions.https.onCall(async (data, context) => {
 
 const autoAcceptParentInviteHandler = createAutoAcceptParentInviteHandler({
   firestore,
-  Timestamp: admin.firestore.Timestamp,
+  Timestamp: FirestoreTimestamp,
   HttpsError: functions.https.HttpsError,
   normalizeFirestoreId,
   validateCode: validateAutoAcceptParentInviteCode
@@ -4104,6 +4274,18 @@ exports.cleanupInviteSignupOnAuthDelete = functions.auth.user().onDelete(async (
   return null;
 });
 
+const cleanupAccountDiamondPrivateNotesOnAuthDelete = createAccountDiamondPrivateNoteAuthDeleteHandler({
+  firestore,
+  getDocumentIdField: () => admin.firestore.FieldPath.documentId(),
+  deleteFieldValue: () => admin.firestore.FieldValue.delete()
+});
+
+exports.cleanupAccountDiamondPrivateNotesOnAuthDelete = functions
+  .runWith({ timeoutSeconds: 540, memory: '1GB', failurePolicy: true })
+  .auth
+  .user()
+  .onDelete(cleanupAccountDiamondPrivateNotesOnAuthDelete);
+
 exports.cleanupPublicUserProfileOnAuthDelete = functions.auth
   .user()
   .onDelete(createPublicProfileAuthDeleteHandler({
@@ -4121,7 +4303,7 @@ exports.sweepIneligiblePublicUserProfiles = functions
     const publicProfileEligibilitySweepHandler = createPublicProfileEligibilitySweepHandler({
       firestore,
       auth: admin.auth(),
-      documentIdField: admin.firestore.FieldPath.documentId(),
+      documentIdField: FirestoreFieldPath.documentId(),
       isAuthUserNotFound: publicUserProfileProjection.isPublicProfileAuthUserNotFound,
       reconcileAuthIdentity: async (userId, authIdentity) => {
         const authIdentitySnap = await firestore.doc(`publicProfileAuthIdentities/${userId}`).get();
@@ -4168,7 +4350,7 @@ exports.sweepIneligiblePublicUserProfiles = functions
             userId,
             currentStaffTeamIds: [],
             buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            updatedAt: FirestoreFieldValue.serverTimestamp()
           });
           await firestore.doc(`publicProfileAuthIdentities/${userId}`).delete();
         }
@@ -4211,7 +4393,7 @@ function compactPublicProfileString(value) {
 function buildTrustedPublicUserProfileProjectionPayload(userData = {}, options = {}) {
   return {
     ...publicUserProfileProjection.buildPublicUserProfileProjection(userData, options),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    updatedAt: FirestoreFieldValue.serverTimestamp()
   };
 }
 
@@ -4247,7 +4429,7 @@ async function loadPublicProfileStaffTeamIdsForIdentity(userId, email = '') {
     firestore.collection('teams').where('ownerId', '==', normalizedUserId).get(),
     loadCaseInsensitivePublicProfileStaffTeamIds(firestore, {
       email,
-      documentIdField: admin.firestore.FieldPath.documentId()
+      documentIdField: FirestoreFieldPath.documentId()
     })
   ]);
   return uniqueNonEmptyStrings([
@@ -4293,7 +4475,7 @@ async function removePublicProfileAuthorizationForIneligibleAuth(userId, authIde
     userId: normalizedUserId,
     currentStaffTeamIds: [],
     buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    updatedAt: FirestoreFieldValue.serverTimestamp()
   });
   await authIdentityRef.delete();
   await publicProfileRef.delete();
@@ -4352,7 +4534,7 @@ async function reconcileRoutinePublicProfileAuthIdentity(
   if (currentEmail) {
     await authIdentityRef.set({
       email: currentEmail,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      updatedAt: FirestoreFieldValue.serverTimestamp()
     });
   } else {
     await authIdentityRef.delete();
@@ -4385,7 +4567,7 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
       userId: normalizedUserId,
       currentStaffTeamIds: [],
       buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      updatedAt: FirestoreFieldValue.serverTimestamp()
     });
     await authIdentityRef.delete();
     await publicProfileRef.delete();
@@ -4446,7 +4628,7 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
   if (options.updateAuthIdentityIndex === true) {
     batch.set(authIdentityRef, {
       email: String(authIdentity.email || '').trim().toLowerCase(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      updatedAt: FirestoreFieldValue.serverTimestamp()
     });
   }
   await batch.commit();
@@ -4472,7 +4654,7 @@ async function reconcilePublicProfileStaffMembershipsForAuthUser(
     firestore.collection('teams').where('ownerId', '==', normalizedUserId).get(),
     loadCaseInsensitivePublicProfileStaffTeamIds(firestore, {
       email: rawEmail,
-      documentIdField: admin.firestore.FieldPath.documentId()
+      documentIdField: FirestoreFieldPath.documentId()
     })
   ]);
   (ownedTeamSnap.docs || [])
@@ -4491,7 +4673,7 @@ async function reconcilePublicProfileStaffMembershipsForAuthUser(
     userId: normalizedUserId,
     currentStaffTeamIds: authoritativeTeamIds,
     buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    updatedAt: FirestoreFieldValue.serverTimestamp()
   });
   return uniqueNonEmptyStrings([
     ...publicUserProfileProjection.derivePublicProfileTeamIds(userData),
@@ -4513,7 +4695,7 @@ async function syncPublicUserProfilesForTeamChange(teamId, beforeTeam, afterTeam
     teamId,
     currentStaffUserIds: afterUserIds,
     buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    updatedAt: FirestoreFieldValue.serverTimestamp()
   });
   const candidateUserIds = new Set([
     ...beforeUserIds,
@@ -9376,6 +9558,257 @@ function decodePublicSharedGamePath(gameId) {
   }
 }
 
+function exactPublicDiamondResourceId(value) {
+  return typeof value === 'string' &&
+    value.length >= 1 &&
+    value.length <= 128 &&
+    value === value.trim() &&
+    value !== '.' &&
+    value !== '..' &&
+    !value.includes('/') &&
+    !/[\u0000-\u001f\u007f]/.test(value)
+    ? value
+    : '';
+}
+
+function normalizePublicDiamondSharedGamePath(value) {
+  if (typeof value !== 'string' || value !== value.trim() || !value || value.length > 512) return '';
+  const segments = value.split('/');
+  return segments.length === 4 &&
+    ['organizations', 'tournaments'].includes(segments[0]) &&
+    segments[2] === 'sharedGames' &&
+    segments.every((segment) => exactPublicDiamondResourceId(segment))
+    ? value
+    : '';
+}
+
+function publicDiamondProjectionUnavailable(reason, message = 'Diamond game report data is temporarily unavailable.') {
+  return new functions.https.HttpsError('unavailable', message, { reason });
+}
+
+function hasExactPublicDiamondSharedBacklink(game = {}, sharedGamePath = '') {
+  const candidates = [
+    game.diamondSharedGamePath,
+    game.sharedGamePath,
+    game._sharedGamePath
+  ].filter((value) => value !== null && value !== undefined && value !== '');
+  if (!candidates.length) return false;
+  const normalized = [...new Set(candidates.map(normalizePublicDiamondSharedGamePath))];
+  return normalized.length === 1 && normalized[0] === sharedGamePath;
+}
+
+function hasMatchingPublicDiamondSharedHead(sharedGame = {}, identity = {}) {
+  const requiredMatches = [
+    sharedGame.trackingEngine === 'diamond-v2',
+    sharedGame.diamondProjectionStatus === identity.diamondProjectionStatus,
+    sharedGame.diamondProjectionRevision === identity.diamondProjectionRevision,
+    sharedGame.diamondProjectionCheckpointHash === identity.diamondProjectionCheckpointHash,
+    sharedGame.diamondScorebookInstanceId === identity.diamondScorebookInstanceId,
+    sharedGame.diamondProjectionHash === identity.diamondProjectionHash
+  ];
+  if (Object.prototype.hasOwnProperty.call(sharedGame, 'diamondProjectionComplete')) {
+    requiredMatches.push(sharedGame.diamondProjectionComplete === true);
+  }
+  if (Object.prototype.hasOwnProperty.call(sharedGame, 'diamondStatConfigSnapshotHash')) {
+    requiredMatches.push(
+      sharedGame.diamondStatConfigSnapshotHash === identity.diamondStatConfigSnapshotHash
+    );
+  }
+  return requiredMatches.every(Boolean);
+}
+
+function publicDiamondProjectionCoherenceToken(state = {}) {
+  const replayFields = [
+    'hasRecordedReplay',
+    'replayArchiveRevision',
+    'replayVideoFallbackDisabled',
+    'replayStatus',
+    'recordedReplayStatus',
+    'videoReplayStatus',
+    'replayVideo',
+    'recordedVideo',
+    'videoReplay',
+    'replayVideoUrl',
+    'recordedVideoUrl',
+    'videoReplayUrl',
+    'archivedVideoUrl',
+    'replayVideoPublicUrl'
+  ];
+  const replayState = Object.fromEntries(replayFields.map((field) => [
+    field,
+    state.requestedGame?.[field] ?? null
+  ]));
+  return JSON.stringify({
+    publicGame: serializePublicGame(state.displayGame, {
+      team: state.team,
+      recordedReplayMarkerOnly: true
+    }),
+    identity: state.publicIdentity,
+    diamondStats: state.diamondStats,
+    sourceOpponentStats: state.sourceGame?.opponentStats ?? null,
+    replayState
+  });
+}
+
+async function loadPublicDiamondProjectionState({ teamId, gameId, sharedPath = '' } = {}) {
+  const requestedGameRef = sharedPath
+    ? firestore.doc(sharedPath)
+    : firestore.doc(`teams/${teamId}/games/${gameId}`);
+  return firestore.runTransaction(async (transaction) => {
+    const teamRef = firestore.doc(`teams/${teamId}`);
+    const [teamSnap, requestedGameSnap] = await Promise.all([
+      transaction.get(teamRef),
+      transaction.get(requestedGameRef)
+    ]);
+    if (!teamSnap.exists || !requestedGameSnap.exists) return null;
+
+    const team = { id: teamId, ...(teamSnap.data() || {}) };
+    const requestedGame = {
+      id: requestedGameSnap.id,
+      ...(requestedGameSnap.data() || {}),
+      ...(sharedPath ? { _sharedGamePath: requestedGameSnap.ref.path, isSharedGame: true } : {})
+    };
+    const displayGame = sharedPath
+      ? projectSharedGameForPublicTeam(requestedGame, teamId)
+      : requestedGame;
+    if (!displayGame || !canProjectPublicGame(team, displayGame)) return null;
+    if (requestedGame.trackingEngine !== 'diamond-v2') {
+      throw publicDiamondProjectionUnavailable('public-game-projection-changed');
+    }
+
+    let sourceTeamId = teamId;
+    let sourceGameId = gameId;
+    let sourceGame = requestedGame;
+    if (sharedPath) {
+      const canonicalSharedPath = normalizePublicDiamondSharedGamePath(sharedPath);
+      if (!canonicalSharedPath) {
+        throw publicDiamondProjectionUnavailable('diamond-shared-binding-invalid');
+      }
+      sourceTeamId = exactPublicDiamondResourceId(requestedGame.diamondSourceTeamId);
+      sourceGameId = exactPublicDiamondResourceId(requestedGame.diamondSourceGameId);
+      if (!sourceTeamId || !sourceGameId) {
+        throw publicDiamondProjectionUnavailable('diamond-shared-binding-invalid');
+      }
+      // Diamond public stat documents are source-team oriented. Until a
+      // complete opponent-oriented projection exists, never present them as
+      // the viewing team's statistics or infer source authority from that team.
+      if (sourceTeamId !== teamId) {
+        throw publicDiamondProjectionUnavailable(
+          'diamond-shared-source-inaccessible',
+          'Diamond statistics for this shared-game side are unavailable.'
+        );
+      }
+      const sourceGameSnap = await transaction.get(
+        firestore.doc(`teams/${sourceTeamId}/games/${sourceGameId}`)
+      );
+      if (!sourceGameSnap.exists) {
+        throw publicDiamondProjectionUnavailable('diamond-shared-binding-invalid');
+      }
+      sourceGame = {
+        ...(sourceGameSnap.data() || {}),
+        id: sourceGameId,
+        teamId: sourceTeamId
+      };
+      if (!canProjectPublicGame(team, sourceGame)) {
+        throw publicDiamondProjectionUnavailable('diamond-source-not-public');
+      }
+      if (!hasExactPublicDiamondSharedBacklink(sourceGame, canonicalSharedPath)) {
+        throw publicDiamondProjectionUnavailable('diamond-shared-binding-invalid');
+      }
+    } else {
+      sourceGame = { ...sourceGame, id: sourceGameId, teamId: sourceTeamId };
+    }
+
+    const canonicalIdentity = serializePublicDiamondGameIdentity(sourceGame);
+    if (!canonicalIdentity) {
+      throw publicDiamondProjectionUnavailable('diamond-projection-head-incomplete');
+    }
+    if (sharedPath && !hasMatchingPublicDiamondSharedHead(requestedGame, canonicalIdentity)) {
+      throw publicDiamondProjectionUnavailable('diamond-shared-head-mismatch');
+    }
+    const configSnap = await transaction.get(firestore.doc(
+      `teams/${sourceTeamId}/statTrackerConfigs/${canonicalIdentity.statTrackerConfigId}`
+    ));
+    let statConfigSnapshot = null;
+    if (configSnap.exists) {
+      try {
+        statConfigSnapshot = createDiamondStatConfigSnapshot({
+          teamId: sourceTeamId,
+          configId: canonicalIdentity.statTrackerConfigId,
+          config: configSnap.data() || {}
+        });
+      } catch {
+        statConfigSnapshot = null;
+      }
+    }
+    if (statConfigSnapshot?.snapshotHash !== canonicalIdentity.diamondStatConfigSnapshotHash) {
+      throw publicDiamondProjectionUnavailable('diamond-stat-config-snapshot-unavailable');
+    }
+    const opponentStatKeys = [...statConfigSnapshot.publicPlayerStatIds];
+    const opponentStats = serializePublicDiamondOpponentStats(
+      sourceGame.opponentStats,
+      opponentStatKeys,
+      canonicalIdentity
+    );
+    if (opponentStats === null) {
+      throw publicDiamondProjectionUnavailable('diamond-public-opponent-stats-incomplete');
+    }
+    const serializedDiamondStats = serializeDiamondPublicStatsResponse({
+      game: sourceGame,
+      teamId: sourceTeamId,
+      gameId: sourceGameId
+    });
+    const configBoundPublicTeamStats = sanitizeDiamondPublicTeamStatDocument({
+      game: sourceGame,
+      teamId: sourceTeamId,
+      gameId: sourceGameId,
+      allowedStatIds: statConfigSnapshot.publicTeamStatIds
+    });
+    if (
+      serializedDiamondStats.status !== 'complete' ||
+      serializedDiamondStats.complete !== true ||
+      !configBoundPublicTeamStats ||
+      JSON.stringify(configBoundPublicTeamStats.publicStatIds) !==
+        JSON.stringify(serializedDiamondStats.publicTeamStats.publicStatIds)
+    ) {
+      throw publicDiamondProjectionUnavailable('diamond-public-stats-incomplete');
+    }
+    const diamondStats = Object.freeze({
+      ...serializedDiamondStats,
+      publicTeamStats: configBoundPublicTeamStats
+    });
+    const publicIdentity = sharedPath
+      ? serializePublicDiamondGameIdentity({
+          ...displayGame,
+          ...canonicalIdentity,
+          diamondSourceTeamId: sourceTeamId,
+          diamondSourceGameId: sourceGameId
+        }, { sharedGamePath: sharedPath })
+      : canonicalIdentity;
+    if (!publicIdentity) {
+      throw publicDiamondProjectionUnavailable('diamond-shared-binding-invalid');
+    }
+    const state = {
+      team,
+      requestedGame,
+      displayGame,
+      sourceGame,
+      sourceTeamId,
+      sourceGameId,
+      publicIdentity,
+      diamondStats,
+      opponentStatKeys,
+      opponentStats,
+      requestedGamePath: requestedGameSnap.ref.path,
+      sharedPath
+    };
+    return {
+      ...state,
+      coherenceToken: publicDiamondProjectionCoherenceToken(state)
+    };
+  });
+}
+
 async function getPublicGameProjection(teamId, gameId, team) {
   const sharedPath = decodePublicSharedGamePath(gameId);
   const canonicalGameId = sharedPath ? '' : normalizeTeamId(gameId);
@@ -9390,6 +9823,42 @@ async function getPublicGameProjection(teamId, gameId, team) {
     ...(gameSnap.data() || {}),
     ...(sharedPath ? { _sharedGamePath: gameSnap.ref.path, isSharedGame: true } : {})
   };
+  const rawDisplayGame = sharedPath ? projectSharedGameForPublicTeam(rawGame, teamId) : rawGame;
+  if (!rawDisplayGame || !canProjectPublicGame(team, rawDisplayGame)) return null;
+  if (rawGame.trackingEngine === 'diamond-v2') {
+    const initial = await loadPublicDiamondProjectionState({ teamId, gameId, sharedPath });
+    if (!initial) return null;
+    const privateProjectedGame = await loadServerReplayProjection(
+      initial.requestedGame,
+      initial.requestedGamePath
+    );
+    const displayGame = sharedPath
+      ? projectSharedGameForPublicTeam(privateProjectedGame, teamId)
+      : privateProjectedGame;
+    if (!displayGame) return null;
+    const finalState = await loadPublicDiamondProjectionState({ teamId, gameId, sharedPath });
+    if (!finalState || finalState.coherenceToken !== initial.coherenceToken) {
+      throw publicDiamondProjectionUnavailable('public-game-projection-changed');
+    }
+    const exactGame = {
+      ...displayGame,
+      ...finalState.publicIdentity,
+      opponentStats: finalState.opponentStats,
+      diamondPublicTeamStats: finalState.diamondStats.publicTeamStats
+    };
+    const projection = serializePublicGame(exactGame, {
+      team: finalState.team,
+      recordedReplayMarkerOnly: true,
+      opponentStatKeys: finalState.opponentStatKeys,
+      includeDiamondIdentity: true,
+      sharedGamePath: sharedPath,
+      diamondPublicTeamStats: finalState.diamondStats.publicTeamStats
+    });
+    if (!projection || projection.id !== gameId) {
+      throw publicDiamondProjectionUnavailable('public-game-projection-id-mismatch');
+    }
+    return projection;
+  }
   const privateProjectedGame = await loadServerReplayProjection(rawGame, gameSnap.ref.path);
   const game = sharedPath ? projectSharedGameForPublicTeam(privateProjectedGame, teamId) : privateProjectedGame;
   if (!game || !canProjectPublicGame(team, game)) return null;
@@ -10763,7 +11232,7 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
     roles,
     categories: normalizeNotificationTargetCategories(preferences),
     tokens,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    updatedAt: FirestoreFieldValue.serverTimestamp()
   }, { merge: true });
   return { uid: normalizedUid, teamId, roles, tokenCount: tokens.length };
 }
@@ -10981,12 +11450,12 @@ exports.syncTeamOwnerAccessOnCreate = functions
   .document('teams/{teamId}')
   .onCreate(createTeamOwnerAccessSyncHandler({
     firestore,
-    fieldValue: admin.firestore.FieldValue
+    fieldValue: FirestoreFieldValue
   }));
 
 const legacyTeamOwnerAuthSyncHandler = createLegacyTeamOwnerAuthSyncHandler({
   firestore,
-  fieldValue: admin.firestore.FieldValue
+  fieldValue: FirestoreFieldValue
 });
 
 exports.syncLegacyTeamOwnershipOnAuthCreate = functions
@@ -11002,7 +11471,7 @@ exports.reconcileLegacyTeamOwnership = functions
   .onRun(createLegacyTeamOwnerReconciliationHandler({
     firestore,
     auth: admin.auth(),
-    documentIdField: () => admin.firestore.FieldPath.documentId(),
+    documentIdField: () => FirestoreFieldPath.documentId(),
     checkpointRef: firestore.doc('systemJobs/legacyTeamOwnerReconciliation'),
     syncAuthUser: legacyTeamOwnerAuthSyncHandler
   }));
@@ -12435,7 +12904,14 @@ function dedupeNotificationTargets(targets) {
   });
 }
 
-async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}, additionalUsers = []) {
+async function getTargetsForCategory(
+  teamId,
+  category,
+  actorUid = null,
+  audienceContext = {},
+  additionalUsers = [],
+  telemetryOptions = {},
+) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
 
   const targetSnap = await firestore.collection(`teams/${teamId}/notificationRecipients`)
@@ -12532,11 +13008,16 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
       await backfillNotificationRecipientsForTeam(teamId, users, { skipLegacyCleanup: true });
     } catch (error) {
       const logger = typeof functions !== 'undefined' ? functions.logger : null;
-      logger?.warn?.('Failed to backfill notification recipient index after empty lookup', {
-        teamId,
-        category,
-        error: error?.message || String(error || 'Unknown error')
-      });
+      logger?.warn?.(
+        'Failed to backfill notification recipient index after empty lookup',
+        telemetryOptions.suppressResourceTelemetry === true
+          ? { category }
+          : {
+              teamId,
+              category,
+              error: error?.message || String(error || 'Unknown error')
+            },
+      );
     }
   }
 
@@ -12934,7 +13415,9 @@ async function writeNotificationInboxRecords({
   teamId,
   gameId = null,
   eventId = null,
-  conversationId = null
+  conversationId = null,
+  deliveryIdempotencyKey = null,
+  suppressResourceTelemetry = false,
 }) {
   const uniqueTargets = getUniqueNotificationInboxTargets(targets);
   if (!uniqueTargets.length) {
@@ -12949,7 +13432,7 @@ async function writeNotificationInboxRecords({
     async (target) => {
       try {
         const inboxRef = firestore.collection(`users/${target.uid}/notificationInbox`);
-        await inboxRef.add(buildNotificationInboxPayload({
+        const candidatePayload = buildNotificationInboxPayload({
           category,
           title,
           body,
@@ -12960,7 +13443,41 @@ async function writeNotificationInboxRecords({
           conversationId,
           createdAt,
           readAt
-        }));
+        });
+        if (deliveryIdempotencyKey) {
+          const itemRef = firestore.doc(
+            `users/${target.uid}/notificationInbox/${deliveryIdempotencyKey}`,
+          );
+          await firestore.runTransaction(async (transaction) => {
+            const existingSnapshot = await transaction.get(itemRef);
+            const existing = existingSnapshot.exists
+              ? existingSnapshot.data() || {}
+              : null;
+            if (
+              existing &&
+              (existing.category !== candidatePayload.category ||
+                existing.title !== candidatePayload.title ||
+                existing.body !== candidatePayload.body ||
+                existing.appRoute !== candidatePayload.appRoute ||
+                existing.teamId !== candidatePayload.teamId ||
+                existing.gameId !== candidatePayload.gameId ||
+                existing.eventId !== candidatePayload.eventId ||
+                existing.conversationId !== candidatePayload.conversationId)
+            ) {
+              throw new Error(
+                'The notification inbox idempotency key is already bound to another notification.',
+              );
+            }
+            transaction.set(itemRef, {
+              ...candidatePayload,
+              deliveryIdempotencyKey,
+              createdAt: existing?.createdAt ?? createdAt,
+              readAt: existing?.readAt ?? readAt,
+            });
+          });
+        } else {
+          await inboxRef.add(candidatePayload);
+        }
         return { status: 'fulfilled', value: await cleanupNotificationInbox(inboxRef) };
       } catch (reason) {
         return { status: 'rejected', reason };
@@ -12978,11 +13495,16 @@ async function writeNotificationInboxRecords({
       return;
     }
     failureCount += 1;
-    functions.logger.warn('Failed to write notification inbox record', {
-      category,
-      teamId,
-      error: result.reason?.message || String(result.reason || 'Unknown error')
-    });
+    functions.logger.warn(
+      'Failed to write notification inbox record',
+      suppressResourceTelemetry
+        ? { category }
+        : {
+            category,
+            teamId,
+            error: result.reason?.message || String(result.reason || 'Unknown error')
+          },
+    );
   });
 
   return { writeCount, cleanupCount, failureCount };
@@ -13004,7 +13526,8 @@ async function writeNotificationAuditRecord({
   conversationId = null,
   batchId = null,
   recipientId = null,
-  dedupGuardApplied = false
+  dedupGuardApplied = false,
+  suppressResourceTelemetry = false,
 }) {
   if (!teamId || !category) return;
 
@@ -13038,11 +13561,16 @@ async function writeNotificationAuditRecord({
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
   } catch (error) {
-    functions.logger.warn('Failed to write notification audit record', {
-      teamId,
-      category,
-      error: error?.message || String(error || 'Unknown error')
-    });
+    functions.logger.warn(
+      'Failed to write notification audit record',
+      suppressResourceTelemetry
+        ? { category }
+        : {
+            teamId,
+            category,
+            error: error?.message || String(error || 'Unknown error')
+          },
+    );
   }
 }
 
@@ -13177,9 +13705,40 @@ function mergeNotificationWebpushOptions(baseWebpush = {}, deliveryOptions = {})
   };
 }
 
+function normalizeNotificationDeliveryIdempotencyKey(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (
+    typeof value !== 'string' ||
+    value !== value.trim() ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)
+  ) {
+    throw new TypeError('deliveryIdempotencyKey must be an exact safe identifier of at most 128 characters.');
+  }
+  return value;
+}
+
+function normalizeNotificationAppRouteOverride(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (
+    typeof value !== 'string' ||
+    value !== value.trim() ||
+    value.length > 8192 ||
+    !value.startsWith('/') ||
+    value.startsWith('//') ||
+    /[\u0000-\u001f\u007f]/.test(value)
+  ) {
+    throw new TypeError('appRouteOverride must be an exact internal application route.');
+  }
+  return value;
+}
+
 async function sendCategoryNotification({
   teamId,
   gameId = null,
+  viewerTeamId = null,
+  viewerGameId = null,
+  navigationTeamId = null,
+  navigationGameId = null,
   eventId = null,
   conversationId = null,
   childId = null,
@@ -13188,15 +13747,52 @@ async function sendCategoryNotification({
   body,
   actorUid = null,
   linkOverride = null,
+  appRouteOverride = null,
   dedupKey = null,
   dedupKeys = [],
   excludeUids = [],
   audienceContext = {},
-  timeSensitive = false
+  timeSensitive = false,
+  deliveryIdempotencyKey = null,
+  beforeProviderDispatch = null,
+  suppressResourceTelemetry = false,
 }) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return null;
+  const hasViewerTeamId = viewerTeamId !== null && viewerTeamId !== undefined;
+  const hasViewerGameId = viewerGameId !== null && viewerGameId !== undefined;
+  if (hasViewerTeamId !== hasViewerGameId) {
+    throw new TypeError('Notification viewerTeamId and viewerGameId must be provided together.');
+  }
+  const viewerRouteTeamId = hasViewerTeamId
+    ? normalizeFirestoreId(viewerTeamId, 'viewerTeamId')
+    : teamId;
+  const viewerRouteGameId = hasViewerGameId
+    ? normalizeFirestoreId(viewerGameId, 'viewerGameId')
+    : gameId;
+  const hasNavigationTeamId = navigationTeamId !== null && navigationTeamId !== undefined;
+  const hasNavigationGameId = navigationGameId !== null && navigationGameId !== undefined;
+  if (hasNavigationTeamId !== hasNavigationGameId) {
+    throw new TypeError('Notification navigationTeamId and navigationGameId must be provided together.');
+  }
+  const notificationRouteTeamId = hasNavigationTeamId
+    ? normalizeFirestoreId(navigationTeamId, 'navigationTeamId')
+    : teamId;
+  const notificationRouteGameId = hasNavigationGameId
+    ? normalizeFirestoreId(navigationGameId, 'navigationGameId')
+    : gameId;
+  const normalizedAppRouteOverride =
+    normalizeNotificationAppRouteOverride(appRouteOverride);
+  const normalizedDeliveryIdempotencyKey =
+    normalizeNotificationDeliveryIdempotencyKey(deliveryIdempotencyKey);
 
-  const allTargets = await getTargetsForCategory(teamId, category, actorUid, audienceContext);
+  const allTargets = await getTargetsForCategory(
+    teamId,
+    category,
+    actorUid,
+    audienceContext,
+    [],
+    { suppressResourceTelemetry },
+  );
   const excludeSet = new Set(Array.isArray(excludeUids) ? excludeUids : []);
   const candidateTargets = excludeSet.size
     ? allTargets.filter((t) => !excludeSet.has(t.uid))
@@ -13222,12 +13818,17 @@ async function sendCategoryNotification({
   if (normalizedDedupKeys.length) {
     const canSend = await checkAndSetNotificationDedupKeys(teamId, category, gameId, normalizedDedupKeys);
     if (!canSend) {
-      functions.logger.info('Notification dedup: skipping duplicate send', {
-        teamId,
-        category,
-        gameId,
-        dedupKeys: normalizedDedupKeys
-      });
+      functions.logger.info(
+        'Notification dedup: skipping duplicate send',
+        suppressResourceTelemetry
+          ? { category }
+          : {
+              teamId,
+              category,
+              gameId,
+              dedupKeys: normalizedDedupKeys
+            },
+      );
       return null;
     }
   }
@@ -13236,16 +13837,33 @@ async function sendCategoryNotification({
   if (!ALWAYS_SEND_CATEGORIES.has(category) && !normalizedDedupKeys.length) {
     const canSend = await checkAndSetNotificationDedup(teamId, category, gameId, dedupKey);
     if (!canSend) {
-      functions.logger.info('Notification dedup: skipping duplicate send', { teamId, category, gameId, dedupKey });
+      functions.logger.info(
+        'Notification dedup: skipping duplicate send',
+        suppressResourceTelemetry
+          ? { category }
+          : { teamId, category, gameId, dedupKey },
+      );
       return null;
     }
   }
 
-  const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
-  const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
-  const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
-    ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId, timeSensitive })
+  const link = linkOverride || buildNotificationLink({ category, teamId: viewerRouteTeamId, gameId: viewerRouteGameId, eventId: eventId || viewerRouteGameId, conversationId, childId });
+  const appRoute = normalizedAppRouteOverride || buildNotificationAppRoute({ category, teamId: notificationRouteTeamId, gameId: notificationRouteGameId, eventId: eventId || notificationRouteGameId, conversationId, childId });
+  const baseDeliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
+    ? buildNotificationDeliveryOptions({ category, teamId: notificationRouteTeamId, gameId: notificationRouteGameId, eventId: eventId || notificationRouteGameId, timeSensitive })
     : {};
+  const deliveryOptions = normalizedDeliveryIdempotencyKey
+    ? {
+        ...baseDeliveryOptions,
+        webpush: {
+          ...(baseDeliveryOptions.webpush || {}),
+          notification: {
+            ...(baseDeliveryOptions.webpush?.notification || {}),
+            tag: normalizedDeliveryIdempotencyKey
+          }
+        }
+      }
+    : baseDeliveryOptions;
   const mergeWebpushOptions = typeof mergeNotificationWebpushOptions === 'function'
     ? mergeNotificationWebpushOptions
     : (baseWebpush = {}, runtimeDeliveryOptions = {}) => {
@@ -13267,6 +13885,31 @@ async function sendCategoryNotification({
   const allResponses = [];
   let successCount = 0;
   let failureCount = 0;
+  let uncertainFailureCount = 0;
+  let inboxResult = { writeCount: 0, cleanupCount: 0, failureCount: 0 };
+
+  if (normalizedDeliveryIdempotencyKey) {
+    inboxResult = await writeNotificationInboxRecords({
+      targets: inboxTargets,
+      category,
+      title,
+      body,
+      appRoute,
+      teamId: notificationRouteTeamId,
+      gameId: notificationRouteGameId,
+      eventId: eventId || notificationRouteGameId,
+      conversationId,
+      deliveryIdempotencyKey: normalizedDeliveryIdempotencyKey,
+      suppressResourceTelemetry,
+    });
+    if (inboxResult.failureCount > 0) {
+      throw new Error('Notification inbox idempotency validation failed before push delivery.');
+    }
+  }
+
+  if (pushTargets.length && typeof beforeProviderDispatch === 'function') {
+    await beforeProviderDispatch();
+  }
 
   for (let i = 0; i < pushTargets.length; i += maxMulticastTokens) {
     const targetChunk = pushTargets.slice(i, i + maxMulticastTokens);
@@ -13275,9 +13918,9 @@ async function sendCategoryNotification({
         tokens: targetChunk.map((target) => target.token),
         notification: { title, body },
         data: {
-          teamId: String(teamId),
-          gameId: String(gameId || ''),
-          eventId: String(eventId || gameId || ''),
+          teamId: String(notificationRouteTeamId),
+          gameId: String(notificationRouteGameId || ''),
+          eventId: String(eventId || notificationRouteGameId || ''),
           conversationId: String(conversationId || ''),
           childId: String(childId || ''),
           rsvpId: String(childId || ''),
@@ -13297,30 +13940,42 @@ async function sendCategoryNotification({
       await pruneInvalidTokens(sendResult, targetChunk);
     } catch (error) {
       failureCount += targetChunk.length;
+      // A thrown multicast call can mean FCM accepted the request but its
+      // response was lost. Preserve that distinction so callers never replay
+      // the whole generation as though the push provider were idempotent.
+      uncertainFailureCount += targetChunk.length;
       allResponses.push(...targetChunk.map((target) => ({
         success: false,
         error: new Error(`Push delivery failed for ${target.uid || 'unknown-user'}: ${error?.message || String(error || 'Unknown error')}`)
       })));
-      functions.logger.warn('Failed to send push notification chunk', {
-        teamId,
-        category,
-        targetCount: targetChunk.length,
-        error: error?.message || String(error || 'Unknown error')
-      });
+      functions.logger.warn(
+        'Failed to send push notification chunk',
+        suppressResourceTelemetry
+          ? { category, targetCount: targetChunk.length }
+          : {
+              teamId,
+              category,
+              targetCount: targetChunk.length,
+              error: error?.message || String(error || 'Unknown error')
+            },
+      );
     }
   }
 
-  const inboxResult = await writeNotificationInboxRecords({
-    targets: inboxTargets,
-    category,
-    title,
-    body,
-    appRoute,
-    teamId,
-    gameId,
-    eventId: eventId || gameId,
-    conversationId
-  });
+  if (!normalizedDeliveryIdempotencyKey) {
+    inboxResult = await writeNotificationInboxRecords({
+      targets: inboxTargets,
+      category,
+      title,
+      body,
+      appRoute,
+      teamId: notificationRouteTeamId,
+      gameId: notificationRouteGameId,
+      eventId: eventId || notificationRouteGameId,
+      conversationId,
+      suppressResourceTelemetry,
+    });
+  }
 
   await writeNotificationAuditRecord({
     teamId,
@@ -13336,7 +13991,8 @@ async function sendCategoryNotification({
     gameId,
     eventId: eventId || gameId,
     conversationId,
-    dedupGuardApplied: !ALWAYS_SEND_CATEGORIES.has(category)
+    dedupGuardApplied: !ALWAYS_SEND_CATEGORIES.has(category),
+    suppressResourceTelemetry,
   });
 
   return {
@@ -13345,7 +14001,10 @@ async function sendCategoryNotification({
     failureCount,
     inboxWriteCount: inboxResult.writeCount,
     inboxCleanupCount: inboxResult.cleanupCount,
-    inboxFailureCount: inboxResult.failureCount
+    inboxFailureCount: inboxResult.failureCount,
+    providerDispatchAttempted: pushTargets.length > 0,
+    providerDeliveryUncertain: uncertainFailureCount > 0,
+    uncertainFailureCount
   };
 }
 
@@ -13894,6 +14553,7 @@ exports._internal = {
   dispatchDueTeamMediaNotificationBatches,
   getTargetsForCategory,
   sendCategoryNotification,
+  deliverDiamondScorebookNotification,
   sendDirectTargetsNotification,
   sweepStaleNotificationDeviceTokens,
   sendRsvpReminderPushNotifications,
@@ -17191,11 +17851,20 @@ exports.notifyGameUpdated = retryableNotificationFunctions.firestore
     const category = detectGameNotificationCategory(before, after);
     if (!category) return null;
 
+    const isDiamondGame =
+      before.trackingEngine === 'diamond-v2' ||
+      after.trackingEngine === 'diamond-v2';
     const teamId = context.params.teamId;
     const gameId = context.params.gameId;
     const actorUid = after.updatedBy || null;
 
     if (category === 'liveScore') {
+      if (isDiamondGame) {
+        functions.logger.info('Notification routing: Diamond score updates use the revisioned effect outbox', {
+          category
+        });
+        return null;
+      }
       const liveScoreDedupKey = `score:${toNumericScore(before.homeScore)}:${toNumericScore(before.awayScore)}->${toNumericScore(after.homeScore)}:${toNumericScore(after.awayScore)}`;
       const liveScoreStateDedupKey = buildLiveScoreStateNotificationDedupKey(after);
       if (await hasRecentBigMomentLiveEventForScoreState(teamId, gameId, liveScoreStateDedupKey)) {
@@ -17218,6 +17887,17 @@ exports.notifyGameUpdated = retryableNotificationFunctions.firestore
         dedupKey: liveScoreDedupKey,
         dedupKeys: [liveScoreDedupKey, liveScoreStateDedupKey]
       });
+    }
+
+    if (isDiamondGame) {
+      const externallyMeaningfulScheduleChange = ['date', 'location', 'opponent', 'title']
+        .some((field) => valuesDiffer(before?.[field] ?? null, after?.[field] ?? null));
+      if (!externallyMeaningfulScheduleChange) {
+        functions.logger.info('Notification routing: Diamond lifecycle updates use the revisioned effect outbox', {
+          category
+        });
+        return null;
+      }
     }
 
     const payload = buildScheduleUpdateNotificationPayload(before, after);
@@ -20990,10 +21670,13 @@ exports.liveGameSharePreview = functions
         gameId,
         replay: req.query?.replay,
         clipStart: req.query?.clipStart,
-        clipEnd: req.query?.clipEnd
+        clipEnd: req.query?.clipEnd,
+        overlay: req.query?.overlay
       });
       const query = shareParams.toString();
-      const redirectUrl = `https://allplays.ai/live-game.html?${query}`;
+      const useDiamondViewer = game.trackingEngine === 'diamond-v2';
+      const viewerPath = useDiamondViewer ? 'live-game-diamond-v2.html' : 'live-game.html';
+      const redirectUrl = `https://allplays.ai/${viewerPath}?${query}`;
       const shareUrl = `${PUBLIC_SHARE_PREVIEW_ORIGIN}/watch?${query}`;
       const hasHighlightRange = shareParams.has('clipStart') && shareParams.has('clipEnd');
       const metadata = buildLiveGameShareMetadata({
@@ -21464,15 +22147,7 @@ exports.requestAccountDeletion = functions.https.onCall(createAccountDeletionReq
 }));
 
 async function deleteAccountQuery(query) {
-  while (true) {
-    const snapshot = await query.limit(250).get();
-    if (snapshot.empty) return;
-    for (let index = 0; index < snapshot.docs.length; index += 10) {
-      await Promise.all(snapshot.docs
-        .slice(index, index + 10)
-        .map((docSnapshot) => firestore.recursiveDelete(docSnapshot.ref)));
-    }
-  }
+  return deleteAccountQueryPages({ firestore, query });
 }
 
 async function deleteAccountStorage(uid, mediaQueries, profilePhotoUrls = []) {
@@ -21732,6 +22407,13 @@ exports.processAccountDeletionRequest = functions
         throw migrationError;
       }
 
+      await cleanupAccountDiamondPrivateNotes({
+        firestore,
+        uid,
+        documentIdField: admin.firestore.FieldPath.documentId(),
+        redactedAt: admin.firestore.Timestamp.now().toDate().toISOString()
+      });
+
       await deleteAccountStorage(uid, [
         firestore.collectionGroup('media').where('uploadedBy', '==', uid),
         firestore.collectionGroup('mediaItems').where('uploadedBy', '==', uid),
@@ -21792,10 +22474,87 @@ exports.processAccountDeletionRequest = functions
       await requestRef.set({
         status: 'failed',
         updatedAt: admin.firestore.Timestamp.now(),
-        failureCode: error?.code === 'legacy-profile-photo-migration-required'
+        failureCode: [
+          'legacy-profile-photo-migration-required',
+          'diamond-private-note-migration-required',
+          'diamond-private-note-integrity-failed'
+        ].includes(error?.code)
           ? error.code
           : 'processing-failed'
       }, { merge: true });
       throw error;
     }
   });
+
+
+// Diamond Scorebook v2 remains dark unless the server policy and team opt-in
+// both permit a newly scheduled, untracked game. All canonical writes cross
+// these callables; Firestore rules deny direct client access to the ledger.
+const diamondCallableFunctions = functions.runWith({ timeoutSeconds: 120, memory: '512MB' });
+exports.configureDiamondTeam = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.configureDiamondTeam
+);
+exports.getDiamondAccess = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.getDiamondAccess
+);
+exports.getDiamondManagerStats = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.getDiamondManagerStats
+);
+exports.activateDiamondGame = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.activateDiamondGame
+);
+exports.acquireDiamondScorerLease = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.acquireDiamondScorerLease
+);
+exports.listDiamondScorerCandidates = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.listDiamondScorerCandidates
+);
+exports.submitDiamondCommand = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.submitDiamondCommand
+);
+exports.getDiamondState = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.getDiamondState
+);
+exports.listDiamondEvents = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.listDiamondEvents
+);
+exports.getPublicDiamondGame = diamondCallableFunctions.https.onCall(async (data, context = {}) => {
+  assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'diamond-game');
+  return diamondScorebookHandlers.getPublicDiamondGame(data, context);
+});
+exports.postDiamondLiveChat = diamondCallableFunctions.https.onCall(
+  diamondLiveEngagementHandlers.postDiamondLiveChat
+);
+exports.postDiamondLiveReaction = diamondCallableFunctions.https.onCall(
+  diamondLiveEngagementHandlers.postDiamondLiveReaction
+);
+exports.moderateDiamondLiveChat = diamondCallableFunctions.https.onCall(
+  diamondLiveEngagementHandlers.moderateDiamondLiveChat
+);
+exports.parseDiamondVoice = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.parseDiamondVoice
+);
+exports.regenerateDiamondProjection = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.regenerateDiamondProjection
+);
+exports.getDiamondRecapSource = diamondCallableFunctions.https.onCall(
+  diamondScorebookAiHandlers.getDiamondRecapSource
+);
+exports.publishDiamondAiDraft = diamondCallableFunctions.https.onCall(
+  diamondScorebookAiHandlers.publishDiamondAiDraft
+);
+exports.cleanupDeletedDiamondGame = functions
+  .runWith({ timeoutSeconds: 540, memory: '1GB', failurePolicy: true })
+  .firestore
+  .document('teams/{teamId}/games/{gameId}')
+  .onDelete(diamondScorebookHandlers.cleanupDeletedDiamondGame);
+exports.projectDiamondScorebook = functions
+  .runWith({ timeoutSeconds: 540, memory: '1GB', failurePolicy: true })
+  .firestore
+  .document('teams/{teamId}/games/{gameId}/diamondScorebooks/v2')
+  .onWrite(diamondScorebookProjectorHandlers.onDiamondScorebookWrite);
+exports.processDiamondScorebookEffect = functions
+  .runWith({ timeoutSeconds: 120, memory: '512MB', failurePolicy: true })
+  .firestore
+  .document('teams/{teamId}/games/{gameId}/diamondScorebooks/v2/effects/{effectId}')
+  .onWrite(diamondScorebookEffectHandlers.onDiamondEffectWrite);

@@ -71,7 +71,7 @@ export async function addPractice(teamId, practiceData) {
 }
 export async function updateEvent() {}
 export async function deleteEvent() {}
-export async function getConfigs() { return []; }
+export async function getConfigs() { return state().configs || []; }
 export async function addCalendarToTeam() {}
 export async function removeCalendarFromTeam() {}
 export async function getTrackedCalendarEventUids() { return state().trackedUids || []; }
@@ -792,5 +792,100 @@ test.describe('edit schedule season record fields', () => {
         expect(addCall.gameData.seasonLabel).toBe('2030');
         expect(addCall.gameData.competitionType).toBe('league');
         expect(addCall.gameData.countsTowardSeasonRecord).toBe(true);
+    });
+});
+
+test.describe('edit schedule Diamond pinned fields', () => {
+    test.beforeEach(async ({ page }) => {
+        await registerRoutes(page);
+    });
+
+    test('locks Diamond fields after auth and reload while omitting them from unrelated updates', async ({ page }) => {
+        await page.addInitScript((state) => {
+            window.__editScheduleTestState = state;
+            window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
+        }, buildState({
+            configs: [
+                { id: 'cfg-diamond', name: 'Diamond Baseball' },
+                { id: 'cfg-other', name: 'Other config' }
+            ],
+            dbEvents: [{
+                id: 'game-diamond-1',
+                type: 'game',
+                date: '2030-04-08T18:00:00.000Z',
+                opponent: 'Tigers',
+                location: 'Original Field',
+                status: 'scheduled',
+                trackingEngine: 'diamond-v2',
+                isHome: true,
+                statTrackerConfigId: 'cfg-diamond'
+            }]
+        }));
+
+        await page.goto(`${serverOrigin}/edit-schedule.html#teamId=team-1`, { waitUntil: 'domcontentloaded' });
+        await page.getByRole('button', { name: 'Edit' }).click();
+
+        await expect(page.locator('#homeAwayHome')).toBeDisabled();
+        await expect(page.locator('#homeAwayAway')).toBeDisabled();
+        await expect(page.locator('#homeAwayClear')).toBeDisabled();
+        await expect(page.locator('#statConfig')).toBeDisabled();
+        await expect(page.locator('#diamond-pinned-game-fields-note')).toBeVisible();
+
+        await page.locator('#location').fill('Diamond Field');
+        await page.evaluate(() => {
+            document.getElementById('isHome').value = 'away';
+            document.getElementById('statConfig').value = 'cfg-other';
+        });
+        await page.locator('#game-notify-team').uncheck();
+        await page.locator('#submit-game-btn').click();
+
+        const updateCall = await page.waitForFunction(() => window.__editScheduleTestState?.updateGameCalls?.[0])
+            .then((handle) => handle.jsonValue());
+        expect(updateCall.gameData.location).toBe('Diamond Field');
+        expect(updateCall.gameData).not.toHaveProperty('isHome');
+        expect(updateCall.gameData).not.toHaveProperty('statTrackerConfigId');
+        expect(updateCall.gameData).not.toHaveProperty('opponentTeamId');
+
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await page.getByRole('button', { name: 'Edit' }).click();
+        await expect(page.locator('#homeAwayHome')).toBeDisabled();
+        await expect(page.locator('#statConfig')).toBeDisabled();
+    });
+
+    test('keeps classic Home/Away and tracker controls editable and persists their values', async ({ page }) => {
+        await page.addInitScript((state) => {
+            window.__editScheduleTestState = state;
+            window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
+        }, buildState({
+            configs: [
+                { id: 'cfg-classic', name: 'Classic config' },
+                { id: 'cfg-other', name: 'Other config' }
+            ],
+            dbEvents: [{
+                id: 'game-classic-1',
+                type: 'game',
+                date: '2030-04-08T18:00:00.000Z',
+                opponent: 'Tigers',
+                location: 'Original Field',
+                status: 'scheduled',
+                isHome: true,
+                statTrackerConfigId: 'cfg-classic'
+            }]
+        }));
+
+        await page.goto(`${serverOrigin}/edit-schedule.html#teamId=team-1`, { waitUntil: 'domcontentloaded' });
+        await page.getByRole('button', { name: 'Edit' }).click();
+
+        await expect(page.locator('#homeAwayAway')).toBeEnabled();
+        await expect(page.locator('#statConfig')).toBeEnabled();
+        await page.locator('#homeAwayAway').click();
+        await page.locator('#statConfig').selectOption('cfg-other');
+        await page.locator('#game-notify-team').uncheck();
+        await page.locator('#submit-game-btn').click();
+
+        const updateCall = await page.waitForFunction(() => window.__editScheduleTestState?.updateGameCalls?.[0])
+            .then((handle) => handle.jsonValue());
+        expect(updateCall.gameData.isHome).toBe(false);
+        expect(updateCall.gameData.statTrackerConfigId).toBe('cfg-other');
     });
 });

@@ -1324,7 +1324,9 @@ async function nativeQuerySharedTournamentScheduleDocuments(
       const projected = decoded
         ? projectSharedGameForTeam({ ...decoded, _sharedGamePath: documentPath }, teamId)
         : null;
-      const game = projected ? mapScheduleEventRecord(projected, compactString(projected.id)) : null;
+      const game = projected
+        ? mapScheduleEventRecord({ ...projected, isPublicProjection: false }, compactString(projected.id))
+        : null;
       if (!game || !groups.some((group) => matchesTournamentScheduleGroup(game, group))) return;
       const gameId = compactString(game.id || game.gameId);
       if (gameId && !gamesById.has(gameId)) gamesById.set(gameId, game);
@@ -2046,6 +2048,10 @@ export type ScheduleGameFormInput = {
   opponentTeamPhoto?: string | null;
 };
 
+export type ScheduleGameUpdateOptions = {
+  preservePinnedDiamondFields?: boolean;
+};
+
 export type ScheduleTournamentGameFormInput = ScheduleGameFormInput;
 
 export type ScheduleTournamentCreateFormInput = {
@@ -2257,18 +2263,24 @@ export function buildSingleGameTournamentLegacySchedulePayload(
   return buildSingleLegacyTournamentGameDocument([payload], tournament);
 }
 
-function buildScheduledGameUpdatePayload(input: ScheduleGameFormInput, user: AuthUser) {
+function buildScheduledGameUpdatePayload(input: ScheduleGameFormInput, user: AuthUser, options: ScheduleGameUpdateOptions = {}) {
   const { assignments, status, homeScore, awayScore, createdBy, ...payload } = buildScheduledGamePayload(input, user) as Record<string, unknown>;
   void assignments;
   void status;
   void homeScore;
   void awayScore;
   void createdBy;
-  return {
+  const updatePayload: Record<string, unknown> = {
     ...payload,
     updatedAt: new Date(),
     updatedBy: user.uid
   };
+  if (options.preservePinnedDiamondFields === true) {
+    delete updatePayload.isHome;
+    delete updatePayload.statTrackerConfigId;
+    delete updatePayload.opponentTeamId;
+  }
+  return updatePayload;
 }
 
 function buildScheduleImportPracticePayload(row: ScheduleImportNormalizedRow, user: AuthUser) {
@@ -2473,13 +2485,19 @@ export async function createScheduledTournamentBlockForApp(teamId: string, input
   return createdIds;
 }
 
-export async function updateScheduledGameForApp(teamId: string, gameId: string, input: ScheduleGameFormInput, user: AuthUser | null) {
+export async function updateScheduledGameForApp(
+  teamId: string,
+  gameId: string,
+  input: ScheduleGameFormInput,
+  user: AuthUser | null,
+  options: ScheduleGameUpdateOptions = {}
+) {
   const normalizedTeamId = compactString(teamId);
   const normalizedGameId = compactString(gameId);
   if (!normalizedTeamId) throw new Error('Team is required.');
   if (!normalizedGameId) throw new Error('Game is required.');
   await requireScheduleImportStaff(normalizedTeamId, user);
-  const payload = buildScheduledGameUpdatePayload(input, user as AuthUser);
+  const payload = buildScheduledGameUpdatePayload(input, user as AuthUser, options);
 
   try {
     await withTimeout(Promise.resolve(updateGame(normalizedTeamId, normalizedGameId, payload)), 'Scheduled game update');
@@ -3804,7 +3822,7 @@ async function loadGameById(teamId: string, gameId: string, sharedGamePath = '')
           _sharedGamePath: normalizedSharedGamePath
         }, teamId);
         if (!projected) return null;
-        return preserveRouteIdentity(mapScheduleEventRecord(projected, gameId));
+        return preserveRouteIdentity(mapScheduleEventRecord({ ...projected, isPublicProjection: false }, gameId));
       }
     );
   }
@@ -4199,7 +4217,17 @@ function createScheduleEvent(input: {
   competitionType?: string | null;
   countsTowardSeasonRecord?: boolean | null;
   tournament?: Record<string, any> | null;
+  trackingEngine?: string | null;
+  diamondScorebookInstanceId?: unknown;
+  diamondRevision?: unknown;
+  diamondProjectionStatus?: string | null;
+  diamondProjectionComplete?: boolean;
+  diamondProjectionRevision?: unknown;
+  diamondProjectionCheckpointHash?: string | null;
   statTrackerConfigId?: string | null;
+  diamondStatConfigSnapshotHash?: string | null;
+  diamondProjectionHash?: string | null;
+  isPublicProjection?: boolean;
   sourceType?: string | null;
   sourceLabel?: string | null;
   isImported?: boolean;
@@ -4283,7 +4311,20 @@ function createScheduleEvent(input: {
     competitionType: input.competitionType || null,
     countsTowardSeasonRecord: input.countsTowardSeasonRecord ?? null,
     tournament: input.tournament && typeof input.tournament === 'object' ? input.tournament : null,
+    trackingEngine: compactString(input.trackingEngine) || null,
+    diamondScorebookInstanceId:
+      compactString(input.diamondScorebookInstanceId) || null,
+    diamondRevision: toNullableScore(input.diamondRevision),
+    diamondProjectionStatus: compactString(input.diamondProjectionStatus) || null,
+    diamondProjectionComplete: input.diamondProjectionComplete === true,
+    diamondProjectionRevision: toNullableScore(input.diamondProjectionRevision),
+    diamondProjectionCheckpointHash:
+      compactString(input.diamondProjectionCheckpointHash) || null,
     statTrackerConfigId: input.statTrackerConfigId || null,
+    diamondStatConfigSnapshotHash:
+      compactString(input.diamondStatConfigSnapshotHash) || null,
+    diamondProjectionHash: compactString(input.diamondProjectionHash) || null,
+    isPublicProjection: input.isPublicProjection === true,
     sourceType: input.sourceType || (input.isDbGame ? 'db' : 'calendar'),
     sourceLabel: input.sourceLabel || (input.isDbGame ? 'ALL PLAYS schedule' : 'Team calendar'),
     isImported: input.isImported === true || !input.isDbGame,
@@ -4457,7 +4498,17 @@ async function buildTeamSchedule(
             competitionType: game.competitionType || null,
             countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
             tournament: game.tournament || null,
+            trackingEngine: game.trackingEngine || null,
+            diamondScorebookInstanceId: game.diamondScorebookInstanceId || null,
+            diamondRevision: game.diamondRevision ?? null,
+            diamondProjectionStatus: game.diamondProjectionStatus || null,
+            diamondProjectionComplete: game.diamondProjectionComplete === true,
+            diamondProjectionRevision: game.diamondProjectionRevision ?? null,
+            diamondProjectionCheckpointHash: game.diamondProjectionCheckpointHash || null,
             statTrackerConfigId: game.statTrackerConfigId || null,
+            diamondStatConfigSnapshotHash: game.diamondStatConfigSnapshotHash || null,
+            diamondProjectionHash: game.diamondProjectionHash || null,
+            isPublicProjection: game.isPublicProjection === true,
             sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
             sourceLabel: getScheduleSourceLabel(game),
             isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -4533,7 +4584,18 @@ async function buildTeamSchedule(
           competitionType: game.competitionType || null,
           countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
           tournament: game.tournament || null,
+          trackingEngine: game.trackingEngine || null,
+          diamondScorebookInstanceId:
+            compactString(game.diamondScorebookInstanceId) || null,
+          diamondRevision: game.diamondRevision ?? null,
+          diamondProjectionStatus: game.diamondProjectionStatus || null,
+          diamondProjectionComplete: game.diamondProjectionComplete === true,
+          diamondProjectionRevision: game.diamondProjectionRevision ?? null,
+          diamondProjectionCheckpointHash: game.diamondProjectionCheckpointHash || null,
           statTrackerConfigId: game.statTrackerConfigId || null,
+          diamondStatConfigSnapshotHash: game.diamondStatConfigSnapshotHash || null,
+          diamondProjectionHash: game.diamondProjectionHash || null,
+          isPublicProjection: game.isPublicProjection === true,
           sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
           sourceLabel: getScheduleSourceLabel(game),
           isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -4757,7 +4819,17 @@ async function buildTargetedTeamScheduleEvent(
       competitionType: game.competitionType || null,
       countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
       tournament: game.tournament || null,
+      trackingEngine: game.trackingEngine || null,
+      diamondScorebookInstanceId: game.diamondScorebookInstanceId || null,
+      diamondRevision: game.diamondRevision ?? null,
+      diamondProjectionStatus: game.diamondProjectionStatus || null,
+      diamondProjectionComplete: game.diamondProjectionComplete === true,
+      diamondProjectionRevision: game.diamondProjectionRevision ?? null,
+      diamondProjectionCheckpointHash: game.diamondProjectionCheckpointHash || null,
       statTrackerConfigId: game.statTrackerConfigId || null,
+      diamondStatConfigSnapshotHash: game.diamondStatConfigSnapshotHash || null,
+      diamondProjectionHash: game.diamondProjectionHash || null,
+      isPublicProjection: game.isPublicProjection === true,
       sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
       sourceLabel: getScheduleSourceLabel(game),
       isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -4829,7 +4901,18 @@ async function buildTargetedTeamScheduleEvent(
     competitionType: game.competitionType || null,
     countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
     tournament: game.tournament || null,
+    trackingEngine: game.trackingEngine || null,
+    diamondScorebookInstanceId:
+      compactString(game.diamondScorebookInstanceId) || null,
+    diamondRevision: game.diamondRevision ?? null,
+    diamondProjectionStatus: game.diamondProjectionStatus || null,
+    diamondProjectionComplete: game.diamondProjectionComplete === true,
+    diamondProjectionRevision: game.diamondProjectionRevision ?? null,
+    diamondProjectionCheckpointHash: game.diamondProjectionCheckpointHash || null,
     statTrackerConfigId: game.statTrackerConfigId || null,
+    diamondStatConfigSnapshotHash: game.diamondStatConfigSnapshotHash || null,
+    diamondProjectionHash: game.diamondProjectionHash || null,
+    isPublicProjection: game.isPublicProjection === true,
     sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
     sourceLabel: getScheduleSourceLabel(game),
     isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -7514,44 +7597,56 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
   if (!user?.uid) {
     throw new Error('Sign in before cancelling the game.');
   }
-  if (!event.canUpdateScore) {
+  const isDiamondGame = compactString(event.trackingEngine) === 'diamond-v2';
+  if (isDiamondGame && !event.isTeamAdmin) {
+    throw new Error('Team owner or admin access is required to cancel a Diamond game.');
+  }
+  if (!isDiamondGame && !event.canUpdateScore) {
     throw new Error('Coach or admin access is required to cancel this game.');
   }
 
-  const payload: Record<string, unknown> = {
-    status: 'cancelled',
-    liveStatus: 'cancelled',
-    cancelledAt: new Date(),
-    cancelledBy: user.uid
-  };
-
-  try {
-    await withTimeout(Promise.resolve(updateGame(event.teamId, event.id, payload)), 'Game cancellation');
-  } catch (error) {
-    if (!isNativeRuntime()) throw error;
-    logScheduleWarning('Falling back to REST game cancellation.', 'game-cancel', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id });
-    const sourceGame = await nativeGetDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`);
-    if (!sourceGame) {
-      throw new Error('Scheduled game not found.');
-    }
-    const counterpartTeamId = compactString(sourceGame.sharedScheduleOpponentTeamId);
-    const counterpartGameId = compactString(sourceGame.sharedScheduleOpponentGameId);
-    const isSharedGame = Boolean(sourceGame.sharedScheduleId);
-    await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`, payload);
-    if (isSharedGame && counterpartTeamId && counterpartGameId) {
-      try {
-        const counterpartPath = `teams/${encodeURIComponent(counterpartTeamId)}/games/${encodeURIComponent(counterpartGameId)}`;
-        const counterpartGame = await nativeGetDocument(counterpartPath);
-        if (!counterpartGame) throw new Error('Shared scheduled game counterpart not found.');
-        await nativePatchDocument(counterpartPath, payload);
-      } catch (counterpartError) {
-        logScheduleWarning('Unable to synchronize shared game cancellation.', 'game-cancel-counterpart', counterpartError, {
-          fallback: 'rest',
-          teamId: event.teamId,
-          gameId: event.id,
-          counterpartTeamId,
-          counterpartGameId
-        });
+  if (isDiamondGame) {
+    const { cancelDiamondGame } = await import('./diamondScorebookService');
+    await cancelDiamondGame({
+      teamId: event.teamId,
+      gameId: event.id,
+      reason: 'Cancelled from schedule management.'
+    });
+  } else {
+    const payload: Record<string, unknown> = {
+      status: 'cancelled',
+      liveStatus: 'cancelled',
+      cancelledAt: new Date(),
+      cancelledBy: user.uid
+    };
+    try {
+      await withTimeout(Promise.resolve(updateGame(event.teamId, event.id, payload)), 'Game cancellation');
+    } catch (error) {
+      if (!isNativeRuntime()) throw error;
+      logScheduleWarning('Falling back to REST game cancellation.', 'game-cancel', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id });
+      const sourceGame = await nativeGetDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`);
+      if (!sourceGame) {
+        throw new Error('Scheduled game not found.');
+      }
+      const counterpartTeamId = compactString(sourceGame.sharedScheduleOpponentTeamId);
+      const counterpartGameId = compactString(sourceGame.sharedScheduleOpponentGameId);
+      const isSharedGame = Boolean(sourceGame.sharedScheduleId);
+      await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`, payload);
+      if (isSharedGame && counterpartTeamId && counterpartGameId) {
+        try {
+          const counterpartPath = `teams/${encodeURIComponent(counterpartTeamId)}/games/${encodeURIComponent(counterpartGameId)}`;
+          const counterpartGame = await nativeGetDocument(counterpartPath);
+          if (!counterpartGame) throw new Error('Shared scheduled game counterpart not found.');
+          await nativePatchDocument(counterpartPath, payload);
+        } catch (counterpartError) {
+          logScheduleWarning('Unable to synchronize shared game cancellation.', 'game-cancel-counterpart', counterpartError, {
+            fallback: 'rest',
+            teamId: event.teamId,
+            gameId: event.id,
+            counterpartTeamId,
+            counterpartGameId
+          });
+        }
       }
     }
   }
@@ -7559,7 +7654,7 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
   const notificationFailures: string[] = [];
   const senderName = user.displayName || user.email;
   const senderEmail = user.email;
-  const counterpartTeamId = compactString(event.sharedScheduleOpponentTeamId) || null;
+  const counterpartTeamId = isDiamondGame ? null : compactString(event.sharedScheduleOpponentTeamId) || null;
 
   try {
     await postChatMessage(event.teamId, {

@@ -3,7 +3,7 @@ const Module = require('node:module');
 const repoIndexPath = require.resolve('../index.js');
 const originalModuleLoad = Module._load;
 
-function makeFunctionsStub() {
+function makeFunctionsStub(platformLogs = []) {
     class HttpsError extends Error {
         constructor(code, message) {
             super(message);
@@ -67,9 +67,9 @@ function makeFunctionsStub() {
         runWith: () => triggerChain,
         region: () => triggerChain,
         logger: {
-            info: () => {},
-            warn: () => {},
-            error: () => {}
+            info: (...args) => platformLogs.push({ level: 'info', args }),
+            warn: (...args) => platformLogs.push({ level: 'warn', args }),
+            error: (...args) => platformLogs.push({ level: 'error', args })
         }
     };
 }
@@ -138,6 +138,7 @@ function buildNotificationTestEnv({
     const deletedPaths = [];
     const updatedDocs = [];
     const messagingCalls = [];
+    const platformLogs = [];
     const feeRecipientDocGetPaths = [];
     const getAllCalls = [];
     const docStore = new Map();
@@ -474,6 +475,22 @@ function buildNotificationTestEnv({
                 return makeDocSnapshot({ id: this.id, ref: this, data: undefined, exists: false });
             },
             async set(value) {
+                const inboxItemMatch = path.match(/^users\/([^/]+)\/notificationInbox\/([^/]+)$/);
+                if (inboxItemMatch) {
+                    const uid = inboxItemMatch[1];
+                    activeNotificationInboxPipelines += 1;
+                    peakNotificationInboxPipelines = Math.max(
+                        peakNotificationInboxPipelines,
+                        activeNotificationInboxPipelines
+                    );
+                    if (rejectedInboxUids.has(uid)) {
+                        activeNotificationInboxPipelines -= 1;
+                        throw new Error(`Rejected inbox write for ${uid}`);
+                    }
+                    writeStoredDoc(path, value);
+                    inboxWrites.push({ uid, id: inboxItemMatch[2], value });
+                    return;
+                }
                 if (path.startsWith(`teams/${teamId}/notificationSendLog/`)) {
                     const sentAtMillis = Date.now();
                     docStore.set(path, {
@@ -944,11 +961,13 @@ function buildNotificationTestEnv({
             counts.dedupTransactions += 1;
             const transactionError = pendingTransactionErrors.shift();
             if (transactionError) throw transactionError;
+            const pendingMutations = [];
             const result = await handler({
                 get: (ref) => ref.get(),
-                set: (ref, value) => ref.set(value),
-                update: (ref, value) => ref.update(value)
+                set: (ref, value) => pendingMutations.push(Promise.resolve(ref.set(value))),
+                update: (ref, value) => pendingMutations.push(Promise.resolve(ref.update(value)))
             });
+            await Promise.all(pendingMutations);
             const postCommitError = pendingTransactionPostCommitErrors.shift();
             if (postCommitError) throw postCommitError;
             return result;
@@ -1096,6 +1115,7 @@ function buildNotificationTestEnv({
         auditWrites,
         updatedDocs,
         messagingCalls,
+        platformLogs,
         feeRecipientDocGetPaths,
         getAllCalls,
         teamMediaQueryLog,
@@ -1114,9 +1134,12 @@ function buildNotificationTestEnv({
         getStoredDoc(path) {
             return clone(docStore.get(path));
         },
+        setStoredDoc(path, value) {
+            writeStoredDoc(path, value);
+        },
         adminStub,
         firestoreState,
-        functionsStub: makeFunctionsStub(),
+        functionsStub: makeFunctionsStub(platformLogs),
         resendStub,
         stripeStub
     };

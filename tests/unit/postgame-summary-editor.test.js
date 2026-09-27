@@ -41,4 +41,32 @@ describe('postgame summary editor', () => {
         expect(body.slice(openEditorIndex, closeEditorIndex)).toContain('saveBtn.disabled = false;');
         expect(body.slice(closeEditorIndex, saveDisabledIndex)).toContain('saveBtn.disabled = false;');
     });
+
+    it('removes the entire legacy summary editor for Diamond and rechecks every write boundary', () => {
+        const body = getFunctionBody(readGameHtml(), 'setupSummaryControls');
+
+        expect(body).toBeTruthy();
+        expect(body).toContain('blockLegacySummaryEditorForDiamond({ detach: true })');
+        expect(body).toContain("admin.classList.add('hidden');");
+        expect(body).toContain("editor.classList.add('hidden');");
+        expect(body).toContain("summaryDiv.classList.remove('hidden');");
+        expect(body).toContain('control.replaceWith(control.cloneNode(true));');
+
+        const modelIndex = body.indexOf('await model.generateContent(prompt);');
+        const postIndex = body.indexOf('generatedSummary = result.response.text();');
+        const persistIndex = body.indexOf('await updateGame(teamId, gameId, { summary: finalSummary });');
+        expect(modelIndex).toBeGreaterThan(-1);
+        expect(postIndex).toBeGreaterThan(modelIndex);
+        expect(persistIndex).toBeGreaterThan(postIndex);
+        expect(body.lastIndexOf('blockLegacySummaryEditorForDiamond()', modelIndex)).toBeGreaterThan(
+            body.indexOf('getGenerativeModel(ai')
+        );
+        expect(body.lastIndexOf('blockLegacySummaryEditorForDiamond()', postIndex)).toBeGreaterThan(modelIndex);
+        expect(body.lastIndexOf('blockLegacySummaryEditorForDiamond()', persistIndex)).toBeGreaterThan(
+            body.indexOf('const finalSummary =')
+        );
+        expect(body.slice(body.indexOf("addAuthBoundEventListener(saveBtn"), persistIndex)).toContain(
+            'blockLegacySummaryEditorForDiamond()'
+        );
+    });
 });

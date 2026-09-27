@@ -1,0 +1,220 @@
+{
+  "schemaVersion": 2,
+  "teamId": "team-1",
+  "gameId": "game-1",
+  "instanceId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "revision": 7,
+  "checkpointHash": "sha256:0000000000000000000000000000000000000000000000000000000000000007",
+  "authoritative": true,
+  "canSubmitPrivateMaterial": true,
+  "lifecycle": "active",
+  "captureMode": "full",
+  "rulesProfileId": "baseball-youth@1",
+  "rulesProfileVersion": 1,
+  "teamName": "Bears",
+  "opponentName": "Wolves",
+  "homeName": "Bears",
+  "awayName": "Wolves",
+  "score": {
+    "home": 3,
+    "away": 2
+  },
+  "currentHalfRuns": 0,
+  "lastPitchResult": null,
+  "inning": {
+    "number": 4,
+    "half": "bottom",
+    "outs": 1,
+    "balls": 2,
+    "strikes": 1,
+    "pitchesInPlateAppearance": 4
+  },
+  "bases": {
+    "first": {
+      "playerId": "runner-1",
+      "name": "Jordan Lee",
+      "number": "8",
+      "responsiblePitcherId": "pitcher-1",
+      "courtesyForPlayerId": null,
+      "reachedOnEventId": "event-6"
+    },
+    "second": null,
+    "third": {
+      "playerId": "runner-3",
+      "name": "Casey Kim",
+      "number": "4",
+      "responsiblePitcherId": "pitcher-1",
+      "courtesyForPlayerId": null,
+      "reachedOnEventId": "event-5"
+    }
+  },
+  "currentBatter": {
+    "playerId": "batter-1",
+    "name": "Avery Carter",
+    "number": "12"
+  },
+  "currentPitcher": {
+    "playerId": "pitcher-1",
+    "name": "Morgan Diaz",
+    "number": "7"
+  },
+  "lineups": {
+    "home": [
+      {
+        "playerId": "batter-1",
+        "name": "Avery Carter",
+        "number": "12",
+        "slot": 1
+      },
+      {
+        "playerId": "runner-1",
+        "name": "Jordan Lee",
+        "number": "8",
+        "slot": 2
+      }
+    ],
+    "away": [
+      {
+        "playerId": "pitcher-1",
+        "name": "Morgan Diaz",
+        "number": "7",
+        "slot": 1
+      }
+    ]
+  },
+  "defense": {
+    "home": {
+      "P": {
+        "playerId": "batter-1",
+        "name": "Avery Carter",
+        "number": "12"
+      }
+    },
+    "away": {
+      "P": {
+        "playerId": "pitcher-1",
+        "name": "Morgan Diaz",
+        "number": "7"
+      },
+      "C": {
+        "playerId": "fielder-2",
+        "name": "Riley Chen",
+        "number": "2"
+      }
+    }
+  },
+  "nextBatterSlot": {
+    "home": 0,
+    "away": 0
+  },
+  "battingLineup": [
+    {
+      "playerId": "batter-1",
+      "name": "Avery Carter",
+      "number": "12",
+      "slot": 1
+    },
+    {
+      "playerId": "runner-1",
+      "name": "Jordan Lee",
+      "number": "8",
+      "slot": 2
+    }
+  ],
+  "defensiveLineup": [
+    {
+      "playerId": "pitcher-1",
+      "name": "Morgan Diaz",
+      "number": "7"
+    },
+    {
+      "playerId": "fielder-2",
+      "name": "Riley Chen",
+      "number": "2"
+    }
+  ],
+  "availablePlayers": {
+    "home": [
+      {
+        "playerId": "batter-1",
+        "name": "Avery Carter",
+        "number": "12"
+      },
+      {
+        "playerId": "runner-1",
+        "name": "Jordan Lee",
+        "number": "8"
+      },
+      {
+        "playerId": "bench-home",
+        "name": "Taylor Gray",
+        "number": "15"
+      }
+    ],
+    "away": [
+      {
+        "playerId": "pitcher-1",
+        "name": "Morgan Diaz",
+        "number": "7"
+      },
+      {
+        "playerId": "bench-away",
+        "name": "Sam Ortiz",
+        "number": "10"
+      }
+    ]
+  },
+  "managedSide": "home",
+  "ruleCapabilities": {
+    "dpFlex": false,
+    "courtesyRunner": {
+      "pitcher": true,
+      "catcher": true
+    }
+  },
+  "halfInningEnd": null,
+  "gameEndDecision": null,
+  "finalizationReason": null,
+  "recentPlays": [
+    {
+      "eventId": "event-7",
+      "revision": 7,
+      "label": "Avery doubled",
+      "inningLabel": "Bottom 4",
+      "voided": false
+    }
+  ],
+  "lease": {
+    "status": "owned",
+    "canScore": true,
+    "canAcquire": false,
+    "canRecover": false,
+    "holderUid": "coach-1",
+    "holderName": "Coach Carter",
+    "leaseId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "epoch": 1,
+    "expiresAt": "2026-09-05T18:00:00.000Z",
+    "eligibleScorers": [
+      {
+        "playerId": "coach-2",
+        "name": "Coach Lee",
+        "number": null
+      }
+    ]
+  },
+  "completeness": {
+    "status": "partial",
+    "authoritativeRevision": 7,
+    "families": {
+      "batting": "complete",
+      "baserunning": "complete",
+      "pitching": "complete",
+      "fielding": "partial",
+      "sensors": "not_collected"
+    },
+    "omissions": [
+      "fielding location"
+    ]
+  },
+  "readOnlyReason": null
+}

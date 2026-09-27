@@ -55,6 +55,7 @@ const expectedAndroidPackageName = 'ai.allplays.lite';
 const expectedPlaySigningFingerprint = '5A:C2:50:E0:78:32:24:D7:96:12:63:9C:73:AF:93:C7:59:C3:98:86:46:4C:CD:63:FB:5F:29:53:39:D6:C4:94';
 
 const appCheckRuntimeConfigRelativePath = path.join('.well-known', 'allplays-runtime-config.json');
+export const DIAMOND_SCOREBOOK_UI_META_NAME = 'allplays-diamond-scorebook-ui-enabled';
 const primaryFirebaseRuntimeConfig = {
     apiKey: 'AIzaSyDoixIoKJuUVWdmImwjYRTthjKOv2mU0Jc',
     authDomain: 'game-flow-c6311.firebaseapp.com',
@@ -89,6 +90,10 @@ function normalizePublicSiteKey(value) {
 export function isAppCheckEnforcementReady(value) {
     if (value === true) return true;
     return typeof value === 'string' && ['true', '1'].includes(value.trim().toLowerCase());
+}
+
+export function isDiamondScorebookUiRolloutEnabled(value) {
+    return value === true || value === 'true';
 }
 
 export function isMobileAssociationPublishingEnabled(value) {
@@ -271,9 +276,18 @@ function listHtmlFiles(rootDir, currentDir = rootDir, files = []) {
     return files;
 }
 
-export function injectPagesSecurityMeta(destinationDir, { rootDir = defaultRootDir } = {}) {
+export function injectPagesSecurityMeta(
+    destinationDir,
+    {
+        rootDir = defaultRootDir,
+        diamondScorebookUiEnabled = false
+    } = {}
+) {
     const resolvedDestination = path.resolve(destinationDir);
     const policies = readPagesSecurityMetaPolicies(rootDir);
+    const stagedDiamondScorebookUiEnabled = isDiamondScorebookUiRolloutEnabled(
+        diamondScorebookUiEnabled
+    );
     const htmlFiles = listHtmlFiles(resolvedDestination).filter((htmlPath) => (
         !toRelativePath(resolvedDestination, htmlPath).startsWith('app/assets/')
     ));
@@ -296,6 +310,12 @@ export function injectPagesSecurityMeta(destinationDir, { rootDir = defaultRootD
         )];
         if (referrerMetaMatches.length > 1) {
             throw new Error(`Staged HTML already contains multiple referrer meta tags: ${relativePath}`);
+        }
+        const diamondLaunchMetaMatches = [...html.matchAll(
+            new RegExp(`<meta\\b[^>]*name\\s*=\\s*["']?${DIAMOND_SCOREBOOK_UI_META_NAME}["']?[^>]*>`, 'gi')
+        )];
+        if (diamondLaunchMetaMatches.length > 0) {
+            throw new Error(`Staged HTML already contains a Diamond launch meta tag: ${relativePath}`);
         }
         let hasApprovedReferrerMeta = false;
         if (referrerMetaMatches.length === 1) {
@@ -322,7 +342,8 @@ export function injectPagesSecurityMeta(destinationDir, { rootDir = defaultRootD
             `<meta http-equiv="Content-Security-Policy" content="${escapeHtmlAttribute(csp)}">`,
             ...(!hasApprovedReferrerMeta
                 ? [`<meta name="referrer" content="${escapeHtmlAttribute(policies.referrerPolicy)}">`]
-                : [])
+                : []),
+            `<meta name="${DIAMOND_SCOREBOOK_UI_META_NAME}" content="${stagedDiamondScorebookUiEnabled ? 'true' : 'false'}">`
         ].join('\n    ');
         const afterHead = headMatch.index + headMatch[0].length;
         const headCloseIndex = html.search(/<\/head\s*>/i);
@@ -354,17 +375,29 @@ export function injectPagesSecurityMeta(destinationDir, { rootDir = defaultRootD
 
     return {
         htmlFileCount: htmlFiles.length,
+        diamondScorebookUiEnabled: stagedDiamondScorebookUiEnabled,
         ...policies
     };
 }
 
 export function createAppCheckRuntimeConfig(
     siteKey,
-    { enforcementReady = false, firebaseConfig = primaryFirebaseRuntimeConfig } = {}
+    {
+        enforcementReady = false,
+        firebaseConfig = primaryFirebaseRuntimeConfig,
+        diamondScorebookUiEnabled = false
+    } = {}
 ) {
+    const runtimeConfig = {
+        firebase: firebaseConfig,
+        diamondScorebookUiEnabled: isDiamondScorebookUiRolloutEnabled(
+            diamondScorebookUiEnabled
+        )
+    };
+
     if (!isAppCheckEnforcementReady(enforcementReady)) {
         return {
-            firebase: firebaseConfig,
+            ...runtimeConfig,
             appCheck: {
                 enabled: false,
                 isTokenAutoRefreshEnabled: true
@@ -380,7 +413,7 @@ export function createAppCheckRuntimeConfig(
     }
 
     return {
-        firebase: firebaseConfig,
+        ...runtimeConfig,
         appCheck: {
             enabled: true,
             recaptchaEnterpriseSiteKey: normalizedSiteKey,
@@ -392,7 +425,11 @@ export function createAppCheckRuntimeConfig(
 export function writeAppCheckRuntimeConfig(
     destinationDir,
     siteKey,
-    { enforcementReady = false, firebaseConfig = primaryFirebaseRuntimeConfig } = {}
+    {
+        enforcementReady = false,
+        firebaseConfig = primaryFirebaseRuntimeConfig,
+        diamondScorebookUiEnabled = false
+    } = {}
 ) {
     const outputPath = path.join(destinationDir, appCheckRuntimeConfigRelativePath);
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -400,7 +437,7 @@ export function writeAppCheckRuntimeConfig(
         outputPath,
         `${JSON.stringify(createAppCheckRuntimeConfig(
             siteKey,
-            { enforcementReady, firebaseConfig }
+            { enforcementReady, firebaseConfig, diamondScorebookUiEnabled }
         ), null, 2)}\n`
     );
     return outputPath;
@@ -494,6 +531,9 @@ export function stagePagesBundle(
     fs.cpSync(appDistDir, appDestinationDir, { recursive: true });
     fs.writeFileSync(path.join(resolvedDestination, '.nojekyll'), '');
     assertNoUnpublishableRootDevelopmentArtifacts(resolvedDestination, 'Staged public site');
+    const diamondScorebookUiEnabled = isDiamondScorebookUiRolloutEnabled(
+        process.env.ALLPLAYS_DIAMOND_SCOREBOOK_UI_ENABLED
+    );
     const appCheckRuntimeConfigPath = writeAppCheckRuntimeConfig(
         resolvedDestination,
         process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY,
@@ -503,10 +543,14 @@ export function stagePagesBundle(
             ),
             firebaseConfig: resolveStagedFirebaseRuntimeConfig(
                 process.env.ALLPLAYS_FIREBASE_RUNTIME_TARGET
-            )
+            ),
+            diamondScorebookUiEnabled
         }
     );
-    const securityMeta = injectPagesSecurityMeta(resolvedDestination, { rootDir: resolvedRoot });
+    const securityMeta = injectPagesSecurityMeta(resolvedDestination, {
+        rootDir: resolvedRoot,
+        diamondScorebookUiEnabled
+    });
 
     const rootIndexPath = path.join(resolvedDestination, 'index.html');
     const appIndexPath = path.join(appDestinationDir, 'index.html');

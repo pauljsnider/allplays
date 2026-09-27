@@ -8,7 +8,7 @@ const migrationSource = readFileSync(new URL('../../_migration/backfill-notifica
 describe('notification recipient index initiative source contract', () => {
     it('resolves category sends through the denormalized notificationRecipients index first', () => {
         expect(functionsSource).toContain('function buildTeamNotificationRecipientRef(teamId, uid, deviceId)');
-        expect(functionsSource).toContain('async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}, additionalUsers = [])');
+        expect(functionsSource).toMatch(/async function getTargetsForCategory\(\s*teamId,\s*category,\s*actorUid = null,\s*audienceContext = \{\},\s*additionalUsers = \[\],\s*telemetryOptions = \{\},\s*\)/);
         expect(functionsSource).toContain('firestore.collection(`teams/${teamId}/notificationRecipients`)');
         expect(functionsSource).toContain(".where(`categories.${category}`, '==', true)");
     });

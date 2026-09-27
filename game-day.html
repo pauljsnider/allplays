@@ -494,14 +494,14 @@
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import {
             getGameDayTeamContext, getGame, subscribeGame, getPlayers,
-            getRsvpBreakdownByPlayer, getMyRsvp, getGames, getAggregatedStatsForGames,
+            getRsvpBreakdownByPlayer, getMyRsvp, getGames,
             getConfigs, updateGame, logStatEvent, updatePlayerStats,
             broadcastLiveEvent, subscribeLiveEvents, subscribeAggregatedStats,
             setGameLiveStatus, submitRsvpForPlayer, postChatMessage
-        } from './js/db.js?v=4433195';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime } from './js/utils.js?v=443371';
-        import { checkAuth } from './js/auth.js?v=4433199';
-        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443347';
+        } from './js/db.js?v=4433199';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime } from './js/utils.js?v=443375';
+        import { checkAuth } from './js/auth.js?v=4433203';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443350';
         import { buildRotationPlanFromGamePlan } from './js/game-plan-interop.js?v=2';
         import { getPeriodsForFormation, normalizeActivePeriod, sortSubstitutionPeriods } from './js/game-day-periods.js?v=2';
         import {
@@ -522,6 +522,8 @@
         import { pickBestGameId, normalizeGameDayUrl } from './js/game-day-entry.js?v=1';
         import { buildGameDayBroadcastSetupUrl, resolveGameDayBroadcastStatus } from './js/game-day-broadcast.js?v=5';
         import { createGameDayRsvpController } from './js/game-day-rsvp-controls.js?v=3';
+        import { DIAMOND_ENGINE, buildDiamondTrackerUrl, buildDiamondViewerUrl } from './js/diamond-scorebook-routing.js?v=2';
+        import { isLegacyTrackingEngine } from './js/tracking-engine.js?v=1';
         import {
             buildOnFieldMap as buildLiveOnFieldMap,
             syncGameDayLiveState,
@@ -1060,6 +1062,17 @@
                     renderLimitedVideographerAccess(accessInfo);
                     return;
                 }
+                if (game.trackingEngine === DIAMOND_ENGINE) {
+                    // Diamond owns score, plays, lineup changes, and finalization.
+                    // Keep this legacy workspace passive and hand full managers to
+                    // the same React scorer used by web and native clients.
+                    renderLimitedScorekeepingAccess(accessInfo);
+                    return;
+                }
+                if (!isLegacyTrackingEngine(game.trackingEngine)) {
+                    showError('This game uses a newer scoring engine. Update ALL PLAYS before editing it.');
+                    return;
+                }
 
                 hydrateChatState(game);
 
@@ -1361,7 +1374,6 @@
                 state.recentGames = completed.slice(0, 3);
                 markAiChatContextDirty();
                 const lastGame = completed[0];
-                const stats = await getAggregatedStatsForGames(state.teamId, [lastGame.id]);
 
                 let html = `<div class="text-xs font-semibold text-gray-700 mb-1">Last: vs ${escapeHtml(lastGame.opponent || 'Opponent')} (${formatDate(lastGame.date)})</div>`;
                 if (lastGame.homeScore !== undefined) {
@@ -2664,6 +2676,9 @@ Respond ONLY with valid JSON.`;
 
 
         function getScorekeepingTrackerUrl() {
+            if (state.game?.trackingEngine === DIAMOND_ENGINE) {
+                return buildDiamondTrackerUrl(state.teamId, state.gameId);
+            }
             const config = state.game?.statTrackerConfigId && Array.isArray(state.configs)
                 ? state.configs.find((c) => c.id === state.game.statTrackerConfigId)
                 : null;
@@ -2675,7 +2690,9 @@ Respond ONLY with valid JSON.`;
         function renderLimitedScorekeepingAccess(accessInfo) {
             hideLoading();
             const trackerUrl = getScorekeepingTrackerUrl();
-            const watchUrl = `live-game.html#teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(state.gameId)}`;
+            const watchUrl = state.game?.trackingEngine === DIAMOND_ENGINE
+                ? buildDiamondViewerUrl({ teamId: state.teamId, gameId: state.gameId })
+                : `live-game.html#teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(state.gameId)}`;
             renderTeamAdminBanner(document.getElementById('banner-container'), {
                 team: state.team,
                 teamId: state.teamId,

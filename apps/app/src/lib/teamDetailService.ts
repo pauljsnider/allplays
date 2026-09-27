@@ -68,6 +68,27 @@ import {
   where
 } from './adapters/legacyTeamDetail';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import {
+  aggregateCoverageAwareSeasonStats,
+  aggregateCoverageAwareTeamStats,
+  getCoverageAwareStatValue,
+  getDiamondPublicPlayerStatsCollectionPath,
+  getManagerDiamondStatCatalog,
+  getPublicDiamondStatCatalog,
+  isDiamondV2Game,
+  resolveDiamondManagerStatDocuments,
+  resolveDiamondManagerTeamStatDocument,
+  resolveDiamondPublicStatDocuments,
+  resolveDiamondPublicTeamStatDocument,
+  type CoverageAwareStatPresentation
+} from './adapters/legacyDiamondStatPresentation';
+import {
+  DIAMOND_MANAGER_STATS_MAX_GAMES,
+  DIAMOND_MANAGER_STATS_MAX_PLAYERS,
+  loadDiamondManagerStats,
+  type DiamondManagerStatsReadResult
+} from './diamondManagerStatsService';
+import { buildActivationPinnedDiamondPresentationConfig, currentDiamondStatConfigMatchesActivation } from './diamondStatConfigSnapshot';
 import { buildPublicTeamGamesIcsUrl as buildPublicTeamGamesIcsUrlFromRuntime } from './calendarFeedUrls';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { isRetryableReadTransportError, raceFirstSuccessfulRead } from './adapters/legacyHedgedRead';
@@ -85,6 +106,11 @@ const primaryDataTimeoutMs = 5000;
 const restReadHedgeDelayMs = 750;
 const optionalCalendarTimeoutMs = 1500;
 const logger = createLogger('team-detail-service');
+const diamondPublicStatReadConcurrency = 8;
+const seasonStatsReadConcurrency = 2;
+const diamondStatConfigUnavailableMessage = 'Diamond statistic definitions are temporarily unavailable. Refresh to retry.';
+
+type DiamondPublicStatsStatus = 'not-requested' | 'complete' | 'partial' | 'unavailable';
 
 export type TeamDetailPlayer = {
   id: string;
@@ -251,9 +277,12 @@ export type TeamDetailLeaderboard = {
     playerName: string;
     playerNumber: string;
     photoUrl: string | null;
+    canOpenProfile?: boolean;
     rank: number;
     formattedValue: string;
   }>;
+  statVisibility?: 'public' | 'manager-internal';
+  qualificationLabel?: string | null;
 };
 
 export type TeamDetailRosterStatisticsTable = {
@@ -263,8 +292,42 @@ export type TeamDetailRosterStatisticsTable = {
     playerId: string;
     playerName: string;
     playerNumber: string;
-    values: Record<string, { value: number; formattedValue: string }>;
+    canOpenProfile?: boolean;
+    values: Record<
+      string,
+      {
+        value: number | null;
+        formattedValue: string;
+        available?: boolean;
+        observed?: boolean;
+        status?: string;
+      }
+    >;
   }>;
+  teamStats?: {
+    columns: Array<{ id: string; label: string; format?: string; precision?: number }>;
+    values: Record<
+      string,
+      {
+        value: number | null;
+        formattedValue: string;
+        available?: boolean;
+        observed?: boolean;
+        status?: string;
+      }
+    >;
+    presentation: CoverageAwareStatPresentation;
+  };
+  diamond?: {
+    hasDiamond: boolean;
+    pending: boolean;
+    sourceRevisions: readonly number[];
+    requestedStatVisibility?: 'public' | 'manager-internal';
+    statVisibility?: 'public' | 'manager-internal';
+    privateStatsStatus?: 'not-requested' | 'complete' | 'partial' | 'unavailable';
+    privateStatsReason?: string | null;
+    publicStatsStatus?: DiamondPublicStatsStatus;
+  };
 };
 
 export type TeamDetailTrackingSummary = {
@@ -332,7 +395,6 @@ export type TeamStaffPermissionsSummary = {
   videographerGrantTargets: TeamScorekeeperGrantTarget[];
   hasAnyStaff: boolean;
 };
-
 
 export type InviteTeamAdminForAppResult = {
   email: string;
@@ -564,9 +626,11 @@ function canManageTeamAdmins(user: AuthUser | null, team: any) {
   if (!user || !team) return false;
   // Delegates owner/adminEmails/isAdmin checks to the legacy source of truth
   // (js/team-access.js) so this stays in sync with the legacy site instead of drifting.
-  return hasFullTeamAccess(user, team)
-    || user?.isPlatformAdmin === true
-    || (Array.isArray(user?.roles) && (user.roles.includes('admin') || user.roles.includes('platformAdmin')));
+  return (
+    hasFullTeamAccess(user, team) ||
+    user?.isPlatformAdmin === true ||
+    (Array.isArray(user?.roles) && (user.roles.includes('admin') || user.roles.includes('platformAdmin')))
+  );
 }
 
 function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryDataTimeoutMs): Promise<T> {
@@ -602,14 +666,14 @@ function cacheTeamDetailBaseSnapshot(snapshot: TeamDetailBaseSnapshot) {
   });
 }
 
-async function loadTeamDetailBaseSnapshot(teamId: string, options: { includeGamesAndConfigs?: boolean } = {}): Promise<TeamDetailBaseSnapshot> {
+async function loadTeamDetailBaseSnapshot(
+  teamId: string,
+  options: { includeGamesAndConfigs?: boolean } = {}
+): Promise<TeamDetailBaseSnapshot> {
   const normalizedTeamId = cleanString(teamId);
   const includeGamesAndConfigs = options.includeGamesAndConfigs !== false;
   const cachedSnapshot = teamDetailBaseSnapshotCache.get(normalizedTeamId);
-  if (
-    cachedSnapshot?.team
-    && (!includeGamesAndConfigs || (cachedSnapshot.gamesLoaded === true && cachedSnapshot.configsLoaded === true))
-  ) {
+  if (cachedSnapshot?.team && (!includeGamesAndConfigs || (cachedSnapshot.gamesLoaded === true && cachedSnapshot.configsLoaded === true))) {
     return cachedSnapshot;
   }
 
@@ -617,10 +681,14 @@ async function loadTeamDetailBaseSnapshot(teamId: string, options: { includeGame
     cachedSnapshot?.team ? Promise.resolve(cachedSnapshot.team) : loadTeamDocument(normalizedTeamId),
     cachedSnapshot?.players ? Promise.resolve(cachedSnapshot.players) : loadTeamPlayers(normalizedTeamId),
     includeGamesAndConfigs
-      ? (cachedSnapshot?.gamesLoaded ? Promise.resolve(cachedSnapshot.games) : loadTeamGames(normalizedTeamId))
+      ? cachedSnapshot?.gamesLoaded
+        ? Promise.resolve(cachedSnapshot.games)
+        : loadTeamGames(normalizedTeamId)
       : Promise.resolve(cachedSnapshot?.games || []),
     includeGamesAndConfigs
-      ? (cachedSnapshot?.configsLoaded ? Promise.resolve(cachedSnapshot.configs) : loadTeamConfigs(normalizedTeamId))
+      ? cachedSnapshot?.configsLoaded
+        ? Promise.resolve(cachedSnapshot.configs)
+        : loadTeamConfigs(normalizedTeamId)
       : Promise.resolve(cachedSnapshot?.configs || [])
   ]);
 
@@ -644,10 +712,13 @@ function getFirestoreBaseUrl() {
 async function getNativeHeaders(requestUrl: string, forceRefresh = false) {
   const token = await getNativeAuthIdToken(forceRefresh);
   if (!token) throw new Error('Native auth token is unavailable.');
-  return getPrimaryAppCheckHeaders({
-    Authorization: `Bearer ${token}`,
-    'Content-Type': 'application/json'
-  }, requestUrl);
+  return getPrimaryAppCheckHeaders(
+    {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    requestUrl
+  );
 }
 
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
@@ -655,13 +726,17 @@ async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
   const runRequest = async () => {
     const method = String(init.method || 'GET').toUpperCase();
     const isReadOnly = method === 'GET' || path.includes(':runQuery');
-    const execute = async (forceRefresh: boolean) => withTimeout(fetch(url, {
-      ...init,
-      headers: {
-        ...(await getNativeHeaders(url, forceRefresh)),
-        ...(init.headers || {})
-      }
-    }), 'Firestore REST request');
+    const execute = async (forceRefresh: boolean) =>
+      withTimeout(
+        fetch(url, {
+          ...init,
+          headers: {
+            ...(await getNativeHeaders(url, forceRefresh)),
+            ...(init.headers || {})
+          }
+        }),
+        'Firestore REST request'
+      );
     let response = await execute(!isReadOnly);
     if (response.status === 401) {
       response = await execute(true);
@@ -717,13 +792,8 @@ async function nativeGetDocument(path: string) {
 }
 
 async function nativeListCollection(path: string) {
-  const documents = await listNativeFirestoreCollectionPages(
-    path,
-    nativeFirestoreRequest
-  );
-  return documents
-    .map((document: any) => decodeFirestoreDocument(document))
-    .filter(Boolean) as FirestoreDocument[];
+  const documents = await listNativeFirestoreCollectionPages(path, nativeFirestoreRequest);
+  return documents.map((document: any) => decodeFirestoreDocument(document)).filter(Boolean) as FirestoreDocument[];
 }
 
 function encodeFirestoreValue(value: any): Record<string, unknown> {
@@ -765,10 +835,12 @@ async function nativeCreateDocument(path: string, data: Record<string, unknown>)
     acc[key] = encodeFirestoreValue(data[key]);
     return acc;
   }, {});
-  return decodeFirestoreDocument(await nativeFirestoreRequest(`/${path}`, {
-    method: 'POST',
-    body: JSON.stringify({ fields })
-  }));
+  return decodeFirestoreDocument(
+    await nativeFirestoreRequest(`/${path}`, {
+      method: 'POST',
+      body: JSON.stringify({ fields })
+    })
+  );
 }
 
 async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUAL' | 'ARRAY_CONTAINS', value: string) {
@@ -789,7 +861,7 @@ async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUA
   });
 
   return Array.isArray(payload)
-    ? payload.map((entry: any) => decodeFirestoreDocument(entry.document)).filter(Boolean) as FirestoreDocument[]
+    ? (payload.map((entry: any) => decodeFirestoreDocument(entry.document)).filter(Boolean) as FirestoreDocument[])
     : [];
 }
 
@@ -829,20 +901,13 @@ async function loadTeamDocument(teamId: string) {
   );
 }
 
-async function recoverAuthoritativeManagedTeam(
-  teamId: string,
-  user: AuthUser | null,
-  team: Record<string, any> | null
-) {
+async function recoverAuthoritativeManagedTeam(teamId: string, user: AuthUser | null, team: Record<string, any> | null) {
   if (!user?.uid || hasFullTeamAccess(user, team)) return team;
   if (isNativeRuntime()) return team;
-  const hasStaffRole = Array.isArray(user.roles) && user.roles.some((role) => (
-    role === 'coach' || role === 'admin' || role === 'platformAdmin'
-  ));
-  const isPotentialManager = hasStaffRole
-    || (Array.isArray(user.coachOf) && user.coachOf.length > 0)
-    || user.isAdmin === true
-    || user.isPlatformAdmin === true;
+  const hasStaffRole =
+    Array.isArray(user.roles) && user.roles.some((role) => role === 'coach' || role === 'admin' || role === 'platformAdmin');
+  const isPotentialManager =
+    hasStaffRole || (Array.isArray(user.coachOf) && user.coachOf.length > 0) || user.isAdmin === true || user.isPlatformAdmin === true;
   if (!isPotentialManager) return team;
 
   const authoritativeTeam = await nativeGetDocument(`teams/${encodeURIComponent(teamId)}`).catch((error) => {
@@ -867,35 +932,31 @@ async function loadTeamPlayers(teamId: string) {
     `team players ${teamId}`,
     () => Promise.resolve(getPlayers(teamId, { includeInactive: true })),
     async () => {
-      const documents = await listNativeFirestoreCollectionPages(
-        `teams/${encodeURIComponent(teamId)}/players`,
-        nativeFirestoreRequest
-      );
-      return documents
-        .map((document: any) => decodeFirestoreDocument(document))
-        .filter(Boolean) as FirestoreDocument[];
+      const documents = await listNativeFirestoreCollectionPages(`teams/${encodeURIComponent(teamId)}/players`, nativeFirestoreRequest);
+      return documents.map((document: any) => decodeFirestoreDocument(document)).filter(Boolean) as FirestoreDocument[];
     }
   );
 }
 
 async function loadPrivateTeamPlayersViaRest(teamId: string, publicPlayers: any[]) {
-  return Promise.all((Array.isArray(publicPlayers) ? publicPlayers : []).map(async (player) => {
-    const playerId = cleanString(player?.id);
-    if (!playerId) return player;
-    const privateProfile = await nativeGetDocument(
-      `teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(playerId)}/private/profile`
-    );
-    return {
-      ...player,
-      photoPath: privateProfile?.photoPath || player?.photoPath || null,
-      photoOwnershipLoaded: true,
-      privateProfileRosterFields: privateProfile?.rosterFields && typeof privateProfile.rosterFields === 'object'
-        ? privateProfile.rosterFields
-        : {},
-      privateProfileParents: Array.isArray(privateProfile?.parents) ? privateProfile.parents : [],
-      privateProfileContacts: Array.isArray(privateProfile?.contacts) ? privateProfile.contacts : []
-    };
-  }));
+  return Promise.all(
+    (Array.isArray(publicPlayers) ? publicPlayers : []).map(async (player) => {
+      const playerId = cleanString(player?.id);
+      if (!playerId) return player;
+      const privateProfile = await nativeGetDocument(
+        `teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(playerId)}/private/profile`
+      );
+      return {
+        ...player,
+        photoPath: privateProfile?.photoPath || player?.photoPath || null,
+        photoOwnershipLoaded: true,
+        privateProfileRosterFields:
+          privateProfile?.rosterFields && typeof privateProfile.rosterFields === 'object' ? privateProfile.rosterFields : {},
+        privateProfileParents: Array.isArray(privateProfile?.parents) ? privateProfile.parents : [],
+        privateProfileContacts: Array.isArray(privateProfile?.contacts) ? privateProfile.contacts : []
+      };
+    })
+  );
 }
 
 async function loadPrivilegedTeamPlayers(teamId: string, user: AuthUser | null, team: any, publicPlayers: any[]) {
@@ -911,10 +972,13 @@ async function loadPrivilegedTeamPlayers(teamId: string, user: AuthUser | null, 
 
   const playersPromise = readWithNativeFallback(
     `private roster contacts ${normalizedTeamId}`,
-    () => Promise.resolve(getPlayersWithPrivateRosterContacts(normalizedTeamId, {
-      includeInactive: true,
-      players: publicPlayers
-    })),
+    () =>
+      Promise.resolve(
+        getPlayersWithPrivateRosterContacts(normalizedTeamId, {
+          includeInactive: true,
+          players: publicPlayers
+        })
+      ),
     () => loadPrivateTeamPlayersViaRest(normalizedTeamId, publicPlayers)
   ).catch((error) => {
     privilegedTeamPlayersCache.delete(cacheKey);
@@ -964,7 +1028,10 @@ async function loadTeamTrackingStatuses(teamId: string, itemId: string) {
         ...statusDoc.data()
       }));
     },
-    async () => nativeListCollection(`teams/${encodeURIComponent(normalizedTeamId)}/trackingItems/${encodeURIComponent(normalizedItemId)}/memberTracking`)
+    async () =>
+      nativeListCollection(
+        `teams/${encodeURIComponent(normalizedTeamId)}/trackingItems/${encodeURIComponent(normalizedItemId)}/memberTracking`
+      )
   );
 }
 
@@ -993,8 +1060,7 @@ async function loadPendingAdminInvites(teamId: string) {
       return snapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
     },
     async () => nativeRunQuery('accessCodes', 'teamId', 'EQUAL', teamId)
-  ).then((invites: any[]) => (Array.isArray(invites) ? invites : [])
-    .filter(isPendingAdminInvite));
+  ).then((invites: any[]) => (Array.isArray(invites) ? invites : []).filter(isPendingAdminInvite));
 }
 
 function isPendingParentInvite(invite: any) {
@@ -1028,8 +1094,7 @@ async function loadParentInvites(teamId: string) {
 }
 
 async function loadPendingParentInvites(teamId: string) {
-  return loadParentInvites(teamId)
-    .then((invites: any[]) => invites.filter(isPendingParentInvite));
+  return loadParentInvites(teamId).then((invites: any[]) => invites.filter(isPendingParentInvite));
 }
 
 async function loadUserById(userId: string) {
@@ -1081,7 +1146,9 @@ async function loadUsersByParentPlayerKey(parentPlayerKey: string) {
   return readWithNativeFallback(
     `users by parentPlayerKeys ${normalizedParentPlayerKey}`,
     async () => {
-      const snapshot = await getDocs(query(collection(db, 'users'), where('parentPlayerKeys', 'array-contains', normalizedParentPlayerKey)));
+      const snapshot = await getDocs(
+        query(collection(db, 'users'), where('parentPlayerKeys', 'array-contains', normalizedParentPlayerKey))
+      );
       return snapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
     },
     async () => nativeRunQuery('users', 'parentPlayerKeys', 'ARRAY_CONTAINS', normalizedParentPlayerKey)
@@ -1142,18 +1209,24 @@ function createRelevantTeamMembersCacheEntry(): RelevantTeamMembersCacheEntry {
 
 function buildRelevantTeamMemberInviteStateKey(pendingAdminInvites: any[] = [], pendingParentInvites: any[] = []) {
   return [...pendingAdminInvites, ...pendingParentInvites]
-    .map((invite) => [
-      cleanString(invite?.type).toLowerCase(),
-      cleanString(invite?.email).toLowerCase(),
-      cleanString(invite?.playerId),
-      cleanString(invite?.code).toUpperCase()
-    ].join(':'))
+    .map((invite) =>
+      [
+        cleanString(invite?.type).toLowerCase(),
+        cleanString(invite?.email).toLowerCase(),
+        cleanString(invite?.playerId),
+        cleanString(invite?.code).toUpperCase()
+      ].join(':')
+    )
     .filter(Boolean)
     .sort()
     .join('|');
 }
 
-function resetRelevantTeamMembersCacheEntry(entry: RelevantTeamMembersCacheEntry, inviteStateKey: string, options: { resetBaseMembers?: boolean; parentInviteStateKey?: string } = {}) {
+function resetRelevantTeamMembersCacheEntry(
+  entry: RelevantTeamMembersCacheEntry,
+  inviteStateKey: string,
+  options: { resetBaseMembers?: boolean; parentInviteStateKey?: string } = {}
+) {
   entry.inviteStateKey = inviteStateKey;
   if (typeof options.parentInviteStateKey === 'string') entry.parentInviteStateKey = options.parentInviteStateKey;
   if (options.resetBaseMembers) {
@@ -1223,11 +1296,7 @@ async function loadRelevantTeamMembers({
       loadUsersByParentTeamId(normalizedTeamId).catch(() => []),
       Promise.all(parentPlayerKeys.map((parentPlayerKey) => loadUsersByParentPlayerKey(parentPlayerKey).catch(() => [])))
     ]).then(([usersById, usersByParentTeamId, usersByParentPlayerKey]) => {
-      mergeRelevantTeamMembers(cacheEntry!, [
-        ...usersById.filter(Boolean),
-        ...usersByParentTeamId,
-        ...usersByParentPlayerKey.flat()
-      ]);
+      mergeRelevantTeamMembers(cacheEntry!, [...usersById.filter(Boolean), ...usersByParentTeamId, ...usersByParentPlayerKey.flat()]);
       cacheEntry!.baseMembers = getCachedRelevantTeamMembers(cacheEntry!);
       return cacheEntry!.baseMembers;
     });
@@ -1235,33 +1304,37 @@ async function loadRelevantTeamMembers({
 
   await cacheEntry.baseMembersPromise;
 
-  const inviteEmailsToLoad = emails.filter((email) => (
-    email
-    && !cacheEntry!.loadedInviteEmails.has(email)
-    && !cacheEntry!.membersByEmail.has(email)
-  ));
+  const inviteEmailsToLoad = emails.filter(
+    (email) => email && !cacheEntry!.loadedInviteEmails.has(email) && !cacheEntry!.membersByEmail.has(email)
+  );
 
-  await Promise.all(inviteEmailsToLoad.map((email) => {
-    let invitePromise = cacheEntry!.inviteEmailPromises.get(email);
-    if (!invitePromise) {
-      invitePromise = loadUsersByEmail(email)
-        .catch(() => [])
-        .then((members) => {
-          mergeRelevantTeamMembers(cacheEntry!, members);
-          cacheEntry!.loadedInviteEmails.add(email);
-        })
-        .finally(() => {
-          cacheEntry!.inviteEmailPromises.delete(email);
-        });
-      cacheEntry!.inviteEmailPromises.set(email, invitePromise);
-    }
-    return invitePromise;
-  }));
+  await Promise.all(
+    inviteEmailsToLoad.map((email) => {
+      let invitePromise = cacheEntry!.inviteEmailPromises.get(email);
+      if (!invitePromise) {
+        invitePromise = loadUsersByEmail(email)
+          .catch(() => [])
+          .then((members) => {
+            mergeRelevantTeamMembers(cacheEntry!, members);
+            cacheEntry!.loadedInviteEmails.add(email);
+          })
+          .finally(() => {
+            cacheEntry!.inviteEmailPromises.delete(email);
+          });
+        cacheEntry!.inviteEmailPromises.set(email, invitePromise);
+      }
+      return invitePromise;
+    })
+  );
 
   return getCachedRelevantTeamMembers(cacheEntry);
 }
 
-export async function inviteTeamAdminForApp(teamId: string, email: string, user: AuthUser | null = null): Promise<InviteTeamAdminForAppResult> {
+export async function inviteTeamAdminForApp(
+  teamId: string,
+  email: string,
+  user: AuthUser | null = null
+): Promise<InviteTeamAdminForAppResult> {
   const normalizedTeamId = cleanString(teamId);
   const normalizedEmail = cleanString(email).toLowerCase();
   if (!normalizedTeamId) throw new Error('Team ID is required.');
@@ -1302,9 +1375,9 @@ export async function revokeTeamAdminAccessForApp(teamId: string, email: string,
     throw new Error('You do not have permission to manage admins for this team.');
   }
 
-  const ownerEmails = [...new Set([team?.ownerEmail, team?.ownerEmailLower]
-    .map((value) => cleanString(value).toLowerCase())
-    .filter(Boolean))];
+  const ownerEmails = [
+    ...new Set([team?.ownerEmail, team?.ownerEmailLower].map((value) => cleanString(value).toLowerCase()).filter(Boolean))
+  ];
   if (!cleanString(team?.ownerId) && ownerEmails.length === 1 && ownerEmails[0] === normalizedEmail) {
     throw new Error('The team owner cannot be removed from staff access.');
   }
@@ -1339,13 +1412,7 @@ export async function createRosterParentInviteForApp(
 
   let inviteResult;
   try {
-    const inviteArgs = [
-        normalizedTeamId,
-        normalizedPlayerId,
-        cleanString(player?.number),
-        normalizedEmail,
-        relation
-      ] as const;
+    const inviteArgs = [normalizedTeamId, normalizedPlayerId, cleanString(player?.number), normalizedEmail, relation] as const;
     inviteResult = cleanString(options.idempotencyKey)
       ? await inviteParent(...inviteArgs, { idempotencyKey: cleanString(options.idempotencyKey) })
       : await inviteParent(...inviteArgs);
@@ -1411,15 +1478,13 @@ export async function retryRosterParentInviteEmailForApp(
     throw new Error('You do not have permission to resend parent invitations for this team.');
   }
   const invite = (await loadParentInvites(normalizedTeamId))
-    .filter((candidate: any) => (
-      isRetryableParentInviteEmail(candidate)
-      &&
-      cleanString(candidate.playerId) === normalizedPlayerId
-      && cleanString(candidate.email).toLowerCase() === normalizedEmail
-    ))
-    .sort((left: any, right: any) => (
-      (getExpirationTime(right.createdAt) || 0) - (getExpirationTime(left.createdAt) || 0)
-    ))[0];
+    .filter(
+      (candidate: any) =>
+        isRetryableParentInviteEmail(candidate) &&
+        cleanString(candidate.playerId) === normalizedPlayerId &&
+        cleanString(candidate.email).toLowerCase() === normalizedEmail
+    )
+    .sort((left: any, right: any) => (getExpirationTime(right.createdAt) || 0) - (getExpirationTime(left.createdAt) || 0))[0];
   const code = cleanString(invite?.code).toUpperCase();
   if (!code) {
     throw new Error('No retryable invitation matched that player and email. Create a new parent invitation instead.');
@@ -1539,12 +1604,14 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
         }
       ]);
     } else {
-      const [savedOperation] = await applyRosterCsvImportOperations(normalizedTeamId, [{
-        type: 'add',
-        playerId,
-        payload: { ...player, photoPath: null },
-        privateRosterFields: privateValues
-      }]);
+      const [savedOperation] = await applyRosterCsvImportOperations(normalizedTeamId, [
+        {
+          type: 'add',
+          playerId,
+          payload: { ...player, photoPath: null },
+          privateRosterFields: privateValues
+        }
+      ]);
       savedPlayerId = cleanString(savedOperation?.playerId);
       if (!savedPlayerId) throw new Error('The new roster player could not be saved.');
     }
@@ -1561,7 +1628,9 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
   if (input?.photoFile) {
     try {
       if (nativeRuntime) {
-        const uploaded = await import('./nativeStorageUpload').then((module) => module.uploadNativePlayerPhotoFile(input.photoFile!, normalizedTeamId, playerId));
+        const uploaded = await import('./nativeStorageUpload').then((module) =>
+          module.uploadNativePlayerPhotoFile(input.photoFile!, normalizedTeamId, playerId)
+        );
         player = { ...player, photoUrl: uploaded.url };
         nativePhotoPath = uploaded.path;
       } else {
@@ -1596,11 +1665,13 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
           }
         ]);
       } else {
-        await applyRosterCsvImportOperations(normalizedTeamId, [{
-          type: 'update',
-          playerId,
-          payload: { photoUrl: player.photoUrl, photoPath: webPhotoPath || null }
-        }]);
+        await applyRosterCsvImportOperations(normalizedTeamId, [
+          {
+            type: 'update',
+            playerId,
+            payload: { photoUrl: player.photoUrl, photoPath: webPhotoPath || null }
+          }
+        ]);
       }
     } catch (error) {
       const uploadedPhotoPath = nativePhotoPath || webPhotoPath;
@@ -1611,7 +1682,9 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
         savedPlayerId = playerId;
       } else {
         if (persistenceState === 'not-committed' && nativePhotoPath) {
-          await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
+          await import('./nativeStorageUpload')
+            .then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath))
+            .catch(() => undefined);
         } else if (persistenceState === 'not-committed' && webPhotoPath) {
           await Promise.resolve(deleteLegacyImageUpload(webPhotoPath)).catch(() => undefined);
         }
@@ -1670,19 +1743,22 @@ export async function applyRosterImportPlanForApp(
       ? { playerId: `${pendingActionId}_player_${index + 1}` }
       : {})
   }));
-  const savedOperations = options.rosterAlreadyApplied === true
-    ? executionOperations
-    : pendingActionId
-      ? await applyRosterCsvImportOperations(normalizedTeamId, executionOperations, {
-          pendingActionId,
-          userId: cleanString(user?.uid)
-        })
-      : await applyRosterCsvImportOperations(normalizedTeamId, executionOperations);
+  const savedOperations =
+    options.rosterAlreadyApplied === true
+      ? executionOperations
+      : pendingActionId
+        ? await applyRosterCsvImportOperations(normalizedTeamId, executionOperations, {
+            pendingActionId,
+            userId: cleanString(user?.uid)
+          })
+        : await applyRosterCsvImportOperations(normalizedTeamId, executionOperations);
   const deactivatedCount = operations.filter((operation) => operation.type === 'deactivate').length;
   const reactivatedCount = operations.filter((operation) => operation.type === 'reactivate').length;
 
   const inviteResults: RosterImportApplyResultForApp['inviteResults'] = [];
-  for (const operation of (savedOperations as RosterImportPlannedOperationForApp[]).filter((item) => item.type === 'add' || item.type === 'update')) {
+  for (const operation of (savedOperations as RosterImportPlannedOperationForApp[]).filter(
+    (item) => item.type === 'add' || item.type === 'update'
+  )) {
     const playerId = cleanString(operation.playerId);
     const number = cleanString(operation.payload?.number);
     for (const request of operation.inviteRequests || []) {
@@ -1692,9 +1768,7 @@ export async function applyRosterImportPlanForApp(
           user,
           { id: playerId, number } as Pick<TeamDetailPlayer, 'id' | 'number'>,
           { email: request.email, relation: request.relation || 'Parent' },
-          pendingActionId
-            ? { idempotencyKey: `${pendingActionId}:invite:${playerId}:${cleanString(request.email).toLowerCase()}` }
-            : {}
+          pendingActionId ? { idempotencyKey: `${pendingActionId}:invite:${playerId}:${cleanString(request.email).toLowerCase()}` } : {}
         );
         inviteResults.push({
           playerId,
@@ -1722,26 +1796,29 @@ export async function applyRosterImportPlanForApp(
   }
 
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
-  const invitationSummary = inviteResults.reduce<RosterImportApplyResultForApp['invitationSummary']>((summary, invite) => {
-    if (invite.status === 'linked') summary.linked += 1;
-    if (invite.emailStatus === 'emailed') summary.emailed += 1;
-    if (invite.emailStatus === 'retryable') {
-      summary.retryable += 1;
-      summary.retryableRecipients.push(invite.email);
+  const invitationSummary = inviteResults.reduce<RosterImportApplyResultForApp['invitationSummary']>(
+    (summary, invite) => {
+      if (invite.status === 'linked') summary.linked += 1;
+      if (invite.emailStatus === 'emailed') summary.emailed += 1;
+      if (invite.emailStatus === 'retryable') {
+        summary.retryable += 1;
+        summary.retryableRecipients.push(invite.email);
+      }
+      if (invite.status === 'failed') {
+        summary.failed += 1;
+        summary.failedRecipients.push(invite.email);
+      }
+      return summary;
+    },
+    {
+      linked: 0,
+      emailed: 0,
+      retryable: 0,
+      failed: 0,
+      retryableRecipients: [],
+      failedRecipients: []
     }
-    if (invite.status === 'failed') {
-      summary.failed += 1;
-      summary.failedRecipients.push(invite.email);
-    }
-    return summary;
-  }, {
-    linked: 0,
-    emailed: 0,
-    retryable: 0,
-    failed: 0,
-    retryableRecipients: [],
-    failedRecipients: []
-  });
+  );
   return {
     savedOperations,
     deactivatedCount,
@@ -1848,6 +1925,22 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
     throw new Error('You do not have permission to edit this team.');
   }
 
+  const currentSport = cleanString(team?.sport);
+  const requestedSport = Object.prototype.hasOwnProperty.call(input || {}, 'sport') ? cleanString(input?.sport) : currentSport;
+  const normalizedCurrentSport = normalizeDiamondCompatibleTeamSport(currentSport);
+  const normalizedRequestedSport = normalizeDiamondCompatibleTeamSport(requestedSport);
+  const enrolledDiamondSport = cleanString(team?.diamondScorebook?.sport);
+  const normalizedEnrolledDiamondSport = normalizeDiamondCompatibleTeamSport(enrolledDiamondSport);
+  const repairsEnrolledDiamondSport = Boolean(
+    normalizedEnrolledDiamondSport && normalizedRequestedSport === normalizedEnrolledDiamondSport
+  );
+  if (team?.diamondScorebook?.enabled === true && normalizedRequestedSport !== normalizedCurrentSport && !repairsEnrolledDiamondSport) {
+    const enrolledSportLabel = enrolledDiamondSport || currentSport || 'its enrolled sport';
+    throw new Error(
+      `Diamond Scorebook v2 is enrolled for ${enrolledSportLabel}. Keep or restore that sport before saving; no changes were written.`
+    );
+  }
+
   const name = cleanString(input?.name);
   if (!name) throw new Error('Team name is required.');
 
@@ -1868,7 +1961,9 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
   if (input?.photoFile) {
     validateLegacyRosterPhotoFile(input.photoFile);
     if (nativeRuntime) {
-      const uploaded = await import('./nativeStorageUpload').then((module) => module.uploadNativeTeamPhotoFile(input.photoFile!, normalizedTeamId));
+      const uploaded = await import('./nativeStorageUpload').then((module) =>
+        module.uploadNativeTeamPhotoFile(input.photoFile!, normalizedTeamId)
+      );
       photoUrl = uploaded.url;
       nativePhotoPath = uploaded.path;
       photoPath = uploaded.path;
@@ -1882,7 +1977,7 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
 
   const payload = {
     name,
-    sport: cleanString(input?.sport),
+    sport: requestedSport,
     zip: normalizeTeamZip(input?.zip),
     isPublic: input?.isPublic === true,
     photoUrl,
@@ -1896,10 +1991,14 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
 
   try {
     if (nativeRuntime) {
-      await import('./nativeFirestoreMutation').then((module) => module.commitNativeFirestoreWrites([{
-        pathSegments: ['teams', normalizedTeamId],
-        data: payload
-      }]));
+      await import('./nativeFirestoreMutation').then((module) =>
+        module.commitNativeFirestoreWrites([
+          {
+            pathSegments: ['teams', normalizedTeamId],
+            data: payload
+          }
+        ])
+      );
     } else {
       await updateTeam(normalizedTeamId, payload);
     }
@@ -1907,12 +2006,14 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
     const uploadedPhotoPath = nativePhotoPath || webPhotoPath;
     const persistenceState = uploadedPhotoPath
       ? isDefinitiveFirestoreWriteFailure(error)
-        ? 'not-committed' as const
+        ? ('not-committed' as const)
         : await getTeamPhotoPersistenceState(normalizedTeamId, uploadedPhotoPath)
-      : 'unknown' as const;
+      : ('unknown' as const);
     if (persistenceState !== 'committed') {
       if (persistenceState === 'not-committed' && nativePhotoPath) {
-        await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
+        await import('./nativeStorageUpload')
+          .then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath))
+          .catch(() => undefined);
       } else if (persistenceState === 'not-committed' && webPhotoPath) {
         await Promise.resolve(deleteLegacyImageUpload(webPhotoPath)).catch(() => undefined);
       }
@@ -1922,13 +2023,20 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
 
   if (previousPhotoPath && previousPhotoPath !== photoPath) {
     if (nativeRuntime) {
-      await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(previousPhotoPath)).catch(() => undefined);
+      await import('./nativeStorageUpload')
+        .then((module) => module.deleteNativePrimaryStorageFile(previousPhotoPath))
+        .catch(() => undefined);
     } else {
       await Promise.resolve(deleteLegacyImageUpload(previousPhotoPath)).catch(() => undefined);
     }
   }
 
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+}
+
+function normalizeDiamondCompatibleTeamSport(value: unknown) {
+  const sport = cleanString(value).toLowerCase();
+  return sport === 'softball' || sport === 'fastpitch' || sport === 'fastpitch softball' ? 'fastpitch' : sport;
 }
 
 export async function createStatTrackerConfigForApp(teamId: string, user: AuthUser | null, input: UpsertStatTrackerConfigForAppInput) {
@@ -1964,7 +2072,12 @@ export async function createStatTrackerConfigForApp(teamId: string, user: AuthUs
   return cleanString((created as any)?.id);
 }
 
-export async function updateStatTrackerConfigForApp(teamId: string, configId: string, user: AuthUser | null, input: UpsertStatTrackerConfigForAppInput) {
+export async function updateStatTrackerConfigForApp(
+  teamId: string,
+  configId: string,
+  user: AuthUser | null,
+  input: UpsertStatTrackerConfigForAppInput
+) {
   const normalizedTeamId = cleanString(teamId);
   const normalizedConfigId = cleanString(configId);
   if (!normalizedTeamId) throw new Error('Team ID is required.');
@@ -1981,7 +2094,11 @@ export async function updateStatTrackerConfigForApp(teamId: string, configId: st
   await writeWithNativeFallback(
     `update stat tracker config ${normalizedTeamId}:${normalizedConfigId}`,
     async () => updateConfig(normalizedTeamId, normalizedConfigId, normalizedConfig),
-    async () => nativePatchDocument(`teams/${encodeURIComponent(normalizedTeamId)}/statTrackerConfigs/${encodeURIComponent(normalizedConfigId)}`, normalizedConfig)
+    async () =>
+      nativePatchDocument(
+        `teams/${encodeURIComponent(normalizedTeamId)}/statTrackerConfigs/${encodeURIComponent(normalizedConfigId)}`,
+        normalizedConfig
+      )
   );
 
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
@@ -1998,10 +2115,7 @@ export function buildPublicTeamGamesIcsUrl(teamId: string) {
 export function isShareableFanFeedEvent(event: Partial<TeamDetailEvent> = {}) {
   const visibility = cleanString(event.visibility).toLowerCase();
   if (visibility === 'private' || event.isPrivate === true) return false;
-  return visibility === 'public'
-    || event.isPublic === true
-    || event.shareable === true
-    || event.publicCalendar === true;
+  return visibility === 'public' || event.isPublic === true || event.shareable === true || event.publicCalendar === true;
 }
 
 export function canExposePublicFanFeed(team: Partial<TeamDetailModel['team']> = {}, events: Array<Partial<TeamDetailEvent>> = []) {
@@ -2022,13 +2136,935 @@ function getPublicBaseUrl() {
   return 'https://allplays.ai';
 }
 
+type CoverageAwareSeasonStats = {
+  participants: TeamDetailSeasonStatParticipant[];
+  statsByPlayerId: Record<string, Record<string, any>>;
+  completeStatsByPlayerId: Record<string, Record<string, any>>;
+  presentationByPlayerId: Record<string, CoverageAwareStatPresentation>;
+  teamStats: Record<string, any>;
+  completeTeamStats: Record<string, any>;
+  teamPresentation: CoverageAwareStatPresentation | null;
+  projection: {
+    hasDiamond: boolean;
+    pending: boolean;
+    sourceRevisions: readonly number[];
+    requestedStatVisibility?: 'public' | 'manager-internal';
+    statVisibility?: 'public' | 'manager-internal';
+    privateStatsStatus?: 'not-requested' | 'complete' | 'partial' | 'unavailable';
+    privateStatsReason?: string | null;
+    publicStatsStatus?: DiamondPublicStatsStatus;
+  };
+};
+
+type TeamDetailSeasonStatParticipant = Pick<TeamDetailPlayer, 'id' | 'name' | 'number' | 'photoUrl'> & {
+  canOpenProfile: boolean;
+};
+
+type TeamDetailSeasonStatConfigResolution = {
+  rawConfigs: Record<string, any>[];
+  presentationConfigsById: Map<string, Record<string, any>>;
+  publicPresentationConfig: Record<string, any> | null;
+  managerPresentationConfig: Record<string, any> | null;
+};
+
+function compareExactText(left: unknown, right: unknown) {
+  const leftText = cleanString(left);
+  const rightText = cleanString(right);
+  return leftText < rightText ? -1 : leftText > rightText ? 1 : 0;
+}
+
+function getSharedTeamDetailPresentationOverrides(definitions: Record<string, any>[]) {
+  const overrides: Record<string, unknown> = {};
+  const fields = ['label', 'acronym', 'group', 'format', 'precision', 'rankingOrder'] as const;
+  fields.forEach((field) => {
+    const values = definitions.map((definition) => definition?.[field]);
+    if (!values.length || !values.every((value) => Object.is(value, values[0]))) return;
+    const value = values[0];
+    const isSafeText =
+      ['label', 'acronym', 'group'].includes(field) &&
+      typeof value === 'string' &&
+      value === value.trim() &&
+      value.length >= 1 &&
+      value.length <= 160;
+    const isSafeFormat = field === 'format' && ['number', 'percentage'].includes(value);
+    const isSafePrecision = field === 'precision' && Number.isSafeInteger(value) && value >= 0 && value <= 6;
+    const isSafeRankingOrder = field === 'rankingOrder' && ['asc', 'desc'].includes(value);
+    if (isSafeText || isSafeFormat || isSafePrecision || isSafeRankingOrder) overrides[field] = value;
+  });
+  return overrides;
+}
+
+function mergeTeamDetailPresentationConfigs(configs: Record<string, any>[], visibility: 'public' | 'manager-internal') {
+  const sortedConfigs = [...configs].sort((left, right) => compareExactText(left?.id, right?.id));
+  if (sortedConfigs.length === 1) return sortedConfigs[0];
+  if (!sortedConfigs.length) return null;
+
+  const definitionsById = new Map<string, Record<string, any>[]>();
+  sortedConfigs.forEach((config) => {
+    (Array.isArray(config?.statDefinitions) ? config.statDefinitions : []).forEach((definition: Record<string, any>) => {
+      const id = cleanString(definition?.id);
+      if (!id) return;
+      const definitions = definitionsById.get(id) || [];
+      definitions.push(definition);
+      definitionsById.set(id, definitions);
+    });
+  });
+
+  const statDefinitions = [...definitionsById.entries()]
+    .sort(([leftId], [rightId]) => compareExactText(leftId, rightId))
+    .flatMap(([id, definitions]) => {
+      const scopes = new Set(definitions.map((definition) => cleanString(definition?.scope)));
+      if (scopes.size !== 1 || !['player', 'team'].includes([...scopes][0] || '')) return [];
+      const publicDefinitions = definitions.filter((definition) => cleanString(definition?.visibility) === 'public');
+      const visibleDefinitions = visibility === 'public' ? publicDefinitions : definitions;
+      if (!visibleDefinitions.length) return [];
+      const mergedVisibility = publicDefinitions.length ? 'public' : 'private';
+      return [
+        {
+          ...getSharedTeamDetailPresentationOverrides(visibleDefinitions),
+          id,
+          scope: [...scopes][0],
+          visibility: mergedVisibility,
+          topStat: visibleDefinitions.some((definition) => definition?.topStat === true)
+        }
+      ];
+    });
+
+  return {
+    ...sortedConfigs[0],
+    // The definitions below are the exact visibility-specific union. Leaving
+    // legacy columns populated would let later normalization recreate an
+    // omitted private definition as public.
+    columns: [],
+    statDefinitions,
+    diamondPublicTeamStatIds: [
+      ...new Set(
+        sortedConfigs.flatMap((config) => (Array.isArray(config?.diamondPublicTeamStatIds) ? config.diamondPublicTeamStatIds : []))
+      )
+    ].sort(compareExactText)
+  };
+}
+
+function resolveTeamDetailSeasonStatConfig({
+  teamId,
+  games,
+  configs
+}: {
+  teamId: string;
+  games: Record<string, any>[];
+  configs: Record<string, any>[];
+}): TeamDetailSeasonStatConfigResolution | null {
+  const safeConfigs = Array.isArray(configs) ? configs : [];
+  const diamondGames = (Array.isArray(games) ? games : []).filter((game) => isDiamondV2Game(game));
+  if (!diamondGames.length) {
+    return {
+      rawConfigs: [],
+      presentationConfigsById: new Map(),
+      publicPresentationConfig: null,
+      managerPresentationConfig: null
+    };
+  }
+
+  const configIds = diamondGames.map((game) => cleanString(game?.statTrackerConfigId));
+  const uniqueConfigIds = [...new Set(configIds.filter(Boolean))].sort(compareExactText);
+  if (configIds.some((configId) => !configId)) return null;
+
+  const rawConfigs: Record<string, any>[] = [];
+  const presentationConfigs: Record<string, any>[] = [];
+  for (const configId of uniqueConfigIds) {
+    const matchingConfigs = safeConfigs.filter((config) => cleanString(config?.id) === configId);
+    if (matchingConfigs.length !== 1) return null;
+    const rawConfig = matchingConfigs[0];
+    const referencedGames = diamondGames.filter((game) => cleanString(game?.statTrackerConfigId) === configId);
+    if (
+      referencedGames.some(
+        (game) =>
+          !currentDiamondStatConfigMatchesActivation({
+            teamId,
+            game,
+            config: rawConfig
+          })
+      )
+    )
+      return null;
+    const presentationConfig = buildActivationPinnedDiamondPresentationConfig(rawConfig);
+    if (!presentationConfig) return null;
+    rawConfigs.push(rawConfig);
+    presentationConfigs.push(presentationConfig);
+  }
+
+  return {
+    rawConfigs,
+    presentationConfigsById: new Map(presentationConfigs.map((config) => [cleanString(config?.id), config])),
+    publicPresentationConfig: mergeTeamDetailPresentationConfigs(presentationConfigs, 'public'),
+    managerPresentationConfig: mergeTeamDetailPresentationConfigs(presentationConfigs, 'manager-internal')
+  };
+}
+
+async function resolveTeamDetailSeasonStatConfigWithFreshRetry({
+  teamId,
+  games,
+  configs
+}: {
+  teamId: string;
+  games: Record<string, any>[];
+  configs: Record<string, any>[];
+}) {
+  const initialResolution = resolveTeamDetailSeasonStatConfig({ teamId, games, configs });
+  const hasDiamond = games.some((game) => isDiamondV2Game(game));
+  if (!hasDiamond || initialResolution) return { configs, resolution: initialResolution };
+
+  let freshConfigs: Record<string, any>[];
+  try {
+    const loadedConfigs = await loadTeamConfigs(teamId);
+    freshConfigs = Array.isArray(loadedConfigs) ? loadedConfigs : [];
+  } catch {
+    freshConfigs = [];
+  }
+  const freshResolution = resolveTeamDetailSeasonStatConfig({
+    teamId,
+    games,
+    configs: freshConfigs
+  });
+  const cachedSnapshot = teamDetailBaseSnapshotCache.get(cleanString(teamId));
+  if (cachedSnapshot) {
+    cacheTeamDetailBaseSnapshot(
+      freshResolution
+        ? { ...cachedSnapshot, configs: freshConfigs, configsLoaded: true }
+        : { ...cachedSnapshot, configs: [], configsLoaded: false }
+    );
+  }
+  return { configs: freshConfigs, resolution: freshResolution };
+}
+
+function getTeamDetailStatConfigForGame(resolution: TeamDetailSeasonStatConfigResolution, game: Record<string, any>) {
+  return resolution.presentationConfigsById.get(cleanString(game?.statTrackerConfigId)) || null;
+}
+
+function getTeamDetailDiamondStatIdsForGame(
+  resolution: TeamDetailSeasonStatConfigResolution,
+  game: Record<string, any>,
+  visibility: 'public' | 'manager-internal',
+  scope: 'player' | 'team'
+) {
+  const config = getTeamDetailStatConfigForGame(resolution, game);
+  const definitions =
+    visibility === 'manager-internal' ? getManagerDiamondStatCatalog(config, scope) : getPublicDiamondStatCatalog(config, scope);
+  return new Set(definitions.map((definition) => cleanString(definition?.id)).filter(Boolean));
+}
+
+function haveDifferentTeamDetailDiamondStatIdSets(
+  resolution: TeamDetailSeasonStatConfigResolution,
+  games: ReadonlyArray<Record<string, any>>,
+  visibility: 'public' | 'manager-internal',
+  scope: 'player' | 'team'
+) {
+  const signatures = games.map((game) =>
+    [...getTeamDetailDiamondStatIdsForGame(resolution, game, visibility, scope)].sort(compareExactText).join('\u0000')
+  );
+  return new Set(signatures).size > 1;
+}
+
+function filterTeamDetailStatRecord(value: unknown, allowedIds: ReadonlySet<string>) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter(([key]) => allowedIds.has(key)));
+}
+
+function filterTeamDetailDiamondStatDocument(
+  value: Record<string, any>,
+  allowedIds: ReadonlySet<string>,
+  aggregateIds: ReadonlySet<string>,
+  clearFamilyCoverage: boolean
+) {
+  const filterIds = (candidate: unknown) =>
+    Array.isArray(candidate) ? candidate.filter((id) => typeof id === 'string' && allowedIds.has(id)) : candidate;
+  const statCoverage: Record<string, unknown> = filterTeamDetailStatRecord(value?.statCoverage, allowedIds);
+  aggregateIds.forEach((id) => {
+    if (!Object.prototype.hasOwnProperty.call(statCoverage, id)) statCoverage[id] = 'not_collected';
+  });
+  return {
+    ...value,
+    publicStatIds: filterIds(value?.publicStatIds),
+    stats: filterTeamDetailStatRecord(value?.stats, allowedIds),
+    derivedStats: filterTeamDetailStatRecord(value?.derivedStats, allowedIds),
+    observedStats: filterTeamDetailStatRecord(value?.observedStats, allowedIds),
+    observedDerivedStats: filterTeamDetailStatRecord(value?.observedDerivedStats, allowedIds),
+    statCoverage,
+    statSources: filterTeamDetailStatRecord(value?.statSources, allowedIds),
+    unavailableDerivedStats: filterIds(value?.unavailableDerivedStats),
+    ...(clearFamilyCoverage ? { coverage: {}, missingStatFamilies: [] } : {})
+  };
+}
+
+function emptyDiamondManagerStatsResult(status: 'partial' | 'unavailable', reason: string): DiamondManagerStatsReadResult {
+  return {
+    status,
+    reason,
+    documentsByGameId: new Map(),
+    teamDocumentsByGameId: new Map()
+  };
+}
+
+function stableRecordFingerprint(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? String(value);
+  if (Array.isArray(value)) return `[${value.map(stableRecordFingerprint).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableRecordFingerprint(record[key])}`)
+    .join(',')}}`;
+}
+
+async function loadChunkedTeamDiamondManagerStatsOnce({
+  teamId,
+  games,
+  playerIds
+}: {
+  teamId: string;
+  games: Record<string, any>[];
+  playerIds: string[];
+}): Promise<DiamondManagerStatsReadResult> {
+  const gameIds = games.map((game) => cleanString(game?.id || game?.gameId));
+  const normalizedPlayerIds = [...new Set(playerIds.map(cleanString).filter(Boolean))].sort();
+  if (!games.length || gameIds.some((gameId) => !gameId) || new Set(gameIds).size !== gameIds.length || !normalizedPlayerIds.length) {
+    return emptyDiamondManagerStatsResult('partial', 'invalid-or-duplicate-season-request');
+  }
+
+  const mutableDocumentsByGameId = new Map<string, Array<{ id: string; data: Record<string, unknown> }>>();
+  const teamDocumentsByGameId = new Map<string, Record<string, unknown>>();
+  const teamDocumentFingerprintByGameId = new Map<string, string>();
+  let chunkNumber = 0;
+  for (let gameOffset = 0; gameOffset < games.length; gameOffset += DIAMOND_MANAGER_STATS_MAX_GAMES) {
+    const gameChunk = games.slice(gameOffset, gameOffset + DIAMOND_MANAGER_STATS_MAX_GAMES);
+    const expectedGameIds = new Set(gameChunk.map((game) => cleanString(game?.id || game?.gameId)));
+    for (let playerOffset = 0; playerOffset < normalizedPlayerIds.length; playerOffset += DIAMOND_MANAGER_STATS_MAX_PLAYERS) {
+      const playerChunk = normalizedPlayerIds.slice(playerOffset, playerOffset + DIAMOND_MANAGER_STATS_MAX_PLAYERS);
+      chunkNumber += 1;
+      let chunkResult: DiamondManagerStatsReadResult;
+      try {
+        chunkResult = await loadDiamondManagerStats({ teamId, games: gameChunk, playerIds: playerChunk });
+      } catch {
+        return emptyDiamondManagerStatsResult('unavailable', `manager-season-chunk-${String(chunkNumber)}:private-read-unavailable`);
+      }
+      if (chunkResult.status !== 'complete') {
+        return emptyDiamondManagerStatsResult(
+          chunkResult.status,
+          `manager-season-chunk-${String(chunkNumber)}:${chunkResult.reason || 'incomplete'}`
+        );
+      }
+      if (
+        [...chunkResult.documentsByGameId.keys()].some((gameId) => !expectedGameIds.has(gameId)) ||
+        [...chunkResult.teamDocumentsByGameId.keys()].some((gameId) => !expectedGameIds.has(gameId))
+      ) {
+        return emptyDiamondManagerStatsResult('partial', 'manager-season-unexpected-game-result');
+      }
+
+      for (const [gameId, documents] of chunkResult.documentsByGameId) {
+        const mergedDocuments = mutableDocumentsByGameId.get(gameId) || [];
+        const seenPlayerIds = new Set(mergedDocuments.map(({ id }) => id));
+        if (documents.some(({ id }) => seenPlayerIds.has(id))) {
+          return emptyDiamondManagerStatsResult('partial', 'duplicate-manager-player-result');
+        }
+        mergedDocuments.push(...documents);
+        mutableDocumentsByGameId.set(gameId, mergedDocuments);
+      }
+
+      for (const game of gameChunk) {
+        const gameId = cleanString(game?.id || game?.gameId);
+        const teamDocument = chunkResult.teamDocumentsByGameId.get(gameId) || null;
+        const teamResolution = resolveDiamondManagerTeamStatDocument({
+          game,
+          privateDocument: teamDocument,
+          loadStatus: chunkResult.status
+        });
+        if (teamResolution.status !== 'complete' || !teamResolution.document) {
+          return emptyDiamondManagerStatsResult(
+            teamResolution.status === 'unavailable' ? 'unavailable' : 'partial',
+            `manager-season-chunk-${String(chunkNumber)}:${teamResolution.reason || 'private-team-read-incomplete'}`
+          );
+        }
+        const fingerprint = stableRecordFingerprint(teamResolution.document);
+        if (teamDocumentFingerprintByGameId.has(gameId) && teamDocumentFingerprintByGameId.get(gameId) !== fingerprint) {
+          return emptyDiamondManagerStatsResult('partial', 'incoherent-manager-team-result');
+        }
+        teamDocumentFingerprintByGameId.set(gameId, fingerprint);
+        teamDocumentsByGameId.set(gameId, teamResolution.document);
+      }
+    }
+  }
+  if (teamDocumentsByGameId.size !== gameIds.length || gameIds.some((gameId) => !teamDocumentsByGameId.has(gameId))) {
+    return emptyDiamondManagerStatsResult('partial', 'manager-season-team-document-missing');
+  }
+
+  return {
+    status: 'complete',
+    reason: null,
+    documentsByGameId: new Map(
+      [...mutableDocumentsByGameId.entries()].map(([gameId, documents]) => [
+        gameId,
+        Object.freeze(documents.sort((left, right) => left.id.localeCompare(right.id)))
+      ])
+    ),
+    teamDocumentsByGameId
+  };
+}
+
+async function loadChunkedTeamDiamondManagerStats(input: {
+  teamId: string;
+  games: Record<string, any>[];
+  playerIds: string[];
+}): Promise<DiamondManagerStatsReadResult> {
+  const firstAttempt = await loadChunkedTeamDiamondManagerStatsOnce(input);
+  if (firstAttempt.status === 'complete' || firstAttempt.reason === 'invalid-or-duplicate-season-request') {
+    return firstAttempt;
+  }
+  return loadChunkedTeamDiamondManagerStatsOnce(input);
+}
+
+async function mapInTeamStatsReadBatches<T, R>(
+  values: readonly T[],
+  batchSize: number,
+  mapper: (value: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let offset = 0; offset < values.length; offset += batchSize) {
+    const batch = values.slice(offset, offset + batchSize);
+    results.push(...(await Promise.all(batch.map((value, index) => mapper(value, offset + index)))));
+  }
+  return results;
+}
+
+function summarizeDiamondPublicStatsStatus(
+  statuses: ReadonlyArray<'complete' | 'partial' | 'unavailable'>
+): Exclude<DiamondPublicStatsStatus, 'not-requested'> {
+  if (statuses.length && statuses.every((status) => status === 'complete')) return 'complete';
+  if (!statuses.length || statuses.every((status) => status === 'unavailable')) return 'unavailable';
+  return 'partial';
+}
+
+type TeamDiamondPublicStatRead = {
+  game: Record<string, any>;
+  documents: ReadonlyArray<{ id: string; data: Record<string, unknown> }>;
+  status: 'complete' | 'partial' | 'unavailable';
+  absenceConfirmed: boolean;
+};
+
+async function loadTeamDiamondPublicStatBatchOnce(
+  teamId: string,
+  diamondGames: readonly Record<string, any>[]
+): Promise<TeamDiamondPublicStatRead[]> {
+  return mapInTeamStatsReadBatches(diamondGames, diamondPublicStatReadConcurrency, async (game) => {
+    const gameId = cleanString(game?.id || game?.gameId);
+    const collectionPath = getDiamondPublicPlayerStatsCollectionPath({ teamId, gameId, game });
+    if (!collectionPath) {
+      return { game, documents: [], status: 'partial' as const, absenceConfirmed: false };
+    }
+    try {
+      const snapshot = await getDocs(collection(db, collectionPath));
+      const documents: Array<{ id: string; data: Record<string, unknown> }> = [];
+      snapshot.forEach((docSnap: any) => {
+        const id = cleanString(docSnap.id);
+        if (id) documents.push({ id, data: docSnap.data() || {} });
+      });
+      const resolution = resolveDiamondPublicStatDocuments({ teamId, gameId, game, documents });
+      return {
+        game,
+        documents: resolution.status === 'complete' ? [...resolution.documents] : [],
+        status: resolution.status,
+        absenceConfirmed: resolution.status === 'complete' && resolution.absenceConfirmed
+      };
+    } catch {
+      return { game, documents: [], status: 'unavailable' as const, absenceConfirmed: false };
+    }
+  });
+}
+
+function isEmptyIncompleteTeamDiamondBatch(reads: readonly TeamDiamondPublicStatRead[]) {
+  return reads.every(({ documents }) => documents.length === 0) && reads.some(({ status }) => status !== 'complete');
+}
+
+async function loadTeamDiamondPublicStatBatch(
+  teamId: string,
+  diamondGames: readonly Record<string, any>[]
+): Promise<TeamDiamondPublicStatRead[]> {
+  const firstAttempt = await loadTeamDiamondPublicStatBatchOnce(teamId, diamondGames);
+  if (!isEmptyIncompleteTeamDiamondBatch(firstAttempt)) return firstAttempt;
+  return loadTeamDiamondPublicStatBatchOnce(teamId, diamondGames);
+}
+
+function normalizeTeamDetailProjectedIdentityText(value: unknown, maxLength: number) {
+  if (typeof value !== 'string') return '';
+  const normalized = Array.from(value, (character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    const unsafeControl =
+      codePoint <= 31 ||
+      (codePoint >= 127 && codePoint <= 159) ||
+      (codePoint >= 0x202a && codePoint <= 0x202e) ||
+      (codePoint >= 0x2066 && codePoint <= 0x2069);
+    return unsafeControl ? ' ' : character;
+  })
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return Array.from(normalized).slice(0, maxLength).join('');
+}
+
+function compareTeamDetailSeasonParticipantId(left: unknown, right: unknown) {
+  const leftId = typeof left === 'string' ? left : '';
+  const rightId = typeof right === 'string' ? right : '';
+  return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+}
+
+function canOpenTeamDetailPlayerProfile(playerId: unknown) {
+  const id = cleanString(playerId);
+  return Boolean(id) && !id.startsWith('manual:');
+}
+
+function buildTeamDetailSeasonStatParticipants(
+  rosterPlayers: readonly Pick<TeamDetailPlayer, 'id' | 'name' | 'number' | 'photoUrl'>[],
+  publicReads: readonly TeamDiamondPublicStatRead[]
+): TeamDetailSeasonStatParticipant[] {
+  const projectedIdentityById = new Map<string, { name: string; number: string }>();
+  const orderedReads = [...publicReads].sort((left, right) => {
+    const leftTime = toNullableDate(left.game?.date)?.getTime() ?? 0;
+    const rightTime = toNullableDate(right.game?.date)?.getTime() ?? 0;
+    if (leftTime !== rightTime) return leftTime - rightTime;
+    return compareExactText(left.game?.id || left.game?.gameId, right.game?.id || right.game?.gameId);
+  });
+  orderedReads.forEach(({ documents }) => {
+    [...documents]
+      .sort((left, right) => compareTeamDetailSeasonParticipantId(left.id, right.id))
+      .forEach(({ id: rawId, data }) => {
+        const id = typeof rawId === 'string' ? rawId : '';
+        if (!id || data?.playerId !== id) return;
+        const previous = projectedIdentityById.get(id) || { name: '', number: '' };
+        const name = normalizeTeamDetailProjectedIdentityText(data?.playerName, 160);
+        const number = normalizeTeamDetailProjectedIdentityText(data?.playerNumber, 32);
+        projectedIdentityById.set(id, {
+          name: name || previous.name,
+          number: number || previous.number
+        });
+      });
+  });
+
+  const rosterIds = new Set<string>();
+  const rosterRows = rosterPlayers.flatMap((player) => {
+    const id = cleanString(player?.id);
+    if (!id || rosterIds.has(id)) return [];
+    rosterIds.add(id);
+    const projectedIdentity = projectedIdentityById.get(id);
+    return [
+      {
+        id,
+        name: projectedIdentity?.name || normalizeTeamDetailProjectedIdentityText(player?.name, 160) || 'Player',
+        number: projectedIdentity?.number || normalizeTeamDetailProjectedIdentityText(player?.number, 32),
+        photoUrl: player?.photoUrl || null,
+        canOpenProfile: canOpenTeamDetailPlayerProfile(id)
+      }
+    ];
+  });
+  const projectedOnlyRows = [...projectedIdentityById.entries()]
+    .filter(([id]) => !rosterIds.has(id))
+    .sort(([leftId], [rightId]) => compareTeamDetailSeasonParticipantId(leftId, rightId))
+    .map(([id, identity]) => ({
+      id,
+      name: identity.name || 'Recorded player',
+      number: identity.number || '-',
+      photoUrl: null,
+      canOpenProfile: false
+    }));
+  return [...rosterRows, ...projectedOnlyRows];
+}
+
+async function loadCoverageAwareSeasonStats(
+  teamId: string,
+  games: any[],
+  {
+    requestManagerStats = false,
+    players = [],
+    publicTeamStatIds = [],
+    managerTeamStatIds = [],
+    diamondStatConfigResolution = null
+  }: {
+    requestManagerStats?: boolean;
+    players?: Array<Pick<TeamDetailPlayer, 'id' | 'name' | 'number' | 'photoUrl'>>;
+    publicTeamStatIds?: string[];
+    managerTeamStatIds?: string[];
+    diamondStatConfigResolution?: TeamDetailSeasonStatConfigResolution | null;
+  } = {}
+): Promise<CoverageAwareSeasonStats> {
+  const normalizedGames = (Array.isArray(games) ? games : [])
+    .map((game) => ({ ...game, id: cleanString(game?.id || game?.gameId) }))
+    .filter((game) => game.id);
+  const diamondGames = normalizedGames.filter((game) => isDiamondV2Game(game));
+  if (
+    diamondGames.length &&
+    diamondGames.some((game) => {
+      const configId = cleanString(game?.statTrackerConfigId);
+      const matchingConfigs = (diamondStatConfigResolution?.rawConfigs || []).filter((config) => cleanString(config?.id) === configId);
+      return (
+        matchingConfigs.length !== 1 ||
+        !currentDiamondStatConfigMatchesActivation({
+          teamId,
+          game,
+          config: matchingConfigs[0]
+        })
+      );
+    })
+  ) {
+    throw new Error(diamondStatConfigUnavailableMessage);
+  }
+  const clearPublicPlayerFamilyCoverage = haveDifferentTeamDetailDiamondStatIdSets(
+    diamondStatConfigResolution!,
+    diamondGames,
+    'public',
+    'player'
+  );
+  const clearManagerPlayerFamilyCoverage = haveDifferentTeamDetailDiamondStatIdSets(
+    diamondStatConfigResolution!,
+    diamondGames,
+    'manager-internal',
+    'player'
+  );
+  const clearPublicTeamFamilyCoverage = haveDifferentTeamDetailDiamondStatIdSets(
+    diamondStatConfigResolution!,
+    diamondGames,
+    'public',
+    'team'
+  );
+  const clearManagerTeamFamilyCoverage = haveDifferentTeamDetailDiamondStatIdSets(
+    diamondStatConfigResolution!,
+    diamondGames,
+    'manager-internal',
+    'team'
+  );
+  const publicPlayerAggregateIds = new Set(
+    getPublicDiamondStatCatalog(diamondStatConfigResolution?.publicPresentationConfig || null, 'player')
+      .map((definition) => cleanString(definition?.id))
+      .filter(Boolean)
+  );
+  const managerPlayerAggregateIds = new Set(
+    getManagerDiamondStatCatalog(diamondStatConfigResolution?.managerPresentationConfig || null, 'player')
+      .map((definition) => cleanString(definition?.id))
+      .filter(Boolean)
+  );
+  const diamondGameIds = new Set(diamondGames.map((game) => game.id));
+  const legacyGameIds = normalizedGames.map((game) => game.id).filter((gameId) => !diamondGameIds.has(gameId));
+  const legacyStatsByPlayerId = legacyGameIds.length ? await Promise.resolve(getAggregatedStatsForGames(teamId, legacyGameIds)) : {};
+  const rosterParticipants = buildTeamDetailSeasonStatParticipants(players, []);
+
+  if (!diamondGames.length) {
+    return {
+      participants: rosterParticipants,
+      statsByPlayerId: legacyStatsByPlayerId || {},
+      completeStatsByPlayerId: legacyStatsByPlayerId || {},
+      presentationByPlayerId: {},
+      teamStats: {},
+      completeTeamStats: {},
+      teamPresentation: null,
+      projection: { hasDiamond: false, pending: false, sourceRevisions: [] }
+    };
+  }
+
+  const publicDiamondDocuments = await loadTeamDiamondPublicStatBatch(teamId, diamondGames);
+  if (isEmptyIncompleteTeamDiamondBatch(publicDiamondDocuments)) {
+    throw new Error('Diamond season statistics are temporarily unavailable. Refresh to retry.');
+  }
+  const participants = buildTeamDetailSeasonStatParticipants(players, publicDiamondDocuments);
+  const publicReadByGameId = new Map(publicDiamondDocuments.map((read) => [cleanString(read.game?.id || read.game?.gameId), read]));
+  let managerBatch: DiamondManagerStatsReadResult | null = null;
+  let managerFailureReason: string | null = null;
+  let managerSelectedDocuments: Array<{
+    game: Record<string, any>;
+    documents: ReadonlyArray<{ id: string; data: Record<string, unknown> }>;
+  }> | null = null;
+  let managerTeamDocumentsByGameId: ReadonlyMap<string, Record<string, unknown>> | null = null;
+  if (requestManagerStats && publicDiamondDocuments.every(({ status }) => status === 'complete')) {
+    managerBatch = await loadChunkedTeamDiamondManagerStats({
+      teamId,
+      games: diamondGames,
+      playerIds: participants.map(({ id }) => id)
+    });
+    if (managerBatch.status === 'complete') {
+      const resolutions = diamondGames.map((game) => {
+        const gameId = cleanString(game?.id || game?.gameId);
+        const expectedPlayerIds = (publicReadByGameId.get(gameId)?.documents || []).map(({ id }) => id);
+        const privateDocuments = [...(managerBatch?.documentsByGameId.get(gameId) || [])];
+        if (!expectedPlayerIds.length) {
+          return privateDocuments.length
+            ? { status: 'partial' as const, reason: 'private-read-unexpected', documents: [] as const }
+            : { status: 'complete' as const, reason: null, documents: [] as const };
+        }
+        return resolveDiamondManagerStatDocuments({
+          game,
+          expectedPlayerIds,
+          privateDocuments,
+          loadStatus: managerBatch?.status || 'partial'
+        });
+      });
+      const teamResolutions = diamondGames.map((game) => {
+        const gameId = cleanString(game?.id || game?.gameId);
+        const gameTeamStatIds = getTeamDetailDiamondStatIdsForGame(diamondStatConfigResolution!, game, 'manager-internal', 'team');
+        if (!gameTeamStatIds.size) {
+          return { status: 'complete' as const, reason: null, document: null };
+        }
+        return resolveDiamondManagerTeamStatDocument({
+          game,
+          privateDocument: managerBatch?.teamDocumentsByGameId.get(gameId) || null,
+          loadStatus: managerBatch?.status || 'partial'
+        });
+      });
+      if (resolutions.every(({ status }) => status === 'complete') && teamResolutions.every(({ status }) => status === 'complete')) {
+        managerSelectedDocuments = diamondGames.map((game, index) => ({
+          game,
+          documents: resolutions[index].documents
+        }));
+        managerTeamDocumentsByGameId = new Map(
+          diamondGames.flatMap((game, index) => {
+            const document = teamResolutions[index].document;
+            return document ? [[cleanString(game?.id || game?.gameId), document] as const] : [];
+          })
+        );
+      } else {
+        managerFailureReason =
+          resolutions.find(({ status }) => status !== 'complete')?.reason ||
+          teamResolutions.find(({ status }) => status !== 'complete')?.reason ||
+          'private-result-incomplete';
+      }
+    } else {
+      managerFailureReason = managerBatch.reason;
+    }
+  } else if (requestManagerStats) {
+    managerFailureReason = 'public-participant-read-incomplete';
+  }
+  if (managerSelectedDocuments) {
+    const selectedDiamondDocuments = managerSelectedDocuments
+      .filter(({ game, documents }) => {
+        const publicRead = publicReadByGameId.get(cleanString(game?.id || game?.gameId));
+        return documents.length > 0 || !(publicRead?.status === 'complete' && publicRead.absenceConfirmed);
+      })
+      .map(({ game, documents }) => ({
+        game,
+        documents: documents.map(({ id, data }) => ({
+          id,
+          data: filterTeamDetailDiamondStatDocument(
+            data,
+            getTeamDetailDiamondStatIdsForGame(diamondStatConfigResolution!, game, 'manager-internal', 'player'),
+            managerPlayerAggregateIds,
+            clearManagerPlayerFamilyCoverage
+          )
+        }))
+      }));
+    const aggregate = aggregateCoverageAwareSeasonStats({ legacyStatsByPlayerId, diamondGames: selectedDiamondDocuments });
+    const teamAggregate = aggregateCoverageAwareTeamStats({
+      allowedStatIds: managerTeamStatIds,
+      diamondGames: diamondGames.map((game) => {
+        const gameId = cleanString(game?.id || game?.gameId);
+        const gameTeamStatIds = getTeamDetailDiamondStatIdsForGame(diamondStatConfigResolution!, game, 'manager-internal', 'team');
+        return {
+          game,
+          document: managerTeamDocumentsByGameId?.get(gameId)
+            ? filterTeamDetailDiamondStatDocument(
+                managerTeamDocumentsByGameId.get(gameId)!,
+                gameTeamStatIds,
+                new Set(managerTeamStatIds),
+                clearManagerTeamFamilyCoverage
+              )
+            : null
+        };
+      })
+    });
+    return {
+      participants,
+      ...aggregate,
+      teamStats: teamAggregate.stats,
+      completeTeamStats: teamAggregate.completeStats,
+      teamPresentation: { ...teamAggregate.presentation, statVisibility: 'manager-internal' },
+      projection: {
+        ...aggregate.projection,
+        pending: aggregate.projection.pending || teamAggregate.projection.pending,
+        sourceRevisions: [...new Set([...aggregate.projection.sourceRevisions, ...teamAggregate.projection.sourceRevisions])].sort(
+          (a, b) => a - b
+        ),
+        requestedStatVisibility: 'manager-internal',
+        statVisibility: 'manager-internal',
+        privateStatsStatus: 'complete',
+        privateStatsReason: null,
+        publicStatsStatus: summarizeDiamondPublicStatsStatus(publicDiamondDocuments.map(({ status }) => status))
+      }
+    };
+  }
+
+  const aggregate = aggregateCoverageAwareSeasonStats({
+    legacyStatsByPlayerId,
+    diamondGames: publicDiamondDocuments
+      .filter(({ documents, status, absenceConfirmed }) => documents.length > 0 || !(status === 'complete' && absenceConfirmed))
+      .map(({ game, documents }) => {
+        const gamePlayerStatIds = getTeamDetailDiamondStatIdsForGame(diamondStatConfigResolution!, game, 'public', 'player');
+        return {
+          game,
+          documents: documents.map(({ id, data }) => ({
+            id,
+            data: filterTeamDetailDiamondStatDocument(data, gamePlayerStatIds, publicPlayerAggregateIds, clearPublicPlayerFamilyCoverage)
+          }))
+        };
+      })
+  });
+  const publicTeamAggregateIds = new Set(publicTeamStatIds);
+  const publicTeamDocuments = diamondGames.map((game) => {
+    const gameTeamStatIds = getTeamDetailDiamondStatIdsForGame(diamondStatConfigResolution!, game, 'public', 'team');
+    const resolution = resolveDiamondPublicTeamStatDocument({
+      game,
+      allowedStatIds: [...gameTeamStatIds]
+    });
+    return {
+      game,
+      document:
+        resolution.status === 'complete' && resolution.document
+          ? filterTeamDetailDiamondStatDocument(resolution.document, gameTeamStatIds, publicTeamAggregateIds, clearPublicTeamFamilyCoverage)
+          : null,
+      status: resolution.status
+    };
+  });
+  const teamAggregate = aggregateCoverageAwareTeamStats({
+    allowedStatIds: publicTeamStatIds,
+    diamondGames: publicTeamDocuments
+  });
+  const publicStatsStatus = summarizeDiamondPublicStatsStatus([
+    ...publicDiamondDocuments.map(({ status }) => status),
+    ...publicTeamDocuments.map(({ status }) => status)
+  ]);
+  return {
+    participants,
+    ...aggregate,
+    teamStats: teamAggregate.stats,
+    completeTeamStats: teamAggregate.completeStats,
+    teamPresentation: { ...teamAggregate.presentation, statVisibility: 'public' },
+    projection: {
+      ...aggregate.projection,
+      hasDiamond: true,
+      pending: aggregate.projection.pending || teamAggregate.projection.pending || publicStatsStatus !== 'complete',
+      sourceRevisions: [...new Set([...aggregate.projection.sourceRevisions, ...teamAggregate.projection.sourceRevisions])].sort(
+        (a, b) => a - b
+      ),
+      requestedStatVisibility: requestManagerStats ? 'manager-internal' : 'public',
+      statVisibility: 'public',
+      privateStatsStatus: !requestManagerStats ? 'not-requested' : managerBatch?.status === 'unavailable' ? 'unavailable' : 'partial',
+      privateStatsReason: requestManagerStats ? managerFailureReason || managerBatch?.reason || 'private-read-incomplete' : null,
+      publicStatsStatus
+    }
+  };
+}
+
+function buildCoverageAwareRosterStatisticsTable({
+  players,
+  snapshot,
+  config
+}: {
+  players: TeamDetailPlayer[];
+  snapshot: CoverageAwareSeasonStats;
+  config?: Record<string, any> | null;
+}): Omit<TeamDetailRosterStatisticsTable, 'seasonLabel'> {
+  const visibleDiamondStatCatalog =
+    snapshot.projection.statVisibility === 'manager-internal'
+      ? getManagerDiamondStatCatalog(config, 'player')
+      : getPublicDiamondStatCatalog(config, 'player');
+  const columns = visibleDiamondStatCatalog.map((definition) => ({
+    id: String(definition.id || ''),
+    label: String(definition.label || definition.id || ''),
+    format: definition.format ? String(definition.format) : undefined,
+    precision: Number.isInteger(Number(definition.precision)) ? Number(definition.precision) : undefined
+  }));
+  const visibleTeamStatCatalog =
+    snapshot.projection.statVisibility === 'manager-internal'
+      ? getManagerDiamondStatCatalog(config, 'team')
+      : getPublicDiamondStatCatalog(config, 'team');
+  const teamColumns = visibleTeamStatCatalog.map((definition) => ({
+    id: String(definition.id || ''),
+    label: String(definition.label || definition.id || ''),
+    format: definition.format ? String(definition.format) : undefined,
+    precision: Number.isInteger(Number(definition.precision)) ? Number(definition.precision) : undefined
+  }));
+  const displayPlayers = snapshot.participants.length
+    ? snapshot.participants
+    : players.map((player) => ({
+        ...player,
+        canOpenProfile: canOpenTeamDetailPlayerProfile(player.id)
+      }));
+  return {
+    columns,
+    rows: displayPlayers.map((player) => {
+      const stats = snapshot.statsByPlayerId[player.id] || {};
+      const presentation = snapshot.presentationByPlayerId[player.id] || {
+        isDiamond: true,
+        statCoverage: {},
+        observedStatKeys: [],
+        unavailableStatKeys: columns.map((column) => column.id),
+        projectionPending: snapshot.projection.pending
+      };
+      return {
+        playerId: player.id,
+        playerName: player.name,
+        playerNumber: player.number,
+        canOpenProfile: player.canOpenProfile,
+        values: Object.fromEntries(
+          columns.map((column) => {
+            const definition = visibleDiamondStatCatalog.find((candidate) => candidate.id === column.id) || {};
+            const displayed = getCoverageAwareStatValue(presentation, stats, column.id, definition);
+            const numeric = Number(displayed.value);
+            return [
+              column.id,
+              {
+                value: displayed.available && Number.isFinite(numeric) ? numeric : null,
+                formattedValue: displayed.text,
+                available: displayed.available,
+                observed: displayed.observed,
+                status: displayed.status
+              }
+            ];
+          })
+        )
+      };
+    }),
+    teamStats: snapshot.teamPresentation
+      ? {
+          columns: teamColumns,
+          values: Object.fromEntries(
+            teamColumns.map((column) => {
+              const definition = visibleTeamStatCatalog.find((candidate) => candidate.id === column.id) || {};
+              const displayed = getCoverageAwareStatValue(snapshot.teamPresentation, snapshot.teamStats, column.id, definition);
+              const numeric = Number(displayed.value);
+              return [
+                column.id,
+                {
+                  value: displayed.available && Number.isFinite(numeric) ? numeric : null,
+                  formattedValue: displayed.text,
+                  available: displayed.available,
+                  observed: displayed.observed,
+                  status: displayed.status
+                }
+              ];
+            })
+          ),
+          presentation: snapshot.teamPresentation
+        }
+      : undefined,
+    diamond: snapshot.projection
+  };
+}
+
 export async function loadParentTeamDetail(
   teamId: string,
   user: AuthUser | null,
   options: { includeDeferredData?: boolean } = {}
 ): Promise<TeamDetailModel> {
   const includeDeferredData = options.includeDeferredData === true;
-  const { team: loadedTeam, players: publicPlayers, games, configs } = await loadTeamDetailBaseSnapshot(teamId, { includeGamesAndConfigs: true });
+  const {
+    team: loadedTeam,
+    players: publicPlayers,
+    games,
+    configs
+  } = await loadTeamDetailBaseSnapshot(teamId, { includeGamesAndConfigs: true });
   const team = await recoverAuthoritativeManagedTeam(teamId, user, loadedTeam);
 
   if (!team) throw new Error('Team not found.');
@@ -2036,37 +3072,61 @@ export async function loadParentTeamDetail(
   const players = await loadPrivilegedTeamPlayers(teamId, user, team, publicPlayers);
 
   const accessUser = await hydrateTeamDetailAccessUser(user, teamId, players);
+  const requestManagerStats = hasFullTeamAccess(accessUser, team);
   const linkedPlayerIds = getLinkedPlayerIds(accessUser, teamId, players);
-  const completedGameIds = (Array.isArray(games) ? games : [])
-    .filter(isCompletedGame)
-    .map((game: any) => cleanString(game.id || game.gameId))
-    .filter(Boolean);
+  const normalizedSeasonPlayers = normalizePlayers(players, linkedPlayerIds);
+  const completedGames = (Array.isArray(games) ? games : []).filter(isCompletedGame);
+  const completedGameIds = completedGames.map((game: any) => cleanString(game.id || game.gameId)).filter(Boolean);
+  const seasonStatConfigRead = await resolveTeamDetailSeasonStatConfigWithFreshRetry({
+    teamId,
+    games: completedGames,
+    configs
+  });
+  const seasonStatConfigResolution = seasonStatConfigRead.resolution;
+  const publicTeamStatIds = getPublicDiamondStatCatalog(seasonStatConfigResolution?.publicPresentationConfig || null, 'team').map(
+    ({ id }) => String(id)
+  );
+  const managerTeamStatIds = getManagerDiamondStatCatalog(seasonStatConfigResolution?.managerPresentationConfig || null, 'team').map(
+    ({ id }) => String(id)
+  );
 
-  const [seasonStatsByPlayerId, trackingItems, trackingStatuses, localSponsors, adSponsors] = includeDeferredData
+  const [seasonStatsSnapshot, trackingItems, trackingStatuses, localSponsors, adSponsors] = includeDeferredData
     ? await Promise.all([
-      completedGameIds.length ? Promise.resolve(getAggregatedStatsForGames(teamId, completedGameIds)).catch(() => ({})) : Promise.resolve({}),
-      linkedPlayerIds.length ? Promise.resolve(getPublicTrackingItems(teamId)).catch(() => []) : Promise.resolve([]),
-      linkedPlayerIds.length ? Promise.resolve(getPlayerTrackingStatuses(teamId, linkedPlayerIds)).catch(() => []) : Promise.resolve([]),
-      Promise.resolve(getLocalAttractionSponsors(teamId)).catch(() => []),
-      Promise.resolve(getAdSpaceSponsors(teamId)).catch(() => [])
-    ])
-    : await Promise.all([
-      Promise.resolve({}),
-      Promise.resolve([]),
-      Promise.resolve([]),
-      Promise.resolve([]),
-      Promise.resolve([])
-    ]);
+        completedGameIds.length
+          ? loadCoverageAwareSeasonStats(teamId, completedGames, {
+              requestManagerStats,
+              players: normalizedSeasonPlayers,
+              publicTeamStatIds,
+              managerTeamStatIds,
+              diamondStatConfigResolution: seasonStatConfigResolution
+            }).catch(() => null)
+          : Promise.resolve(null),
+        linkedPlayerIds.length ? Promise.resolve(getPublicTrackingItems(teamId)).catch(() => []) : Promise.resolve([]),
+        linkedPlayerIds.length ? Promise.resolve(getPlayerTrackingStatuses(teamId, linkedPlayerIds)).catch(() => []) : Promise.resolve([]),
+        Promise.resolve(getLocalAttractionSponsors(teamId)).catch(() => []),
+        Promise.resolve(getAdSpaceSponsors(teamId)).catch(() => [])
+      ])
+    : await Promise.all([Promise.resolve(null), Promise.resolve([]), Promise.resolve([]), Promise.resolve([]), Promise.resolve([])]);
+  const seasonStatsByPlayerId = seasonStatsSnapshot?.projection.hasDiamond
+    ? seasonStatsSnapshot.completeStatsByPlayerId
+    : seasonStatsSnapshot?.statsByPlayerId || {};
+  const completedGamesHaveDiamond = completedGames.some((game) => isDiamondV2Game(game));
+  const detailStatConfigs = completedGamesHaveDiamond
+    ? [
+        seasonStatsSnapshot?.projection.statVisibility === 'manager-internal'
+          ? seasonStatConfigResolution?.managerPresentationConfig
+          : seasonStatConfigResolution?.publicPresentationConfig
+      ].filter((config): config is Record<string, any> => Boolean(config))
+    : configs;
 
-  const overviewSchedule = await loadTeamDetailOverviewSchedule(teamId, cleanString(team?.name) || teamId, accessUser)
-    .catch((error) => {
-      logger.warn('Unable to merge imported calendar events into team overview.', {
-        operation: 'team-overview-schedule-load',
-        teamId,
-        error
-      });
-      return null;
+  const overviewSchedule = await loadTeamDetailOverviewSchedule(teamId, cleanString(team?.name) || teamId, accessUser).catch((error) => {
+    logger.warn('Unable to merge imported calendar events into team overview.', {
+      operation: 'team-overview-schedule-load',
+      teamId,
+      error
     });
+    return null;
+  });
 
   return buildTeamDetailModel({
     teamId,
@@ -2074,6 +3134,13 @@ export async function loadParentTeamDetail(
     players,
     games,
     configs,
+    leaderboardConfigs: detailStatConfigs,
+    leaderboardPlayers:
+      seasonStatsSnapshot?.participants ||
+      normalizedSeasonPlayers.map((player) => ({
+        ...player,
+        canOpenProfile: canOpenTeamDetailPlayerProfile(player.id)
+      })),
     scheduleEvents: accessUser?.uid && overviewSchedule ? overviewSchedule : undefined,
     user: accessUser,
     linkedPlayerIds,
@@ -2088,11 +3155,7 @@ export async function loadParentTeamDetail(
 
 async function loadTeamDetailOverviewSchedule(teamId: string, teamName: string, user: AuthUser | null) {
   const { loadTeamOverviewSchedule } = await import('./scheduleService');
-  return withTimeout(
-    loadTeamOverviewSchedule(teamId, teamName, user),
-    'Optional team calendar',
-    optionalCalendarTimeoutMs
-  );
+  return withTimeout(loadTeamOverviewSchedule(teamId, teamName, user), 'Optional team calendar', optionalCalendarTimeoutMs);
 }
 
 export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUser | null): Promise<TeamDetailModel> {
@@ -2105,15 +3168,14 @@ export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUs
 
   const accessUser = await hydrateTeamDetailAccessUser(user, teamId, players);
   const linkedPlayerIds = getLinkedPlayerIds(accessUser, teamId, players);
-  const overviewSchedule = await loadTeamDetailOverviewSchedule(teamId, cleanString(team?.name) || teamId, accessUser)
-    .catch((error) => {
-      logger.warn('Unable to merge imported calendar events into team overview.', {
-        operation: 'team-overview-schedule-load',
-        teamId,
-        error
-      });
-      return null;
+  const overviewSchedule = await loadTeamDetailOverviewSchedule(teamId, cleanString(team?.name) || teamId, accessUser).catch((error) => {
+    logger.warn('Unable to merge imported calendar events into team overview.', {
+      operation: 'team-overview-schedule-load',
+      teamId,
+      error
     });
+    return null;
+  });
 
   return buildTeamDetailModel({
     teamId,
@@ -2136,6 +3198,14 @@ export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUs
 export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): Promise<TeamDetailInsightsPayload> {
   const normalizedTeamId = cleanString(teamId);
   const cacheKey = `${normalizedTeamId}::${cleanString(user?.uid) || 'anonymous'}`;
+  const cachedBase = teamDetailBaseSnapshotCache.get(normalizedTeamId);
+  const managerPrivateRequest = hasFullTeamAccess(user, cachedBase?.team);
+  if (managerPrivateRequest) {
+    // Authoritative game heads and current role must be reloaded for every
+    // internal-stat request; corrections and revocations cannot share cache.
+    teamDetailBaseSnapshotCache.delete(normalizedTeamId);
+    teamDetailInsightsCache.delete(cacheKey);
+  }
   const cached = teamDetailInsightsCache.get(cacheKey);
   if (cached) return cached;
 
@@ -2144,28 +3214,78 @@ export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): P
 
     if (!team) throw new Error('Team not found.');
 
+    const requestManagerStats = hasFullTeamAccess(user, team);
+
     const linkedPlayerIds = getLinkedPlayerIds(user, normalizedTeamId, players);
     const seasonLabels = listSeasonLabels(games);
     const currentYearLabel = String(new Date().getFullYear());
-    const seasonLabel = seasonLabels.includes(currentYearLabel) ? currentYearLabel : (seasonLabels[0] || currentYearLabel);
+    const seasonLabel = seasonLabels.includes(currentYearLabel) ? currentYearLabel : seasonLabels[0] || currentYearLabel;
     const normalizedPlayers = normalizePlayers(players, linkedPlayerIds);
-    const completedGamesBySeason = new Map<string, string[]>();
-    const completedGameIds: string[] = [];
+    const completedGamesBySeason = new Map<string, any[]>();
+    const completedGames: any[] = [];
     (Array.isArray(games) ? games : []).filter(isCompletedGame).forEach((game: any) => {
       const label = getAnalyticsSeasonLabel(game, toDate(game?.date));
-      const ids = completedGamesBySeason.get(label) || [];
+      const seasonGames = completedGamesBySeason.get(label) || [];
       const id = cleanString(game.id || game.gameId);
       if (id) {
-        ids.push(id);
-        completedGameIds.push(id);
+        seasonGames.push(game);
+        completedGames.push(game);
       }
-      completedGamesBySeason.set(label, ids);
+      completedGamesBySeason.set(label, seasonGames);
     });
+    const completedGamesHaveDiamond = completedGames.some((game) => isDiamondV2Game(game));
+    const aggregateStatConfigRead = await resolveTeamDetailSeasonStatConfigWithFreshRetry({
+      teamId: normalizedTeamId,
+      games: completedGames,
+      configs
+    });
+    const analyticsConfigs = aggregateStatConfigRead.configs;
+    const defaultRosterConfig =
+      selectAnalyticsConfig(analyticsConfigs, team?.sport) || (Array.isArray(analyticsConfigs) ? analyticsConfigs[0] : null);
 
     const seasonEntries = Array.from(completedGamesBySeason.entries());
-    const seasonStatsResultsPromise = Promise.all(seasonEntries.map(async ([label, gameIds]) => {
+    const seasonStatsResultsPromise = mapInTeamStatsReadBatches(seasonEntries, seasonStatsReadConcurrency, async ([label, seasonGames]) => {
       try {
-        return { label, stats: gameIds.length ? await Promise.resolve(getAggregatedStatsForGames(normalizedTeamId, gameIds)) : {}, unavailable: false };
+        const statConfigResolution = resolveTeamDetailSeasonStatConfig({
+          teamId: normalizedTeamId,
+          games: seasonGames,
+          configs: analyticsConfigs
+        });
+        const seasonHasDiamond = seasonGames.some((game) => isDiamondV2Game(game));
+        if (seasonHasDiamond && !statConfigResolution) {
+          throw new Error(diamondStatConfigUnavailableMessage);
+        }
+        const publicSeasonStatConfig = statConfigResolution?.publicPresentationConfig || defaultRosterConfig;
+        const managerSeasonStatConfig = statConfigResolution?.managerPresentationConfig || defaultRosterConfig;
+        const publicTeamStatIds = getPublicDiamondStatCatalog(publicSeasonStatConfig, 'team').map(({ id }) => String(id));
+        const managerTeamStatIds = getManagerDiamondStatCatalog(managerSeasonStatConfig, 'team').map(({ id }) => String(id));
+        const snapshot = seasonGames.length
+          ? await loadCoverageAwareSeasonStats(normalizedTeamId, seasonGames, {
+              requestManagerStats,
+              players: normalizedPlayers,
+              publicTeamStatIds,
+              managerTeamStatIds,
+              diamondStatConfigResolution: statConfigResolution
+            })
+          : {
+              participants: normalizedPlayers.map((player) => ({
+                ...player,
+                canOpenProfile: canOpenTeamDetailPlayerProfile(player.id)
+              })),
+              statsByPlayerId: {},
+              completeStatsByPlayerId: {},
+              presentationByPlayerId: {},
+              teamStats: {},
+              completeTeamStats: {},
+              teamPresentation: null,
+              projection: { hasDiamond: false, pending: false, sourceRevisions: [] }
+            };
+        return {
+          label,
+          snapshot,
+          config: snapshot.projection.statVisibility === 'manager-internal' ? managerSeasonStatConfig : publicSeasonStatConfig,
+          unavailable: false
+        };
       } catch (error) {
         logger.warn('Unable to load roster statistics for season.', {
           operation: 'team-roster-season-statistics-load',
@@ -2173,47 +3293,187 @@ export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): P
           seasonLabel: label,
           error
         });
-        return { label, stats: {}, unavailable: true };
+        return {
+          label,
+          snapshot: {
+            participants: normalizedPlayers.map((player) => ({
+              ...player,
+              canOpenProfile: canOpenTeamDetailPlayerProfile(player.id)
+            })),
+            statsByPlayerId: {},
+            completeStatsByPlayerId: {},
+            presentationByPlayerId: {},
+            teamStats: {},
+            completeTeamStats: {},
+            teamPresentation: null,
+            projection: {
+              hasDiamond: seasonGames.some((game) => isDiamondV2Game(game)),
+              pending: seasonGames.some((game) => isDiamondV2Game(game)),
+              sourceRevisions: [],
+              requestedStatVisibility: requestManagerStats ? ('manager-internal' as const) : ('public' as const),
+              statVisibility: 'public' as const,
+              privateStatsStatus: requestManagerStats ? ('unavailable' as const) : ('not-requested' as const),
+              privateStatsReason: requestManagerStats ? 'season-stats-load-failed' : null,
+              publicStatsStatus: 'unavailable' as const
+            }
+          },
+          config: null,
+          unavailable: true
+        };
       }
-    }));
-    const leaderboardStatsPromise = seasonEntries.length === 1
-      ? seasonStatsResultsPromise.then(([result]) => result?.stats || {})
-      : completedGameIds.length
-        ? Promise.resolve(getAggregatedStatsForGames(normalizedTeamId, completedGameIds)).catch(() => ({}))
-        : Promise.resolve({});
-    const [leaderboardStatsByPlayerId, seasonStatsResults] = await Promise.all([
-      leaderboardStatsPromise,
-      seasonStatsResultsPromise
-    ]);
-    const seasonStatsBySeason = Object.fromEntries(seasonStatsResults.map(({ label, stats }) => [label, stats]));
+    });
+    const leaderboardConfigResolution = aggregateStatConfigRead.resolution;
+    const leaderboardPublicStatConfig = leaderboardConfigResolution?.publicPresentationConfig || defaultRosterConfig;
+    const leaderboardManagerStatConfig = leaderboardConfigResolution?.managerPresentationConfig || defaultRosterConfig;
+    const leaderboardPublicTeamStatIds = getPublicDiamondStatCatalog(leaderboardPublicStatConfig, 'team').map(({ id }) => String(id));
+    const leaderboardManagerTeamStatIds = getManagerDiamondStatCatalog(leaderboardManagerStatConfig, 'team').map(({ id }) => String(id));
+    const leaderboardStatsPromise =
+      seasonEntries.length === 1
+        ? seasonStatsResultsPromise.then(([result]) =>
+            result?.snapshot.projection.hasDiamond
+              ? {
+                  statsByPlayerId: result.snapshot.completeStatsByPlayerId,
+                  participants: result.snapshot.participants,
+                  diamond: true,
+                  statVisibility: result.snapshot.projection.statVisibility || 'public',
+                  config: result.config
+                }
+              : {
+                  statsByPlayerId: result?.snapshot.statsByPlayerId || {},
+                  participants: result?.snapshot.participants || normalizedPlayers,
+                  diamond: false,
+                  statVisibility: 'public' as const,
+                  config: result?.config || defaultRosterConfig
+                }
+          )
+        : completedGames.length
+          ? completedGamesHaveDiamond && !leaderboardConfigResolution
+            ? Promise.resolve({
+                statsByPlayerId: {},
+                participants: normalizedPlayers,
+                diamond: true,
+                statVisibility: 'public' as const,
+                config: null
+              })
+            : loadCoverageAwareSeasonStats(normalizedTeamId, completedGames, {
+                requestManagerStats,
+                players: normalizedPlayers,
+                publicTeamStatIds: leaderboardPublicTeamStatIds,
+                managerTeamStatIds: leaderboardManagerTeamStatIds,
+                diamondStatConfigResolution: leaderboardConfigResolution
+              })
+                .then((snapshot) =>
+                  snapshot.projection.hasDiamond
+                    ? {
+                        statsByPlayerId: snapshot.completeStatsByPlayerId,
+                        participants: snapshot.participants,
+                        diamond: true,
+                        statVisibility: snapshot.projection.statVisibility || 'public',
+                        config:
+                          snapshot.projection.statVisibility === 'manager-internal'
+                            ? leaderboardConfigResolution?.managerPresentationConfig || null
+                            : leaderboardConfigResolution?.publicPresentationConfig || null
+                      }
+                    : {
+                        statsByPlayerId: snapshot.statsByPlayerId,
+                        participants: snapshot.participants,
+                        diamond: false,
+                        statVisibility: 'public' as const,
+                        config: defaultRosterConfig
+                      }
+                )
+                .catch(() => ({
+                  statsByPlayerId: {},
+                  participants: normalizedPlayers,
+                  diamond: completedGamesHaveDiamond,
+                  statVisibility: 'public' as const,
+                  config: completedGamesHaveDiamond ? null : defaultRosterConfig
+                }))
+          : Promise.resolve({
+              statsByPlayerId: {},
+              participants: normalizedPlayers,
+              diamond: false,
+              statVisibility: 'public' as const,
+              config: defaultRosterConfig
+            });
+    const [leaderboardStatsResult, seasonStatsResults] = await Promise.all([leaderboardStatsPromise, seasonStatsResultsPromise]);
+    const seasonStatsBySeason = Object.fromEntries(seasonStatsResults.map(({ label, snapshot }) => [label, snapshot]));
+    const seasonConfigBySeason = Object.fromEntries(seasonStatsResults.map(({ label, config }) => [label, config]));
     const unavailableSeasons = seasonStatsResults.filter(({ unavailable }) => unavailable).map(({ label }) => label);
     const unavailableSeasonSet = new Set(unavailableSeasons);
-    const rosterConfig = selectAnalyticsConfig(configs, team?.sport) || (Array.isArray(configs) ? configs[0] : null);
+    const leaderboardConfigs = leaderboardStatsResult.diamond
+      ? leaderboardStatsResult.config
+        ? [
+            {
+              ...leaderboardStatsResult.config,
+              statDefinitions:
+                leaderboardStatsResult.statVisibility === 'manager-internal'
+                  ? getManagerDiamondStatCatalog(leaderboardStatsResult.config, 'player')
+                  : getPublicDiamondStatCatalog(leaderboardStatsResult.config, 'player')
+            }
+          ]
+        : []
+      : configs;
     const rosterStatistics = {
       seasonLabel,
       availableSeasons: seasonLabels,
       unavailableSeasons,
-      seasons: seasonLabels.map((label: string) => unavailableSeasonSet.has(label)
-        ? { seasonLabel: label, columns: [], rows: [] }
-        : {
-          seasonLabel: label,
-          ...buildRosterStatisticsTable({ config: rosterConfig || {}, players: normalizedPlayers, seasonStatsByPlayerId: seasonStatsBySeason[label] || {} })
-        })
+      seasons: seasonLabels.map((label: string) =>
+        unavailableSeasonSet.has(label)
+          ? { seasonLabel: label, columns: [], rows: [] }
+          : {
+              seasonLabel: label,
+              ...(seasonStatsBySeason[label]?.projection?.hasDiamond
+                ? buildCoverageAwareRosterStatisticsTable({
+                    players: normalizedPlayers,
+                    snapshot: seasonStatsBySeason[label],
+                    config: seasonConfigBySeason[label] || null
+                  })
+                : buildRosterStatisticsTable({
+                    config: seasonConfigBySeason[label] || defaultRosterConfig || {},
+                    players: normalizedPlayers,
+                    seasonStatsByPlayerId: seasonStatsBySeason[label]?.statsByPlayerId || {}
+                  }))
+            }
+      )
     };
 
     const [trackingItems, trackingStatuses] = await Promise.all([
       linkedPlayerIds.length ? Promise.resolve(getPublicTrackingItems(normalizedTeamId)).catch(() => []) : Promise.resolve([]),
-      linkedPlayerIds.length ? Promise.resolve(getPlayerTrackingStatuses(normalizedTeamId, linkedPlayerIds)).catch(() => []) : Promise.resolve([])
+      linkedPlayerIds.length
+        ? Promise.resolve(getPlayerTrackingStatuses(normalizedTeamId, linkedPlayerIds)).catch(() => [])
+        : Promise.resolve([])
     ]);
 
     return {
-      leaderboards: buildLeaderboards(configs, normalizedPlayers, leaderboardStatsByPlayerId, team?.sport),
+      leaderboards: buildLeaderboards(
+        leaderboardConfigs,
+        leaderboardStatsResult.participants,
+        leaderboardStatsResult.statsByPlayerId,
+        team?.sport,
+        { omitMissingValues: leaderboardStatsResult.diamond, teamGames: completedGames.length }
+      ).map((leaderboard: TeamDetailLeaderboard) => ({ ...leaderboard, statVisibility: leaderboardStatsResult.statVisibility })),
       rosterStatistics,
       trackingSummaries: buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses),
       teamAnalytics: buildTeamAnalytics(games, seasonLabel)
     };
   })();
   teamDetailInsightsCache.set(cacheKey, request);
+  request
+    .then((value) => {
+      const containsPrivateRequest = value.rosterStatistics.seasons.some(
+        (season: TeamDetailRosterStatisticsTable) => season.diamond?.requestedStatVisibility === 'manager-internal'
+      );
+      const containsIncompletePublicRead =
+        value.rosterStatistics.unavailableSeasons.length > 0 ||
+        value.rosterStatistics.seasons.some((season: TeamDetailRosterStatisticsTable) =>
+          ['partial', 'unavailable'].includes(String(season.diamond?.publicStatsStatus || ''))
+        );
+      if ((containsPrivateRequest || containsIncompletePublicRead) && teamDetailInsightsCache.get(cacheKey) === request) {
+        teamDetailInsightsCache.delete(cacheKey);
+      }
+    })
+    .catch(() => undefined);
   request.catch(() => {
     if (teamDetailInsightsCache.get(cacheKey) === request) teamDetailInsightsCache.delete(cacheKey);
   });
@@ -2293,12 +3553,14 @@ export async function loadTeamTrackingAdmin(teamId: string, user: AuthUser | nul
   const trackingStatusesByItemId = new Map<string, any[]>();
 
   if (trackingItems.length) {
-    await Promise.all(trackingItems.map(async (item) => {
-      const statuses = (await loadTeamTrackingStatuses(normalizedTeamId, item.id))
-        .map((statusDoc) => normalizeTrackingStatus(statusDoc))
-        .filter((status) => cleanString((status as any)?.trackingItemId || (status as any)?.itemId) === item.id);
-      trackingStatusesByItemId.set(item.id, statuses);
-    }));
+    await Promise.all(
+      trackingItems.map(async (item) => {
+        const statuses = (await loadTeamTrackingStatuses(normalizedTeamId, item.id))
+          .map((statusDoc) => normalizeTrackingStatus(statusDoc))
+          .filter((status) => cleanString((status as any)?.trackingItemId || (status as any)?.itemId) === item.id);
+        trackingStatusesByItemId.set(item.id, statuses);
+      })
+    );
   }
 
   return trackingItems.map((item) => buildTeamTrackingAdminItem(item, activePlayers, trackingStatusesByItemId.get(item.id) || []));
@@ -2390,6 +3652,8 @@ export function buildTeamDetailModel({
   games = [],
   scheduleEvents,
   configs = [],
+  leaderboardConfigs,
+  leaderboardPlayers,
   user = null,
   linkedPlayerIds = getLinkedPlayerIds(user, teamId, players),
   seasonStatsByPlayerId = {},
@@ -2407,6 +3671,8 @@ export function buildTeamDetailModel({
   games?: any[];
   scheduleEvents?: ParentScheduleEvent[];
   configs?: any[];
+  leaderboardConfigs?: any[];
+  leaderboardPlayers?: TeamDetailSeasonStatParticipant[];
   user?: AuthUser | null;
   linkedPlayerIds?: string[];
   seasonStatsByPlayerId?: Record<string, Record<string, number>>;
@@ -2421,25 +3687,35 @@ export function buildTeamDetailModel({
   const canManageTeam = hasFullTeamAccess(user, team);
   const canUsePrivateCalendarSync = isEligiblePrivateCalendarSubscriberForApp(user, teamId, team);
   const normalizedPlayers = normalizePlayers(players, linkedPlayerIds, { includeParentContacts: canManageTeam });
-  const normalizedInactivePlayers = normalizePlayers(players, linkedPlayerIds, { inactiveOnly: true, includeParentContacts: canManageTeam });
+  const normalizedInactivePlayers = normalizePlayers(players, linkedPlayerIds, {
+    inactiveOnly: true,
+    includeParentContacts: canManageTeam
+  });
   const normalizedStatTrackerConfigs = buildTeamStatTrackerConfigs(configs, games);
-  const normalizedEvents = normalizeEvents(
-    mergeTeamScheduleSources(games, scheduleEvents),
-    normalizedStatTrackerConfigs.byId
-  );
+  const normalizedEvents = normalizeEvents(mergeTeamScheduleSources(games, scheduleEvents), normalizedStatTrackerConfigs.byId);
   const seasonLabels = listSeasonLabels(games);
   const currentYearLabel = String(new Date().getFullYear());
-  const seasonLabel = seasonLabels.includes(currentYearLabel) ? currentYearLabel : (seasonLabels[0] || currentYearLabel);
+  const seasonLabel = seasonLabels.includes(currentYearLabel) ? currentYearLabel : seasonLabels[0] || currentYearLabel;
   const record = calculateSeasonRecord(games, { seasonLabel });
   const completedGames = games.filter(isCompletedGame);
   const standings = buildStandings(team, games);
-  const leaderboards = includeInsights ? buildLeaderboards(configs, normalizedPlayers, seasonStatsByPlayerId, team?.sport) : [];
-  const trackingSummaries = includeInsights ? buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses) : [];
+  const leaderboards = includeInsights
+    ? buildLeaderboards(
+        leaderboardConfigs === undefined ? configs : leaderboardConfigs,
+        leaderboardPlayers || normalizedPlayers,
+        seasonStatsByPlayerId,
+        team?.sport
+      )
+    : [];
+  const trackingSummaries = includeInsights
+    ? buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses)
+    : [];
   const teamAnalytics = buildTeamAnalytics(games, seasonLabel);
   const canManageAdmins = canManageTeamAdmins(user, team);
-  const staffPermissions = canManageTeam && includeStaffPermissions
-    ? buildTeamStaffPermissionsSummary({ teamId, team, players, pendingAdminInvites, confirmedTeamMembers })
-    : null;
+  const staffPermissions =
+    canManageTeam && includeStaffPermissions
+      ? buildTeamStaffPermissionsSummary({ teamId, team, players, pendingAdminInvites, confirmedTeamMembers })
+      : null;
 
   return {
     team: {
@@ -2496,23 +3772,13 @@ export function buildTeamDetailModel({
 }
 
 function normalizeExactPrivateCalendarId(value: unknown) {
-  if (
-    typeof value !== 'string'
-    || value !== value.trim()
-    || !value
-    || value.length > 128
-    || value.includes('/')
-  ) {
+  if (typeof value !== 'string' || value !== value.trim() || !value || value.length > 128 || value.includes('/')) {
     return '';
   }
   return value;
 }
 
-export function isEligiblePrivateCalendarSubscriberForApp(
-  user: AuthUser | null,
-  teamId: string,
-  team: Record<string, any>
-) {
+export function isEligiblePrivateCalendarSubscriberForApp(user: AuthUser | null, teamId: string, team: Record<string, any>) {
   // This only keeps guaranteed-denial controls out of the UI. The callable
   // remains authoritative for fresh Auth, profile, and deletion-request state.
   const uid = normalizeExactPrivateCalendarId(user?.uid);
@@ -2527,15 +3793,10 @@ export function isEligiblePrivateCalendarSubscriberForApp(
 
   const currentAuthEmail = cleanString(user?.email).toLowerCase();
   const hasVerifiedAuthEmail = Boolean(currentAuthEmail && user?.emailVerified === true);
-  const legacyOwnerEmails = [...new Set([team?.ownerEmail, team?.ownerEmailLower]
-    .map((value) => cleanString(value).toLowerCase())
-    .filter(Boolean))];
-  if (
-    hasEmptyLegacyOwnerId
-    && hasVerifiedAuthEmail
-    && legacyOwnerEmails.length === 1
-    && legacyOwnerEmails[0] === currentAuthEmail
-  ) {
+  const legacyOwnerEmails = [
+    ...new Set([team?.ownerEmail, team?.ownerEmailLower].map((value) => cleanString(value).toLowerCase()).filter(Boolean))
+  ];
+  if (hasEmptyLegacyOwnerId && hasVerifiedAuthEmail && legacyOwnerEmails.length === 1 && legacyOwnerEmails[0] === currentAuthEmail) {
     return true;
   }
   if (hasVerifiedAuthEmail && normalizeAdminEmailList(team?.adminEmails).includes(currentAuthEmail)) {
@@ -2558,7 +3819,8 @@ export function buildRosterParentInviteSummaries({
   const normalizedTeamId = cleanString(teamId);
   const acceptedCounts = new Map<string, number>();
   const acceptedParentKeysByPlayerId = new Map<string, Set<string>>();
-  const getAcceptedParentKey = (contact: any) => cleanString(contact?.userId || contact?.uid || contact?.id || contact?.email).toLowerCase();
+  const getAcceptedParentKey = (contact: any) =>
+    cleanString(contact?.userId || contact?.uid || contact?.id || contact?.email).toLowerCase();
   (Array.isArray(players) ? players : []).forEach((player) => {
     const playerId = cleanString(player?.id || player?.playerId);
     if (!playerId) return;
@@ -2599,9 +3861,9 @@ export function buildRosterParentInviteSummaries({
     .filter((player) => cleanString(player?.id || player?.playerId))
     .map((player) => {
       const playerId = cleanString(player?.id || player?.playerId);
-      const pendingInvites = (pendingInvitesByPlayerId.get(playerId) || []).slice().sort((a, b) => (
-        (getExpirationTime(b?.createdAt) || 0) - (getExpirationTime(a?.createdAt) || 0)
-      ));
+      const pendingInvites = (pendingInvitesByPlayerId.get(playerId) || [])
+        .slice()
+        .sort((a, b) => (getExpirationTime(b?.createdAt) || 0) - (getExpirationTime(a?.createdAt) || 0));
       const acceptedParentCount = acceptedCounts.get(playerId) || 0;
       const pendingInviteCount = pendingInvites.length;
 
@@ -2666,8 +3928,9 @@ function normalizeTeamScheduleNotifications(settings: any): TeamScheduleNotifica
     enabled: normalized.enabled,
     reminderHours,
     delivery: 'team_chat',
-    hasExplicitReminderHours: Object.prototype.hasOwnProperty.call(settings || {}, 'reminderHours')
-      && [24, 48, 72].includes(Number.parseInt(settings?.reminderHours, 10)),
+    hasExplicitReminderHours:
+      Object.prototype.hasOwnProperty.call(settings || {}, 'reminderHours') &&
+      [24, 48, 72].includes(Number.parseInt(settings?.reminderHours, 10)),
     summary: describeScheduleReminderWindow(settings || {})
   };
 }
@@ -2701,19 +3964,24 @@ function normalizeTeamTrackingItemDraft(input: TeamTrackingItemForAppInput) {
 }
 
 function normalizeTeamTrackingItem(item: any): Omit<TeamTrackingAdminItem, 'playerStatuses' | 'completionSummary'> {
-  const status: 'active' | 'archived' = item?.status === 'archived' || item?.archived === true || item?.active === false ? 'archived' : 'active';
+  const status: 'active' | 'archived' =
+    item?.status === 'archived' || item?.archived === true || item?.active === false ? 'archived' : 'active';
   return {
     id: cleanString(item?.id),
     name: cleanString(item?.name || item?.title || item?.label),
     description: cleanString(item?.description || item?.note),
-    visibility: item?.visibility === 'public' ? 'public' as const : 'private' as const,
+    visibility: item?.visibility === 'public' ? ('public' as const) : ('private' as const),
     status,
     active: status === 'active',
     archived: status === 'archived'
   };
 }
 
-function buildTeamTrackingAdminItem(item: ReturnType<typeof normalizeTeamTrackingItem>, players: TeamDetailPlayer[], statuses: any[] = []): TeamTrackingAdminItem {
+function buildTeamTrackingAdminItem(
+  item: ReturnType<typeof normalizeTeamTrackingItem>,
+  players: TeamDetailPlayer[],
+  statuses: any[] = []
+): TeamTrackingAdminItem {
   const statusByPlayerId = new Map<string, any>();
   (Array.isArray(statuses) ? statuses : []).forEach((status) => {
     const playerId = cleanString(status?.playerId || status?.id);
@@ -2738,11 +4006,15 @@ function buildTeamTrackingAdminItem(item: ReturnType<typeof normalizeTeamTrackin
   };
 }
 
-function normalizePlayers(players: any[], linkedPlayerIds: string[], options: { inactiveOnly?: boolean; includeParentContacts?: boolean } = {}): TeamDetailPlayer[] {
+function normalizePlayers(
+  players: any[],
+  linkedPlayerIds: string[],
+  options: { inactiveOnly?: boolean; includeParentContacts?: boolean } = {}
+): TeamDetailPlayer[] {
   const linked = new Set(linkedPlayerIds);
   const inactiveOnly = options.inactiveOnly === true;
   return (Array.isArray(players) ? players : [])
-    .filter((player) => inactiveOnly ? player?.active === false : player?.active !== false)
+    .filter((player) => (inactiveOnly ? player?.active === false : player?.active !== false))
     .map((player) => normalizePlayer(player, linked, options.includeParentContacts === true))
     .filter((player) => player.id)
     .sort((a, b) => sortByNumberThenName(a, b));
@@ -2756,7 +4028,9 @@ function normalizePlayer(player: any, linked: Set<string>, includeParentContacts
     number: cleanString(player?.number),
     photoUrl: getFirstUrl(player?.photoUrl, player?.imageUrl, player?.headshotUrl),
     photoPath: cleanString(player?.photoPath) || null,
-    position: cleanString(player?.position || player?.primaryPosition || player?.profile?.customFields?.position || player?.customFields?.position),
+    position: cleanString(
+      player?.position || player?.primaryPosition || player?.profile?.customFields?.position || player?.customFields?.position
+    ),
     ...(includeParentContacts ? { ageClassification: deriveAgeClassification(player) || undefined } : {}),
     isLinked: linked.has(id),
     active: player?.active !== false
@@ -2771,10 +4045,15 @@ function normalizePlayer(player: any, linked: Set<string>, includeParentContacts
 }
 
 export function deriveAgeClassification(player: any = {}): string {
-  const publicSources = [player, player?.rosterFieldValues, player?.customFields, player?.profile?.rosterFields, player?.profile?.customFields];
-  const privateFields = player?.privateProfileRosterFields && typeof player.privateProfileRosterFields === 'object'
-    ? player.privateProfileRosterFields
-    : {};
+  const publicSources = [
+    player,
+    player?.rosterFieldValues,
+    player?.customFields,
+    player?.profile?.rosterFields,
+    player?.profile?.customFields
+  ];
+  const privateFields =
+    player?.privateProfileRosterFields && typeof player.privateProfileRosterFields === 'object' ? player.privateProfileRosterFields : {};
   const readValue = (keys: string[], allowFullDate = false) => {
     for (const source of [...publicSources, privateFields]) {
       if (!source || typeof source !== 'object') continue;
@@ -2796,7 +4075,13 @@ export function deriveAgeClassification(player: any = {}): string {
   return derivedBirthYear ? `Birth year ${derivedBirthYear}` : '';
 }
 
-function buildPermissionGrantTargets(team: Record<string, any>, players: any[], permissionKey: string, confirmedTeamMembers: any[] = [], teamId = ''): TeamScorekeeperGrantTarget[] {
+function buildPermissionGrantTargets(
+  team: Record<string, any>,
+  players: any[],
+  permissionKey: string,
+  confirmedTeamMembers: any[] = [],
+  teamId = ''
+): TeamScorekeeperGrantTarget[] {
   const selectedPermissionIds = getSelectedPermissionIds(team, permissionKey);
   const targetsByUserId = new Map<string, Omit<TeamScorekeeperGrantTarget, 'isGranted'>>();
 
@@ -2858,9 +4143,7 @@ function getPlayerLinkedUserIds(player: any) {
 function getSelectedPermissionIds(team: Record<string, any>, kind: string) {
   const permission = team?.teamPermissions?.[kind] || {};
   if (permission.mode !== 'selected') return new Set<string>();
-  return new Set((Array.isArray(permission.memberIds) ? permission.memberIds : [])
-    .map(cleanString)
-    .filter(Boolean));
+  return new Set((Array.isArray(permission.memberIds) ? permission.memberIds : []).map(cleanString).filter(Boolean));
 }
 
 function buildTeamStatTrackerConfigs(configs: any[], games: any[]) {
@@ -2905,8 +4188,8 @@ function normalizeTeamStatTrackerConfig(config: any): TeamDetailStatTrackerConfi
     normalized.columns.length
       ? normalized.columns
       : (normalized.statDefinitions || [])
-        .filter((definition: any) => !definition?.formula)
-        .map((definition: any) => cleanString(definition?.acronym || definition?.label || definition?.id))
+          .filter((definition: any) => !definition?.formula)
+          .map((definition: any) => cleanString(definition?.acronym || definition?.label || definition?.id))
   );
   const baseType = cleanString(config?.baseType) || 'Custom';
 
@@ -2918,20 +4201,23 @@ function normalizeTeamStatTrackerConfig(config: any): TeamDetailStatTrackerConfi
     columnCount: columnNames.length,
     columnNames,
     columns: normalized.columns || [],
-    statDefinitions: Array.isArray(normalized.statDefinitions) ? normalized.statDefinitions.map((definition: Record<string, unknown>) => ({ ...definition })) : [],
+    statDefinitions: Array.isArray(normalized.statDefinitions)
+      ? normalized.statDefinitions.map((definition: Record<string, unknown>) => ({ ...definition }))
+      : [],
     assignedUpcomingGames: []
   };
 }
 
 function extractStatColumnNames(columns: any) {
-  return dedupeStrings((Array.isArray(columns) ? columns : [])
-    .map((column) => {
+  return dedupeStrings(
+    (Array.isArray(columns) ? columns : []).map((column) => {
       if (typeof column === 'string') return cleanString(column);
       if (column && typeof column === 'object') {
         return cleanString(column.acronym || column.key || column.id || column.label || column.name);
       }
       return '';
-    }));
+    })
+  );
 }
 
 function dedupeStrings(values: string[]) {
@@ -2979,7 +4265,7 @@ function normalizeEvents(games: any[], configById: Map<string, TeamDetailStatTra
         sourceLabel: cleanString(game?.sourceLabel) || null,
         statTrackerConfigId,
         statTrackerConfigLabel: statTrackerConfigId
-          ? (matchedConfig?.name || `Missing config (${statTrackerConfigId})`)
+          ? matchedConfig?.name || `Missing config (${statTrackerConfigId})`
           : 'No config assigned',
         statTrackerConfigBaseType: matchedConfig?.baseType || '',
         statTrackerConfigExists: Boolean(matchedConfig),
@@ -2993,7 +4279,11 @@ function normalizeEvents(games: any[], configById: Map<string, TeamDetailStatTra
       .filter((event) => !event.isCancelled && event.status.toLowerCase() !== 'completed' && isInUpcomingWindow(event.date))
       .sort((a, b) => a.date.getTime() - b.date.getTime()),
     recent: events
-      .filter((event) => event.status.toLowerCase() === 'completed' || (event.homeScore !== null && event.awayScore !== null && event.date.getTime() < Date.now()))
+      .filter(
+        (event) =>
+          event.status.toLowerCase() === 'completed' ||
+          (event.homeScore !== null && event.awayScore !== null && event.date.getTime() < Date.now())
+      )
       .sort((a, b) => b.date.getTime() - a.date.getTime())
   };
 }
@@ -3003,9 +4293,7 @@ function mergeTeamScheduleSources(games: any[], scheduleEvents?: ParentScheduleE
 
   const dbGames = Array.isArray(games) ? games : [];
   const dbGamesById = new Map(
-    dbGames
-      .map((game) => [cleanString(game?.id || game?.gameId), game] as const)
-      .filter(([gameId]) => Boolean(gameId))
+    dbGames.map((game) => [cleanString(game?.id || game?.gameId), game] as const).filter(([gameId]) => Boolean(gameId))
   );
   const dbGameIdsByLength = Array.from(dbGamesById.keys()).sort((a, b) => b.length - a.length);
   const consumedDbGameIds = new Set<string>();
@@ -3014,17 +4302,13 @@ function mergeTeamScheduleSources(games: any[], scheduleEvents?: ParentScheduleE
     if (event?.isDbGame === false) return event;
 
     const eventId = cleanString(event?.id);
-    const sourceGameId = dbGamesById.has(eventId)
-      ? eventId
-      : dbGameIdsByLength.find((gameId) => eventId.startsWith(`${gameId}__`));
+    const sourceGameId = dbGamesById.has(eventId) ? eventId : dbGameIdsByLength.find((gameId) => eventId.startsWith(`${gameId}__`));
     const sourceGame = sourceGameId ? dbGamesById.get(sourceGameId) : null;
 
     if (!sourceGameId || !sourceGame) return event;
 
     consumedDbGameIds.add(sourceGameId);
-    const definedEventFields = Object.fromEntries(
-      Object.entries(event).filter(([, value]) => value !== null && value !== undefined)
-    );
+    const definedEventFields = Object.fromEntries(Object.entries(event).filter(([, value]) => value !== null && value !== undefined));
     return {
       ...sourceGame,
       ...definedEventFields
@@ -3074,16 +4358,43 @@ function buildStandings(team: Record<string, any>, games: any[]) {
   };
 }
 
-function buildLeaderboards(configs: any[], players: TeamDetailPlayer[], seasonStatsByPlayerId: Record<string, Record<string, number>>, sport: string) {
+function buildLeaderboards(
+  configs: any[],
+  players: Array<Pick<TeamDetailPlayer, 'id' | 'name' | 'number' | 'photoUrl'> & { canOpenProfile?: boolean }>,
+  seasonStatsByPlayerId: Record<string, Record<string, number>>,
+  sport: string,
+  options: { omitMissingValues?: boolean; teamGames?: number } = {}
+) {
   const analyticsConfig = selectAnalyticsConfig(configs, sport);
   if (!analyticsConfig) return [];
-  const snapshot = buildPlayerLeaderboardSnapshot({
-    config: analyticsConfig,
-    players: players.map((player) => ({ id: player.id, name: player.name, number: player.number })),
-    seasonStatsByPlayerId
-  });
+  const normalizedPlayers = players.map((player) => ({ id: player.id, name: player.name, number: player.number }));
+  const topStats = options.omitMissingValues
+    ? (analyticsConfig.statDefinitions || [])
+        .filter((definition: any) => definition?.topStat === true && definition?.scope !== 'team' && definition?.visibility !== 'private')
+        .flatMap((definition: any) => {
+          const statId = cleanString(definition?.id).toLowerCase();
+          const qualification = getDiamondLeaderboardQualification(definition, options.teamGames);
+          const eligiblePlayers = normalizedPlayers.filter((player) => {
+            const stats = seasonStatsByPlayerId?.[player.id] || {};
+            return statId && Object.prototype.hasOwnProperty.call(stats, statId) && qualification.qualifies(stats);
+          });
+          if (!eligiblePlayers.length) return [];
+          return (
+            buildPlayerLeaderboardSnapshot({
+              config: { ...analyticsConfig, statDefinitions: [definition] },
+              players: eligiblePlayers,
+              seasonStatsByPlayerId
+            }).topStats || []
+          ).map((stat: any) => ({ ...stat, qualificationLabel: qualification.label }));
+        })
+    : buildPlayerLeaderboardSnapshot({
+        config: analyticsConfig,
+        players: normalizedPlayers,
+        seasonStatsByPlayerId
+      }).topStats || [];
   const photosByPlayerId = new Map(players.map((player) => [player.id, player.photoUrl]));
-  return (snapshot?.topStats || []).slice(0, 4).map((stat: any) => ({
+  const profileAccessByPlayerId = new Map(players.map((player) => [player.id, player.canOpenProfile !== false]));
+  return topStats.slice(0, 4).map((stat: any) => ({
     id: stat.id,
     label: stat.label,
     leaders: (stat.leaders || []).slice(0, 3).map((leader: any) => ({
@@ -3091,13 +4402,64 @@ function buildLeaderboards(configs: any[], players: TeamDetailPlayer[], seasonSt
       playerName: leader.playerName,
       playerNumber: leader.playerNumber || '',
       photoUrl: photosByPlayerId.get(leader.playerId) || null,
+      canOpenProfile: profileAccessByPlayerId.get(leader.playerId) === true,
       rank: leader.rank,
       formattedValue: leader.formattedValue
-    }))
+    })),
+    qualificationLabel: stat.qualificationLabel || null
   }));
 }
 
-function buildTrackingSummaries(players: TeamDetailPlayer[], linkedPlayerIds: string[], items: any[], statuses: any[]): TeamDetailTrackingSummary[] {
+export function getDiamondLeaderboardQualification(definition: any, teamGames = 0) {
+  const statId = cleanString(definition?.id).toLowerCase();
+  if (!definition?.formula) return { label: null, qualifies: () => true };
+  const positive = (stats: Record<string, number>, key: string) => Number(stats?.[key]) > 0;
+  if (['avg', 'obp', 'slg', 'ops', 'bb_rate', 'strikeout_rate'].includes(statId)) {
+    const minimum = Math.ceil(Math.max(0, Number(teamGames) || 0) * 2.1);
+    return {
+      label: `${minimum} PA minimum (2.1/team game)`,
+      qualifies: (stats: Record<string, number>) => {
+        if (!(minimum > 0 && Number(stats?.pa) >= minimum)) return false;
+        if (statId === 'avg' || statId === 'slg') return Number(stats?.ab) > 0;
+        if (statId === 'obp' || statId === 'ops') {
+          return (
+            Number(stats?.ab || 0) + Number(stats?.bb || 0) + Number(stats?.ibb || 0) + Number(stats?.hbp || 0) + Number(stats?.sf || 0) > 0
+          );
+        }
+        return Number(stats?.pa) > 0;
+      }
+    };
+  }
+  const denominatorByStat: Record<string, string> = {
+    stolen_base_rate: 'steal attempts',
+    era: 'pitching outs',
+    whip: 'pitching outs',
+    strikeout_walk_ratio: 'walks',
+    strike_rate: 'pitches',
+    first_pitch_strike_rate: 'batters faced',
+    fpct: 'fielding chances'
+  };
+  const denominator = denominatorByStat[statId];
+  if (!denominator) return { label: 'Complete denominator required', qualifies: () => false };
+  return {
+    label: `At least 1 ${denominator}`,
+    qualifies: (stats: Record<string, number>) => {
+      if (statId === 'stolen_base_rate') return Number(stats?.sb || 0) + Number(stats?.cs || 0) > 0;
+      if (statId === 'era' || statId === 'whip') return positive(stats, 'ip_outs');
+      if (statId === 'strikeout_walk_ratio') return Number(stats?.p_bb || 0) + Number(stats?.p_ibb || 0) > 0;
+      if (statId === 'strike_rate') return positive(stats, 'pitches');
+      if (statId === 'first_pitch_strike_rate') return positive(stats, 'bf');
+      return Number(stats?.po || 0) + Number(stats?.a || 0) + Number(stats?.e || 0) > 0;
+    }
+  };
+}
+
+function buildTrackingSummaries(
+  players: TeamDetailPlayer[],
+  linkedPlayerIds: string[],
+  items: any[],
+  statuses: any[]
+): TeamDetailTrackingSummary[] {
   if (!linkedPlayerIds.length) return [];
   const playersById = new Map(players.map((player) => [player.id, player]));
   return getVisiblePlayerTrackingSummary({ items, statuses, playerIds: linkedPlayerIds })
@@ -3187,11 +4549,11 @@ function getRegistrationProviderDetails(team: Record<string, any>) {
   const lastSyncStatus = cleanString(source.lastSyncStatus || source.syncStatus);
   const lastSyncTime = formatRegistrationProviderSyncTime(source.lastSyncedAt || source.lastSyncAt || source.syncedAt || source.updatedAt);
   const appTeamId = cleanString(team?.id || team?.teamId);
-  const externalTeamId = cleanString(source.externalTeamId || source.externalTeamID || source.providerTeamId || source.providerTeamID || source.sourceTeamId);
+  const externalTeamId = cleanString(
+    source.externalTeamId || source.externalTeamID || source.providerTeamId || source.providerTeamID || source.sourceTeamId
+  );
   const sourceTeamId = cleanString(source.teamId);
-  const providerTeamId = sourceTeamId && sourceTeamId !== appTeamId && sourceTeamId !== externalTeamId
-    ? sourceTeamId
-    : '';
+  const providerTeamId = sourceTeamId && sourceTeamId !== appTeamId && sourceTeamId !== externalTeamId ? sourceTeamId : '';
   const rows = [
     { label: 'Provider', value: cleanString(source.provider || source.providerName) },
     { label: 'External team ID', value: externalTeamId, copyable: true },
@@ -3248,8 +4610,7 @@ export function buildTeamAnalytics(games: any[] = [], preferredSeasonLabel = '')
       const pointsFor = toNullableNumber(scorePair.teamScore) || 0;
       const pointsAgainst = toNullableNumber(scorePair.opponentScore) || 0;
       const date = toDate(game?.date);
-      const opponent = cleanString(game?.opponent || game?.awayTeam || game?.title)
-        .replace(/^vs\.?\s*/i, '') || 'Opponent';
+      const opponent = cleanString(game?.opponent || game?.awayTeam || game?.title).replace(/^vs\.?\s*/i, '') || 'Opponent';
       return {
         id: cleanString(game?.id || game?.gameId) || `game-${index + 1}`,
         date,
@@ -3267,14 +4628,14 @@ export function buildTeamAnalytics(games: any[] = [], preferredSeasonLabel = '')
     .filter(Boolean)
     .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
   const currentYear = String(new Date().getFullYear());
-  const seasonLabel = preferredSeasonLabel
-    || (availableSeasons.includes(currentYear) ? currentYear : (availableSeasons[0] || currentYear));
-  const seasons = availableSeasons.map((label) => buildTeamAnalyticsSnapshot(
-    completedGames.filter((game) => game.seasonLabel === label),
-    label
-  ));
-  const selectedSeason = seasons.find((season) => season.seasonLabel === seasonLabel)
-    || buildTeamAnalyticsSnapshot([], seasonLabel);
+  const seasonLabel = preferredSeasonLabel || (availableSeasons.includes(currentYear) ? currentYear : availableSeasons[0] || currentYear);
+  const seasons = availableSeasons.map((label) =>
+    buildTeamAnalyticsSnapshot(
+      completedGames.filter((game) => game.seasonLabel === label),
+      label
+    )
+  );
+  const selectedSeason = seasons.find((season) => season.seasonLabel === seasonLabel) || buildTeamAnalyticsSnapshot([], seasonLabel);
 
   return { ...selectedSeason, availableSeasons, seasons };
 }
@@ -3307,15 +4668,17 @@ function isCompletedGame(game: any) {
   if (!game || game.type === 'practice') return false;
   const status = cleanString(game.status).toLowerCase();
   const liveStatus = cleanString(game.liveStatus).toLowerCase();
-  return (status === 'completed' || status === 'final' || liveStatus === 'completed' || liveStatus === 'final')
-    && toNullableNumber(game.homeScore) !== null
-    && toNullableNumber(game.awayScore) !== null;
+  return (
+    (status === 'completed' || status === 'final' || liveStatus === 'completed' || liveStatus === 'final') &&
+    toNullableNumber(game.homeScore) !== null &&
+    toNullableNumber(game.awayScore) !== null
+  );
 }
 
 function getWinPercentage(record: { wins: number; losses: number; ties: number }) {
   const games = record.wins + record.losses + record.ties;
   if (!games) return null;
-  return Math.round(((record.wins + (record.ties * 0.5)) / games) * 1000) / 10;
+  return Math.round(((record.wins + record.ties * 0.5) / games) * 1000) / 10;
 }
 
 function sortByNumberThenName(a: TeamDetailPlayer, b: TeamDetailPlayer) {
@@ -3338,13 +4701,14 @@ function toDate(value: any) {
 
 function toNullableDate(value: any) {
   if (!value) return null;
-  const date = value instanceof Date
-    ? value
-    : typeof value?.toDate === 'function'
-      ? value.toDate()
-      : typeof value?.seconds === 'number'
-        ? new Date(value.seconds * 1000)
-        : new Date(value);
+  const date =
+    value instanceof Date
+      ? value
+      : typeof value?.toDate === 'function'
+        ? value.toDate()
+        : typeof value?.seconds === 'number'
+          ? new Date(value.seconds * 1000)
+          : new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
@@ -3355,7 +4719,11 @@ function toNullableNumber(value: any) {
 }
 
 function isDefinitiveFirestoreWriteFailure(error: unknown) {
-  const code = cleanString((error as { code?: unknown })?.code).toLowerCase().split('/').pop() || '';
+  const code =
+    cleanString((error as { code?: unknown })?.code)
+      .toLowerCase()
+      .split('/')
+      .pop() || '';
   return new Set([
     'already-exists',
     'failed-precondition',
@@ -3373,8 +4741,8 @@ async function getRosterPlayerOwnerState(teamId: string, playerId: string) {
   try {
     const players = await getPlayers(teamId, { includeInactive: true });
     return (Array.isArray(players) ? players : []).some((player) => cleanString(player?.id) === playerId)
-      ? 'committed' as const
-      : 'not-committed' as const;
+      ? ('committed' as const)
+      : ('not-committed' as const);
   } catch {
     return 'unknown' as const;
   }
@@ -3384,9 +4752,7 @@ async function getPlayerPhotoPersistenceState(teamId: string, playerId: string, 
   if (!expectedPhotoPath) return 'not-committed' as const;
   try {
     const privateProfile = await getPlayerPrivateProfile(teamId, playerId);
-    return cleanString(privateProfile?.photoPath) === expectedPhotoPath
-      ? 'committed' as const
-      : 'not-committed' as const;
+    return cleanString(privateProfile?.photoPath) === expectedPhotoPath ? ('committed' as const) : ('not-committed' as const);
   } catch {
     return 'unknown' as const;
   }
@@ -3396,9 +4762,7 @@ async function getTeamPhotoPersistenceState(teamId: string, expectedPhotoPath: s
   if (!expectedPhotoPath) return 'not-committed' as const;
   try {
     const team = await getTeam(teamId, { includeInactive: true });
-    return cleanString(team?.photoPath) === expectedPhotoPath
-      ? 'committed' as const
-      : 'not-committed' as const;
+    return cleanString(team?.photoPath) === expectedPhotoPath ? ('committed' as const) : ('not-committed' as const);
   } catch {
     return 'unknown' as const;
   }

@@ -38,7 +38,7 @@ describe('notification recipient index foundation', () => {
     });
 
     it('repairs partial recipient indexes and falls back after empty indexed lookups', () => {
-        expect(functionsSource).toContain('async function getTargetsForCategory(teamId, category');
+        expect(functionsSource).toMatch(/async function getTargetsForCategory\(\s*teamId,\s*category,/);
         expect(functionsSource).toContain('async function resolveMixedNotificationRecipientIndex({');
         expect(functionsSource).toContain('function isAggregateNotificationRecipientDoc(docSnap) {');
         expect(functionsSource).toContain('const rawCategoryRecipientDocs = targetSnap.docs || [];');
