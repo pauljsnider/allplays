@@ -100,18 +100,21 @@ describe('public games calendar feed helpers', () => {
 
     it('runs the public feed function with the configured calendar runtime', () => {
         const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+        const handlerSource = readFileSync(new URL('../../functions/public-calendar-feed-handler.cjs', import.meta.url), 'utf8');
         const feedStart = source.indexOf('exports.publicTeamGamesIcs = functions');
         const feedEnd = source.indexOf('async function getCalendarTokenSnapshot', feedStart);
         const publicFeedSource = source.slice(feedStart, feedEnd);
 
         expect(source).toContain('exports.publicTeamGamesIcs = functions\n  .runWith(fetchCalendarRuntime)');
-        expect(publicFeedSource).toContain('normalizePublicCalendarTeamId(req.query.teamId)');
-        expect(publicFeedSource).toContain("res.set('Content-Disposition', 'inline; filename=\"allplays-public-games.ics\"')");
-        expect(publicFeedSource).not.toContain('filename="${teamId}');
-        expect(publicFeedSource).toContain('getCalendarFeedGamesQuery(teamId).get()');
-        expect(publicFeedSource).toContain('games.filter((game) => isPublicFanGame(team, game))');
-        expect(publicFeedSource).toContain('buildPublicGamesIcs({ teamId, team, games: publicGames })');
-        expect(publicFeedSource).toContain('!canExposeEmptyPublicFeed(team)');
+        expect(publicFeedSource).toContain('createPublicCalendarFeedHandler({');
+        expect(publicFeedSource).toContain('checkRateLimit: checkPublicCalendarFeedRateLimit');
+        expect(publicFeedSource).toContain('getGamesSnapshot: (teamId) => getCalendarFeedGamesQuery(teamId).get()');
+        expect(handlerSource).toContain('normalizePublicCalendarTeamId(req.query?.teamId)');
+        expect(handlerSource).toContain("res.set('Content-Disposition', 'inline; filename=\"allplays-public-games.ics\"')");
+        expect(handlerSource).not.toContain('filename="${teamId}');
+        expect(handlerSource).toContain('games.filter((game) => isPublicFanGame(team, game))');
+        expect(handlerSource).toContain('buildPublicGamesIcs({ teamId, team, games: publicGames })');
+        expect(handlerSource).toContain('!canExposeEmptyPublicFeed(team)');
         expect(publicFeedSource).not.toContain("firestore.collection(`teams/${teamId}/games`).get()");
     });
 
