@@ -137,12 +137,7 @@ const {
   normalizePublicRegistrationSecurityMode,
   resolvePublicRegistrationGuardianEmail
 } = require('./public-registration-abuse-core.cjs');
-const {
-  buildPublicGamesIcs,
-  canExposeEmptyPublicFeed,
-  isPublicFanGame,
-  normalizePublicCalendarTeamId
-} = require('./public-calendar-core.cjs');
+const { createPublicCalendarFeedHandler } = require('./public-calendar-feed-handler.cjs');
 const {
   buildPublicGamesResponse,
   buildPublicRosterResponse,
@@ -821,6 +816,11 @@ const checkPublicTeamApiRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 120,
   maxKeys: 5_000
+});
+const checkPublicCalendarFeedRateLimit = createInMemoryRateLimiter({
+  windowMs: getPositiveIntegerEnvironmentValue('PUBLIC_CALENDAR_FEED_RATE_LIMIT_WINDOW_MS', 60_000),
+  maxRequests: getPositiveIntegerEnvironmentValue('PUBLIC_CALENDAR_FEED_RATE_LIMIT_MAX_REQUESTS', 120),
+  maxKeys: getPositiveIntegerEnvironmentValue('PUBLIC_CALENDAR_FEED_RATE_LIMIT_MAX_KEYS', 5_000)
 });
 const checkReplayPlaybackRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
@@ -10123,46 +10123,11 @@ exports.publicTeamGamesV1 = functions
 exports.publicTeamGamesIcs = functions
   .runWith(fetchCalendarRuntime)
   .https
-  .onRequest(async (req, res) => {
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      res.status(405).send('Method not allowed');
-      return;
-    }
-
-    const teamId = normalizePublicCalendarTeamId(req.query.teamId);
-    if (!teamId) {
-      res.status(400).send('Missing or invalid teamId');
-      return;
-    }
-
-    try {
-      const teamSnap = await firestore.doc(`teams/${teamId}`).get();
-      if (!teamSnap.exists) {
-        res.status(404).send('Calendar not found');
-        return;
-      }
-
-      const team = { id: teamId, ...(teamSnap.data() || {}) };
-      const gamesSnap = await getCalendarFeedGamesQuery(teamId).get();
-      const games = [];
-      gamesSnap.forEach((docSnap) => games.push({ id: docSnap.id, ...(docSnap.data() || {}) }));
-      const publicGames = games.filter((game) => isPublicFanGame(team, game));
-
-      if (!publicGames.length && !canExposeEmptyPublicFeed(team)) {
-        res.status(404).send('Calendar not found');
-        return;
-      }
-
-      const icsText = buildPublicGamesIcs({ teamId, team, games: publicGames });
-      res.set('Content-Type', 'text/calendar; charset=utf-8');
-      res.set('Content-Disposition', 'inline; filename="allplays-public-games.ics"');
-      res.set('Cache-Control', 'public, max-age=300');
-      res.status(200).send(req.method === 'HEAD' ? '' : icsText);
-    } catch (error) {
-      console.error('Failed to build public team games ICS:', error);
-      res.status(500).send('Calendar unavailable');
-    }
-  });
+  .onRequest(createPublicCalendarFeedHandler({
+    checkRateLimit: checkPublicCalendarFeedRateLimit,
+    getTeamSnapshot: (teamId) => firestore.doc(`teams/${teamId}`).get(),
+    getGamesSnapshot: (teamId) => getCalendarFeedGamesQuery(teamId).get()
+  }));
 
 async function getCalendarTokenSnapshot(teamId, tokenHash, token) {
   const tokenRef = firestore.doc(`teams/${teamId}/calendarTokens/${tokenHash}`);

@@ -121,6 +121,24 @@ test('allows requests through the threshold, rejects excess, and resets after th
     assert.equal(checkRateLimit(request, 2_000).allowed, true);
 });
 
+test('evicts old keys to keep in-memory rate-limit state bounded', () => {
+    const checkRateLimit = createInMemoryRateLimiter({
+        windowMs: 60_000,
+        maxRequests: 1,
+        maxKeys: 2
+    });
+    const first = { ip: '203.0.113.10' };
+
+    assert.equal(checkRateLimit(first, 1_000).allowed, true);
+    assert.equal(checkRateLimit(first, 1_001).allowed, false);
+    assert.equal(checkRateLimit({ ip: '203.0.113.11' }, 1_002).allowed, true);
+    assert.equal(checkRateLimit({ ip: '203.0.113.12' }, 1_003).allowed, true);
+
+    // The next check prunes the oldest key before evaluating the request, so
+    // the evicted client starts a fresh window instead of growing the map.
+    assert.equal(checkRateLimit(first, 1_004).allowed, true);
+});
+
 test('shares an atomic fixed-window count across durable limiter instances', async () => {
     const firestore = makeAtomicFirestore();
     const options = {
