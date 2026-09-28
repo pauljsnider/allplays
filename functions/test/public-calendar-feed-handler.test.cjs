@@ -129,7 +129,7 @@ test('rate limits GET and HEAD before Firestore reads and resets after the windo
   assert.equal(harness.gameReads, 3);
 });
 
-test('uses a dedicated bounded limiter rather than the public JSON API budget', () => {
+test('uses a dedicated shared limiter rather than the public JSON API budget', () => {
   const source = readFileSync(join(__dirname, '..', 'index.js'), 'utf8');
   const limiterStart = source.indexOf('const checkPublicCalendarFeedRateLimit');
   const limiterEnd = source.indexOf('const checkReplayPlaybackRateLimit', limiterStart);
@@ -139,8 +139,10 @@ test('uses a dedicated bounded limiter rather than the public JSON API budget', 
   const handlerSource = source.slice(handlerStart, handlerEnd);
 
   assert.notEqual(limiterStart, -1);
-  assert.match(limiterSource, /PUBLIC_CALENDAR_FEED_RATE_LIMIT_MAX_KEYS/);
-  assert.match(limiterSource, /5_000/);
+  assert.match(limiterSource, /createFirestoreFixedWindowRateLimiter/);
+  assert.match(limiterSource, /collectionName: 'publicCalendarFeedRateLimits'/);
+  assert.match(limiterSource, /getRequestIp\(req\)/);
+  assert.doesNotMatch(limiterSource, /createInMemoryRateLimiter/);
   assert.match(handlerSource, /checkRateLimit: checkPublicCalendarFeedRateLimit/);
   assert.doesNotMatch(handlerSource, /checkPublicTeamApiRateLimit/);
 });

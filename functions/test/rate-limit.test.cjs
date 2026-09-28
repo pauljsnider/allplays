@@ -161,6 +161,23 @@ test('shares an atomic fixed-window count across durable limiter instances', asy
     assert.equal(results.filter((result) => !result.allowed).length, 1);
 });
 
+test('shares the public calendar feed budget across function instances', async () => {
+    const firestore = makeAtomicFirestore();
+    const options = {
+        firestore,
+        collectionName: 'publicCalendarFeedRateLimits',
+        windowMs: 60_000,
+        maxRequests: 2
+    };
+    const instanceA = createFirestoreFixedWindowRateLimiter(options);
+    const instanceB = createFirestoreFixedWindowRateLimiter(options);
+
+    assert.equal((await instanceA('203.0.113.10', 1_000)).allowed, true);
+    assert.equal((await instanceB('203.0.113.10', 1_000)).allowed, true);
+    assert.equal((await instanceA('203.0.113.10', 1_000)).allowed, false);
+    assert.equal([...firestore.state.values()][0].count, 2);
+});
+
 test('prepares a transaction-compatible durable reservation with a hashed boundary', async () => {
     const firestore = makeAtomicFirestore();
     const prepareReservation = createFirestoreFixedWindowRateLimitReservation({

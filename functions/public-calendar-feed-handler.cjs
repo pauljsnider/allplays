@@ -17,12 +17,19 @@ function createPublicCalendarFeedHandler({
       return;
     }
 
-    const rateLimit = checkRateLimit(req);
-    res.set('X-RateLimit-Remaining', String(rateLimit.remaining));
-    if (!rateLimit.allowed) {
-      res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+    try {
+      const rateLimit = await checkRateLimit(req);
+      res.set('X-RateLimit-Remaining', String(rateLimit.remaining));
+      if (!rateLimit.allowed) {
+        res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+        res.set('Cache-Control', 'no-store');
+        res.status(429).send('Too many requests');
+        return;
+      }
+    } catch (error) {
+      logError('Failed to enforce public team games ICS rate limit:', error);
       res.set('Cache-Control', 'no-store');
-      res.status(429).send('Too many requests');
+      res.status(503).send('Calendar unavailable');
       return;
     }
 

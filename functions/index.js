@@ -817,11 +817,13 @@ const checkPublicTeamApiRateLimit = createInMemoryRateLimiter({
   maxRequests: 120,
   maxKeys: 5_000
 });
-const checkPublicCalendarFeedRateLimit = createInMemoryRateLimiter({
+const checkPublicCalendarFeedRateLimitByIp = createFirestoreFixedWindowRateLimiter({
+  firestore,
+  collectionName: 'publicCalendarFeedRateLimits',
   windowMs: getPositiveIntegerEnvironmentValue('PUBLIC_CALENDAR_FEED_RATE_LIMIT_WINDOW_MS', 60_000),
-  maxRequests: getPositiveIntegerEnvironmentValue('PUBLIC_CALENDAR_FEED_RATE_LIMIT_MAX_REQUESTS', 120),
-  maxKeys: getPositiveIntegerEnvironmentValue('PUBLIC_CALENDAR_FEED_RATE_LIMIT_MAX_KEYS', 5_000)
+  maxRequests: getPositiveIntegerEnvironmentValue('PUBLIC_CALENDAR_FEED_RATE_LIMIT_MAX_REQUESTS', 120)
 });
+const checkPublicCalendarFeedRateLimit = (req) => checkPublicCalendarFeedRateLimitByIp(getRequestIp(req));
 const checkReplayPlaybackRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 120,
