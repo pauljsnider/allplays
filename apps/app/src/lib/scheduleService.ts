@@ -1142,7 +1142,12 @@ function isNativeDocumentNotFound(error: unknown) {
   return (error as any)?.status === 404 || message.includes('not_found') || message.includes('not found');
 }
 
-async function nativeListCollection(path: string, options: { pageSize?: number; orderBy?: string; stopAfterFullPage?: boolean } = {}) {
+async function nativeListCollection(path: string, options: {
+  pageSize?: number;
+  orderBy?: string;
+  stopAfterFullPage?: boolean;
+  stopAfterDocumentCount?: number;
+} = {}) {
   const requestedPageSize = Number(options.pageSize);
   const pageSize = Number.isFinite(requestedPageSize)
     ? Math.min(Math.max(Math.floor(requestedPageSize), 1), 100)
@@ -1153,6 +1158,7 @@ async function nativeListCollection(path: string, options: { pageSize?: number; 
     {
       ...(pageSize ? { pageSize } : {}),
       ...(options.stopAfterFullPage ? { stopAfterFullPage: true } : {}),
+      ...(options.stopAfterDocumentCount ? { stopAfterDocumentCount: options.stopAfterDocumentCount } : {}),
       ...(options.orderBy ? { orderBy: options.orderBy } : {})
     }
   );
@@ -6691,7 +6697,11 @@ export async function loadGameDayLiveEventsForApp(teamId: string, gameId: string
     logScheduleWarning('Falling back to REST game day live events.', 'game-day-live-events-load', error, { fallback: 'rest', teamId, gameId });
     const events = await nativeListCollection(
       `teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/liveEvents`,
-      { pageSize: MAX_ACTIVE_GAME_LIVE_EVENTS, stopAfterFullPage: true }
+      {
+        pageSize: MAX_ACTIVE_GAME_LIVE_EVENTS,
+        stopAfterFullPage: true,
+        stopAfterDocumentCount: MAX_ACTIVE_GAME_LIVE_EVENTS
+      }
     );
     return Array.isArray(events) ? events.slice(0, MAX_ACTIVE_GAME_LIVE_EVENTS) : [];
   }
