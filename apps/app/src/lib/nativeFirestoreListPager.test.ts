@@ -51,6 +51,18 @@ describe('listNativeFirestoreCollectionPages', () => {
     expect(request).toHaveBeenCalledTimes(2);
   });
 
+  it('stops and caps accumulated documents at the requested count', async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce({ documents: ['first', 'second'], nextPageToken: 'more' })
+      .mockResolvedValueOnce({ documents: ['third', 'fourth', 'fifth'], nextPageToken: 'unexpected-third-page' });
+
+    await expect(listNativeFirestoreCollectionPages('teams/team-1/liveEvents', request, {
+      pageSize: 3,
+      stopAfterDocumentCount: 4
+    })).resolves.toEqual(['first', 'second', 'third', 'fourth']);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
   it('rejects repeated page tokens instead of returning a partial collection', async () => {
     const request = vi.fn()
       .mockResolvedValueOnce({ documents: ['first'], nextPageToken: 'repeat' })
