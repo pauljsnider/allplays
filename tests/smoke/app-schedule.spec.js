@@ -750,9 +750,11 @@ async function mockScheduleModules(page, options = {}) {
                     return preview;
                 }
 
-                export async function loadGameDayLiveEventsForApp(teamId, gameId) {
+                export async function loadGameDayLiveEventsForApp(teamId, gameId, readOptions = {}) {
+                    window.__foulHistoryRequested = readOptions.fullHistory === true;
                     window.__scheduleCalls.liveEvents = (window.__scheduleCalls.liveEvents || []).concat({ action: 'load', teamId, gameId });
-                    return ${JSON.stringify(options.liveEvents || [])};
+                    const events = ${JSON.stringify(options.liveEvents || [])};
+                    return readOptions.fullHistory ? events : events.slice(-20);
                 }
 
                 export async function saveGameDaySubstitutionForApp(teamId, gameId, user, payload) {
@@ -2277,4 +2279,41 @@ test('schedule failure states show errors without trapping users in spinners', a
     await assignmentsSection.locator('article').filter({ hasText: 'Snacks' }).getByRole('button', { name: 'Sign up' }).click();
     await expect(assignmentsSection.getByText('Slot already taken.')).toBeVisible({ timeout: 15000 });
     await errorPage.close();
+});
+
+
+test('foul tracker retains earlier fouls and bonus after twenty newer plays', async ({ page, baseURL }) => {
+    const errors = captureUnexpectedPageErrors(page);
+    await page.addInitScript(() => {
+        window.__ALLPLAYS_CONFIG__ = {
+            firebase: { apiKey: 'demo-api-key', authDomain: 'demo-allplays.firebaseapp.com', projectId: 'demo-allplays', messagingSenderId: '1234567890', appId: '1:1234567890:web:allplayssmoke' },
+            appCheck: { enabled: false },
+            diamondScorebookUiEnabled: false
+        };
+    });
+    await mockScheduleModules(page, {
+        isCoach: true,
+        staffManageable: true,
+        gameStatus: 'live',
+        gameLiveStatus: 'live',
+        liveEvents: Array.from({ length: 27 }, (_, index) => ({
+            id: `event-${index}`, type: 'stat', statKey: index < 7 ? 'fouls' : 'pts',
+            value: 1, period: 'Q1', isOpponent: false
+        }))
+    });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=game'), { waitUntil: 'domcontentloaded' });
+    await expect(async () => {
+        expect(errors).toEqual([]);
+        await expect(page.getByRole('button', { name: 'Foul tracker', exact: true })).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 15000 });
+    await page.getByRole('button', { name: 'Foul tracker', exact: true }).click({ timeout: 3000 });
+    const panel = page.getByTestId('game-day-foul-panel');
+    expect(errors).toEqual([]);
+    await expect(panel.getByText('7 team fouls this period', { exact: true })).toBeVisible();
+    await expect(panel.getByLabel('Team foul bonus state')).toContainText('Q1 · Bonus');
+    expect(await page.evaluate(() => window.__foulHistoryRequested)).toBe(true);
+    await page.getByRole('button', { name: 'Foul tracker', exact: true }).click({ timeout: 3000 });
+    await page.getByRole('button', { name: 'Foul tracker', exact: true }).click({ timeout: 3000 });
+    await expect(panel.getByText('7 team fouls this period', { exact: true })).toBeVisible();
+    expect(errors).toEqual([]);
 });

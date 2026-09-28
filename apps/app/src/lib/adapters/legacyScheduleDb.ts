@@ -388,7 +388,9 @@ export async function broadcastLiveEvent(teamId: string, gameId: string, payload
     return await Promise.resolve(legacyBroadcastLiveEvent(teamId, gameId, payload));
 }
 
-export async function getLiveEvents(teamId: string, gameId: string) {
+export async function getLiveEvents(teamId: string, gameId: string, options: { fullHistory?: boolean } = {}) {
+    // Foul totals and undo history cannot be reconstructed from a recent-feed window.
+    if (options.fullHistory) return await Promise.resolve(legacyGetLiveEvents(teamId, gameId));
     const game = await Promise.resolve(legacyGetGame(teamId, gameId));
     const status = [game?.status, game?.liveStatus]
         .map((value) => String(value || '').trim().toLowerCase());
