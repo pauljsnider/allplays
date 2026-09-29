@@ -3,12 +3,14 @@ import { Loader2, MapPin, ShieldCheck, Users } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { Status } from '../components/TeamSummaryPrimitives';
 import { formatShortDate } from '../lib/datetime';
-import { getPublicTeamDetail, getPublicTeamRecentResults, type PublicTeamProfile, type PublicTeamRecentResult } from '../lib/publicTeamsService';
+import { getPublicTeamDetail, getPublicTeamRecentResults, getPublicTeamStandings, type PublicTeamProfile, type PublicTeamRecentResult, type PublicTeamStandings } from '../lib/publicTeamsService';
 import type { AuthState } from '../lib/types';
 
 export function PublicTeamDetail({ authUser }: { authUser: AuthState['user'] }) {
   const { teamId = '' } = useParams();
   const [team, setTeam] = useState<PublicTeamProfile | null>(null);
+  const [standings, setStandings] = useState<PublicTeamStandings | null | undefined>(undefined);
+  const [standingsError, setStandingsError] = useState(false);
   const [recentResults, setRecentResults] = useState<PublicTeamRecentResult[] | null>(null);
   const [recentResultsError, setRecentResultsError] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -19,6 +21,8 @@ export function PublicTeamDetail({ authUser }: { authUser: AuthState['user'] }) 
     let active = true;
     setLoading(true);
     setTeam(null);
+    setStandings(undefined);
+    setStandingsError(false);
     setRecentResults(null);
     setRecentResultsError(false);
     setError('');
@@ -28,12 +32,14 @@ export function PublicTeamDetail({ authUser }: { authUser: AuthState['user'] }) 
         if (!active) return;
         setTeam(item);
         setLoading(false);
-        try {
-          const results = await getPublicTeamRecentResults(teamId);
-          if (active) setRecentResults(results);
-        } catch {
-          if (active) setRecentResultsError(true);
-        }
+        void getPublicTeamStandings(teamId).then(
+          (loadedStandings) => { if (active) setStandings(loadedStandings); },
+          () => { if (active) setStandingsError(true); }
+        );
+        void getPublicTeamRecentResults(teamId).then(
+          (results) => { if (active) setRecentResults(results); },
+          () => { if (active) setRecentResultsError(true); }
+        );
       } catch (loadError: any) {
         if (active) {
           setTeam(null);
@@ -96,7 +102,7 @@ export function PublicTeamDetail({ authUser }: { authUser: AuthState['user'] }) 
           <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm font-semibold leading-6 text-emerald-900"><div className="flex items-center gap-2 font-black"><ShieldCheck className="h-5 w-5" />Public-safe profile</div><p className="mt-1">This page shows team identity, general location, and completed public game results. Rosters, private schedules, contacts, and member data are not loaded.</p></div>
         </div>
       </section>
-      <PublicStandingsSection standings={team.standings} leagueUrl={team.leagueUrl} />
+      <PublicStandingsSection standings={standings} standingsError={standingsError} leagueUrl={team.leagueUrl} />
       <section className="app-card p-5 sm:p-6" aria-labelledby="recent-results-heading">
         <h2 id="recent-results-heading" className="text-lg font-black text-gray-950">Recent results</h2>
         {recentResultsError ? (
@@ -142,7 +148,7 @@ export function PublicTeamDetail({ authUser }: { authUser: AuthState['user'] }) 
   );
 }
 
-function PublicStandingsSection({ standings, leagueUrl }: { standings: PublicTeamProfile['standings']; leagueUrl: string | null }) {
+function PublicStandingsSection({ standings, standingsError, leagueUrl }: { standings: PublicTeamStandings | null | undefined; standingsError: boolean; leagueUrl: string | null }) {
   const highlightKey = getPublicStandingsRowKey(standings?.currentRow ?? null);
 
   return (
@@ -151,7 +157,17 @@ function PublicStandingsSection({ standings, leagueUrl }: { standings: PublicTea
         <h2 id="public-standings-heading" className="text-lg font-black text-gray-950">Standings</h2>
         <p className="mt-1 text-sm font-semibold text-gray-500">{standings?.label || 'Current league standings'}</p>
       </div>
-      {!standings?.rows.length ? (
+      {standingsError ? (
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+          <p>Standings are temporarily unavailable.</p>
+          {leagueUrl ? <a href={leagueUrl} target="_blank" rel="noreferrer" className="mt-3 inline-block max-w-full break-words font-black text-primary-700 underline">View league standings</a> : null}
+        </div>
+      ) : standings === undefined ? (
+        <div className="mt-3 flex items-center gap-2 text-sm font-semibold text-gray-600" role="status">
+          <Loader2 className="h-4 w-4 animate-spin text-primary-600" aria-hidden="true" />
+          Loading standings
+        </div>
+      ) : !standings?.rows.length ? (
         <div className="mt-3 min-w-0 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4">
           <div className="text-sm font-black text-gray-900">Standings are currently unavailable</div>
           <p className="mt-1 text-sm font-semibold text-gray-600">There are no published standings for this team yet.</p>
