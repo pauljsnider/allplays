@@ -33,6 +33,34 @@ describe('compact Firestore rules', () => {
         );
     });
 
+    it('drops only exact no-op deny statements from the artifact', () => {
+        const source = `
+            match /a/{id} {
+                allow read: if true;
+                allow update: if false;
+                allow create, delete: if false;
+                allow list: if falseFlag;
+                allow get: if false || isOwner();
+            }
+            match /b/{id} {
+                allow read, write: if false;
+                match /c/{document=**} {
+                    allow write: if false;
+                }
+            }
+            match /d/{id} {
+                allow read: if true;
+                match /e/{eid} {
+                    allow delete: if false;
+                }
+            }
+        `;
+
+        expect(compactFirestoreRules(source)).toBe(
+            'match /a/{id}{allow read:if true;allow list:if falseFlag;allow get:if false||isOwner();}match /d/{id}{allow read:if true;}\n'
+        );
+    });
+
     it('keeps the production artifact comfortably below the deploy budget', () => {
         const source = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
         const compact = compactFirestoreRules(source);

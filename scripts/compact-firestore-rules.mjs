@@ -167,8 +167,25 @@ function shortenFirestoreRuleFunctionNames(rulesSource) {
     return result;
 }
 
+// An `allow <methods>: if false;` statement can never grant access: a request is
+// allowed when any matching allow statement is true, and denied by default. Drop
+// these no-ops from the deployed artifact only; the source keeps explicit denies
+// for reviewers and tests. Matches only the exact minified statement form.
+// Firestore rejects empty match bodies, so match blocks left without any
+// declaration (which likewise grant nothing) are removed too, innermost first.
+function dropNoOpDenyStatements(minified) {
+    let result = minified.replace(/(?<=^|[{;}])allow [a-z]+(?:,[a-z]+)*:if false;/g, '');
+    const emptyMatch = /match (?:\/(?:\{[^{}\s]*\}|[^/{};\s]+))+\{\}/g;
+    let previous;
+    do {
+        previous = result;
+        result = result.replace(emptyMatch, '');
+    } while (result !== previous);
+    return result;
+}
+
 export function compactFirestoreRules(rulesSource) {
-    const minified = minifyFirestoreRulesSource(rulesSource);
+    const minified = dropNoOpDenyStatements(minifyFirestoreRulesSource(rulesSource));
     return `${shortenFirestoreRuleFunctionNames(minified)}\n`;
 }
 
