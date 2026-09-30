@@ -651,6 +651,7 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
 async function mockPublicTeamsBrowseModule(page, { slowSearch = false } = {}) {
     await page.addInitScript(({ shouldSlowSearch }) => {
         window.__publicTeamSearchCalls = [];
+        window.__publicTeamStandingsCalls = [];
         window.__slowPublicTeamSearch = shouldSlowSearch;
     }, { shouldSlowSearch: slowSearch });
 
@@ -745,6 +746,11 @@ async function mockPublicTeamsBrowseModule(page, { slowSearch = false } = {}) {
                         zip: '30303',
                         location: 'Atlanta, GA'
                     };
+                }
+
+                export async function getPublicTeamStandings(teamId) {
+                    window.__publicTeamStandingsCalls.push(teamId);
+                    return null;
                 }
 
                 export async function getPublicTeamRecentResults() {
@@ -940,8 +946,13 @@ test.describe('mobile My Teams', () => {
         await expect.poll(async () => atlantaFireLink.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
         await atlantaFireLink.click();
 
-        expect(pageErrors).toEqual([]);
-        await expect(page.getByRole('heading', { name: 'Atlanta Fire' })).toBeVisible();
+        await expect(async () => {
+            expect(pageErrors).toEqual([]);
+            await expect(page.getByRole('heading', { name: 'Atlanta Fire' })).toBeVisible({ timeout: 500 });
+        }).toPass({ timeout: 5000 });
+        await expect.poll(() => page.evaluate(() => window.__publicTeamStandingsCalls)).toEqual(['search-atl-1']);
+        await expect(page.getByRole('heading', { name: 'Standings', exact: true })).toBeVisible();
+        await expect(page.getByText('Standings are currently unavailable', { exact: true })).toBeVisible();
         await expect(page.getByRole('heading', { name: 'Recent results' })).toBeVisible();
         const recentResult = page.getByTestId('public-recent-result');
         await expect(recentResult).toContainText('North Atlanta Community Soccer Academy Owls');
