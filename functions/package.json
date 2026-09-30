@@ -19,5 +19,8 @@
     "google-auth-library": "9.15.1",
     "resend": "^6.30.0",
     "stripe": "^16.12.0"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "1.14.5"
   }
 }
