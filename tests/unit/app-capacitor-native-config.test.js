@@ -20,21 +20,21 @@ describe('Capacitor native config', () => {
         const rootRuntimePackages = ['@capacitor/cli', '@capacitor/android', '@capacitor/core', '@capacitor/ios'];
         rootRuntimePackages.forEach((dependency) => {
             const dependencyGroup = dependency === '@capacitor/cli' ? 'devDependencies' : 'dependencies';
-            expect(rootPackage[dependencyGroup][dependency]).toBe('^8.5.0');
-            expect(rootPackageLock.packages[''][dependencyGroup][dependency]).toBe('^8.5.0');
-            expect(rootPackageLock.packages[`node_modules/${dependency}`].version).toBe('8.5.0');
+            expect(rootPackage[dependencyGroup][dependency]).toBe('^8.5.2');
+            expect(rootPackageLock.packages[''][dependencyGroup][dependency]).toBe('^8.5.2');
+            expect(rootPackageLock.packages[`node_modules/${dependency}`].version).toBe('8.5.2');
         });
 
-        expect(rootPackage.dependencies['@capacitor/camera']).toBe('^8.2.2');
-        expect(rootPackageLock.packages[''].dependencies['@capacitor/camera']).toBe('^8.2.2');
-        expect(rootPackageLock.packages['node_modules/@capacitor/camera'].version).toBe('8.2.2');
+        expect(rootPackage.dependencies['@capacitor/camera']).toBe('^8.2.4');
+        expect(rootPackageLock.packages[''].dependencies['@capacitor/camera']).toBe('^8.2.4');
+        expect(rootPackageLock.packages['node_modules/@capacitor/camera'].version).toBe('8.2.4');
 
-        expect(appPackage.dependencies['@capacitor/core']).toBe('^8.5.0');
-        expect(appPackage.dependencies['@capacitor/camera']).toBe('^8.2.2');
-        expect(appPackageLock.packages[''].dependencies['@capacitor/core']).toBe('^8.5.0');
-        expect(appPackageLock.packages[''].dependencies['@capacitor/camera']).toBe('^8.2.2');
-        expect(appPackageLock.packages['node_modules/@capacitor/core'].version).toBe('8.5.0');
-        expect(appPackageLock.packages['node_modules/@capacitor/camera'].version).toBe('8.2.2');
+        expect(appPackage.dependencies['@capacitor/core']).toBe('^8.5.2');
+        expect(appPackage.dependencies['@capacitor/camera']).toBe('^8.2.4');
+        expect(appPackageLock.packages[''].dependencies['@capacitor/core']).toBe('^8.5.2');
+        expect(appPackageLock.packages[''].dependencies['@capacitor/camera']).toBe('^8.2.4');
+        expect(appPackageLock.packages['node_modules/@capacitor/core'].version).toBe('8.5.2');
+        expect(appPackageLock.packages['node_modules/@capacitor/camera'].version).toBe('8.2.4');
     });
 
     it('keeps the synchronized iOS SwiftPM runtime aligned with the JavaScript lockfile', () => {
@@ -84,8 +84,8 @@ describe('Capacitor native config', () => {
             androidBuild
         ].join('\n');
 
-        expect(rootPackageLock.packages['node_modules/@capacitor/android'].version).toBe('8.5.0');
-        expect(rootPackageLock.packages['node_modules/@capacitor/core'].version).toBe('8.5.0');
+        expect(rootPackageLock.packages['node_modules/@capacitor/android'].version).toBe('8.5.2');
+        expect(rootPackageLock.packages['node_modules/@capacitor/core'].version).toBe('8.5.2');
         expect(androidSettings).toContain("project(':capacitor-android').projectDir = new File('../node_modules/@capacitor/android/capacitor')");
         expect(androidSettings).toContain("project(':capacitor-camera').projectDir = new File('../node_modules/@capacitor/camera/android')");
         expect(androidAppBuild).toContain("implementation project(':capacitor-android')");
@@ -163,7 +163,7 @@ describe('Capacitor native config', () => {
         const expectedDependencies = {
             'lucide-react': { group: 'dependencies', specifier: '^1.32.0', version: '1.32.0' },
             'react-router-dom': { group: 'dependencies', specifier: '7.18.2', version: '7.18.2' },
-            'web-vitals': { group: 'dependencies', specifier: '^6.1.1', version: '6.1.1' },
+            'web-vitals': { group: 'dependencies', specifier: '^6.2.2', version: '6.2.2' },
             globals: { group: 'devDependencies', specifier: '^17.11.0', version: '17.11.0' },
             postcss: { group: 'devDependencies', specifier: '^8.5.26', version: '8.5.26' }
         };
@@ -175,13 +175,17 @@ describe('Capacitor native config', () => {
         });
     });
 
-    it('keeps the npm jsdom dependency graph aligned with the app update', () => {
+    it('keeps the npm jsdom dependency graph aligned across root and app lockfiles', () => {
+        const rootPackage = JSON.parse(readProjectFile('package.json'));
+        const rootPackageLock = JSON.parse(readProjectFile('package-lock.json'));
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
 
-        expect(appPackage.devDependencies.jsdom).toBe('^30.0.1');
-        expect(appPackageLock.packages['node_modules/jsdom'].version).toBe('30.0.1');
-        expect(appPackageLock.packages['node_modules/undici'].version).toBe('8.9.0');
+        expect(rootPackage.dependencies.jsdom).toBe('^30.1.1');
+        expect(rootPackageLock.packages['node_modules/jsdom'].version).toBe('30.1.1');
+        expect(appPackage.devDependencies.jsdom).toBe('^30.1.1');
+        expect(appPackageLock.packages['node_modules/jsdom'].version).toBe('30.1.1');
+        expect(appPackageLock.packages['node_modules/undici'].version).toBe('8.11.2');
         expect(appPackageLock.packages['node_modules/undici'].engines.node).toBe('>=22.19.0');
     });
 
@@ -218,7 +222,7 @@ describe('Capacitor native config', () => {
         const iosAppDelegate = readProjectFile('ios/App/App/AppDelegate.swift');
 
         const appCheckPackage = '@capacitor-firebase/app-check';
-        const appCheckVersion = '8.4.0';
+        const appCheckVersion = '8.5.2';
 
         expect(rootPackage.dependencies[appCheckPackage]).toBe(appCheckVersion);
         expect(appPackage.dependencies[appCheckPackage]).toBe(appCheckVersion);
@@ -289,15 +293,23 @@ describe('Capacitor native config', () => {
         expect(appPackageLock.packages['node_modules/@vitest/coverage-v8'].peerDependencies.vitest).toBe(vitestVersion);
     });
 
-    it('keeps shared Camera and Firebase maintenance versions aligned across manifests and npm lockfiles', () => {
+    it('keeps shared dependency maintenance versions aligned across manifests and npm lockfiles', () => {
         const rootPackage = JSON.parse(readProjectFile('package.json'));
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const rootPackageLock = JSON.parse(readProjectFile('package-lock.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
         const expectedDependencies = {
-            '@capacitor/camera': { specifier: '^8.2.2', version: '8.2.2' },
-            firebase: { specifier: '12.17.1', version: '12.17.1' },
-            'web-vitals': { specifier: '^6.1.1', version: '6.1.1' }
+            '@capacitor-firebase/app-check': { specifier: '8.5.2', version: '8.5.2' },
+            '@capacitor-firebase/authentication': { specifier: '^8.5.2', version: '8.5.2' },
+            '@capacitor-firebase/messaging': { specifier: '^8.5.2', version: '8.5.2' },
+            '@capacitor-firebase/performance': { specifier: '^8.5.2', version: '8.5.2' },
+            '@capacitor/camera': { specifier: '^8.2.4', version: '8.2.4' },
+            '@capacitor/core': { specifier: '^8.5.2', version: '8.5.2' },
+            '@capacitor/filesystem': { specifier: '^8.1.3', version: '8.1.3' },
+            '@capacitor/share': { specifier: '^8.0.2', version: '8.0.2' },
+            '@capgo/capacitor-speech-recognition': { specifier: '^8.3.2', version: '8.3.2' },
+            firebase: { specifier: '12.19.0', version: '12.19.0' },
+            'web-vitals': { specifier: '^6.2.2', version: '6.2.2' }
         };
 
         Object.entries(expectedDependencies).forEach(([dependency, expected]) => {

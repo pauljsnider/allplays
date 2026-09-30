@@ -7,12 +7,19 @@ const defaultManifestPath = path.resolve('node_modules/@capacitor-firebase/authe
 const facebookManifestLines = [
   /^\s*\.package\(url: "https:\/\/github\.com\/facebook\/facebook-ios-sdk\.git", from: "[^"]+"\),?\r?\n/m,
   /^\s*\.product\(name: "FacebookCore", package: "facebook-ios-sdk"\),?\r?\n/m,
+  /^\s*\.product\(name: "FacebookCore", package: "facebook-ios-sdk",\r?\n\s*condition: \.when\(traits: \["Facebook"\]\)\),?\r?\n/m,
   /^\s*\.product\(name: "FacebookLogin", package: "facebook-ios-sdk"\),?\r?\n/m,
-  /^\s*\.define\("RGCFA_INCLUDE_FACEBOOK"\),?\r?\n/m
+  /^\s*\.product\(name: "FacebookLogin", package: "facebook-ios-sdk",\r?\n\s*condition: \.when\(traits: \["Facebook"\]\)\),?\r?\n/m,
+  /^\s*\.define\("RGCFA_INCLUDE_FACEBOOK"\),?\r?\n/m,
+  /^\s*\.define\("RGCFA_INCLUDE_FACEBOOK", \.when\(traits: \["Facebook"\]\)\),?\r?\n/m,
+  /^\s*\.trait\(\r?\n\s*name: "Facebook",\r?\n\s*description: "[^"]*"\r?\n\s*\),?\r?\n/m
 ];
 
 export function buildAppleGoogleOnlyAuthenticationManifest(source) {
-  let prepared = String(source || '');
+  let prepared = String(source || '').replace(
+    /\.default\(enabledTraits: \["Google", "Facebook"\]\)/,
+    '.default(enabledTraits: ["Google"])'
+  );
   facebookManifestLines.forEach((pattern) => {
     prepared = prepared.replace(pattern, '');
   });
@@ -22,7 +29,7 @@ export function buildAppleGoogleOnlyAuthenticationManifest(source) {
       || !prepared.includes('RGCFA_INCLUDE_GOOGLE')) {
     throw new Error('The Capacitor Firebase Authentication Swift package has an unexpected shape.');
   }
-  if (/facebook-ios-sdk|FacebookCore|FacebookLogin|RGCFA_INCLUDE_FACEBOOK/.test(prepared)) {
+  if (/facebook-ios-sdk|FacebookCore|FacebookLogin|RGCFA_INCLUDE_FACEBOOK|name: "Facebook"|traits: \[[^\]]*"Facebook"/.test(prepared)) {
     throw new Error('The iOS authentication package still links the unused Facebook SDK.');
   }
   return prepared;
