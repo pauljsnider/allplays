@@ -556,6 +556,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # Generated rules identity includes the whole generation toolchain.
+          # Watch scripts/ conservatively so a new imported helper cannot silently
+          # change output while a source-only component marker advances.
           baseline_branch="$GITHUB_REF_NAME"
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then
@@ -710,7 +713,7 @@ jobs:
             if git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"; then
               if [[ "$firestore_success_sha" != "$last_success_sha" ]]; then
                 if git diff --quiet "$firestore_success_sha" "$last_success_sha" -- \
-                  firestore.rules firestore.indexes.json; then
+                  firestore.rules firestore.indexes.json scripts/ package.json package-lock.json firebase.json .github/workflows/deploy-prod.yml; then
                   echo "::notice::A newer unchanged complete production deployment supersedes the older Firestore component marker; advancing its SHA and forcing live mode classification."
                   firestore_success_sha="$last_success_sha"
                   if [[ "$firestore_success_mode" != "final" ]]; then
@@ -849,7 +852,7 @@ jobs:
             elif [[ "$firestore_success_mode" == "ambiguous" ]]; then
               echo "::warning::The Firestore baseline has no component mode marker; forcing live exact-source classification."
               echo "changed=true" >> "$GITHUB_OUTPUT"
-            elif git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json; then
+            elif git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json scripts/ package.json package-lock.json firebase.json .github/workflows/deploy-prod.yml; then
               echo "changed=false" >> "$GITHUB_OUTPUT"
             else
               echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -1330,7 +1333,7 @@ jobs:
           transient_pattern='(^|[^[:alnum:]])(429|500|502|503|504)([^[:alnum:]]|$)|HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists|service[[:space:]_-]+unavailable|econnreset|connection[[:space:]_-]+reset|network[[:space:]_-]+reset|etimedout|timed[[:space:]_-]+out|timeout'
           retry_enabled_inventory_producer_target="functions:indexCertificateLegacySignaturesOnDefaultsWrite"
           retry_enabled_cleanup_compatibility_target="functions:cleanupCertificateSignature"
-          retry_enabled_function_targets="functions:cleanupPrivateReplayArchiveOnGameDelete,functions:cleanupPrivateReplayArchiveOnSharedGameDelete,functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:cleanupAccountDiamondPrivateNotesOnAuthDelete,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:reconcileLegacyTeamOwnership,functions:syncLegacyTeamOwnershipOnAuthCreate,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate,functions:notifyConversationChatMessageCreated,functions:notifyFeeAssigned,functions:notifyFeeMarkedPaid,functions:notifyGameCreated,functions:notifyGameUpdated,functions:notifyInviteRedeemed,functions:notifyLiveEventCreated,functions:notifyOfficiatingNotificationCreated,functions:notifyOpenOfficiatingSlots,functions:notifyParentMembershipRequestCreated,functions:notifyParentMembershipRequestUpdated,functions:notifyPracticePacketAssigned,functions:notifyPracticePacketCompleted,functions:notifyPublishedCertificateAward,functions:notifyRegistrationStatusChanged,functions:notifyRegistrationSubmitted,functions:notifyRideClaimCreated,functions:notifyRideClaimUpdated,functions:notifyRideOfferCancelled,functions:notifyRideOfferCreated,functions:notifyScheduleImportBatchCompleted,functions:notifyTeamChatMessageCreated,functions:syncTeamNotificationTargetsOnDeviceWrite,functions:syncTeamNotificationTargetsOnPreferenceWrite,functions:processPasswordResetEmailRequest,functions:sweepIneligiblePublicUserProfiles,functions:dispatchDueTeamMediaNotificationBatches,functions:dispatchDuePreEventReminders,functions:queueDueRegistrationFailedPaymentReminders,functions:sendPracticePacketDueTomorrowReminders,functions:sendFeeUnpaidDueReminders,functions:cleanupDeletedDiamondGame,functions:projectDiamondScorebook,functions:processDiamondScorebookEffect"
+          retry_enabled_function_targets="functions:cleanupPrivateReplayArchiveOnGameDelete,functions:cleanupPrivateReplayArchiveOnSharedGameDelete,functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:cleanupAccountDiamondPrivateNotesOnAuthDelete,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:reconcileLegacyTeamOwnership,functions:syncLegacyTeamOwnershipOnAuthCreate,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate,functions:notifyConversationChatMessageCreated,functions:notifyFeeAssigned,functions:notifyFeeMarkedPaid,functions:notifyGameCreated,functions:notifyGameUpdated,functions:notifyInviteRedeemed,functions:notifyLiveEventCreated,functions:notifyOfficiatingNotificationCreated,functions:notifyOpenOfficiatingSlots,functions:notifyParentMembershipRequestCreated,functions:notifyParentMembershipRequestUpdated,functions:notifyPracticePacketAssigned,functions:notifyPracticePacketCompleted,functions:notifyPublishedCertificateAward,functions:notifyRegistrationStatusChanged,functions:notifyRegistrationSubmitted,functions:notifyRideClaimCreated,functions:notifyRideClaimUpdated,functions:notifyRideOfferCancelled,functions:notifyRideOfferCreated,functions:notifyScheduleImportBatchCompleted,functions:notifyTeamChatMessageCreated,functions:syncTeamNotificationTargetsOnDeviceWrite,functions:syncTeamNotificationTargetsOnPreferenceWrite,functions:processPasswordResetEmailRequest,functions:sweepIneligiblePublicUserProfiles,functions:dispatchDueTeamMediaNotificationBatches,functions:dispatchDuePreEventReminders,functions:queueDueRegistrationFailedPaymentReminders,functions:sendPracticePacketDueTomorrowReminders,functions:sendFeeUnpaidDueReminders,functions:cleanupDeletedDiamondGame,functions:projectDiamondScorebook,functions:processDiamondScorebookEffect,functions:cleanupDirectGameCoachesOnlyNote,functions:cleanupOrganizationSharedGameCoachesOnlyNotes,functions:cleanupTournamentSharedGameCoachesOnlyNotes"
           native_web_auth_runtime_service_account="game-flow-c6311@appspot.gserviceaccount.com"
           native_web_auth_runtime_policy="$RUNNER_TEMP/native-web-auth-runtime-policy.json"
           gcloud iam service-accounts get-iam-policy \

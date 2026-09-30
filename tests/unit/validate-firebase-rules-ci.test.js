@@ -191,12 +191,12 @@ concurrency:
           echo "firestore_baseline_sha=$firestore_success_sha" >> "$GITHUB_OUTPUT"
           echo "firestore_baseline_mode=$firestore_success_mode" >> "$GITHUB_OUTPUT"
           git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"
-          git diff --quiet "$firestore_success_sha" "$last_success_sha" -- firestore.rules firestore.indexes.json
+          git diff --quiet "$firestore_success_sha" "$last_success_sha" -- firestore.rules firestore.indexes.json scripts/ package.json package-lock.json firebase.json .github/workflows/deploy-prod.yml; then
           echo "advancing its SHA and forcing live mode classification"
           echo "The protected native-readiness gate can finalize the same"
           firestore_success_sha="$last_success_sha"
           echo "The Firestore component and complete production baselines diverged; forcing authorization rules-first ordering."
-          git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json
+          git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json scripts/ package.json package-lock.json firebase.json .github/workflows/deploy-prod.yml; then
           git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- storage.rules
       - name: Stage exact Firestore baseline variants
         env:
@@ -241,7 +241,7 @@ concurrency:
             )
             retry_enabled_inventory_producer_target="functions:indexCertificateLegacySignaturesOnDefaultsWrite"
             retry_enabled_cleanup_compatibility_target="functions:cleanupCertificateSignature"
-            retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:cleanupAccountDiamondPrivateNotesOnAuthDelete,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:reconcileLegacyTeamOwnership,functions:syncLegacyTeamOwnershipOnAuthCreate,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate,functions:notifyConversationChatMessageCreated,functions:notifyFeeAssigned,functions:notifyFeeMarkedPaid,functions:notifyGameCreated,functions:notifyGameUpdated,functions:notifyInviteRedeemed,functions:notifyLiveEventCreated,functions:notifyOfficiatingNotificationCreated,functions:notifyOpenOfficiatingSlots,functions:notifyParentMembershipRequestCreated,functions:notifyParentMembershipRequestUpdated,functions:notifyPracticePacketAssigned,functions:notifyPracticePacketCompleted,functions:notifyPublishedCertificateAward,functions:notifyRegistrationStatusChanged,functions:notifyRegistrationSubmitted,functions:notifyRideClaimCreated,functions:notifyRideClaimUpdated,functions:notifyRideOfferCancelled,functions:notifyRideOfferCreated,functions:notifyScheduleImportBatchCompleted,functions:notifyTeamChatMessageCreated,functions:syncTeamNotificationTargetsOnDeviceWrite,functions:syncTeamNotificationTargetsOnPreferenceWrite,functions:processPasswordResetEmailRequest,functions:sweepIneligiblePublicUserProfiles,functions:dispatchDueTeamMediaNotificationBatches,functions:dispatchDuePreEventReminders,functions:queueDueRegistrationFailedPaymentReminders,functions:sendPracticePacketDueTomorrowReminders,functions:sendFeeUnpaidDueReminders,functions:cleanupDeletedDiamondGame,functions:projectDiamondScorebook,functions:processDiamondScorebookEffect"
+            retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:cleanupAccountDiamondPrivateNotesOnAuthDelete,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:reconcileLegacyTeamOwnership,functions:syncLegacyTeamOwnershipOnAuthCreate,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate,functions:notifyConversationChatMessageCreated,functions:notifyFeeAssigned,functions:notifyFeeMarkedPaid,functions:notifyGameCreated,functions:notifyGameUpdated,functions:notifyInviteRedeemed,functions:notifyLiveEventCreated,functions:notifyOfficiatingNotificationCreated,functions:notifyOpenOfficiatingSlots,functions:notifyParentMembershipRequestCreated,functions:notifyParentMembershipRequestUpdated,functions:notifyPracticePacketAssigned,functions:notifyPracticePacketCompleted,functions:notifyPublishedCertificateAward,functions:notifyRegistrationStatusChanged,functions:notifyRegistrationSubmitted,functions:notifyRideClaimCreated,functions:notifyRideClaimUpdated,functions:notifyRideOfferCancelled,functions:notifyRideOfferCreated,functions:notifyScheduleImportBatchCompleted,functions:notifyTeamChatMessageCreated,functions:syncTeamNotificationTargetsOnDeviceWrite,functions:syncTeamNotificationTargetsOnPreferenceWrite,functions:processPasswordResetEmailRequest,functions:sweepIneligiblePublicUserProfiles,functions:dispatchDueTeamMediaNotificationBatches,functions:dispatchDuePreEventReminders,functions:queueDueRegistrationFailedPaymentReminders,functions:sendPracticePacketDueTomorrowReminders,functions:sendFeeUnpaidDueReminders,functions:cleanupDeletedDiamondGame,functions:projectDiamondScorebook,functions:processDiamondScorebookEffect,functions:cleanupDirectGameCoachesOnlyNote,functions:cleanupOrganizationSharedGameCoachesOnlyNotes,functions:cleanupTournamentSharedGameCoachesOnlyNotes"
             certificate_compatibility_recovery_ruleset="projects/game-flow-c6311/rulesets/6da601e4-12e3-420a-8db3-907153c712c7"
             certificate_compatibility_recovery_source_sha256="825ec3d3a56a067dc5c80c0e6e6f3fc1ceba2b09b249e0605889dc3d964dc6f2"
             certificate_compatibility_recovery_canonical_sha256="0334471987fba5fbb95f7acf49382e3e412849f02cb2ed333f87249f1674b4de"
@@ -473,6 +473,9 @@ concurrency:
             'git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json',
             'git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- firestore.rules firestore.indexes.json'
         ))).toThrow('Production Firestore component change detection is missing');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replaceAll(' scripts/ ', ' '))).toThrow(
+            'Production Firestore generation pipeline change detection'
+        );
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'if last_success_run_json="$(gh api',
             'last_success_run_json="$(gh api'
