@@ -3105,7 +3105,7 @@ describe('ScheduleEventDetail assignments', () => {
     expect(scheduleServiceMocks.loadHomeScoringPlayers).toHaveBeenNthCalledWith(1, 'team-1', 'game-1');
     expect(scheduleServiceMocks.loadHomeScoringPlayers).toHaveBeenNthCalledWith(2, 'team-1', 'game-2');
     expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenCalledTimes(1);
-    expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenCalledWith('team-1', 'game-2');
+    expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenCalledWith('team-1', 'game-2', { fullHistory: true });
   });
 
   it('preserves dirty game schedule edits when same-event score updates refresh the event object', async () => {
@@ -3436,10 +3436,17 @@ describe('ScheduleEventDetail assignments', () => {
       { id: 'p1', name: 'Avery Smith', number: '12', points: 10, fouls: 3 },
       { id: 'p2', name: 'Blake Jones', number: '7', points: 6, fouls: 1 }
     ]);
-    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([
-      { id: 'f1', eventId: 'f1', type: 'stat', statKey: 'fouls', value: 6, period: 'Q1', isOpponent: false },
-      { id: 'f2', eventId: 'f2', type: 'stat', statKey: 'fouls', value: 1, period: 'Q2', isOpponent: false }
-    ]);
+    const completeHistory = [
+      { id: 'f1', eventId: 'f1', type: 'stat', statKey: 'fouls', value: 7, period: 'Q1', isOpponent: false },
+      { id: 'undo1', eventId: 'undo1', type: 'stat', statKey: 'fouls', value: -1, period: 'Q1', isOpponent: false },
+      { id: 'f2', eventId: 'f2', type: 'stat', statKey: 'fouls', value: 1, period: 'Q2', isOpponent: false },
+      ...Array.from({ length: 20 }, (_, index) => ({
+        id: `score-${index}`, eventId: `score-${index}`, type: 'stat', statKey: 'pts', value: 2, period: 'Q1', isOpponent: false
+      }))
+    ];
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockImplementation(async (_teamId, _gameId, options) => (
+      options?.fullHistory ? completeHistory : completeHistory.slice(-20)
+    ));
     scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
 
     renderScheduleEventDetailWithRouteControls();
