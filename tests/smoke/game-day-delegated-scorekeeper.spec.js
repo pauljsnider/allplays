@@ -133,6 +133,10 @@ async function installModuleMocks(page) {
             return () => {};
         }
 
+        export async function getLiveEvents() {
+            return [];
+        }
+
         export function subscribeAggregatedStats(_teamId, _gameId, callback) {
             callback({});
             return () => {};
