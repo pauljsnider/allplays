@@ -61,6 +61,19 @@ describe('app dependency audit exception', () => {
             .toThrow('exception expired');
     });
 
+    it('reports unrelated dependency findings accurately after the router exception expires', () => {
+        const report = structuredClone(reviewedReport);
+        report.vulnerabilities = { firebase: { name: 'firebase', severity: 'high', via: ['@grpc/grpc-js'] } };
+        expect(() => validateAppAuditReport(report, new Date('2026-09-30T00:00:00Z')))
+            .toThrow('outside the reviewed React Router RSC exception');
+    });
+
+    it('accepts a report with no moderate-or-higher findings after the exception expires', () => {
+        const report = structuredClone(reviewedReport);
+        report.vulnerabilities = {};
+        expect(() => validateAppAuditReport(report, new Date('2026-09-30T00:00:00Z'))).not.toThrow();
+    });
+
     it('rejects registry error JSON instead of treating it as a clean audit', () => {
         expect(() => validateAppAuditResult({
             status: 1,
