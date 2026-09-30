@@ -21,14 +21,33 @@ const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'u
 describe('coaches-only game note rules contract', () => {
     it('keeps direct and shared notes behind exact manager-only document rules', () => {
         expect(rules).toContain('match /coachNotes/main {');
-        expect(rules).toContain('match /organizations/{organizationId}/sharedGames/{gameId}/coachNotes/{teamId} {');
-        expect(rules).toContain('match /tournaments/{tournamentId}/sharedGames/{gameId}/coachNotes/{teamId} {');
-        expect(rules).toContain('function isSharedGameTeamManager(sharedGamePath, teamId)');
+        expect(rules).toContain('match /{sharedRoot}/{sharedParentId}/sharedGames/{gameId}/coachNotes/{teamId} {');
+        expect(rules).toContain("return sharedRoot in ['organizations', 'tournaments'] &&");
+        expect(rules).toContain('function isSharedGameCoachNoteManager(sharedRoot, sharedParentId, gameId, teamId)');
+        expect(rules).toContain('function isTeamGameCoachNoteManager(teamId, gameId)');
         expect(rules).toContain("data.keys().hasOnly(['text', 'updatedAt', 'updatedBy'])");
+        expect(rules).toContain('data.size() == 3');
         expect(rules).toContain('data.text.size() <= 5000');
         expect(rules).toContain('data.updatedAt == request.time');
         expect(rules).toContain('data.updatedBy == request.auth.uid');
-        expect(rules).toContain('allow list: if false;');
+        expect(rules).toContain('(request.resource == null || isCoachesOnlyGameNotePayloadValid(request.resource.data))');
+        // No rule grants list on coach notes; collection reads are denied by default.
+        const matchBlock = (header) => {
+            const start = rules.indexOf(header);
+            expect(start).toBeGreaterThan(-1);
+            let depth = 0;
+            for (let index = rules.indexOf('{', start + header.length - 1); index < rules.length; index += 1) {
+                if (rules[index] === '{') depth += 1;
+                if (rules[index] === '}' && --depth === 0) return rules.slice(start, index + 1);
+            }
+            throw new Error(`unterminated ${header}`);
+        };
+        for (const header of [
+            'match /coachNotes/main {',
+            'match /{sharedRoot}/{sharedParentId}/sharedGames/{gameId}/coachNotes/{teamId} {'
+        ]) {
+            expect(matchBlock(header)).not.toMatch(/allow (read|list)/);
+        }
     });
 });
 
