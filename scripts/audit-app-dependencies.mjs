@@ -33,10 +33,6 @@ export function validateAppAuditReport(report, now = new Date()) {
         .filter((entry) => (severityRank.get(entry?.severity) || 0) >= severityRank.get('moderate'));
 
     if (relevant.length === 0) return;
-    if (now >= exceptionExpiresAt) {
-        throw new Error(`The temporary React Router RSC advisory exception expired on ${exceptionExpiresAt.toISOString()}.`);
-    }
-
     const router = relevant.find((entry) => entry.name === 'react-router');
     const routerDom = relevant.find((entry) => entry.name === 'react-router-dom');
     const directAdvisories = router?.via?.filter((entry) => typeof entry === 'object') || [];
@@ -51,6 +47,10 @@ export function validateAppAuditReport(report, now = new Date()) {
 
     if (!router || !routerDom || !onlyExpectedPackages || !onlyExpectedAdvisory || !onlyExpectedDependency) {
         throw new Error('App dependency audit contains a moderate-or-higher vulnerability outside the reviewed React Router RSC exception.');
+    }
+
+    if (now >= exceptionExpiresAt) {
+        throw new Error(`The temporary React Router RSC advisory exception expired on ${exceptionExpiresAt.toISOString()}.`);
     }
 
     console.warn(
