@@ -1203,18 +1203,23 @@
             state.unsubscribers.push(unsubStats);
 
             if (state.mode === 'gameday') {
-                state.liveEventsSubscriptionActive = true;
-                const unsubLive = subscribeLiveEvents(teamId, gameId, (events) => {
-                    state.boundedLiveEvents = events;
-                    if (state.mode !== 'gameday') return;
-                    state.liveEvents = state.boundedLiveEvents;
-                    markAiChatContextDirty();
-                    renderLiveEventLog();
-                }, (err) => console.error('subscribeLiveEvents error', err));
-                state.unsubscribers.push(unsubLive);
+                subscribeGameDayLiveEvents();
             } else if (state.mode === 'wrapup') {
                 loadCompletedGameEvents();
             }
+        }
+
+        function subscribeGameDayLiveEvents() {
+            if (state.liveEventsSubscriptionActive) return;
+            state.liveEventsSubscriptionActive = true;
+            const unsubLive = subscribeLiveEvents(state.teamId, state.gameId, (events) => {
+                state.boundedLiveEvents = events;
+                if (state.mode !== 'gameday') return;
+                state.liveEvents = state.boundedLiveEvents;
+                markAiChatContextDirty();
+                renderLiveEventLog();
+            }, (err) => console.error('subscribeLiveEvents error', err));
+            state.unsubscribers.push(unsubLive);
         }
 
         async function loadCompletedGameEvents() {
@@ -1226,6 +1231,7 @@
                 if (state.mode === 'wrapup') {
                     state.liveEvents = state.completedLiveEvents;
                     markAiChatContextDirty();
+                    renderWrapup();
                 }
             } catch (err) {
                 console.error('getLiveEvents error', err);
@@ -1270,7 +1276,7 @@
             updateModeSwitcherUI();
             renderCurrentMode();
             if (mode === 'gameday' && !state.liveEventsSubscriptionActive) {
-                subscribeGameDayData();
+                subscribeGameDayLiveEvents();
             } else if (mode === 'wrapup' && !state.completedLiveEventsLoaded) {
                 loadCompletedGameEvents();
             }
