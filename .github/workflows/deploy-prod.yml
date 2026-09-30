@@ -556,6 +556,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # Generated rules identity includes the whole generation toolchain.
+          # Watch scripts/ conservatively so a new imported helper cannot silently
+          # change output while a source-only component marker advances.
           baseline_branch="$GITHUB_REF_NAME"
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then
@@ -710,7 +713,7 @@ jobs:
             if git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"; then
               if [[ "$firestore_success_sha" != "$last_success_sha" ]]; then
                 if git diff --quiet "$firestore_success_sha" "$last_success_sha" -- \
-                  firestore.rules firestore.indexes.json; then
+                  firestore.rules firestore.indexes.json scripts/ package.json package-lock.json firebase.json .github/workflows/deploy-prod.yml; then
                   echo "::notice::A newer unchanged complete production deployment supersedes the older Firestore component marker; advancing its SHA and forcing live mode classification."
                   firestore_success_sha="$last_success_sha"
                   if [[ "$firestore_success_mode" != "final" ]]; then
@@ -849,7 +852,7 @@ jobs:
             elif [[ "$firestore_success_mode" == "ambiguous" ]]; then
               echo "::warning::The Firestore baseline has no component mode marker; forcing live exact-source classification."
               echo "changed=true" >> "$GITHUB_OUTPUT"
-            elif git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json; then
+            elif git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json scripts/ package.json package-lock.json firebase.json .github/workflows/deploy-prod.yml; then
               echo "changed=false" >> "$GITHUB_OUTPUT"
             else
               echo "changed=true" >> "$GITHUB_OUTPUT"
