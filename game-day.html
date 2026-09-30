@@ -496,7 +496,7 @@
             getGameDayTeamContext, getGame, subscribeGame, getPlayers,
             getRsvpBreakdownByPlayer, getMyRsvp, getGames,
             getConfigs, updateGame, logStatEvent, updatePlayerStats,
-            broadcastLiveEvent, subscribeLiveEvents, subscribeAggregatedStats,
+            broadcastLiveEvent, subscribeLiveEvents, getLiveEvents, subscribeAggregatedStats,
             setGameLiveStatus, submitRsvpForPlayer, postChatMessage
         } from './js/db.js?v=4433199';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime } from './js/utils.js?v=443375';
@@ -685,7 +685,12 @@
             aiModel: null,
             broadcastStatusTimer: null,
             // Unsubs
-            unsubscribers: []
+            unsubscribers: [],
+            boundedLiveEvents: [],
+            completedLiveEvents: [],
+            liveEventsSubscriptionActive: false,
+            completedLiveEventsLoaded: false,
+            completedLiveEventsLoadInFlight: false
         };
         const gameDayRsvpController = createGameDayRsvpController({
             state,
@@ -1197,12 +1202,42 @@
             }, (err) => console.error('subscribeAggregatedStats error', err));
             state.unsubscribers.push(unsubStats);
 
-            const unsubLive = subscribeLiveEvents(teamId, gameId, (events) => {
-                state.liveEvents = events;
+            if (state.mode === 'gameday') {
+                subscribeGameDayLiveEvents();
+            } else if (state.mode === 'wrapup') {
+                loadCompletedGameEvents();
+            }
+        }
+
+        function subscribeGameDayLiveEvents() {
+            if (state.liveEventsSubscriptionActive) return;
+            state.liveEventsSubscriptionActive = true;
+            const unsubLive = subscribeLiveEvents(state.teamId, state.gameId, (events) => {
+                state.boundedLiveEvents = events;
+                if (state.mode !== 'gameday') return;
+                state.liveEvents = state.boundedLiveEvents;
                 markAiChatContextDirty();
-                if (state.mode === 'gameday') renderLiveEventLog();
+                renderLiveEventLog();
             }, (err) => console.error('subscribeLiveEvents error', err));
             state.unsubscribers.push(unsubLive);
+        }
+
+        async function loadCompletedGameEvents() {
+            if (state.completedLiveEventsLoaded || state.completedLiveEventsLoadInFlight) return;
+            state.completedLiveEventsLoadInFlight = true;
+            try {
+                state.completedLiveEvents = await getLiveEvents(state.teamId, state.gameId);
+                state.completedLiveEventsLoaded = true;
+                if (state.mode === 'wrapup') {
+                    state.liveEvents = state.completedLiveEvents;
+                    markAiChatContextDirty();
+                    renderWrapup();
+                }
+            } catch (err) {
+                console.error('getLiveEvents error', err);
+            } finally {
+                state.completedLiveEventsLoadInFlight = false;
+            }
         }
 
         // ==================== SUBBANNER ====================
@@ -1232,11 +1267,18 @@
         // ==================== MODE SWITCHING ====================
         window.setMode = function(mode) {
             state.mode = mode;
+            if (mode === 'gameday' && state.liveEventsSubscriptionActive) {
+                state.liveEvents = state.boundedLiveEvents;
+            } else if (mode === 'wrapup' && state.completedLiveEventsLoaded) {
+                state.liveEvents = state.completedLiveEvents;
+            }
             markAiChatContextDirty();
             updateModeSwitcherUI();
             renderCurrentMode();
-            if (mode === 'gameday' && state.unsubscribers.length <= 1) {
-                subscribeGameDayData();
+            if (mode === 'gameday' && !state.liveEventsSubscriptionActive) {
+                subscribeGameDayLiveEvents();
+            } else if (mode === 'wrapup' && !state.completedLiveEventsLoaded) {
+                loadCompletedGameEvents();
             }
         };
 
