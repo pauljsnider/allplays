@@ -686,6 +686,8 @@
             broadcastStatusTimer: null,
             // Unsubs
             unsubscribers: [],
+            boundedLiveEvents: [],
+            completedLiveEvents: [],
             liveEventsSubscriptionActive: false,
             completedLiveEventsLoaded: false,
             completedLiveEventsLoadInFlight: false
@@ -1203,9 +1205,11 @@
             if (state.mode === 'gameday') {
                 state.liveEventsSubscriptionActive = true;
                 const unsubLive = subscribeLiveEvents(teamId, gameId, (events) => {
-                    state.liveEvents = events;
+                    state.boundedLiveEvents = events;
+                    if (state.mode !== 'gameday') return;
+                    state.liveEvents = state.boundedLiveEvents;
                     markAiChatContextDirty();
-                    if (state.mode === 'gameday') renderLiveEventLog();
+                    renderLiveEventLog();
                 }, (err) => console.error('subscribeLiveEvents error', err));
                 state.unsubscribers.push(unsubLive);
             } else if (state.mode === 'wrapup') {
@@ -1217,9 +1221,12 @@
             if (state.completedLiveEventsLoaded || state.completedLiveEventsLoadInFlight) return;
             state.completedLiveEventsLoadInFlight = true;
             try {
-                state.liveEvents = await getLiveEvents(state.teamId, state.gameId);
+                state.completedLiveEvents = await getLiveEvents(state.teamId, state.gameId);
                 state.completedLiveEventsLoaded = true;
-                markAiChatContextDirty();
+                if (state.mode === 'wrapup') {
+                    state.liveEvents = state.completedLiveEvents;
+                    markAiChatContextDirty();
+                }
             } catch (err) {
                 console.error('getLiveEvents error', err);
             } finally {
@@ -1254,6 +1261,11 @@
         // ==================== MODE SWITCHING ====================
         window.setMode = function(mode) {
             state.mode = mode;
+            if (mode === 'gameday' && state.liveEventsSubscriptionActive) {
+                state.liveEvents = state.boundedLiveEvents;
+            } else if (mode === 'wrapup' && state.completedLiveEventsLoaded) {
+                state.liveEvents = state.completedLiveEvents;
+            }
             markAiChatContextDirty();
             updateModeSwitcherUI();
             renderCurrentMode();

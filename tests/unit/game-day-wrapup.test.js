@@ -136,8 +136,11 @@ describe('game-day wrap-up page wiring', () => {
     expect(source).toContain('broadcastLiveEvent, subscribeLiveEvents, getLiveEvents, subscribeAggregatedStats,');
     expect(source).toContain("if (state.mode === 'gameday') {");
     expect(source).toContain('subscribeLiveEvents(teamId, gameId');
-    expect(source).toContain('state.liveEvents = await getLiveEvents(state.teamId, state.gameId);');
+    expect(source).toContain('state.completedLiveEvents = await getLiveEvents(state.teamId, state.gameId);');
     expect(source).toContain('completedLiveEventsLoaded');
+    expect(source).toContain("if (state.mode !== 'gameday') return;");
+    expect(source).toContain('state.liveEvents = state.boundedLiveEvents;');
+    expect(source).toContain('state.liveEvents = state.completedLiveEvents;');
 
     const subscriptionBlock = source.slice(
       source.indexOf("if (state.mode === 'gameday') {"),
