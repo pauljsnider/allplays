@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 const require = createRequire(import.meta.url);
 const {
     PRE_EVENT_REMINDER_QUERY_PAGE_SIZE,
+    drainOrderedPages,
     drainDueReminderPages
 } = require('../../functions/pre-event-reminder-dispatcher-core.cjs');
 
@@ -189,5 +190,94 @@ describe('drainDueReminderPages', () => {
 
         expect(summary.stoppedBecause).toBe('maxPages');
         expect(summary.results).toHaveLength(100);
+    });
+});
+
+describe('drainOrderedPages', () => {
+    it('uses the explicit page size and advances with each page result cursor', async () => {
+        const cursors = [{ value: 'cursor-1' }, { value: 'cursor-2' }];
+        const pages = [
+            { docs: [{ id: 'a' }, { id: 'b' }], nextCursor: cursors[0] },
+            { docs: [{ id: 'c' }, { id: 'd' }], nextCursor: cursors[1] },
+            { docs: [{ id: 'e' }], nextCursor: null }
+        ];
+        const loadPage = vi.fn(async ({ pageNumber }) => pages[pageNumber - 1]);
+        const processedIds = [];
+
+        const summary = await drainOrderedPages({
+            pageSize: 2,
+            maxPages: 5,
+            loadPage,
+            processPage: async (docs) => {
+                processedIds.push(...docs.map((doc) => doc.id));
+                return { sentCount: docs.length, failedCount: 0 };
+            }
+        });
+
+        expect(loadPage.mock.calls.map(([input]) => input)).toEqual([
+            { cursor: null, limit: 2, pageNumber: 1 },
+            { cursor: cursors[0], limit: 2, pageNumber: 2 },
+            { cursor: cursors[1], limit: 2, pageNumber: 3 }
+        ]);
+        expect(processedIds).toEqual(['a', 'b', 'c', 'd', 'e']);
+        expect(summary).toEqual({
+            pagesAttempted: 3,
+            examinedCount: 5,
+            sentCount: 5,
+            failedCount: 0,
+            stoppedBecause: 'drained',
+            lastCursor: null
+        });
+    });
+
+    it('stops at the page cap and reports counters only for processed pages', async () => {
+        const loadPage = vi.fn(async ({ pageNumber }) => ({
+            docs: [{ id: `${pageNumber}-a` }, { id: `${pageNumber}-b` }],
+            nextCursor: `cursor-${pageNumber}`
+        }));
+
+        const summary = await drainOrderedPages({
+            pageSize: 2,
+            maxPages: 2,
+            loadPage,
+            processPage: async () => ({ sentCount: 1, failedCount: 1 })
+        });
+
+        expect(loadPage).toHaveBeenCalledTimes(2);
+        expect(summary).toEqual({
+            pagesAttempted: 2,
+            examinedCount: 4,
+            sentCount: 2,
+            failedCount: 2,
+            stoppedBecause: 'maxPages',
+            lastCursor: 'cursor-2'
+        });
+    });
+
+    it('aggregates counters and treats a short page at the cap as drained', async () => {
+        const pages = [
+            { docs: [{ id: 'a' }, { id: 'b' }], nextCursor: 'cursor-1' },
+            { docs: [{ id: 'c' }], nextCursor: 'cursor-2' }
+        ];
+        const outcomes = [
+            { sentCount: 1, failedCount: 1 },
+            { sentCount: 0, failedCount: 1 }
+        ];
+
+        const summary = await drainOrderedPages({
+            pageSize: 2,
+            maxPages: 2,
+            loadPage: async ({ pageNumber }) => pages[pageNumber - 1],
+            processPage: async (_docs, { pageNumber }) => outcomes[pageNumber - 1]
+        });
+
+        expect(summary).toEqual({
+            pagesAttempted: 2,
+            examinedCount: 3,
+            sentCount: 1,
+            failedCount: 2,
+            stoppedBecause: 'drained',
+            lastCursor: 'cursor-2'
+        });
     });
 });
