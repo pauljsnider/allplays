@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   shouldPromptWrapupOnCompletion,
   getWrapupFormState,
@@ -10,6 +10,61 @@ import {
   buildPracticeFeedPrompt,
   buildGameSummaryPrompt
 } from '../../js/game-day-wrapup.js';
+
+const gameDayPageSource = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
+
+function createGameDaySubscriptionHarness(overrides = {}) {
+  const subscriptionStart = gameDayPageSource.indexOf('        function subscribeGameDayData()');
+  const subscriptionEnd = gameDayPageSource.indexOf('        // ==================== SUBBANNER', subscriptionStart);
+  const setModeStart = gameDayPageSource.indexOf('        window.setMode = function(mode)');
+  const setModeEnd = gameDayPageSource.indexOf('        function renderCurrentMode()', setModeStart);
+  const pageFunctions = [
+    gameDayPageSource.slice(subscriptionStart, subscriptionEnd),
+    gameDayPageSource.slice(setModeStart, setModeEnd)
+  ].join('\n');
+  const state = {
+    teamId: 'team-1',
+    gameId: 'game-1',
+    mode: 'wrapup',
+    gameViewTab: 'field',
+    liveEvents: [{ id: 'bounded-event' }],
+    boundedLiveEvents: [{ id: 'bounded-event' }],
+    completedLiveEvents: [],
+    liveEventsSubscriptionActive: false,
+    completedLiveEventsLoaded: false,
+    completedLiveEventsLoadInFlight: false,
+    unsubscribers: [],
+    ...overrides.state
+  };
+  const dependencies = {
+    state,
+    subscribeAggregatedStats: vi.fn(() => vi.fn()),
+    subscribeLiveEvents: vi.fn(() => vi.fn()),
+    getLiveEvents: vi.fn(async () => []),
+    markAiChatContextDirty: vi.fn(),
+    renderStatsView: vi.fn(),
+    renderLiveEventLog: vi.fn(),
+    renderWrapup: vi.fn(),
+    updateModeSwitcherUI: vi.fn(),
+    renderCurrentMode: vi.fn(),
+    console,
+    ...overrides
+  };
+  dependencies.state = state;
+
+  const createHarness = new Function('deps', `
+    const {
+      state, subscribeAggregatedStats, subscribeLiveEvents, getLiveEvents,
+      markAiChatContextDirty, renderStatsView, renderLiveEventLog, renderWrapup,
+      updateModeSwitcherUI, renderCurrentMode, console
+    } = deps;
+    const window = {};
+    ${pageFunctions}
+    return { subscribeGameDayData, loadCompletedGameEvents, setMode: window.setMode };
+  `);
+
+  return { state, dependencies, ...createHarness(dependencies) };
+}
 
 describe('game day wrap-up helpers', () => {
   it('opens wrap-up when a real-time update marks the game completed outside wrap-up mode', () => {
@@ -130,6 +185,59 @@ describe('game day wrap-up helpers', () => {
 });
 
 describe('game-day wrap-up page wiring', () => {
+  it('rerenders wrap-up after the complete event history finishes loading', async () => {
+    let resolveEvents;
+    const getLiveEvents = vi.fn(() => new Promise((resolve) => {
+      resolveEvents = resolve;
+    }));
+    const harness = createGameDaySubscriptionHarness({ getLiveEvents });
+    const fullHistory = [{ id: 'event-1' }, { id: 'event-2' }];
+
+    const loading = harness.loadCompletedGameEvents();
+    expect(harness.dependencies.renderWrapup).not.toHaveBeenCalled();
+
+    resolveEvents(fullHistory);
+    await loading;
+
+    expect(harness.state.liveEvents).toBe(fullHistory);
+    expect(harness.dependencies.renderWrapup).toHaveBeenCalledOnce();
+  });
+
+  it('subscribes only to missing live events when switching an initial wrap-up view to Game Day', () => {
+    const harness = createGameDaySubscriptionHarness({
+      getLiveEvents: vi.fn(async () => [{ id: 'completed-event' }])
+    });
+
+    harness.subscribeGameDayData();
+    expect(harness.dependencies.subscribeAggregatedStats).toHaveBeenCalledOnce();
+    expect(harness.dependencies.subscribeLiveEvents).not.toHaveBeenCalled();
+
+    harness.setMode('gameday');
+
+    expect(harness.dependencies.subscribeAggregatedStats).toHaveBeenCalledOnce();
+    expect(harness.dependencies.subscribeLiveEvents).toHaveBeenCalledOnce();
+  });
+
+  it('uses the bounded live subscription only for active games and preserves full completed replay loading', () => {
+    const source = gameDayPageSource;
+
+    expect(source).toContain('broadcastLiveEvent, subscribeLiveEvents, getLiveEvents, subscribeAggregatedStats,');
+    expect(source).toContain("if (state.mode === 'gameday') {");
+    expect(source).toContain('subscribeLiveEvents(state.teamId, state.gameId');
+    expect(source).toContain('state.completedLiveEvents = await getLiveEvents(state.teamId, state.gameId);');
+    expect(source).toContain('completedLiveEventsLoaded');
+    expect(source).toContain("if (state.mode !== 'gameday') return;");
+    expect(source).toContain('state.liveEvents = state.boundedLiveEvents;');
+    expect(source).toContain('state.liveEvents = state.completedLiveEvents;');
+
+    const subscriptionBlock = source.slice(
+      source.indexOf("if (state.mode === 'gameday') {"),
+      source.indexOf('async function loadCompletedGameEvents()')
+    );
+    expect(subscriptionBlock).toContain('subscribeLiveEvents(state.teamId, state.gameId');
+    expect(subscriptionBlock).not.toContain('getLiveEvents(');
+  });
+
   it('routes the completion transition, wrap-up prefill, and finish flow through the helper module', () => {
     const source = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
 
