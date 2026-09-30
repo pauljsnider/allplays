@@ -181,7 +181,7 @@ describe('Capacitor native config', () => {
 
         expect(appPackage.devDependencies.jsdom).toBe('^30.0.1');
         expect(appPackageLock.packages['node_modules/jsdom'].version).toBe('30.0.1');
-        expect(appPackageLock.packages['node_modules/undici'].version).toBe('8.10.0');
+        expect(appPackageLock.packages['node_modules/undici'].version).toBe('8.9.0');
         expect(appPackageLock.packages['node_modules/undici'].engines.node).toBe('>=22.19.0');
     });
 
