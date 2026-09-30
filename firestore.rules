@@ -1735,6 +1735,33 @@ service cloud.firestore {
              );
     }
 
+    function isCoachesOnlyGameNotePayloadValid(data) {
+      return data.keys().hasOnly(['text', 'updatedAt', 'updatedBy']) &&
+             data.size() == 3 &&
+             data.text is string &&
+             data.text.size() <= 5000 &&
+             data.updatedAt == request.time &&
+             data.updatedBy == request.auth.uid;
+    }
+
+    function isTeamGameCoachNoteManager(teamId, gameId) {
+      return exists(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)) &&
+             isTeamOwnerOrAdmin(teamId);
+    }
+
+    function isSharedGameCoachNoteManager(sharedRoot, sharedParentId, gameId, teamId) {
+      let sharedGame = get(/databases/$(database)/documents/$(sharedRoot)/$(sharedParentId)/sharedGames/$(gameId)).data;
+      return sharedRoot in ['organizations', 'tournaments'] &&
+             sharedGame != null &&
+             teamId is string &&
+             teamId.size() > 0 &&
+             (
+               sharedGame.get('homeTeamId', null) == teamId ||
+               sharedGame.get('awayTeamId', null) == teamId
+             ) &&
+             isTeamOwnerOrAdmin(teamId);
+    }
+
     function isTrackingItemPayloadValid(teamId, data) {
       return data.keys().hasOnly([
                'teamId', 'name', 'description', 'visibility', 'status', 'active', 'archived',
@@ -3420,6 +3447,17 @@ service cloud.firestore {
       allow read: if canReadCollectionGroupSharedGameDocument(resource.data);
     }
 
+    // Shared-game notes stay beneath the physical organization or tournament
+    // shared game. Each linked team gets its own document, and removing the team
+    // or game immediately revokes access even if asynchronous cleanup has not run.
+    // No rule grants list; delete requests carry no payload (request.resource == null).
+    match /{sharedRoot}/{sharedParentId}/sharedGames/{gameId}/coachNotes/{teamId} {
+      allow get: if isSharedGameCoachNoteManager(sharedRoot, sharedParentId, gameId, teamId);
+      allow write: if isVerifiedForSensitiveWrite() &&
+                      isSharedGameCoachNoteManager(sharedRoot, sharedParentId, gameId, teamId) &&
+                      (request.resource == null || isCoachesOnlyGameNotePayloadValid(request.resource.data));
+    }
+
     // Live viewers open shared games by synthetic ID, then read live/replay data
     // from the decoded sharedGames document path.
     match /{path=**}/sharedGames/{gameId}/{liveGameCollection}/{docId} {
@@ -3998,6 +4036,16 @@ service cloud.firestore {
         // game-update role and exceed the per-request expression budget.
         allow update: if isBroadcastSessionOnlyUpdate() && isTeamOwnerOrAdmin(teamId);
         allow update: if isStreamingGameUpdate(teamId, gameId);
+
+        // A separately stored note for coaches and team managers. The game
+        // document itself is readable by parents and scoped game helpers, so
+        // private staff text must never be stored on that parent document.
+        match /coachNotes/main {
+          allow get: if isTeamGameCoachNoteManager(teamId, gameId);
+          allow write: if isVerifiedForSensitiveWrite() &&
+                          isTeamGameCoachNoteManager(teamId, gameId) &&
+                          (request.resource == null || isCoachesOnlyGameNotePayloadValid(request.resource.data));
+        }
 
         // Events subcollection
         match /events/{eventId} {

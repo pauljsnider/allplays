@@ -40,6 +40,10 @@ import {
 import { useShellLayout } from '../../lib/useShellLayout';
 import { CompactMeta } from '../../components/schedule/CompactMeta';
 import { GameReplayEditor } from '../../components/schedule/GameReplayEditor';
+import {
+  buildCoachesOnlyGameNoteScopeKey,
+  CoachesOnlyGameNotesPanel
+} from '../../components/schedule/CoachesOnlyGameNotesPanel';
 import { PracticeAttendancePanel } from '../../components/schedule/PracticeAttendancePanel';
 import { ReportMarkdownText } from '../../components/schedule/ReportMarkdownText';
 import { ScoreStepper } from '../../components/schedule/ScoreStepper';
@@ -1734,6 +1738,28 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
         </LazyGameHubPanel>
       ) : null}
     </section>
+  );
+}
+
+export function ScheduleGameHubPrivateNotes({
+  auth,
+  event,
+  sharedGamePath = ''
+}: {
+  auth: AuthState;
+  event: ParentScheduleEvent;
+  sharedGamePath?: string;
+}) {
+  if (auth.loading || !auth.user || event.type === 'practice' || !event.isTeamAdmin || !event.isDbGame) return null;
+
+  return (
+    <CoachesOnlyGameNotesPanel
+      key={buildCoachesOnlyGameNoteScopeKey(auth.user.uid, event.teamId, event.id, sharedGamePath)}
+      teamId={event.teamId}
+      gameId={event.id}
+      userId={auth.user.uid}
+      sharedGamePath={sharedGamePath}
+    />
   );
 }
 
