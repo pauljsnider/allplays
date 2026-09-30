@@ -189,10 +189,11 @@ describe('Capacitor native config', () => {
         expect(appPackageLock.packages['node_modules/undici'].engines.node).toBe('>=22.19.0');
     });
 
-    it('forces patched glob dependency versions throughout the app npm lockfile', () => {
+    it('forces patched transitive dependency versions throughout the app npm lockfile', () => {
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
         const patchedVersions = {
+            '@grpc/grpc-js': '1.14.5',
             'brace-expansion': '5.0.8',
             minimatch: '10.2.5'
         };
