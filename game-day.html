@@ -496,7 +496,7 @@
             getGameDayTeamContext, getGame, subscribeGame, getPlayers,
             getRsvpBreakdownByPlayer, getMyRsvp, getGames,
             getConfigs, updateGame, logStatEvent, updatePlayerStats,
-            broadcastLiveEvent, subscribeLiveEvents, subscribeAggregatedStats,
+            broadcastLiveEvent, subscribeLiveEvents, getLiveEvents, subscribeAggregatedStats,
             setGameLiveStatus, submitRsvpForPlayer, postChatMessage
         } from './js/db.js?v=4433199';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime } from './js/utils.js?v=443375';
@@ -685,7 +685,10 @@
             aiModel: null,
             broadcastStatusTimer: null,
             // Unsubs
-            unsubscribers: []
+            unsubscribers: [],
+            liveEventsSubscriptionActive: false,
+            completedLiveEventsLoaded: false,
+            completedLiveEventsLoadInFlight: false
         };
         const gameDayRsvpController = createGameDayRsvpController({
             state,
@@ -1197,12 +1200,31 @@
             }, (err) => console.error('subscribeAggregatedStats error', err));
             state.unsubscribers.push(unsubStats);
 
-            const unsubLive = subscribeLiveEvents(teamId, gameId, (events) => {
-                state.liveEvents = events;
+            if (state.mode === 'gameday') {
+                state.liveEventsSubscriptionActive = true;
+                const unsubLive = subscribeLiveEvents(teamId, gameId, (events) => {
+                    state.liveEvents = events;
+                    markAiChatContextDirty();
+                    if (state.mode === 'gameday') renderLiveEventLog();
+                }, (err) => console.error('subscribeLiveEvents error', err));
+                state.unsubscribers.push(unsubLive);
+            } else if (state.mode === 'wrapup') {
+                loadCompletedGameEvents();
+            }
+        }
+
+        async function loadCompletedGameEvents() {
+            if (state.completedLiveEventsLoaded || state.completedLiveEventsLoadInFlight) return;
+            state.completedLiveEventsLoadInFlight = true;
+            try {
+                state.liveEvents = await getLiveEvents(state.teamId, state.gameId);
+                state.completedLiveEventsLoaded = true;
                 markAiChatContextDirty();
-                if (state.mode === 'gameday') renderLiveEventLog();
-            }, (err) => console.error('subscribeLiveEvents error', err));
-            state.unsubscribers.push(unsubLive);
+            } catch (err) {
+                console.error('getLiveEvents error', err);
+            } finally {
+                state.completedLiveEventsLoadInFlight = false;
+            }
         }
 
         // ==================== SUBBANNER ====================
@@ -1235,8 +1257,10 @@
             markAiChatContextDirty();
             updateModeSwitcherUI();
             renderCurrentMode();
-            if (mode === 'gameday' && state.unsubscribers.length <= 1) {
+            if (mode === 'gameday' && !state.liveEventsSubscriptionActive) {
                 subscribeGameDayData();
+            } else if (mode === 'wrapup' && !state.completedLiveEventsLoaded) {
+                loadCompletedGameEvents();
             }
         };
 

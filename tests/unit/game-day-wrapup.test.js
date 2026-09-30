@@ -130,6 +130,23 @@ describe('game day wrap-up helpers', () => {
 });
 
 describe('game-day wrap-up page wiring', () => {
+  it('uses the bounded live subscription only for active games and preserves full completed replay loading', () => {
+    const source = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
+
+    expect(source).toContain('broadcastLiveEvent, subscribeLiveEvents, getLiveEvents, subscribeAggregatedStats,');
+    expect(source).toContain("if (state.mode === 'gameday') {");
+    expect(source).toContain('subscribeLiveEvents(teamId, gameId');
+    expect(source).toContain('state.liveEvents = await getLiveEvents(state.teamId, state.gameId);');
+    expect(source).toContain('completedLiveEventsLoaded');
+
+    const subscriptionBlock = source.slice(
+      source.indexOf("if (state.mode === 'gameday') {"),
+      source.indexOf('async function loadCompletedGameEvents()')
+    );
+    expect(subscriptionBlock).toContain('subscribeLiveEvents(teamId, gameId');
+    expect(subscriptionBlock).not.toContain('getLiveEvents(');
+  });
+
   it('routes the completion transition, wrap-up prefill, and finish flow through the helper module', () => {
     const source = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
 
