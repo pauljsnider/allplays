@@ -3408,7 +3408,7 @@ function GameDayFoulTrackerPanel({ auth, event, homePlayers, loadingHomePlayers,
       setFoulHistoryLoadFailed(false);
       try {
         const { loadGameDayLiveEventsForApp } = await loadScheduleGameDayService();
-        const loadedLiveEvents = await loadGameDayLiveEventsForApp(event.teamId, event.id);
+        const loadedLiveEvents = await loadGameDayLiveEventsForApp(event.teamId, event.id, { fullHistory: true });
         if (cancelled) return;
         setLiveEvents(Array.isArray(loadedLiveEvents) ? loadedLiveEvents : []);
       } catch (error) {
