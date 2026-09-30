@@ -18,15 +18,24 @@ vi.mock('../../js/firebase-app-check-rest.js?v=1', () => ({
     getPrimaryAppCheckHeaders: vi.fn(async (headers) => headers)
 }));
 
-const { loadDashboardTeams } = await import('../../js/dashboard-team-load.js?v=4');
+const { loadDashboardTeams } = await import('../../js/dashboard-team-load.js?v=5');
 
-function dashboardResult({ items = [], parentItems = [], isPartial = false, includesAllTeams = false } = {}) {
+function dashboardResult({
+    items = [],
+    parentItems = [],
+    isPartial = false,
+    includesAllTeams = false,
+    nextCursor = null,
+    hasMore = false
+} = {}) {
     return {
         dashboardTeamLoadVersion: 1,
         includesAllTeams,
         items,
         parentItems,
-        isPartial
+        isPartial,
+        nextCursor,
+        hasMore
     };
 }
 
@@ -203,25 +212,54 @@ describe('dashboard team load', () => {
         expect(firebaseMocks.listManagedTeams).toHaveBeenCalledTimes(2);
     });
 
-    it('requires an explicit all-teams acknowledgement for a platform-admin request', async () => {
-        vi.useFakeTimers();
+    it('transports and normalizes platform-admin page size and cursor metadata', async () => {
         firebaseMocks.listManagedTeams.mockResolvedValue({
-            data: dashboardResult({ includesAllTeams: false })
-        });
-        globalThis.fetch = vi.fn().mockResolvedValue({
-            ok: true,
-            json: async () => ({ result: dashboardResult({ includesAllTeams: false }) })
+            data: dashboardResult({
+                items: [
+                    { id: 'team-c', name: 'Zulu', active: true },
+                    { id: 'team-b', name: 'Alpha', active: true }
+                ],
+                nextCursor: 'team-c',
+                hasMore: true
+            })
         });
 
-        const resultPromise = loadDashboardTeams({ includeAllTeams: true });
-        const assertion = expect(resultPromise).rejects.toMatchObject({
-            code: 'dashboard-team-discovery-incomplete-admin'
+        await expect(loadDashboardTeams({
+            includeAllTeams: true,
+            pageSize: 25,
+            cursor: 'team-a'
+        })).resolves.toEqual({
+            fullAccessTeams: [
+                { id: 'team-b', name: 'Alpha', active: true },
+                { id: 'team-c', name: 'Zulu', active: true }
+            ],
+            parentTeams: [],
+            nextCursor: 'team-c',
+            hasMore: true
         });
-        await vi.advanceTimersByTimeAsync(750);
-        await assertion;
         expect(firebaseMocks.listManagedTeams).toHaveBeenCalledWith({
             includeParentTeams: true,
-            includeAllTeams: true
+            includeAllTeams: true,
+            pageSize: 25,
+            cursor: 'team-a'
+        });
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    it('does not require an all-teams completeness acknowledgement for an admin page', async () => {
+        firebaseMocks.listManagedTeams.mockResolvedValue({
+            data: dashboardResult({
+                items: [{ id: 'team-1', name: 'First page' }],
+                includesAllTeams: false,
+                nextCursor: 'team-1',
+                hasMore: true
+            })
+        });
+
+        await expect(loadDashboardTeams({ includeAllTeams: true })).resolves.toMatchObject({
+            fullAccessTeams: [{ id: 'team-1', name: 'First page' }],
+            nextCursor: 'team-1',
+            hasMore: true
         });
     });
 
