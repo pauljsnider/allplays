@@ -877,6 +877,14 @@ export function validateProductionDeployCommand(deployProd) {
         'Production Firestore divergent baseline fail-closed fallback'
     );
     assertIncludes(deployProd, 'git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json', 'Production Firestore component change detection');
+    const generationInputs = 'firestore.rules firestore.indexes.json scripts/ package.json package-lock.json firebase.json .github/workflows/deploy-prod.yml';
+    const normalizedDeploy = deployProd.replace(/\\\r?\n\s*/g, '');
+    for (const target of ['last_success_sha', 'GITHUB_SHA']) {
+        assertIncludes(normalizedDeploy,
+            `git diff --quiet "$firestore_success_sha" "$${target}" -- ${generationInputs}; then`,
+            'Production Firestore generation pipeline change detection');
+    }
+
     assertIncludes(deployProd, 'record_component_deployment()', 'Production component deployment recorder');
     assertIncludes(deployProd, '"production-firestore"', 'Production Firestore component marker');
     assertIncludes(deployProd, 'state: "success"', 'Production Firestore component success status');

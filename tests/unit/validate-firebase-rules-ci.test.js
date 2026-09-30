@@ -191,12 +191,12 @@ concurrency:
           echo "firestore_baseline_sha=$firestore_success_sha" >> "$GITHUB_OUTPUT"
           echo "firestore_baseline_mode=$firestore_success_mode" >> "$GITHUB_OUTPUT"
           git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"
-          git diff --quiet "$firestore_success_sha" "$last_success_sha" -- firestore.rules firestore.indexes.json
+          git diff --quiet "$firestore_success_sha" "$last_success_sha" -- firestore.rules firestore.indexes.json scripts/ package.json package-lock.json firebase.json .github/workflows/deploy-prod.yml; then
           echo "advancing its SHA and forcing live mode classification"
           echo "The protected native-readiness gate can finalize the same"
           firestore_success_sha="$last_success_sha"
           echo "The Firestore component and complete production baselines diverged; forcing authorization rules-first ordering."
-          git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json
+          git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json scripts/ package.json package-lock.json firebase.json .github/workflows/deploy-prod.yml; then
           git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- storage.rules
       - name: Stage exact Firestore baseline variants
         env:
@@ -473,6 +473,9 @@ concurrency:
             'git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json',
             'git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- firestore.rules firestore.indexes.json'
         ))).toThrow('Production Firestore component change detection is missing');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replaceAll(' scripts/ ', ' '))).toThrow(
+            'Production Firestore generation pipeline change detection'
+        );
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'if last_success_run_json="$(gh api',
             'last_success_run_json="$(gh api'
