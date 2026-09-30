@@ -1,9 +1,36 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 
 const read = (path) => readFileSync(path, 'utf8');
 
 describe('agent guidance', () => {
+    it.each(['AGENTS.md', 'docs/codebase/TESTING.md', 'docs/landing-process.md'])('keeps %s aligned with the active PR CI topology', (file) => {
+        const guidance = read(file);
+        const fast = parseYaml(read('.github/workflows/pr-fast.yml'));
+        const integration = parseYaml(read('.github/workflows/pr-integration.yml'));
+
+        for (const name of ['pr-fast.yml', 'pr-integration.yml']) {
+            expect(guidance).toContain(`\`${name}\``);
+        }
+        expect(fast.on.pull_request.types).toContain('ready_for_review');
+        expect(integration.on.pull_request.types).toContain('ready_for_review');
+        expect(guidance).toContain('ready_for_review');
+        expect(guidance).toMatch(/draft/i);
+        expect(guidance).toContain('reusable/manual only');
+        expect(guidance).toContain('`ci.yml` is manual only');
+        expect(guidance).not.toMatch(/`ci\.yml` runs on pull requests/);
+        for (const job of Object.values(integration.jobs).filter((job) => job.uses)) {
+            const name = job.uses.split('/').at(-1);
+            expect(guidance).toContain(`\`${name}\``);
+            const reusable = parseYaml(read(`.github/workflows/${name}`));
+            expect(reusable.on).toHaveProperty('workflow_call');
+            expect(reusable.on).not.toHaveProperty('pull_request');
+            expect(reusable.on).not.toHaveProperty('push');
+        }
+        expect(parseYaml(read('.github/workflows/ci.yml')).on).toEqual({ workflow_dispatch: null });
+    });
+
     it('uses the canonical product name and only active source/package trees', () => {
         const readme = read('README.md');
         const landing = read('docs/landing-process.md');

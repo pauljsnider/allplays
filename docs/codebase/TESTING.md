@@ -87,7 +87,13 @@ emulators and must never target a real Firebase project.
 
 ### Fast and focused validation
 
-`ci.yml` runs on pull requests and `master` pushes:
+The two PR code-head entrypoints are `pr-fast.yml` and `pr-integration.yml`.
+Both handle opened, synchronize, reopened, and `ready_for_review` events.
+Draft heads skip heavy jobs; ownership-label changes do not trigger CI.
+`ci.yml` is manual only; the integration children are reusable/manual only and
+must not regain competing pull-request or master-push triggers.
+
+`pr-fast.yml` owns:
 
 - `cache-bust-guard`: verifies selected legacy asset query-version updates.
 - `unit-tests`: installs root, Functions, and app packages; validates optional
@@ -96,19 +102,19 @@ emulators and must never target a real Firebase project.
 - `app-quality`: audits app production dependencies, typechecks, performs
   diff-aware lint, and runs app tests.
 
-`regression-guards.yml` runs:
+`pr-integration.yml` calls `regression-guards.yml` for:
 
 - `firebase-rules-deploy-guard`: `npm run ci:firebase-rules`.
 - `roster-chat-media-replay-smoke`: focused Playwright fallback regression.
 
 ### Expensive path-filtered integration
 
-`mobile-build.yml` classifies changes. App, native, Capacitor, root manifest,
+`pr-integration.yml` also calls `mobile-build.yml`, which classifies changes. App, native, Capacitor, root manifest,
 lockfile, or workflow changes run Android debug and iOS simulator jobs. The
 stable aggregate job named `mobile-build` passes when native work is not
 applicable and fails closed on classification or native failures.
 
-`preview-smoke.yml` classifies served-web impact. Backend, native, docs,
+The third `pr-integration.yml` child, `preview-smoke.yml`, classifies served-web impact. Backend, native, docs,
 migration, root unit-test, and rule-only diffs may skip heavy work. Applicable
 changes build/stage the root plus app, start static and app servers, and run
 nonvisual and deterministic visual Playwright suites. The stable aggregate job
@@ -120,13 +126,15 @@ dependency jobs before treating a green skip as an executed native/browser run.
 
 ### Preview security split
 
-`deploy-preview.yml` runs only for same-repository PRs and has empty
-permissions. It checks regression gates and builds an untrusted Hosting
-artifact without Google credentials.
+An explicit `pr-preview.yml` dispatch supplies a ready same-repository PR
+number and exact current head SHA to the reusable `deploy-preview.yml` builder.
+The builder has empty permissions and creates an untrusted Hosting artifact
+without Google credentials. Ordinary PR pushes and labels do not deploy previews.
 
-`deploy-preview-trusted.yml` runs from `workflow_run` using trusted
-default-branch verifier code. It validates the triggering workflow, PR,
-artifact name/content, and exact current head; safely extracts content, creates
+`deploy-preview-trusted.yml` accepts only the completed successful `pr-preview`
+manual dispatch through `workflow_run`, using trusted default-branch verifier
+code. It requires successful exact-head `pr-integration` results and validates
+the ready PR, artifact name/content, and exact current head; safely extracts content, creates
 a trusted Firebase config, and creates a sanitized handoff. Only the deploy job
 then obtains OIDC and writes the fixed `pr-N` preview channel. Reporting checks
 that the head is still current.
@@ -134,9 +142,9 @@ that the head is still current.
 Never check out or execute PR code in the OIDC job. Never replace this pair with
 `pull_request_target`, loosen artifact validation, or let a stale head publish.
 
-`app-github-pages.yml` also builds and bundle-checks the staged root plus app.
-Its deploy job runs only when an explicit repository variable or manual input
-enables it.
+`app-github-pages.yml` is manual validation only; it builds and bundle-checks
+the staged root plus app. Pages publication runs inside `deploy-prod.yml`,
+serialized behind the exact-SHA Firebase release.
 
 ## 6) Landing and Exact-Head Interpretation
 
@@ -159,7 +167,7 @@ enables it.
 
 `deploy-prod.yml` runs on `master` push or manual dispatch:
 
-1. Root/rules/function tests and focused regression smoke run first.
+1. Exact-head successful PR validation is verified for reuse, or root/rules/Functions tests and focused regression smoke run as a fallback.
 2. A credential-free job builds the app and exact-commit deploy handoff.
 3. It detects rules, indexes, Storage, and backfill changes.
 4. The protected deploy job validates the handoff before OIDC.
@@ -167,6 +175,8 @@ enables it.
    block later deploys on failure.
 6. Hosting and Functions deploy with bounded transient retries; optional
    backfills run only under their explicit change/dispatch conditions.
+7. Pages publication follows Firebase, then the complete exact-SHA release
+   marker records success for all enabled components.
 
 `post-deploy-smoke.yml` validates a successful exact-master deployment against
 candidate and production routes. `scheduled-prod-smoke.yml` runs every 15
@@ -209,6 +219,9 @@ visual baseline generation.
 - `apps/app/src/setupTests.ts`
 - `playwright.smoke.config.js`
 - `tests/smoke/page-registry.js`
+- `.github/workflows/pr-fast.yml`
+- `.github/workflows/pr-integration.yml`
+- `.github/workflows/pr-preview.yml`
 - `.github/workflows/ci.yml`
 - `.github/workflows/regression-guards.yml`
 - `.github/workflows/mobile-build.yml`

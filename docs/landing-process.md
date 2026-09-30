@@ -25,12 +25,20 @@ sole writer through review, remediation, checks, and merge.
 
 ## CI stages
 
-- Fast PR checks (`unit-tests`, `cache-bust-guard`, `app-quality`, and focused
-  regression guards) run for applicable code-head events.
-- Native Android/iOS builds, full preview smoke, and preview artifact creation
-  also run when the changed paths require them, regardless of ownership label.
+- `pr-fast.yml` owns `unit-tests`, `cache-bust-guard`, and `app-quality`.
+- `pr-integration.yml` calls `regression-guards.yml`, `mobile-build.yml`, and
+  `preview-smoke.yml` for regression, native, and preview smoke validation.
+- These are the two PR code-head entrypoints: opened, synchronize, reopened,
+  and `ready_for_review`. Draft heads skip heavy jobs; ready exact heads begin
+  validation. Path filters decide which native/browser jobs are applicable.
+- The integration children are reusable/manual only. `ci.yml` is manual only.
+  Do not restore competing pull-request or master-push triggers in them.
 - Adding or removing `external-claim` does not launch, cancel, or replace CI.
-- Production deployment remains a post-merge `master` workflow.
+- Firebase preview publication requires an explicit `pr-preview.yml` dispatch
+  for a ready same-repository PR and its exact head after `pr-integration` passes.
+- Production deployment remains a post-merge `master` workflow. `deploy-prod.yml`
+  serializes Firebase and Pages publication and records the exact-SHA release;
+  `app-github-pages.yml` is manual validation only.
 
 The stable aggregate contexts `mobile-build` and `preview-smoke` preserve
 branch-protection signals across path-filtered jobs. When `external-claim` is

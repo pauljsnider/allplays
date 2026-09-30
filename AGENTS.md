@@ -146,26 +146,30 @@ curated feature map and add focused regressions for changed behavior.
 
 ## CI Flow
 
-PR validation is intentionally split. Diagnose the failing stage instead of
-restarting every run:
+The two PR code-head entrypoints are `pr-fast.yml` and `pr-integration.yml`.
+They handle opened, synchronize, reopened, and `ready_for_review` events; draft
+heads skip heavy jobs. Ownership labels do not restart CI.
 
-1. `ci.yml`: cache-bust guard, root/rules/function tests, app audit, typecheck,
-   diff-aware lint, and app tests.
-2. `regression-guards.yml`: Firebase deploy/rules guard and focused
-   roster/chat/media/replay Playwright smoke.
-3. `mobile-build.yml`: path-filtered Android and iOS builds, summarized by the
-   stable fail-closed `mobile-build` context.
-4. `preview-smoke.yml`: path-filtered staged web/app smoke and visual tests,
-   summarized by the stable fail-closed `preview-smoke` context.
-5. `deploy-preview.yml` creates an untrusted, credential-free PR artifact.
-   `deploy-preview-trusted.yml` verifies the run, PR, artifact, and current head
-   from trusted default-branch code before OIDC and Firebase preview deployment.
-6. `app-github-pages.yml` validates the staged web bundle on PRs; deployment is
-   disabled unless the repository variable or manual input explicitly enables it.
+1. `pr-fast.yml` owns `cache-bust-guard`, `unit-tests`, and `app-quality`:
+   root/rules/Functions tests, app audit, typecheck, diff-aware lint, and app tests.
+2. `pr-integration.yml` calls `regression-guards.yml`, `mobile-build.yml`, and
+   `preview-smoke.yml` for focused regression, native builds, and staged web/app
+   smoke. It preserves the stable `mobile-build` and `preview-smoke` contexts.
+3. Those called workflows are reusable/manual only. `ci.yml` is manual only.
+   Do not restore competing pull-request or master-push triggers in them.
+4. An explicit `pr-preview.yml` dispatch binds a ready same-repository PR to its
+   exact head and calls the untrusted `deploy-preview.yml` builder.
+   `deploy-preview-trusted.yml` verifies the dispatch, successful exact-head
+   `pr-integration`, PR, and artifact from default-branch code before OIDC.
+   Ordinary PR pushes and labels do not deploy Firebase previews.
+5. `app-github-pages.yml` is manual validation only. Pages publication is
+   serialized inside `deploy-prod.yml` behind the exact-SHA Firebase release.
 
-After merge, `deploy-prod.yml` retests and builds a commit-bound artifact, then
-obtains production credentials only in the protected deploy job. It deploys
-changed rules/indexes before application components and fails closed.
+After merge, `deploy-prod.yml` verifies reusable exact-head PR validation or
+runs fallback checks, builds a commit-bound artifact, and obtains production
+credentials only in the protected deploy job. Changed rules/indexes precede
+application components and fail closed. Firebase and Pages must succeed before
+the complete exact-SHA release marker is recorded.
 `post-deploy-smoke.yml`, `scheduled-prod-smoke.yml`,
 `critical-workflow-health.yml`, and `firestore-recovery-health.yml` monitor the
 result.
