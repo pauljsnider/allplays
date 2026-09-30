@@ -1082,6 +1082,23 @@ service cloud.firestore {
              !retiredPaths.hasAny(signerImagePaths);
     }
 
+    function isLegacyCertificateDefaultsCreateSafe(data) {
+      return !data.keys().hasAny(['retiredSignatureImageObjectKeys', 'retiredSignatureImagePaths']) &&
+             certificateSignerImageUrls(data) == [null, null, null, null] &&
+             certificateSignerImagePaths(data) == [null, null, null, null];
+    }
+
+    function isLegacyCertificateDefaultsUpdateSafe() {
+      return request.resource.data.get('retiredSignatureImageObjectKeys', []) ==
+               resource.data.get('retiredSignatureImageObjectKeys', []) &&
+             request.resource.data.get('retiredSignatureImagePaths', []) ==
+               resource.data.get('retiredSignatureImagePaths', []) &&
+             certificateSignerImageUrls(request.resource.data) ==
+               certificateSignerImageUrls(resource.data) &&
+             certificateSignerImagePaths(request.resource.data) ==
+               certificateSignerImagePaths(resource.data);
+    }
+
     function isCertificateOutputCreateSafe(teamId, data) {
       return certificateSignersHaveCanonicalImagePaths(teamId, data) &&
              certificateSignersUseCurrentImages(teamId, data) &&
