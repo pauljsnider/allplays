@@ -271,6 +271,25 @@ describe('legacyScheduleDb live-event reads', () => {
         expect(legacyGetLiveEvents).not.toHaveBeenCalled();
     });
 
+    it('preserves earlier current-period fouls when complete history is requested', async () => {
+        const events = Array.from({ length: 27 }, (_, index) => ({
+            id: `event-${index + 1}`, createdAt: index + 1, period: 'Q1',
+            type: 'stat', isOpponent: false, statKey: index < 7 ? 'fouls' : 'pts', value: 1
+        }));
+        vi.mocked(legacyGetGame).mockResolvedValue({ status: 'live' });
+        vi.mocked(legacyGetLiveEvents).mockResolvedValue(events);
+        vi.mocked(getDocs).mockResolvedValue({
+            docs: events.slice(-20).reverse().map(({ id, ...data }) => ({ id, data: () => data }))
+        } as never);
+
+        const loaded = await getLiveEvents('team-1', 'game-1', { fullHistory: true });
+        expect(loaded.filter((event: any) => event.statKey === 'fouls')).toHaveLength(7);
+        expect(loaded).toEqual(events);
+        expect(legacyGetLiveEvents).toHaveBeenCalledWith('team-1', 'game-1');
+        expect(getDocs).not.toHaveBeenCalled();
+        vi.mocked(getDocs).mockReset();
+    });
+
     it('keeps completed-game replay reads unbounded', async () => {
         vi.mocked(legacyGetGame).mockResolvedValueOnce({ status: 'completed', liveStatus: 'completed' });
         vi.mocked(legacyGetLiveEvents).mockResolvedValueOnce([{ id: 'event-1' }, { id: 'event-2' }]);

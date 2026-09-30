@@ -6688,22 +6688,36 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
   });
 }
 
-export async function loadGameDayLiveEventsForApp(teamId: string, gameId: string) {
+export async function loadGameDayLiveEventsForApp(teamId: string, gameId: string, options: { fullHistory?: boolean } = {}) {
   if (!teamId || !gameId) return [];
   try {
-    return await withTimeout(Promise.resolve(getLiveEvents(teamId, gameId)), 'Game day live events');
+    return await withTimeout(Promise.resolve(getLiveEvents(teamId, gameId, options)), 'Game day live events');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST game day live events.', 'game-day-live-events-load', error, { fallback: 'rest', teamId, gameId });
+    const gamePath = `teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`;
+    let fullHistory = options.fullHistory === true;
+    if (!fullHistory) {
+      const game = await nativeGetDocument(gamePath);
+      if (!game) throw new Error('Game could not be loaded before reading live events.');
+      fullHistory = [game.status, game.liveStatus].some((value) => (
+        ['completed', 'final'].includes(String(value || '').trim().toLowerCase())
+      ));
+    }
+    if (fullHistory) {
+      // The pager must finish or throw; a partial result would corrupt foul totals/replay.
+      return await nativeListCollection(`${gamePath}/liveEvents`, { orderBy: 'createdAt asc' });
+    }
     const events = await nativeListCollection(
-      `teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/liveEvents`,
+      `${gamePath}/liveEvents`,
       {
         pageSize: MAX_ACTIVE_GAME_LIVE_EVENTS,
+        orderBy: 'createdAt desc',
         stopAfterFullPage: true,
         stopAfterDocumentCount: MAX_ACTIVE_GAME_LIVE_EVENTS
       }
     );
-    return Array.isArray(events) ? events.slice(0, MAX_ACTIVE_GAME_LIVE_EVENTS) : [];
+    return events.slice(0, MAX_ACTIVE_GAME_LIVE_EVENTS).reverse();
   }
 }
 

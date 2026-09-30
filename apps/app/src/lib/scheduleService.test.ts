@@ -308,100 +308,99 @@ it('keeps schedule workflows behind typed legacy adapters', () => {
   expect(scheduleGameHubSectionSource).toContain("../../lib/adapters/legacyScheduleHelpers");
 });
 
+describe('native live event history', () => {
+  const previousWindow = (globalThis as any).window;
+  const previousFetch = globalThis.fetch;
+  const documents = Array.from({ length: 127 }, (_, index) => ({
+    name: `projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/liveEvents/event-${String((index * 37) % 127).padStart(3, '0')}`,
+    fields: {
+      sequence: { integerValue: String(index + 1) },
+      createdAt: { timestampValue: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString() },
+      statKey: { stringValue: index < 7 ? 'fouls' : 'pts' }
+    }
+  }));
+
+  function installRest({ game = { status: 'live' }, count = 25, shortPages = false, failLater = false, repeatedToken = false }:
+    { game?: Record<string, string>; count?: number; shortPages?: boolean; failLater?: boolean; repeatedToken?: boolean } = {}) {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/games/game-1')) {
+        return { ok: true, json: async () => ({
+          name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1',
+          fields: Object.fromEntries(Object.entries(game).map(([key, value]) => [key, { stringValue: value }]))
+        }) };
+      }
+      const offset = Number(url.searchParams.get('pageToken') || 0);
+      if (failLater && offset) throw new Error('Later history page unavailable');
+      const orderBy = url.searchParams.get('orderBy');
+      const ordered = documents.slice(0, count).sort((a, b) => {
+        if (orderBy?.startsWith('createdAt')) {
+          const diff = Number(a.fields.sequence.integerValue) - Number(b.fields.sequence.integerValue);
+          return orderBy.includes('desc') ? -diff : diff;
+        }
+        return a.name.localeCompare(b.name);
+      });
+      const size = shortPages ? 10 : Number(url.searchParams.get('pageSize'));
+      const next = offset + size;
+      return { ok: true, json: async () => ({
+        documents: ordered.slice(offset, next),
+        ...(next < count ? { nextPageToken: repeatedToken ? '10' : String(next) } : {})
+      }) };
+    });
+    globalThis.fetch = fetchMock as any;
+    return fetchMock;
+  }
+
+  beforeEach(() => {
+    vi.mocked(getLiveEvents).mockReset().mockRejectedValue(new Error('SDK live events unavailable'));
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout };
+  });
+  afterEach(() => {
+    (globalThis as any).window = previousWindow;
+    globalThis.fetch = previousFetch;
+    vi.mocked(getLiveEvents).mockReset();
+  });
+
+  it.each([false, true])('returns the newest 20 events chronologically, with short pages: %s', async (shortPages) => {
+    const fetchMock = installRest({ shortPages });
+    const events = await loadGameDayLiveEventsForApp('team-1', 'game-1');
+    expect(events.map((event: any) => event.sequence)).toEqual(Array.from({ length: 20 }, (_, i) => i + 6));
+    const listCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/liveEvents?'));
+    expect(listCalls).toHaveLength(shortPages ? 2 : 1);
+    for (const [url] of listCalls) {
+      expect(new URL(String(url)).searchParams.get('orderBy')).toBe('createdAt desc');
+      expect(new URL(String(url)).searchParams.get('pageSize')).toBe('20');
+    }
+  });
+
+  it('preserves all pages and earlier fouls for complete active-game history', async () => {
+    const fetchMock = installRest({ count: 127 });
+    const events = await loadGameDayLiveEventsForApp('team-1', 'game-1', { fullHistory: true });
+    expect(events.map((event: any) => event.sequence)).toEqual(Array.from({ length: 127 }, (_, i) => i + 1));
+    expect(events.filter((event: any) => event.statKey === 'fouls')).toHaveLength(7);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([{ status: 'completed', liveStatus: 'live' }, { status: 'scheduled', liveStatus: ' FINAL ' }])('preserves completed-game replay history: %j', async (game) => {
+    installRest({ game, count: 127 });
+    const events = await loadGameDayLiveEventsForApp('team-1', 'game-1');
+    expect(events.map((event: any) => event.sequence)).toEqual(Array.from({ length: 127 }, (_, i) => i + 1));
+  });
+
+  it.each([{ failLater: true }, { repeatedToken: true, shortPages: true }])('rejects incomplete foul history: %j', async (options) => {
+    installRest({ count: 127, ...options });
+    await expect(loadGameDayLiveEventsForApp('team-1', 'game-1', { fullHistory: true })).rejects.toThrow();
+  });
+
+  it('forwards complete-history intent to the SDK adapter', async () => {
+    vi.mocked(getLiveEvents).mockResolvedValueOnce([{ id: 'earlier-foul' }]);
+    await expect(loadGameDayLiveEventsForApp('team-1', 'game-1', { fullHistory: true })).resolves.toEqual([{ id: 'earlier-foul' }]);
+    expect(getLiveEvents).toHaveBeenCalledWith('team-1', 'game-1', { fullHistory: true });
+  });
+});
+
 describe('native scoring roster fallback', () => {
-  it('caps native fallback active-game live events at 20', async () => {
-    const previousWindow = (globalThis as any).window;
-    const previousFetch = globalThis.fetch;
-    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
-    vi.mocked(getLiveEvents).mockRejectedValueOnce(new Error('SDK live events unavailable'));
-    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
-    (globalThis as any).fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        documents: Array.from({ length: 25 }, (_, index) => ({
-          name: `projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/liveEvents/event-${index + 1}`,
-          fields: { sequence: { integerValue: String(index + 1) } }
-        }))
-      })
-    });
-
-    try {
-      const events = await loadGameDayLiveEventsForApp('team-1', 'game-1');
-
-      expect(events).toHaveLength(20);
-      expect(events.map((event: any) => event.id)).toEqual(
-        Array.from({ length: 20 }, (_, index) => `event-${index + 1}`)
-      );
-      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-      expect(globalThis.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/liveEvents?pageSize=20'),
-        expect.anything()
-      );
-    } finally {
-      (globalThis as any).window = previousWindow;
-      globalThis.fetch = previousFetch;
-    }
-  });
-
-  it('does not request another native fallback page when the current page has 20 events', async () => {
-    const previousWindow = (globalThis as any).window;
-    const previousFetch = globalThis.fetch;
-    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
-    vi.mocked(getLiveEvents).mockRejectedValueOnce(new Error('SDK live events unavailable'));
-    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
-    (globalThis as any).fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        documents: Array.from({ length: 20 }, (_, index) => ({
-          name: `projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/liveEvents/event-${index + 1}`,
-          fields: { sequence: { integerValue: String(index + 1) } }
-        })),
-        nextPageToken: 'unexpected-second-page'
-      })
-    });
-
-    try {
-      await expect(loadGameDayLiveEventsForApp('team-1', 'game-1')).resolves.toHaveLength(20);
-      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-    } finally {
-      (globalThis as any).window = previousWindow;
-      globalThis.fetch = previousFetch;
-    }
-  });
-
-  it('keeps native fallback pagination for a page with fewer than 20 events', async () => {
-    const previousWindow = (globalThis as any).window;
-    const previousFetch = globalThis.fetch;
-    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
-    vi.mocked(getLiveEvents).mockRejectedValueOnce(new Error('SDK live events unavailable'));
-    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
-    const page = (start: number, count: number) => ({
-      ok: true,
-      json: async () => ({
-        documents: Array.from({ length: count }, (_, index) => ({
-          name: `projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/liveEvents/event-${start + index}`,
-          fields: { sequence: { integerValue: String(start + index) } }
-        })),
-        ...(start === 1
-          ? { nextPageToken: 'second-page' }
-          : start === 11
-            ? { nextPageToken: 'third-page' }
-            : {})
-      })
-    });
-    (globalThis as any).fetch = vi.fn()
-      .mockResolvedValueOnce(page(1, 10))
-      .mockResolvedValueOnce(page(11, 15));
-
-    try {
-      await expect(loadGameDayLiveEventsForApp('team-1', 'game-1')).resolves.toHaveLength(20);
-      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
-    } finally {
-      (globalThis as any).window = previousWindow;
-      globalThis.fetch = previousFetch;
-    }
-  });
-
   it('includes later-page players in the home scoring model', async () => {
     const previousWindow = (globalThis as any).window;
     const previousFetch = globalThis.fetch;
