@@ -383,9 +383,16 @@ describe('native live event history', () => {
   });
 
   it.each([{ status: 'completed', liveStatus: 'live' }, { status: 'scheduled', liveStatus: ' FINAL ' }])('preserves completed-game replay history: %j', async (game) => {
-    installRest({ game, count: 127 });
+    const fetchMock = installRest({ game, count: 127 });
     const events = await loadGameDayLiveEventsForApp('team-1', 'game-1');
     expect(events.map((event: any) => event.sequence)).toEqual(Array.from({ length: 127 }, (_, i) => i + 1));
+    const listCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/liveEvents?'));
+    expect(listCalls).toHaveLength(2);
+    for (const [url] of listCalls) {
+      const params = new URL(String(url)).searchParams;
+      expect(params.get('orderBy')).toBe('createdAt asc');
+      expect(params.get('pageSize')).not.toBe('20');
+    }
   });
 
   it.each([{ failLater: true }, { repeatedToken: true, shortPages: true }])('rejects incomplete foul history: %j', async (options) => {
