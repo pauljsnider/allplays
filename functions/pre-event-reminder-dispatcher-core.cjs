@@ -21,7 +21,9 @@ async function drainOrderedPages({
   processPage,
   pageSize,
   maxPages,
-  initialCursor = null
+  maxRuntimeMs,
+  initialCursor = null,
+  getCurrentTimeMs = Date.now
 } = {}) {
   if (typeof loadPage !== 'function') {
     throw new Error('loadPage is required.');
@@ -31,7 +33,12 @@ async function drainOrderedPages({
   }
   requirePositiveInteger(pageSize, 'pageSize');
   requirePositiveInteger(maxPages, 'maxPages');
+  requirePositiveInteger(maxRuntimeMs, 'maxRuntimeMs');
+  if (typeof getCurrentTimeMs !== 'function') {
+    throw new Error('getCurrentTimeMs must be a function.');
+  }
 
+  const startedAtMs = getCurrentTimeMs();
   const summary = {
     pagesAttempted: 0,
     examinedCount: 0,
@@ -43,6 +50,11 @@ async function drainOrderedPages({
   let cursor = initialCursor;
 
   while (summary.pagesAttempted < maxPages) {
+    if ((getCurrentTimeMs() - startedAtMs) >= maxRuntimeMs) {
+      summary.stoppedBecause = 'maxRuntimeMs';
+      return summary;
+    }
+
     const pageNumber = summary.pagesAttempted + 1;
     const page = await loadPage({ cursor, limit: pageSize, pageNumber }) || {};
     const docs = Array.isArray(page.docs) ? page.docs : [];

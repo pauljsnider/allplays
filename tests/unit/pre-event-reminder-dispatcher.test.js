@@ -207,6 +207,7 @@ describe('drainOrderedPages', () => {
         const summary = await drainOrderedPages({
             pageSize: 2,
             maxPages: 5,
+            maxRuntimeMs: 1000,
             loadPage,
             processPage: async (docs) => {
                 processedIds.push(...docs.map((doc) => doc.id));
@@ -239,6 +240,7 @@ describe('drainOrderedPages', () => {
         const summary = await drainOrderedPages({
             pageSize: 2,
             maxPages: 2,
+            maxRuntimeMs: 1000,
             loadPage,
             processPage: async () => ({ sentCount: 1, failedCount: 1 })
         });
@@ -251,6 +253,38 @@ describe('drainOrderedPages', () => {
             failedCount: 2,
             stoppedBecause: 'maxPages',
             lastCursor: 'cursor-2'
+        });
+    });
+
+    it('stops before another page when the runtime cap is reached and preserves completed counters', async () => {
+        let currentTimeMs = 5000;
+        const loadPage = vi.fn(async () => ({
+            docs: [{ id: 'a' }, { id: 'b' }],
+            nextCursor: 'cursor-1'
+        }));
+        const processPage = vi.fn(async () => {
+            currentTimeMs += 100;
+            return { sentCount: 1, failedCount: 1 };
+        });
+
+        const summary = await drainOrderedPages({
+            pageSize: 2,
+            maxPages: 5,
+            maxRuntimeMs: 100,
+            getCurrentTimeMs: () => currentTimeMs,
+            loadPage,
+            processPage
+        });
+
+        expect(loadPage).toHaveBeenCalledTimes(1);
+        expect(processPage).toHaveBeenCalledTimes(1);
+        expect(summary).toEqual({
+            pagesAttempted: 1,
+            examinedCount: 2,
+            sentCount: 1,
+            failedCount: 1,
+            stoppedBecause: 'maxRuntimeMs',
+            lastCursor: 'cursor-1'
         });
     });
 
@@ -267,6 +301,7 @@ describe('drainOrderedPages', () => {
         const summary = await drainOrderedPages({
             pageSize: 2,
             maxPages: 2,
+            maxRuntimeMs: 1000,
             loadPage: async ({ pageNumber }) => pages[pageNumber - 1],
             processPage: async (_docs, { pageNumber }) => outcomes[pageNumber - 1]
         });
