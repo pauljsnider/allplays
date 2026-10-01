@@ -6691,7 +6691,10 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
 export async function loadGameDayLiveEventsForApp(teamId: string, gameId: string, options: { fullHistory?: boolean } = {}) {
   if (!teamId || !gameId) return [];
   try {
-    return await withTimeout(Promise.resolve(getLiveEvents(teamId, gameId, options)), 'Game day live events');
+    const readOptions = options.fullHistory
+      ? options
+      : { ...options, maxEvents: MAX_ACTIVE_GAME_LIVE_EVENTS };
+    return await withTimeout(Promise.resolve(getLiveEvents(teamId, gameId, readOptions)), 'Game day live events');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST game day live events.', 'game-day-live-events-load', error, { fallback: 'rest', teamId, gameId });
