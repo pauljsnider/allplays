@@ -43,14 +43,24 @@ async function runReminderWorkers({
     while (nextIndex < values.length) {
       const currentIndex = nextIndex;
       nextIndex += 1;
-      results[currentIndex] = await worker(values[currentIndex], currentIndex);
+      try {
+        results[currentIndex] = {
+          sent: Boolean(await worker(values[currentIndex], currentIndex)),
+          failed: false
+        };
+      } catch {
+        results[currentIndex] = {
+          sent: false,
+          failed: true
+        };
+      }
     }
   }));
 
   return {
     examinedCount: values.length,
-    sentCount: results.filter(Boolean).length,
-    failedCount: 0
+    sentCount: results.filter((result) => result.sent).length,
+    failedCount: results.filter((result) => result.failed).length
   };
 }
 
