@@ -405,6 +405,14 @@ describe('native live event history', () => {
     await expect(loadGameDayLiveEventsForApp('team-1', 'game-1', { fullHistory: true })).resolves.toEqual([{ id: 'earlier-foul' }]);
     expect(getLiveEvents).toHaveBeenCalledWith('team-1', 'game-1', { fullHistory: true });
   });
+
+  it('passes the active-game event cap to the SDK adapter', async () => {
+    vi.mocked(getLiveEvents).mockResolvedValueOnce([{ id: 'latest-event' }]);
+
+    await expect(loadGameDayLiveEventsForApp('team-1', 'game-1')).resolves.toEqual([{ id: 'latest-event' }]);
+
+    expect(getLiveEvents).toHaveBeenCalledWith('team-1', 'game-1', { maxEvents: 20 });
+  });
 });
 
 describe('native scoring roster fallback', () => {

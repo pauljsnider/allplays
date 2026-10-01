@@ -271,6 +271,17 @@ describe('legacyScheduleDb live-event reads', () => {
         expect(legacyGetLiveEvents).not.toHaveBeenCalled();
     });
 
+    it('uses the explicit active-game event maximum', async () => {
+        vi.mocked(legacyGetGame).mockResolvedValueOnce({ status: 'live', liveStatus: 'live' });
+        vi.mocked(collection).mockReturnValueOnce({ path: 'teams/team-1/games/game-1/liveEvents' } as never);
+        vi.mocked(query).mockReturnValueOnce({} as never);
+        vi.mocked(getDocs).mockResolvedValueOnce({ docs: [] } as never);
+
+        await expect(getLiveEvents('team-1', 'game-1', { maxEvents: 20 })).resolves.toEqual([]);
+
+        expect(limit).toHaveBeenCalledWith(20);
+    });
+
     it('preserves earlier current-period fouls when complete history is requested', async () => {
         const events = Array.from({ length: 27 }, (_, index) => ({
             id: `event-${index + 1}`, createdAt: index + 1, period: 'Q1',
