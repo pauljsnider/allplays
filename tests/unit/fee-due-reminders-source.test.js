@@ -111,6 +111,57 @@ describe('runReminderWorkers', () => {
             failedCount: 0
         });
     });
+
+    it('reports every worker rejection without leaving queued items unexamined', async () => {
+        const items = ['first', 'second', 'third', 'fourth'];
+        const examinedIndexes = [];
+
+        await expect(runReminderWorkers({
+            items,
+            concurrency: 2,
+            worker: async (_item, index) => {
+                examinedIndexes.push(index);
+                throw new Error(`worker ${index} failed`);
+            }
+        })).resolves.toEqual({
+            examinedCount: 4,
+            sentCount: 0,
+            failedCount: 4
+        });
+        expect(examinedIndexes.sort((left, right) => left - right)).toEqual([0, 1, 2, 3]);
+    });
+
+    it('returns deterministic counters after mixed workers settle out of order', async () => {
+        const items = [
+            { sent: true, failed: false, delayTurns: 4 },
+            { sent: false, failed: true, delayTurns: 0 },
+            { sent: false, failed: false, delayTurns: 3 },
+            { sent: true, failed: false, delayTurns: 1 },
+            { sent: false, failed: true, delayTurns: 2 },
+            { sent: true, failed: false, delayTurns: 0 }
+        ];
+        const examinedIndexes = [];
+
+        await expect(runReminderWorkers({
+            items,
+            concurrency: 2,
+            worker: async (item, index) => {
+                examinedIndexes.push(index);
+                for (let turn = 0; turn < item.delayTurns; turn += 1) {
+                    await Promise.resolve();
+                }
+                if (item.failed) {
+                    throw new Error(`worker ${index} failed`);
+                }
+                return item.sent;
+            }
+        })).resolves.toEqual({
+            examinedCount: 6,
+            sentCount: 3,
+            failedCount: 2
+        });
+        expect(examinedIndexes.sort((left, right) => left - right)).toEqual([0, 1, 2, 3, 4, 5]);
+    });
 });
 
 describe('fee due reminder helper logic', () => {
