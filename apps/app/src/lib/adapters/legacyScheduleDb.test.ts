@@ -292,11 +292,15 @@ describe('legacyScheduleDb live-event reads', () => {
 
     it('keeps completed-game replay reads unbounded', async () => {
         vi.mocked(legacyGetGame).mockResolvedValueOnce({ status: 'completed', liveStatus: 'completed' });
-        vi.mocked(legacyGetLiveEvents).mockResolvedValueOnce([{ id: 'event-1' }, { id: 'event-2' }]);
+        vi.mocked(legacyGetLiveEvents).mockResolvedValueOnce(
+            Array.from({ length: 27 }, (_, index) => ({ id: `event-${index + 1}` }))
+        );
 
-        await expect(getLiveEvents('team-1', 'game-1')).resolves.toHaveLength(2);
+        await expect(getLiveEvents('team-1', 'game-1')).resolves.toHaveLength(27);
 
         expect(legacyGetLiveEvents).toHaveBeenCalledWith('team-1', 'game-1');
+        expect(limit).not.toHaveBeenCalled();
+        expect(getDocs).not.toHaveBeenCalled();
     });
 });
 
