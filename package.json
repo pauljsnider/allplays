@@ -101,5 +101,8 @@
     "html-to-image": "^1.11.13",
     "jsdom": "^30.0.1",
     "web-vitals": "^6.1.1"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "1.14.5"
   }
 }
