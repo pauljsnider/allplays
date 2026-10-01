@@ -217,6 +217,7 @@ describe('PlayerDetail athlete profile season selection', () => {
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
   });
 
   it('passes parent links from the hydrated profile into player detail loading', async () => {
@@ -1384,6 +1385,11 @@ describe('PlayerDetail athlete profile season selection', () => {
   });
 
   it('prevents saving while an athlete headshot is still preparing', async () => {
+    // Object URL creation belongs to the browser. Vitest's jsdom Blob shim
+    // relies on private jsdom fields that changed in jsdom 30.1.
+    const previewUrl = 'blob:test-athlete-headshot';
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue(previewUrl);
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
     const normalizeDeferred = createDeferred<File>();
     const headshotFile = new File(['headshot-bytes'], 'new-headshot.png', { type: 'image/png' });
     profilePhotoServiceMocks.normalizeProfilePhoto.mockImplementationOnce(() => normalizeDeferred.promise);
@@ -1404,10 +1410,17 @@ describe('PlayerDetail athlete profile season selection', () => {
 
     expect(await screen.findByText('Finish preparing the athlete headshot before saving.')).toBeTruthy();
     expect(playerServiceMocks.saveParentAthleteProfileDraft).not.toHaveBeenCalled();
+    expect(createObjectURL).not.toHaveBeenCalled();
 
     normalizeDeferred.resolve(headshotFile);
     expect(await screen.findByText('New headshot selected. Save to publish it.')).toBeTruthy();
+    expect(createObjectURL).toHaveBeenCalledWith(headshotFile);
+    expect(screen.getByAltText('Athlete profile headshot preview')).toHaveAttribute('src', previewUrl);
     expect((screen.getByRole('button', { name: 'Save Athlete Profile' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(playerServiceMocks.saveParentAthleteProfileDraft).not.toHaveBeenCalled();
+
+    cleanup();
+    expect(revokeObjectURL).toHaveBeenCalledWith(previewUrl);
   });
 
   it('switches the athlete profile save CTA with the selected privacy option', async () => {

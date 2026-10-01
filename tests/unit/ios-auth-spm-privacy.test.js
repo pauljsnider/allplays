@@ -28,12 +28,56 @@ dependencies: [
   ])
 `;
 
+const traitBasedUpstreamManifest = `
+traits: [
+  .default(enabledTraits: ["Google", "Facebook"]),
+  .trait(
+    name: "Lite",
+    description: "Excludes all optional third party SDKs."
+  ),
+  .trait(
+    name: "Google",
+    description: "Includes the Google Sign-In SDK."
+  ),
+  .trait(
+    name: "Facebook",
+    description: "Includes the Facebook SDK."
+  )
+],
+dependencies: [
+  .package(url: "https://github.com/google/GoogleSignIn-iOS", from: "9.0.0"),
+  .package(url: "https://github.com/facebook/facebook-ios-sdk.git", from: "18.0.0")
+],
+.target(
+  name: "CapacitorFirebaseAuthentication",
+  dependencies: [
+    .product(name: "GoogleSignIn", package: "GoogleSignIn-iOS",
+             condition: .when(traits: ["Google"])),
+    .product(name: "FacebookCore", package: "facebook-ios-sdk",
+             condition: .when(traits: ["Facebook"])),
+    .product(name: "FacebookLogin", package: "facebook-ios-sdk",
+             condition: .when(traits: ["Facebook"]))
+  ],
+  swiftSettings: [
+    .define("RGCFA_INCLUDE_GOOGLE", .when(traits: ["Google"])),
+    .define("RGCFA_INCLUDE_FACEBOOK", .when(traits: ["Facebook"]))
+  ])
+`;
+
 describe('iOS authentication Swift package privacy boundary', () => {
   it('removes only the unused Facebook provider and keeps Google sign-in', () => {
     const prepared = buildAppleGoogleOnlyAuthenticationManifest(upstreamManifest);
     expect(prepared).toContain('GoogleSignIn-iOS');
     expect(prepared).toContain('RGCFA_INCLUDE_GOOGLE');
     expect(prepared).not.toMatch(/facebook-ios-sdk|FacebookCore|FacebookLogin|RGCFA_INCLUDE_FACEBOOK/);
+  });
+
+  it('removes the Facebook trait and multiline products from current upstream manifests', () => {
+    const prepared = buildAppleGoogleOnlyAuthenticationManifest(traitBasedUpstreamManifest);
+    expect(prepared).toContain('.default(enabledTraits: ["Google"])');
+    expect(prepared).toContain('condition: .when(traits: ["Google"])');
+    expect(prepared).not.toMatch(/facebook-ios-sdk|FacebookCore|FacebookLogin|RGCFA_INCLUDE_FACEBOOK/);
+    expect(prepared).not.toContain('name: "Facebook"');
   });
 
   it('keeps the installed package prepared after npm install', () => {
