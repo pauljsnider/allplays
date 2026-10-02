@@ -424,9 +424,11 @@ export async function loadParentScheduleSummary(
       hydrateDetails: false,
       expandStaffPlayers: false,
       previewParentChildren: options.previewParentChildren,
-      parentScope: options.scheduleScope,
-      nativeProfileLoader: options.nativeContext?.loadProfile,
-      nativeStaffTeamsLoader: options.nativeContext?.loadManagedTeams,
+      ...(options.scheduleScope ? { parentScope: options.scheduleScope } : {}),
+      ...(options.nativeContext ? {
+        nativeProfileLoader: options.nativeContext.loadProfile,
+        nativeStaffTeamsLoader: options.nativeContext.loadManagedTeams
+      } : {}),
       ...(previewState
         ? { onPartial: (schedule: ParentScheduleLoadResult) => emitParentSchedulePreview(cacheKey, schedule) }
         : options.onPartial ? { onPartial: options.onPartial } : {})
