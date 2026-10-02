@@ -1,5 +1,5 @@
-import { escapeHtml } from './utils.js?v=443375';
-import { discoverPublicTeams } from './db.js?v=4433199';
+import { escapeHtml } from './utils.js?v=443376';
+import { discoverPublicTeams } from './db.js?v=4433200';
 import { canUserDiscoverPlayerInSearch, filterSearchableTeams } from './global-search-visibility.js?v=44335';
 import { isTeamActive } from './team-visibility.js?v=2';
 import {
@@ -25,6 +25,12 @@ let cachedAccessibleTeamsUserKey = '';
 const playerSearchQueryLimit = playerSearchResultLimit;
 const playerSearchTeamLimit = 8;
 const teamSearchQueryLimit = 20;
+const searchResultCacheLimit = 20;
+
+const publicTeamSearchCache = new Map();
+const playerSearchCache = new Map();
+let activeSearchScopeKey = '';
+let activeSearchUserKey = '';
 
 let currentUser = null;
 let keyHandlerInstalled = false;
@@ -44,6 +50,77 @@ function isTypingTarget(target) {
 
 function normalizeQuery(q) {
     return (q || '').trim().toLowerCase();
+}
+
+function clearSearchResultCaches() {
+    publicTeamSearchCache.clear();
+    playerSearchCache.clear();
+}
+
+function buildSearchScopeKey(teamsById) {
+    const teams = Array.from(teamsById?.values?.() || [])
+        .map((team) => ({
+            id: String(team?.id || '').trim(),
+            name: String(team?.name || '').trim(),
+            sport: String(team?.sport || '').trim(),
+            zip: String(team?.zip || '').trim(),
+            isPublic: team?.isPublic !== false
+        }))
+        .sort((a, b) => a.id.localeCompare(b.id));
+
+    return JSON.stringify({ user: buildAccessibleTeamsCacheKey(currentUser), teams });
+}
+
+function activateSearchScope(teamsById) {
+    const scopeKey = buildSearchScopeKey(teamsById);
+    if (scopeKey !== activeSearchScopeKey) {
+        clearSearchResultCaches();
+        activeSearchScopeKey = scopeKey;
+    }
+    return scopeKey;
+}
+
+function evictCompletedSearchEntries(cache) {
+    let completedCount = Array.from(cache.values()).filter((entry) => entry.completed).length;
+    if (completedCount <= searchResultCacheLimit) return;
+
+    for (const [key, entry] of cache) {
+        if (!entry.completed) continue;
+        cache.delete(key);
+        completedCount -= 1;
+        if (completedCount <= searchResultCacheLimit) return;
+    }
+}
+
+function loadCachedSearch(cache, key, load, shouldRetain = () => true) {
+    const cached = cache.get(key);
+    if (cached) {
+        cache.delete(key);
+        cache.set(key, cached);
+        return cached.promise;
+    }
+
+    const entry = { completed: false, promise: null };
+    entry.promise = Promise.resolve()
+        .then(load)
+        .then((result) => {
+            if (cache.get(key) !== entry) return result;
+            if (!shouldRetain(result)) {
+                cache.delete(key);
+                return result;
+            }
+
+            entry.completed = true;
+            cache.delete(key);
+            cache.set(key, entry);
+            evictCompletedSearchEntries(cache);
+            return result;
+        }, (error) => {
+            if (cache.get(key) === entry) cache.delete(key);
+            throw error;
+        });
+    cache.set(key, entry);
+    return entry.promise;
 }
 
 function capitalizeFirst(s) {
@@ -652,9 +729,18 @@ function openModal({ initialQuery = '' } = {}) {
         modalState.publicTeamsError = '';
         renderResults();
 
+        const searchScopeKey = activateSearchScope(modalState.teamsById);
+        const cacheKey = normalizeQuery(q);
+
         try {
-            const result = await discoverPublicTeams({ searchText: q, pageSize: teamSearchQueryLimit });
-            if (!modalState || reqId !== modalState.publicTeamsReqId) return;
+            const result = await loadCachedSearch(
+                publicTeamSearchCache,
+                cacheKey,
+                () => discoverPublicTeams({ searchText: q, pageSize: teamSearchQueryLimit })
+            );
+            if (!modalState
+                || reqId !== modalState.publicTeamsReqId
+                || searchScopeKey !== buildSearchScopeKey(modalState.teamsById)) return;
             const publicTeams = (result?.teams || []).filter((team) => isTeamActive(team) && !modalState.teamsById.has(team.id));
             modalState.publicTeams = publicTeams;
             modalState.loadingPublicTeams = false;
@@ -696,10 +782,20 @@ function openModal({ initialQuery = '' } = {}) {
             searchTokens.flatMap((t) => [t, t.toLowerCase(), titleCaseWord(t)])
         ).values()).filter(Boolean).slice(0, 6);
         const isNumeric = /^[0-9]+$/.test(q);
+        const searchScopeKey = activateSearchScope(modalState.teamsById);
+        const cacheKey = normalizeQuery(q);
+        const teamsById = modalState.teamsById;
 
         try {
-            const result = await loadPlayerSearchDocs(prefixes, q, isNumeric, modalState.teamsById);
-            if (!modalState || reqId !== modalState.playersReqId) return;
+            const result = await loadCachedSearch(
+                playerSearchCache,
+                cacheKey,
+                () => loadPlayerSearchDocs(prefixes, q, isNumeric, teamsById),
+                (searchResult) => searchResult.rejected.length === 0
+            );
+            if (!modalState
+                || reqId !== modalState.playersReqId
+                || searchScopeKey !== buildSearchScopeKey(modalState.teamsById)) return;
 
             const rejected = result.rejected;
             const anyPermDenied = rejected.some(e => (e?.code || '') === 'permission-denied');
@@ -915,7 +1011,14 @@ function injectCenteredSearchLauncher(headerContainer) {
 }
 
 export function setupHeaderSearch({ user, headerContainer } = {}) {
-    currentUser = user || null;
+    const nextUser = user || null;
+    const nextUserKey = buildAccessibleTeamsCacheKey(nextUser);
+    if (nextUserKey !== activeSearchUserKey) {
+        clearSearchResultCaches();
+        activeSearchScopeKey = '';
+        activeSearchUserKey = nextUserKey;
+    }
+    currentUser = nextUser;
     installKeyHandler();
 
     injectCenteredSearchLauncher(headerContainer);
