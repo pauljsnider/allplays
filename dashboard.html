@@ -487,7 +487,13 @@
                         </div>
                     ` : '';
                     if (fullAccessTeams.length === 0 && parentOnlyTeams.length === 0) {
-                        container.innerHTML = `${renderNoTeamsState()}${loadMoreSection}`;
+                        const emptyState = hasMoreTeams
+                            ? `<div class="text-center py-10 bg-white rounded-2xl shadow-md border border-gray-200">
+                                <h3 class="text-xl font-bold text-gray-900 mb-3">No active teams in this batch</h3>
+                                <p class="text-gray-600">More teams remain to check. Load more to continue.</p>
+                               </div>`
+                            : renderNoTeamsState();
+                        container.innerHTML = `${emptyState}${loadMoreSection}`;
                         container.querySelector('#load-more-teams')?.addEventListener('click', loadMoreTeams);
                     } else if (fullAccessTeams.length === 0 && parentOnlyTeams.length > 0) {
                         container.innerHTML = `

@@ -27,7 +27,7 @@ describe('dashboard zero-team onboarding state', () => {
         expect(html).toContain('href="edit-team.html"');
     });
 
-    it.each([false, true])('renders zero-team onboarding before mapping, with more pages: %s', (hasMoreTeams) => {
+    it.each([false, true])('distinguishes an exhausted inventory from an empty batch, with more pages: %s', (hasMoreTeams) => {
         const loadMoreButton = { addEventListener: vi.fn() };
         const container = {
             innerHTML: '',
@@ -48,8 +48,14 @@ describe('dashboard zero-team onboarding state', () => {
 
         renderTeamLists();
 
-        expect(renderNoTeamsState).toHaveBeenCalledOnce();
-        expect(container.innerHTML).toContain('No Teams Yet');
+        if (hasMoreTeams) {
+            expect(renderNoTeamsState).not.toHaveBeenCalled();
+            expect(container.innerHTML).toContain('No active teams in this batch');
+            expect(container.innerHTML).not.toContain('No Teams Yet');
+        } else {
+            expect(renderNoTeamsState).toHaveBeenCalledOnce();
+            expect(container.innerHTML).toContain('No Teams Yet');
+        }
         expect(renderTeamCard).not.toHaveBeenCalled();
         expect(attachDeleteHandlers).not.toHaveBeenCalled();
         if (hasMoreTeams) {
