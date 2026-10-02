@@ -31,6 +31,14 @@ const homeMaxStaleMs = 5 * 60 * 1000;
 const teamsSummaryTtlMs = 30 * 1000;
 const logger = createLogger('home');
 
+type ParentSchedulePreviewState = {
+  callbacks: Set<(schedule: ParentScheduleLoadResult) => void>;
+  latest?: ParentScheduleLoadResult;
+  callers: number;
+};
+
+const parentSchedulePreviewStates = new Map<string, ParentSchedulePreviewState>();
+
 type ParentHomeNativeLoadContext = {
   loadProfile: () => Promise<Record<string, unknown>>;
   loadManagedTeams: () => Promise<{ teams: any[]; isPartial: boolean }>;
@@ -406,8 +414,12 @@ export async function loadParentScheduleSummary(
 ): Promise<ParentScheduleLoadResult> {
   if (!user?.uid) return { children: [], events: [] };
   const hasScopedStaffTeams = Boolean(options.scheduleScope?.staffTeams?.length);
-  return loadCachedAppData(
-    getParentScheduleSummaryCacheKey(user.uid),
+  const cacheKey = getParentScheduleSummaryCacheKey(user.uid);
+  const previewState = options.previewParentChildren
+    ? registerParentSchedulePreviewCaller(cacheKey, options.onPartial)
+    : undefined;
+  const loadPromise = loadCachedAppData(
+    cacheKey,
     () => loadParentSchedule(user, {
       hydrateDetails: false,
       expandStaffPlayers: false,
@@ -415,7 +427,9 @@ export async function loadParentScheduleSummary(
       parentScope: options.scheduleScope,
       nativeProfileLoader: options.nativeContext?.loadProfile,
       nativeStaffTeamsLoader: options.nativeContext?.loadManagedTeams,
-      ...(options.onPartial ? { onPartial: options.onPartial } : {})
+      ...(previewState
+        ? { onPartial: (schedule: ParentScheduleLoadResult) => emitParentSchedulePreview(cacheKey, schedule) }
+        : options.onPartial ? { onPartial: options.onPartial } : {})
     }),
     {
       ttlMs: homeSummaryTtlMs,
@@ -429,6 +443,41 @@ export async function loadParentScheduleSummary(
       shouldCache: (result) => result?.isPartial !== true
     }
   );
+  try {
+    return await loadPromise;
+  } finally {
+    previewState?.release();
+  }
+}
+
+function registerParentSchedulePreviewCaller(
+  cacheKey: string,
+  callback?: (schedule: ParentScheduleLoadResult) => void
+) {
+  const state = parentSchedulePreviewStates.get(cacheKey) || {
+    callbacks: new Set<(schedule: ParentScheduleLoadResult) => void>(),
+    callers: 0
+  };
+  state.callers += 1;
+  if (callback) {
+    state.callbacks.add(callback);
+    if (state.latest) callback(state.latest);
+  }
+  parentSchedulePreviewStates.set(cacheKey, state);
+  return {
+    release: () => {
+      if (callback) state.callbacks.delete(callback);
+      state.callers -= 1;
+      if (state.callers === 0) parentSchedulePreviewStates.delete(cacheKey);
+    }
+  };
+}
+
+function emitParentSchedulePreview(cacheKey: string, schedule: ParentScheduleLoadResult) {
+  const state = parentSchedulePreviewStates.get(cacheKey);
+  if (!state) return;
+  state.latest = schedule;
+  state.callbacks.forEach((callback) => callback(schedule));
 }
 
 function normalizeStaffTeams(schedule: ParentScheduleLoadResult): ParentHomeInboxTeam[] {

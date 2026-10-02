@@ -164,6 +164,34 @@ describe('homeService Teams bootstrap reuse', () => {
         await expect(homeLoad).resolves.toEqual(expect.objectContaining({ schedule: complete }));
     });
 
+    it('replays an in-flight Home preview to a later Home caller', async () => {
+        const preview = {
+            children: [{ teamId: 'team-1', teamName: 'Fast Falcons', playerId: 'player-1', playerName: 'Avery Ace' }],
+            events: [],
+            staffTeams: [],
+            isPartial: true
+        };
+        const complete = { ...preview, isPartial: false };
+        const pendingHome = deferred<typeof complete>();
+        const firstOnPartial = vi.fn();
+        const secondOnPartial = vi.fn();
+        scheduleServiceMocks.loadParentSchedule.mockImplementationOnce((_user, options) => {
+            options.onPartial(preview);
+            return pendingHome.promise;
+        });
+
+        const firstHomeLoad = loadParentHomeSummaryBootstrap(user, { onPartial: firstOnPartial });
+        const secondHomeLoad = loadParentHomeSummaryBootstrap(user, { onPartial: secondOnPartial });
+
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(1);
+        expect(firstOnPartial).toHaveBeenCalledWith(expect.objectContaining({ schedule: preview }));
+        expect(secondOnPartial).toHaveBeenCalledWith(expect.objectContaining({ schedule: preview }));
+
+        pendingHome.resolve(complete);
+        await expect(firstHomeLoad).resolves.toEqual(expect.objectContaining({ schedule: complete }));
+        await expect(secondHomeLoad).resolves.toEqual(expect.objectContaining({ schedule: complete }));
+    });
+
     it('shares one native profile and managed-team projection across Home schedule and chat', async () => {
         nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
         const profile = { parentOf: [], coachOf: ['team-owned'] };
