@@ -25,7 +25,7 @@ describe('player profile cache delivery', () => {
     });
 
     it('delivers updated shared utility and nested entry-module imports', () => {
-        expect(read('js/utils.js')).toContain("import('./global-search.js?v=443356')");
+        expect(read('js/utils.js')).toContain("import('./global-search.js?v=443357')");
         expect(read('drills.html')).toContain('js/team-admin-banner.js?v=443350');
         expect(read('game-day.html')).toContain('js/team-admin-banner.js?v=443350');
         expect(read('js/certificates/studio.js')).toContain('team-admin-banner.js?v=443350');

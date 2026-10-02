@@ -24,7 +24,7 @@ import {
     canViewSavedCertificate
 } from '../db.js?v=4433199';
 import { loadCompleteCertificateNarrativeStats } from '../diamond-legacy-game-context.js?v=1';
-import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443375';
+import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443376';
 import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=443350';
 import { TEMPLATES } from './templates.js?v=2';
 import { CERTIFICATE_FONT_OPTIONS, renderCertificate, createPreviewDraft, resolveColors, getContrastWarning } from './renderer.js?v=2';

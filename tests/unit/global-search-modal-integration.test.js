@@ -20,7 +20,7 @@ const firebaseMocks = vi.hoisted(() => ({
 
 vi.mock('../../js/db.js?v=4433199', () => dbMocks);
 vi.mock('../../js/firebase.js?v=33', () => firebaseMocks);
-vi.mock('../../js/utils.js?v=443375', () => ({
+vi.mock('../../js/utils.js?v=443376', () => ({
     escapeHtml: (value) => String(value || '')
 }));
 vi.mock('../../js/global-search-visibility.js?v=44335', () => ({
@@ -53,6 +53,40 @@ async function flushAsyncWork() {
     await Promise.resolve();
 }
 
+function searchableParent(teamId = 'team-access', teamName = 'Access Rockets') {
+    return {
+        teamId,
+        teamName,
+        sport: 'Basketball',
+        isPublic: false,
+        active: true,
+        status: 'active'
+    };
+}
+
+function openGlobalSearch() {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+}
+
+async function searchFor(value) {
+    const input = document.querySelector('[data-global-search-input="1"]');
+    input.value = value;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(200);
+    await flushAsyncWork();
+}
+
+function closeGlobalSearch() {
+    document.querySelector('[data-global-search-close="1"]')?.click();
+}
+
+function playerGetDocsCalls() {
+    return firebaseMocks.getDocs.mock.calls.filter(([request]) => {
+        const ref = request?.parts?.[0] || request || {};
+        return /^teams\/[^/]+\/players$/.test(ref.path || '');
+    });
+}
+
 describe('legacy global search modal', () => {
     beforeEach(() => {
         vi.resetModules();
@@ -73,7 +107,7 @@ describe('legacy global search modal', () => {
     });
 
     it('opens without bootstrapping all public teams and waits for a 2-character query before public discovery', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443356');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443357');
 
         setupHeaderSearch({
             user: {
@@ -111,7 +145,7 @@ describe('legacy global search modal', () => {
     });
 
     it('uses parent team link visibility summaries without per-team fallback reads', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443356');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443357');
 
         setupHeaderSearch({
             user: {
@@ -157,7 +191,7 @@ describe('legacy global search modal', () => {
     });
 
     it('falls back to Firestore when parent links only mark app access without visibility', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443356');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443357');
 
         firebaseMocks.getDoc.mockResolvedValueOnce(firestoreDoc('team-app-access-only', {
             name: 'Stored Access Rockets',
@@ -192,7 +226,7 @@ describe('legacy global search modal', () => {
     });
 
     it('searches a query-matching private team beyond the first eight private teams', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443356');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443357');
         const privateTeams = [
             ...Array.from({ length: 8 }, (_, index) => ({
                 teamId: `team-private-${index}`,
@@ -254,5 +288,148 @@ describe('legacy global search modal', () => {
         expect(playerQueryCount).toBe(playerSearchFirestoreQueryBudget);
         expect(document.body.textContent).toContain('#3 Pat Forward');
         expect(document.body.textContent).toContain('Patriots');
+    });
+
+    it('reuses completed normalized searches after clearing and reopening the modal', async () => {
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443357');
+
+        firebaseMocks.getDocs.mockResolvedValue({ docs: [] });
+        setupHeaderSearch({
+            user: { parentOf: [searchableParent()] },
+            headerContainer: null
+        });
+
+        openGlobalSearch();
+        await flushAsyncWork();
+        await searchFor('  BE  ');
+
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(1);
+        expect(playerGetDocsCalls()).toHaveLength(2);
+
+        await searchFor('');
+        await searchFor('be');
+        closeGlobalSearch();
+        openGlobalSearch();
+        await flushAsyncWork();
+        await searchFor('Be');
+
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(1);
+        expect(playerGetDocsCalls()).toHaveLength(2);
+        expect(document.body.textContent).toContain('Bearcats');
+
+        await searchFor('12');
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(2);
+        expect(playerGetDocsCalls()).toHaveLength(4);
+
+        await searchFor('be');
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(2);
+        expect(playerGetDocsCalls()).toHaveLength(4);
+    });
+
+    it('coalesces identical team and player searches while their requests are in flight', async () => {
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443357');
+        let resolveTeamSearch;
+        const playerResolvers = [];
+
+        dbMocks.discoverPublicTeams.mockImplementation(() => new Promise((resolve) => {
+            resolveTeamSearch = resolve;
+        }));
+        firebaseMocks.getDocs.mockImplementation((request) => {
+            const ref = request?.parts?.[0] || request || {};
+            if (/^teams\/[^/]+\/players$/.test(ref.path || '')) {
+                return new Promise((resolve) => playerResolvers.push(resolve));
+            }
+            return Promise.resolve({ docs: [] });
+        });
+        setupHeaderSearch({ user: { parentOf: [searchableParent()] }, headerContainer: null });
+
+        openGlobalSearch();
+        await flushAsyncWork();
+        await searchFor('pat');
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(1);
+        expect(playerGetDocsCalls()).toHaveLength(1);
+
+        await searchFor('');
+        await searchFor('PAT');
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(1);
+        expect(playerGetDocsCalls()).toHaveLength(1);
+
+        resolveTeamSearch({ teams: [], nextCursor: null });
+        playerResolvers.shift()({ docs: [] });
+        await flushAsyncWork();
+        expect(playerGetDocsCalls()).toHaveLength(2);
+        playerResolvers.shift()({ docs: [] });
+        await flushAsyncWork();
+    });
+
+    it('removes failed searches from the cache so the same query can retry', async () => {
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443357');
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        dbMocks.discoverPublicTeams
+            .mockRejectedValueOnce(new Error('temporary team failure'))
+            .mockResolvedValue({ teams: [], nextCursor: null });
+        firebaseMocks.getDocs
+            .mockRejectedValueOnce(new Error('temporary player failure'))
+            .mockRejectedValueOnce(new Error('temporary player failure'))
+            .mockResolvedValue({ docs: [] });
+        setupHeaderSearch({ user: { parentOf: [searchableParent()] }, headerContainer: null });
+
+        openGlobalSearch();
+        await flushAsyncWork();
+        await searchFor('retry');
+        await searchFor('');
+        await searchFor('RETRY');
+
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(2);
+        expect(playerGetDocsCalls()).toHaveLength(4);
+        expect(document.body.textContent).not.toContain('Public team search unavailable.');
+        expect(document.body.textContent).not.toContain('Player search unavailable.');
+        consoleError.mockRestore();
+    });
+
+    it('bounds completed caches and isolates results when the user or accessible teams change', async () => {
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443357');
+        const queries = Array.from({ length: 21 }, (_, index) => `q${String.fromCharCode(97 + index)}`);
+
+        firebaseMocks.getDocs.mockResolvedValue({ docs: [] });
+        setupHeaderSearch({
+            user: { uid: 'user-1', parentOf: [searchableParent('team-one', 'Team One')] },
+            headerContainer: null
+        });
+        openGlobalSearch();
+        await flushAsyncWork();
+        for (const queryText of queries) {
+            await searchFor(queryText);
+        }
+        const completedPlayerCalls = playerGetDocsCalls().length;
+        await searchFor(queries[0]);
+
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(22);
+        expect(playerGetDocsCalls().length).toBeGreaterThan(completedPlayerCalls);
+
+        closeGlobalSearch();
+        setupHeaderSearch({
+            user: { uid: 'user-1', parentOf: [searchableParent('team-two', 'Team Two')] },
+            headerContainer: null
+        });
+        openGlobalSearch();
+        await flushAsyncWork();
+        await searchFor(queries[1]);
+
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(23);
+        expect(playerGetDocsCalls().at(-1)?.[0]?.parts?.[0]?.path).toBe('teams/team-two/players');
+
+        closeGlobalSearch();
+        setupHeaderSearch({
+            user: { uid: 'user-2', parentOf: [searchableParent('team-two', 'Team Two')] },
+            headerContainer: null
+        });
+        openGlobalSearch();
+        await flushAsyncWork();
+        await searchFor(queries[1]);
+
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(24);
+        expect(playerGetDocsCalls().at(-1)?.[0]?.parts?.[0]?.path).toBe('teams/team-two/players');
     });
 });

@@ -44,7 +44,7 @@ const adminAuthMocks = vi.hoisted(() => ({
 
 vi.mock('../../js/db.js?v=4433199', () => adminDbMocks);
 vi.mock('../../js/firebase.js?v=33', () => adminFirebaseMocks);
-vi.mock('../../js/utils.js?v=443375', () => ({
+vi.mock('../../js/utils.js?v=443376', () => ({
     renderHeader: vi.fn(),
     renderFooter: vi.fn(),
     escapeHtml: (value) => String(value || '')
