@@ -6,11 +6,11 @@ const source = readFileSync(resolve(process.cwd(), 'js/global-search.js'), 'utf8
 
 describe('legacy global player search scoping', () => {
     it('uses bounded public team discovery instead of bootstrapping the full catalog', () => {
-        expect(source).toContain("import { discoverPublicTeams } from './db.js?v=4433199';");
+        expect(source).toContain("import { discoverPublicTeams } from './db.js?v=4433200';");
         expect(source).not.toContain('import { getTeams }');
         expect(source).toContain('const teamSearchQueryLimit = 20;');
         expect(source).toContain('if (q.length < 2) {');
-        expect(source).toContain("const result = await discoverPublicTeams({ searchText: q, pageSize: teamSearchQueryLimit });");
+        expect(source).toContain("() => discoverPublicTeams({ searchText: q, pageSize: teamSearchQueryLimit })");
         expect(source).not.toContain('const teams = await getTeams();');
     });
 
@@ -19,8 +19,14 @@ describe('legacy global player search scoping', () => {
         expect(source).toContain('async function loadPlayerSearchDocsByTeam(');
         expect(source).toContain('async function loadPlayerSearchDocs(prefixes, rawQuery, isNumeric, teamsById)');
         expect(source).toContain("const playersRef = collection(db, `teams/${teamId}/players`);");
-        expect(source).toContain('const result = await loadPlayerSearchDocs(prefixes, q, isNumeric, modalState.teamsById);');
+        expect(source).toContain('() => loadPlayerSearchDocs(prefixes, q, isNumeric, teamsById)');
         expect(source).not.toContain("collectionGroup(db, 'players')");
+    });
+
+    it('keeps completed global-search caches explicitly bounded', () => {
+        expect(source).toContain('const searchResultCacheLimit = 20;');
+        expect(source).toContain('function evictCompletedSearchEntries(cache)');
+        expect(source).toContain('if (completedCount <= searchResultCacheLimit) return;');
     });
 
     it('limits legacy player fan-out to a bounded set of searchable teams and queries', () => {
