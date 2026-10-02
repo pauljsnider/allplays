@@ -407,6 +407,17 @@ describe('production parent smoke fixture maintenance', () => {
         expect(workflowSource).not.toContain('pull_request:');
     });
 
+    it('targets panel headings instead of colliding navigation labels', () => {
+        for (const name of ['Registrations', 'Team fees', 'Access requests', 'Family share', 'Awards']) {
+            expect(authenticatedCoreSource).toContain(
+                `page.getByRole('heading', { name: '${name}', exact: true })`
+            );
+            expect(authenticatedCoreSource).not.toContain(`page.getByText('${name}', { exact: true })`);
+        }
+        expect(authenticatedCoreSource).toContain("not.toContainText('No published awards')");
+        expect(authenticatedCoreSource).toContain("panelHeading: 'Team fees', seededFees: true");
+    });
+
     it('uses an unambiguous semantic locator for the household invite heading', () => {
         expect(authenticatedCoreSource).toContain(
             "page.getByRole('heading', { name: 'Create invite' })"
