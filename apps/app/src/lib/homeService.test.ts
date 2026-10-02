@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearAppDataCache } from './appDataCache';
+import { clearAppDataCache, getCachedAppData, getParentScheduleSummaryCacheKey, invalidateCachedAppData } from './appDataCache';
 
 const chatServiceMocks = vi.hoisted(() => ({
     loadChatInbox: vi.fn()
@@ -190,6 +190,68 @@ describe('homeService Teams bootstrap reuse', () => {
         pendingHome.resolve(complete);
         await expect(firstHomeLoad).resolves.toEqual(expect.objectContaining({ schedule: complete }));
         await expect(secondHomeLoad).resolves.toEqual(expect.objectContaining({ schedule: complete }));
+    });
+
+    it.each([
+        ['key', 'old-first'], ['key', 'new-first'],
+        ['clear-all', 'old-first'], ['clear-all', 'new-first'],
+        ['clear-prefix', 'old-first'], ['clear-prefix', 'new-first']
+    ])('does not join or replay invalidated Home previews (%s, %s)', async (invalidation, completionOrder) => {
+        const key = getParentScheduleSummaryCacheKey(user.uid);
+        const oldPreview = { children: [], events: [], staffTeams: [], isPartial: true, marker: 'old' };
+        const newPreview = { ...oldPreview, marker: 'new' };
+        const oldComplete = { ...oldPreview, isPartial: false };
+        const newComplete = { ...newPreview, isPartial: false };
+        const oldPending = deferred<typeof oldComplete>();
+        const newPending = deferred<typeof newComplete>();
+        const oldCallback = vi.fn();
+        const newCallback = vi.fn();
+        let oldOptions: any;
+        let newOptions: any;
+        scheduleServiceMocks.loadParentSchedule
+            .mockImplementationOnce((_user, options) => {
+                oldOptions = options;
+                options.onPartial(oldPreview);
+                return oldPending.promise;
+            })
+            .mockImplementationOnce((_user, options) => {
+                newOptions = options;
+                return newPending.promise;
+            });
+        const oldLoad = loadParentHomeSummaryBootstrap(user, { onPartial: oldCallback });
+        if (invalidation === 'key') invalidateCachedAppData(key);
+        else clearAppDataCache(invalidation === 'clear-prefix' ? 'app-schedule-summary:' : '');
+        const newLoad = loadParentHomeSummaryBootstrap(user, { onPartial: newCallback });
+        try {
+            expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+            expect(newCallback).not.toHaveBeenCalled();
+            oldOptions.onPartial(oldPreview);
+            expect(oldCallback).toHaveBeenCalledWith(expect.objectContaining({ schedule: oldPreview }));
+            expect(newCallback).not.toHaveBeenCalled();
+            newOptions.onPartial(newPreview);
+            expect(newCallback).toHaveBeenCalledWith(expect.objectContaining({ schedule: newPreview }));
+            if (completionOrder === 'old-first') {
+                oldPending.resolve(oldComplete);
+                await oldLoad;
+                expect(getCachedAppData(key)).toBeNull();
+                newPending.resolve(newComplete);
+            } else {
+                newPending.resolve(newComplete);
+                await newLoad;
+                oldPending.resolve(oldComplete);
+            }
+            await expect(oldLoad).resolves.toEqual(expect.objectContaining({ schedule: oldComplete }));
+            await expect(newLoad).resolves.toEqual(expect.objectContaining({ schedule: newComplete }));
+            expect(newCallback).not.toHaveBeenCalledWith(expect.objectContaining({ schedule: oldPreview }));
+            expect(newCallback).not.toHaveBeenCalledWith(expect.objectContaining({ schedule: oldComplete }));
+            expect(getCachedAppData(key)).toEqual(newComplete);
+            const stored = window.localStorage.getItem(`allplays:appDataCache:${encodeURIComponent(key)}`);
+            expect(JSON.parse(stored || '{}').value).toEqual(newComplete);
+        } finally {
+            oldPending.resolve(oldComplete);
+            newPending.resolve(newComplete);
+            await Promise.all([oldLoad, newLoad]);
+        }
     });
 
     it('isolates previews from overlapping forced Home generations and keeps the newer cache value', async () => {

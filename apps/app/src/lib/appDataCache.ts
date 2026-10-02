@@ -37,6 +37,11 @@ type StoredCacheEntry = {
   expiresAt: number;
 };
 
+/** Opaque snapshot of the same invalidation boundary used by cache-owned requests. */
+export function getAppDataCacheInvalidationToken(key: string): string {
+  return `${cacheInvalidationVersion}:${getCacheKeyInvalidationVersion(key)}`;
+}
+
 export function getParentScheduleSummaryCacheKey(userId: string) {
   return `app-schedule-summary:${userId}`;
 }

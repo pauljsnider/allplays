@@ -8,6 +8,7 @@ import {
 } from './homeLogic';
 import { createLogger } from './logger';
 import {
+  getAppDataCacheInvalidationToken,
   getParentHomeSecondaryCacheKey,
   getParentScheduleSummaryCacheKey,
   getTeamsSummaryBootstrapCacheKey,
@@ -32,6 +33,7 @@ const teamsSummaryTtlMs = 30 * 1000;
 const logger = createLogger('home');
 
 type ParentSchedulePreviewState = {
+  invalidationToken: string;
   callbacks: Map<(schedule: ParentScheduleLoadResult) => void, number>;
   latest?: ParentScheduleLoadResult;
   promise?: Promise<ParentScheduleLoadResult>;
@@ -417,9 +419,10 @@ export async function loadParentScheduleSummary(
   const hasScopedStaffTeams = Boolean(options.scheduleScope?.staffTeams?.length);
   const cacheKey = getParentScheduleSummaryCacheKey(user.uid);
   const force = Boolean(options.force || hasScopedStaffTeams);
+  const invalidationToken = getAppDataCacheInvalidationToken(cacheKey);
   if (options.previewParentChildren && !force) {
     const activePreview = parentSchedulePreviewStates.get(cacheKey);
-    if (activePreview?.promise) {
+    if (activePreview?.promise && activePreview.invalidationToken === invalidationToken) {
       const release = registerParentSchedulePreviewCallback(activePreview, options.onPartial);
       try {
         return await activePreview.promise;
@@ -430,7 +433,7 @@ export async function loadParentScheduleSummary(
   }
 
   const previewState: ParentSchedulePreviewState | undefined = options.previewParentChildren
-    ? { callbacks: new Map<(schedule: ParentScheduleLoadResult) => void, number>() }
+    ? { invalidationToken, callbacks: new Map<(schedule: ParentScheduleLoadResult) => void, number>() }
     : undefined;
   const releasePreviewCallback = previewState
     ? registerParentSchedulePreviewCallback(previewState, options.onPartial)
