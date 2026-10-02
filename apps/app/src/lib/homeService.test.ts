@@ -467,6 +467,38 @@ describe('homeService Teams bootstrap reuse', () => {
         await vi.waitFor(() => expect(onPartial).toHaveBeenCalledTimes(1));
     });
 
+    it('detaches failed background requests before synchronous retry callbacks', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        const stale = { children: [], events: [] } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(stale);
+        await loadParentScheduleSummary(user, { previewParentChildren: true });
+        vi.setSystemTime(46000);
+        const failed = deferred<any>();
+        const retry = deferred<any>();
+        scheduleServiceMocks.loadParentSchedule.mockReturnValueOnce(failed.promise).mockReturnValueOnce(retry.promise);
+        const retryErrors = vi.fn();
+        const retryRefreshes = [vi.fn(), vi.fn()];
+        const retryLoads: Promise<unknown>[] = [];
+        const errors = retryRefreshes.map((onRefresh) => vi.fn(() => {
+            retryLoads.push(loadParentScheduleSummary(user, {
+                previewParentChildren: true, onRefresh, onBackgroundError: retryErrors
+            }));
+        }));
+        for (const onBackgroundError of errors) {
+            expect(await loadParentScheduleSummary(user, { previewParentChildren: true, onBackgroundError })).toBe(stale);
+        }
+        const error = new Error('refresh unavailable');
+        failed.reject(error);
+        await vi.waitFor(() => errors.forEach((callback) => expect(callback).toHaveBeenCalledExactlyOnceWith(error)));
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(3);
+        expect(retryErrors).not.toHaveBeenCalled();
+        expect(await Promise.all(retryLoads)).toEqual([stale, stale]);
+        const fresh = { ...stale, staffTeams: [] };
+        retry.resolve(fresh);
+        await vi.waitFor(() => retryRefreshes.forEach((callback) => expect(callback).toHaveBeenCalledExactlyOnceWith(fresh)));
+    });
+
     it('reports a complete stale-summary background refresh separately from initial partials', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-08-13T12:00:00.000Z'));

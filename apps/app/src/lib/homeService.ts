@@ -448,6 +448,16 @@ export async function loadParentScheduleSummary(
     previewState.subscribers.clear();
     if (parentSchedulePreviewStates.get(cacheKey) === previewState) parentSchedulePreviewStates.delete(cacheKey);
   };
+  let terminalSubscribers: ParentScheduleSummaryOptions[] | undefined;
+  const settlePreview = () => {
+    if (!terminalSubscribers) {
+      terminalSubscribers = [...(previewState?.subscribers ?? [])];
+      // Terminal callbacks can synchronously reload Home. Detach before fanout
+      // so reentry reads the committed cache and cannot extend this dispatch.
+      cleanup();
+    }
+    return terminalSubscribers;
+  };
   if (previewState) parentSchedulePreviewStates.set(cacheKey, previewState);
   const previewScope = previewState ? `home-parent-preview:${++parentSchedulePreviewRequestId}` : undefined;
   const loadPromise = loadCachedAppData(
@@ -476,20 +486,15 @@ export async function loadParentScheduleSummary(
       staleWhileRevalidate: true,
       onBackgroundLoad: previewState ? (request) => {
         previewState.background = request;
-        // Success cleans up after refresh callbacks; the error callback owns failure cleanup.
-        void request.promise.then(cleanup, () => undefined);
       } : undefined,
       onRefresh: previewState
-        ? (schedule) => previewState.subscribers.forEach((subscriber) => subscriber.onPartial?.(schedule))
+        ? (schedule) => settlePreview().forEach((subscriber) => subscriber.onPartial?.(schedule))
         : options.onPartial,
       onBackgroundRefresh: previewState
-        ? (schedule) => previewState.subscribers.forEach((subscriber) => subscriber.onRefresh?.(schedule))
+        ? (schedule) => settlePreview().forEach((subscriber) => subscriber.onRefresh?.(schedule))
         : options.onRefresh,
       onRefreshError: previewState
-        ? (error) => {
-          try { previewState.subscribers.forEach((subscriber) => subscriber.onBackgroundError?.(error)); }
-          finally { cleanup(); }
-        }
+        ? (error) => settlePreview().forEach((subscriber) => subscriber.onBackgroundError?.(error))
         : options.onBackgroundError,
       shouldCache: (result) => result?.isPartial !== true
     }
