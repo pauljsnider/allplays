@@ -53,7 +53,7 @@ import {
     formatOfficialUserSummary,
     getOfficialUserSummary
 } from './admin-user-official-links.js?v=4';
-import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=2';
+import { buildAdminTeamOfficialsSummary, loadAdminTeamOfficialsCoverageGames } from './admin-team-officials.js?v=3';
 import {
     createDebouncedAdminTeamSearch,
     normalizeAdminTeamSearchTerm,
@@ -448,21 +448,21 @@ async function loadGameStatsForTeams(teams = allTeams, { scope = 'page' } = {}) 
         return;
     }
 
-    const dashboardGameQueryWindow = scope === 'dashboard'
-        ? buildDashboardGameQueryWindow()
-        : null;
-    const gamesPromises = teams.map(async (team) => {
-        try {
-            const games = dashboardGameQueryWindow
-                ? await getGames(team.id, dashboardGameQueryWindow)
-                : await getGames(team.id);
-            return games.map(g => ({ ...g, teamId: team.id, teamName: team.name }));
-        } catch (e) {
-            return [];
-        }
-    });
-    const gamesArrays = await Promise.all(gamesPromises);
-    const nextGames = gamesArrays.flat();
+    let nextGames;
+    if (scope === 'dashboard') {
+        const dashboardGameQueryWindow = buildDashboardGameQueryWindow();
+        const gamesArrays = await Promise.all(teams.map(async (team) => {
+            try {
+                const games = await getGames(team.id, dashboardGameQueryWindow);
+                return games.map(g => ({ ...g, teamId: team.id, teamName: team.name }));
+            } catch (e) {
+                return [];
+            }
+        }));
+        nextGames = gamesArrays.flat();
+    } else {
+        nextGames = await loadAdminTeamOfficialsCoverageGames(teams, getGames);
+    }
 
     if (scope === 'dashboard') {
         dashboardGames = nextGames;
