@@ -132,3 +132,17 @@ for (const state of ['Player not found', 'Error loading player details']) {
         expect(text).not.toMatch(/private-team|private-person|secret-token|teamId|playerId/);
     });
 }
+
+
+test('Awards panel assertions stay strict when its navigation link has the same label', async ({ page }) => {
+    await page.route('http://smoke.invalid/**', (request) => request.fulfill({
+        contentType: 'text/html',
+        body: '<main><h1>Family workflows</h1><nav aria-label="Family tools"><a href="#/parent-tools/certificates" aria-current="page"><span>Awards</span></a></nav><section><h2>Awards</h2><div>Published fixture certificate</div></section></main>'
+    }));
+    await openAuthenticatedAppRoute(page, base, '/parent-tools/certificates', {
+        heading: 'Family workflows', panelHeading: 'Awards'
+    });
+    await expect(page.getByText('Awards', { exact: true })).toHaveCount(2);
+    await expect(page.getByRole('heading', { name: 'Awards', exact: true })).toBeVisible();
+    await expect(page.locator('main')).not.toContainText('No published awards');
+});
