@@ -33,9 +33,75 @@ function assetPath(url) {
         const { pathname } = new URL(url);
         const chunk = pathname.match(/^\/app\/assets\/(FeesTool|ParentTools|index)-[A-Za-z0-9_-]{8}\.js$/);
         if (chunk) return `/app/assets/${chunk[1]}-[hash].js`;
-        if (['/js/officiating-slots.js', '/js/firebase-auth.js', '/js/vendor/firebase-auth.js', '/player.html', '/team.html'].includes(pathname)) return pathname;
+        if (['/js/officiating-slots.js', '/js/firebase-auth.js', '/js/vendor/firebase-auth.js',
+            '/js/team-access.js', '/js/auth.js', '/js/edit-schedule-practice-payload.js',
+            '/player.html', '/team.html'].includes(pathname)) return pathname;
     } catch { /* Unrecognized URLs are omitted. */ }
     return '[other-asset]';
+}
+
+function responseHeader(name, value) {
+    // Reject rather than truncate: even a short unknown token can be private.
+    if (typeof value !== 'string' || value.length > 160 || /[^\x20-\x7e]/.test(value)) return undefined;
+    if (name === 'date') {
+        const date = new Date(value);
+        if (value.length === 29 && date.getUTCFullYear() >= 2000 && date.getUTCFullYear() <= 2100 && date.toUTCString() === value) return date.toISOString();
+    }
+    if (name === 'content-type' && /^(?:text\/(?:html|plain|css|javascript)|application\/(?:javascript|json|octet-stream))(?:;\s*charset=(?:utf-8|iso-8859-1))?$/i.test(value)) return value.split(';')[0].toLowerCase();
+    if (name === 'server' && /^(?:GitHub\.com|Varnish|nginx|Apache|cloudflare|envoy|Google Frontend|GSE|ESF|UploadServer)$/i.test(value)) return value.toLowerCase();
+    if (name === 'via' && /^(?:1\.0|1\.1|2) (?:varnish|google|envoy)(?:, (?:1\.0|1\.1|2) (?:varnish|google|envoy)){0,3}$/i.test(value)) return value.toLowerCase();
+    if (name === 'age' && /^(?:0|[1-9][0-9]{0,9})$/.test(value) && Number(value) <= 2_147_483_647) return Number(value);
+    if (name === 'x-cache' && /^(?:HIT|MISS)(?:, (?:HIT|MISS)){0,3}$/.test(value)) return value.split(', ');
+    if (name === 'x-served-by') {
+        const nodes = value.split(', ');
+        // Only recognizable public cache-node shapes, never arbitrary hostnames.
+        if (nodes.length <= 4 && nodes.every((node) => /^cache-(?:[a-z]{3}[0-9]{4,5}|[a-z]{3}-[a-z]{4}[0-9]{7})-[A-Z]{3}$/.test(node))) return nodes;
+    }
+    if (name === 'x-github-request-id' && /^[A-F0-9]{4}:[A-F0-9]{1,8}:[A-F0-9]{1,8}:[A-F0-9]{1,8}:[A-F0-9]{8}$/i.test(value)) return value;
+    return undefined;
+}
+
+async function collectResponseMetadata(responses) {
+    const headers = {
+        date: 'responseUtc', 'content-type': 'contentType', server: 'server', via: 'via',
+        age: 'ageSeconds', 'x-cache': 'cache', 'x-served-by': 'servedBy', 'x-github-request-id': 'githubRequestId'
+    };
+    let accepting = true;
+    let timer;
+    // The fixed event/header limits bound work. This deadline leaves most of the
+    // existing one-second diagnostic budget for state and artifact I/O.
+    try {
+        const pending = responses.flatMap(({ response, event }) => {
+            try {
+                const timing = response.request().timing();
+                const safeTiming = {};
+                for (const key of ['domainLookupStart', 'domainLookupEnd', 'connectStart', 'secureConnectionStart',
+                    'connectEnd', 'requestStart', 'responseStart', 'responseEnd']) {
+                    if (Number.isFinite(timing[key]) && timing[key] >= 0 && timing[key] <= 3_600_000) safeTiming[key] = Math.round(timing[key]);
+                }
+                if (Object.keys(safeTiming).length) event.timingMs = safeTiming;
+            } catch { /* Timing is optional on closed or incomplete requests. */ }
+            return [
+                ...Object.entries(headers).map(([header, field]) => Promise.resolve()
+                    .then(() => response.headerValue(header))
+                    .then((value) => {
+                        if (!accepting) return;
+                        const safe = responseHeader(header, value);
+                        if (safe !== undefined) event[field] = safe;
+                    }).catch(() => {})),
+                Promise.resolve().then(() => response.httpVersion()).then((value) => {
+                    if (accepting && ['HTTP/1.0', 'HTTP/1.1', 'HTTP/2.0', 'HTTP/3.0', 'h2', 'h3'].includes(value)) event.protocol = value;
+                }).catch(() => {})
+            ];
+        });
+        await Promise.race([
+            Promise.all(pending),
+            new Promise((resolve) => { timer = setTimeout(resolve, 250); })
+        ]);
+    } finally {
+        accepting = false;
+        clearTimeout(timer);
+    }
 }
 
 export async function withAppFailureDiagnostic(session, testInfo, callback, { baseline = false } = {}) {
@@ -43,7 +109,13 @@ export async function withAppFailureDiagnostic(session, testInfo, callback, { ba
     const startedAt = Date.now();
     routeTimings.delete(page);
     const events = [];
-    const record = (event) => { if (events.length < 40) events.push({ elapsedMs: Date.now() - startedAt, ...event }); };
+    const responses = [];
+    const record = (event) => {
+        if (events.length >= 40) return undefined;
+        const entry = { elapsedMs: Date.now() - startedAt, ...event };
+        events.push(entry);
+        return entry;
+    };
     const resourceTypes = baseline ? ['script', 'stylesheet', 'document', 'fetch', 'xhr'] : ['script', 'stylesheet', 'document'];
     const listeners = {
         console: (message) => {
@@ -56,9 +128,12 @@ export async function withAppFailureDiagnostic(session, testInfo, callback, { ba
             }
         },
         response: (response) => {
-            if ((response.status() >= 400 || (baseline && response.request().resourceType() === 'document')) && resourceTypes.includes(response.request().resourceType())) {
-                record({ type: 'response', asset: assetPath(response.url()), status: response.status() });
-            }
+            const status = response.status();
+            if (!Number.isInteger(status) || status < 100 || status > 599) return;
+            if (!resourceTypes.includes(response.request().resourceType())) return;
+            if (status < 400 && !(baseline && response.request().resourceType() === 'document')) return;
+            const event = record({ type: 'response', asset: assetPath(response.url()), status, observedUtc: new Date().toISOString() });
+            if (event && status >= 400 && event.asset !== '[other-asset]') responses.push({ response, event });
         }
     };
     for (const [event, listener] of Object.entries(listeners)) page.on(event, listener);
@@ -66,10 +141,13 @@ export async function withAppFailureDiagnostic(session, testInfo, callback, { ba
         return await callback(page);
     } catch (failure) {
         // Diagnostics are best effort and must never replace the original failure.
+        for (const [event, listener] of Object.entries(listeners)) page.off(event, listener);
         let timer;
+        let collecting = true;
         try {
             await Promise.race([
                 (async () => {
+                    await collectResponseMetadata(responses);
                     const visible = (locator) => locator.isVisible().catch(() => null);
                     const activeTabs = await Promise.all(tools.map(async (tool) => (
                         await visible(page.locator(`nav[aria-label="Family tools"] a[aria-current="page"][href="#/parent-tools/${tool}"]`)) ? tool : null
@@ -87,9 +165,11 @@ export async function withAppFailureDiagnostic(session, testInfo, callback, { ba
                         state.diamondConfigError = await visible(page.getByText('Diamond statistic definitions could not be verified.', { exact: true }));
                         state.mainVisible = await visible(page.locator('main'));
                     }
+                    if (!collecting) return;
                     const timing = routeTimings.get(page);
                     const file = testInfo.outputPath(baseline ? 'boot-path-diagnostic.json' : 'app-route-diagnostic.json');
                     await mkdir(path.dirname(file), { recursive: true });
+                    if (!collecting) return;
                     const diagnostic = JSON.stringify({
                         retry: testInfo.retry, elapsedMs: Date.now() - startedAt,
                         route: routeTemplate(page.url(), baseline), activeTabs: activeTabs.filter(Boolean), state,
@@ -104,7 +184,7 @@ export async function withAppFailureDiagnostic(session, testInfo, callback, { ba
                 new Promise((resolve) => { timer = setTimeout(resolve, 1_000); })
             ]);
         } catch { /* Preserve callback/assertion identity even if artifact I/O fails. */ }
-        finally { clearTimeout(timer); }
+        finally { collecting = false; clearTimeout(timer); }
         throw failure;
     } finally {
         for (const [event, listener] of Object.entries(listeners)) page.off(event, listener);
