@@ -250,6 +250,21 @@ describe('fee due reminder source wiring', () => {
         expect(functionsSource).toContain(".where('reminderDeliveryClaimExpiresAtMillis', '>', 0)");
     });
 
+    it('pages upcoming recipients through the bounded drain and worker primitives', () => {
+        expect(functionsSource).toContain('FEE_REMINDER_QUERY_PAGE_SIZE = PRE_EVENT_REMINDER_QUERY_PAGE_SIZE');
+        expect(functionsSource).toContain('FEE_REMINDER_WORKER_CONCURRENCY = 5');
+        expect(functionsSource).toContain('const upcomingSummary = await drainOrderedPages({');
+        expect(functionsSource).toContain(".orderBy('dueDate')");
+        expect(functionsSource).toContain('.limit(limit || FEE_REMINDER_QUERY_PAGE_SIZE)');
+        expect(functionsSource).toContain('query = query.startAfter(cursor);');
+        expect(functionsSource).toContain('const workerSummary = await runReminderWorkers({');
+        expect(functionsSource).toContain('concurrency: FEE_REMINDER_WORKER_CONCURRENCY');
+        expect(functionsSource).toContain("stoppedBecause: upcomingSummary.stoppedBecause");
+        expect(functionsSource).toContain('examinedCount: upcomingSummary.examinedCount');
+        expect(functionsSource).toContain('sentCount: upcomingSummary.sentCount');
+        expect(functionsSource).toContain('failedCount: upcomingSummary.failedCount');
+    });
+
     it('declares collection-group indexes for upcoming and leased reminder queries', () => {
         expect(firestoreIndexes.indexes).toContainEqual({
             collectionGroup: 'feeRecipients',

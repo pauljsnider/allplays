@@ -1549,6 +1549,69 @@ test('sendFeeUnpaidDueReminders sends eligible unpaid parent fee reminders with 
     }
 });
 
+test('sendFeeUnpaidDueReminders pages upcoming recipients and reports bounded delivery counts', async () => {
+    const nowMillis = Date.parse('2026-06-28T12:00:00.000Z');
+    const recipientCount = 51;
+    const initialDocs = Object.fromEntries(Array.from({ length: recipientCount }, (_, index) => {
+        const recipientId = `recipient-${String(index + 1).padStart(2, '0')}`;
+        return [
+            `teams/team-1/feeBatches/batch-1/feeRecipients/${recipientId}`,
+            {
+                status: 'unpaid',
+                parentUserId: 'parent-1',
+                feeTitle: `Fee ${index + 1}`,
+                amountCents: 1000 + index,
+                dueDate: new Date(nowMillis + (index + 1) * 60 * 1000).toISOString()
+            }
+        ];
+    }));
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentTeamIds: ['team-1'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        initialDocs,
+        nowMillis
+    });
+
+    try {
+        await moduleExports.sendFeeUnpaidDueReminders();
+
+        const pageSize = moduleExports._internal.FEE_REMINDER_QUERY_PAGE_SIZE;
+        assert.equal(pageSize, 50);
+        assert.equal(env.messagingCalls.length, recipientCount);
+        assert.equal(env.messagingCalls.some((call) => (
+            call.data.appRoute?.endsWith('&recipientId=recipient-51')
+        )), true);
+
+        const upcomingQueries = env.feeRecipientQueryLog.filter((entry) => (
+            entry.filters.some((filter) => filter.field === 'dueDate')
+        ));
+        assert.equal(upcomingQueries.length, 2);
+        assert.deepEqual(upcomingQueries.map((entry) => entry.limit), [pageSize, pageSize]);
+        assert.deepEqual(upcomingQueries.map((entry) => entry.resultPaths.length), [pageSize, 1]);
+        assert.equal(upcomingQueries[0].order?.field, 'dueDate');
+        assert.equal(upcomingQueries[0].cursorPath, null);
+        assert.equal(upcomingQueries[1].cursorPath, upcomingQueries[0].resultPaths.at(-1));
+
+        const completionLog = env.platformLogs.find(({ level, args }) => (
+            level === 'info' && args[0] === 'sendFeeUnpaidDueReminders: upcoming delivery complete'
+        ));
+        assert.deepEqual(completionLog?.args[1], {
+            pagesAttempted: 2,
+            stoppedBecause: 'drained',
+            examinedCount: recipientCount,
+            sentCount: recipientCount,
+            failedCount: 0
+        });
+    } finally {
+        cleanup();
+    }
+});
+
 test('sendFeeUnpaidDueReminders excludes paid fees and parents with disabled fee notifications', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
@@ -2403,6 +2466,18 @@ test('sendFeeUnpaidDueReminders retains its sent marker after an ambiguous deliv
         assert.ok(recipient.reminderSentAt);
         assert.equal(recipient.reminderDeliveryClaimId, undefined);
         assert.match(recipient.reminderLastError, /ambiguous messaging failure/);
+        const failureLog = env.platformLogs.find(({ level, args }) => (
+            level === 'info'
+            && args[0] === 'sendFeeUnpaidDueReminders: upcoming delivery complete'
+            && args[1]?.failedCount === 1
+        ));
+        assert.deepEqual(failureLog?.args[1], {
+            pagesAttempted: 1,
+            stoppedBecause: 'drained',
+            examinedCount: 1,
+            sentCount: 0,
+            failedCount: 1
+        });
 
         await moduleExports.sendFeeUnpaidDueReminders();
         assert.equal(env.messagingCalls.length, 1);

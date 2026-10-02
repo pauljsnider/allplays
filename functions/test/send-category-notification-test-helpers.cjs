@@ -143,6 +143,7 @@ function buildNotificationTestEnv({
     const getAllCalls = [];
     const docStore = new Map();
     const teamMediaQueryLog = [];
+    const feeRecipientQueryLog = [];
     const rejectedInboxUids = new Set(rejectedNotificationInboxUids);
     let activeNotificationInboxPipelines = 0;
     let peakNotificationInboxPipelines = 0;
@@ -944,14 +945,77 @@ function buildNotificationTestEnv({
             if (name !== 'feeRecipients') {
                 return makeQuery(() => []);
             }
-            return makeQuery(() => Array.from(docStore.entries())
+            const getFeeRecipientDocs = () => Array.from(docStore.entries())
                 .filter(([path]) => /\/feeRecipients\/[^/]+$/.test(path))
                 .map(([path, data]) => makeDocSnapshot({
                     id: path.split('/').pop(),
                     ref: doc(path),
                     data,
                     exists: true
-                })));
+                }));
+            const makeFeeRecipientQuery = ({
+                filters = [],
+                order = null,
+                cursor = null,
+                limitCount = null
+            } = {}) => ({
+                where(field, op, value) {
+                    return makeFeeRecipientQuery({
+                        filters: [...filters, { field, op, value }],
+                        order,
+                        cursor,
+                        limitCount
+                    });
+                },
+                orderBy(field, direction = 'asc') {
+                    return makeFeeRecipientQuery({
+                        filters,
+                        order: { field, direction },
+                        cursor,
+                        limitCount
+                    });
+                },
+                startAfter(nextCursor) {
+                    return makeFeeRecipientQuery({ filters, order, cursor: nextCursor, limitCount });
+                },
+                limit(nextLimitCount) {
+                    return makeFeeRecipientQuery({ filters, order, cursor, limitCount: nextLimitCount });
+                },
+                async get() {
+                    let docs = getFeeRecipientDocs().filter((docSnap) => {
+                        const data = docSnap.data() || {};
+                        return filters.every((filter) => matchesQueryFilter(data, filter));
+                    });
+                    if (order) {
+                        docs.sort((left, right) => {
+                            const leftMillis = comparableMillis(left.data()?.[order.field]);
+                            const rightMillis = comparableMillis(right.data()?.[order.field]);
+                            const fieldComparison = leftMillis - rightMillis;
+                            const pathComparison = left.ref.path.localeCompare(right.ref.path);
+                            const comparison = fieldComparison || pathComparison;
+                            return order.direction === 'desc' ? -comparison : comparison;
+                        });
+                    } else {
+                        docs.sort((left, right) => left.ref.path.localeCompare(right.ref.path));
+                    }
+                    if (cursor) {
+                        const cursorIndex = docs.findIndex((docSnap) => docSnap.ref.path === cursor.ref.path);
+                        docs = cursorIndex >= 0 ? docs.slice(cursorIndex + 1) : docs;
+                    }
+                    if (Number.isFinite(limitCount)) {
+                        docs = docs.slice(0, limitCount);
+                    }
+                    feeRecipientQueryLog.push({
+                        filters: filters.map(({ field, op }) => ({ field, op })),
+                        order: order ? { ...order } : null,
+                        cursorPath: cursor?.ref?.path || null,
+                        limit: limitCount,
+                        resultPaths: docs.map((docSnap) => docSnap.ref.path)
+                    });
+                    return makeQuerySnapshot(docs);
+                }
+            });
+            return makeFeeRecipientQuery();
         },
         async getAll(...refs) {
             getAllCalls.push(refs.map((ref) => ref.path));
@@ -1119,6 +1183,7 @@ function buildNotificationTestEnv({
         feeRecipientDocGetPaths,
         getAllCalls,
         teamMediaQueryLog,
+        feeRecipientQueryLog,
         get activeNotificationInboxPipelines() {
             return activeNotificationInboxPipelines;
         },
