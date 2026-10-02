@@ -301,6 +301,8 @@ const {
   PRE_EVENT_REMINDER_QUERY_PAGE_SIZE,
   PRE_EVENT_REMINDER_MAX_PAGES_PER_RUN,
   PRE_EVENT_REMINDER_MAX_RUNTIME_MS,
+  drainOrderedPages,
+  runReminderWorkers,
   drainDueReminderPages
 } = require('./pre-event-reminder-dispatcher-core.cjs');
 const {
@@ -14652,6 +14654,10 @@ function getNewOpenOfficiatingSlots(beforeGame = {}, afterGame = {}) {
 
 const FEE_REMINDER_CLAIM_LEASE_MS = 10 * 60 * 1000;
 const FEE_REMINDER_STALE_RECOVERY_GRACE_MS = 48 * 60 * 60 * 1000;
+const FEE_REMINDER_QUERY_PAGE_SIZE = PRE_EVENT_REMINDER_QUERY_PAGE_SIZE;
+const FEE_REMINDER_MAX_PAGES_PER_RUN = PRE_EVENT_REMINDER_MAX_PAGES_PER_RUN;
+const FEE_REMINDER_MAX_RUNTIME_MS = PRE_EVENT_REMINDER_MAX_RUNTIME_MS;
+const FEE_REMINDER_WORKER_CONCURRENCY = 5;
 
 exports._internal = {
   createStripeTeamPassCheckoutLegacyForTest,
@@ -14680,6 +14686,10 @@ exports._internal = {
   finalizeFeeDueReminderClaim,
   FEE_REMINDER_CLAIM_LEASE_MS,
   FEE_REMINDER_STALE_RECOVERY_GRACE_MS,
+  FEE_REMINDER_QUERY_PAGE_SIZE,
+  FEE_REMINDER_MAX_PAGES_PER_RUN,
+  FEE_REMINDER_MAX_RUNTIME_MS,
+  FEE_REMINDER_WORKER_CONCURRENCY,
   FIRESTORE_BATCH_SAFE_WRITE_LIMIT,
   NOTIFICATION_RECIPIENT_DEVICE_SYNC_CONCURRENCY,
   NOTIFICATION_INBOX_WRITE_CONCURRENCY,
@@ -15895,21 +15905,13 @@ async function sendFeeUnpaidDueReminders() {
 
   // Keep leased recipients in the retry set even if they cross their due time
   // while a crashed attempt's lease is active.
-  const [upcomingSnap, leasedSnap] = await Promise.all([
-    firestore.collectionGroup('feeRecipients')
-      .where('status', 'in', ['unpaid', 'pending'])
-      .where('dueDate', '>=', now)
-      .where('dueDate', '<=', maxReminderThresholdLater)
-      .get(),
-    firestore.collectionGroup('feeRecipients')
-      .where('reminderDeliveryClaimExpiresAtMillis', '>', 0)
-      .get()
-  ]);
-  const reminderDocs = [...new Map(
-    [...upcomingSnap.docs, ...leasedSnap.docs].map((docSnap) => [docSnap.ref.path, docSnap])
-  ).values()];
+  const leasedSnap = await firestore.collectionGroup('feeRecipients')
+    .where('reminderDeliveryClaimExpiresAtMillis', '>', 0)
+    .get();
+  const examinedRecipientPaths = new Set();
+  let firstRetryableFailure = null;
 
-  const promises = reminderDocs.map(async (doc) => {
+  const processReminderDoc = async (doc) => {
     let data = doc.data();
     const pathParts = doc.ref.path.split('/');
     // Path structure: teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}
@@ -16071,27 +16073,75 @@ async function sendFeeUnpaidDueReminders() {
       }
     } catch (err) {
       console.error('sendFeeUnpaidDueReminders: failed to notify', { teamId, candidateUserIds: buildFeeReminderCandidateUserIds(data), error: err });
-      if (
-        isNotificationAuthResolutionFailure(err)
-        || isFeeReminderClaimActiveFailure(err)
-        || isFeeReminderPreEffectFailure(err)
-      ) throw err;
-      return null;
+      throw err;
+    }
+  };
+
+  const runFeeReminderWorkers = async (docs) => {
+    const workerSummary = await runReminderWorkers({
+      items: docs,
+      concurrency: FEE_REMINDER_WORKER_CONCURRENCY,
+      worker: async (doc) => {
+        try {
+          return Boolean(await processReminderDoc(doc));
+        } catch (error) {
+          if (
+            !firstRetryableFailure
+            && (
+              isNotificationAuthResolutionFailure(error)
+              || isFeeReminderClaimActiveFailure(error)
+              || isFeeReminderPreEffectFailure(error)
+            )
+          ) {
+            firstRetryableFailure = error;
+          }
+          throw error;
+        }
+      }
+    });
+    return workerSummary;
+  };
+
+  const upcomingSummary = await drainOrderedPages({
+    pageSize: FEE_REMINDER_QUERY_PAGE_SIZE,
+    maxPages: FEE_REMINDER_MAX_PAGES_PER_RUN,
+    maxRuntimeMs: FEE_REMINDER_MAX_RUNTIME_MS,
+    loadPage: async ({ cursor, limit }) => {
+      let query = firestore.collectionGroup('feeRecipients')
+        .where('status', 'in', ['unpaid', 'pending'])
+        .where('dueDate', '>=', now)
+        .where('dueDate', '<=', maxReminderThresholdLater)
+        .orderBy('dueDate')
+        .limit(limit || FEE_REMINDER_QUERY_PAGE_SIZE);
+      if (cursor) {
+        query = query.startAfter(cursor);
+      }
+      const upcomingSnap = await query.get();
+      return {
+        docs: upcomingSnap.docs,
+        nextCursor: upcomingSnap.docs[upcomingSnap.docs.length - 1] || null
+      };
+    },
+    processPage: async (docs) => {
+      docs.forEach((doc) => examinedRecipientPaths.add(doc.ref.path));
+      return runFeeReminderWorkers(docs);
     }
   });
 
-  const results = await Promise.allSettled(promises);
-  const retryableFailure = results.find((result) => (
-    result.status === 'rejected'
-    && (
-      isNotificationAuthResolutionFailure(result.reason)
-      || isFeeReminderClaimActiveFailure(result.reason)
-      || isFeeReminderPreEffectFailure(result.reason)
-    )
-  ));
-  if (retryableFailure) throw retryableFailure.reason;
-  const sent = results.filter((r) => r.status === 'fulfilled' && r.value).length;
-  console.log(`sendFeeUnpaidDueReminders: processed ${reminderDocs.length} docs, sent ${sent} reminders`);
+  functions.logger.info('sendFeeUnpaidDueReminders: upcoming delivery complete', {
+    pagesAttempted: upcomingSummary.pagesAttempted,
+    stoppedBecause: upcomingSummary.stoppedBecause,
+    examinedCount: upcomingSummary.examinedCount,
+    sentCount: upcomingSummary.sentCount,
+    failedCount: upcomingSummary.failedCount
+  });
+
+  const leasedDocs = leasedSnap.docs.filter((doc) => !examinedRecipientPaths.has(doc.ref.path));
+  const leasedSummary = await runFeeReminderWorkers(leasedDocs);
+  const processedCount = upcomingSummary.examinedCount + leasedSummary.examinedCount;
+  const sentCount = upcomingSummary.sentCount + leasedSummary.sentCount;
+  console.log(`sendFeeUnpaidDueReminders: processed ${processedCount} docs, sent ${sentCount} reminders`);
+  if (firstRetryableFailure) throw firstRetryableFailure;
 }
 
 exports.sendFeeUnpaidDueReminders = retryableNotificationFunctions.pubsub
