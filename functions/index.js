@@ -20932,6 +20932,7 @@ const MAX_DASHBOARD_PARENT_TEAMS = 180;
 // lookahead document so hasMore is exact without scanning the collection.
 const DEFAULT_PLATFORM_ADMIN_DASHBOARD_TEAM_PAGE_SIZE = 24;
 const MAX_PLATFORM_ADMIN_DASHBOARD_TEAM_PAGE_SIZE = 50;
+const MAX_PLATFORM_ADMIN_DASHBOARD_SCAN_BATCHES = 3;
 const DASHBOARD_TEAM_LOAD_VERSION = 1;
 const DASHBOARD_TEAM_FIELD_PATHS = Object.freeze([
   'name',
@@ -20998,23 +20999,45 @@ async function listPlatformAdminTeamDocuments(caller, options = {}) {
     throw new functions.https.HttpsError('permission-denied', 'Platform admin access is required to load platform-wide teams.');
   }
   const pageSize = normalizePlatformAdminDashboardPageSize(options.pageSize);
-  const cursor = normalizePlatformAdminDashboardCursor(options.cursor);
-  let query = firestore.collection('teams')
+  let cursor = normalizePlatformAdminDashboardCursor(options.cursor);
+  const baseQuery = firestore.collection('teams')
     .select(...DASHBOARD_TEAM_FIELD_PATHS)
     .orderBy(admin.firestore.FieldPath.documentId());
-  // Cached clients predate pagination and require the complete projection.
   const paginated = options.dashboardTeamPageVersion === 1;
-  if (paginated && cursor) query = query.startAfter(cursor);
-  const snapshot = await (paginated ? query.limit(pageSize + 1) : query).get();
-  const hasMore = paginated && snapshot.docs.length > pageSize;
-  const pageDocs = paginated ? snapshot.docs.slice(0, pageSize) : snapshot.docs;
+  const pageDocs = [];
+  let hasMore = false;
+  let queryCount = 0;
+  if (!paginated) {
+    // Cached clients require the complete projection and filter visibility locally.
+    const snapshot = await baseQuery.get();
+    pageDocs.push(...snapshot.docs);
+    queryCount = 1;
+  } else {
+    // Fill visible pages without an unbounded scan of archived inventory.
+    // At most 3 * (pageSize + 1) projected documents are read per request.
+    while (pageDocs.length < pageSize && queryCount < MAX_PLATFORM_ADMIN_DASHBOARD_SCAN_BATCHES) {
+      let query = baseQuery;
+      if (cursor) query = query.startAfter(cursor);
+      const snapshot = await query.limit(pageSize + 1).get();
+      queryCount += 1;
+      hasMore = false;
+      for (let index = 0; index < Math.min(pageSize, snapshot.docs.length); index += 1) {
+        const teamSnap = snapshot.docs[index];
+        cursor = teamSnap.id;
+        if (isFamilyShareTeamActive(teamSnap.data() || {})) pageDocs.push(teamSnap);
+        hasMore = index + 1 < snapshot.docs.length;
+        if (pageDocs.length === pageSize) break;
+      }
+      if (!hasMore) break;
+    }
+  }
   const teams = new Map(pageDocs.map((teamSnap) => [teamSnap.id, teamSnap]));
-  teams.discoveryQueryCount = 1;
-  teams.successfulDiscoveryQueryCount = 1;
+  teams.discoveryQueryCount = queryCount;
+  teams.successfulDiscoveryQueryCount = queryCount;
   teams.discoveryErrors = [];
   teams.isPartial = false;
   teams.hasMore = hasMore;
-  teams.nextCursor = hasMore && pageDocs.length > 0 ? pageDocs.at(-1).id : null;
+  teams.nextCursor = hasMore ? cursor : null;
   return teams;
 }
 

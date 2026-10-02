@@ -436,3 +436,27 @@ test('loading another page keeps exhausted unread recovery visible', async ({ pa
     await expect(page.locator('[data-team-card="team-a"] [data-unread-chat-unknown]')).toHaveAttribute('title', 'Unread messages are unavailable');
     expect(errors).toEqual([]);
 });
+
+
+test('an empty admin batch with continuation does not claim the inventory is empty', async ({ page, baseURL }) => {
+    const errors = await mockAdminPages(page, `
+        export async function deleteTeam() {}
+        export async function getUnreadChatCounts(_uid, ids) { return Object.fromEntries(ids.map(id => [id, 0])); }
+    `);
+    await page.route(/\/js\/dashboard-team-load\.js(?:\?.*)?$/, route => route.fulfill({
+        contentType: 'application/javascript', body: `
+            let first = true;
+            export async function loadDashboardTeams() {
+                if (first) { first = false; return { fullAccessTeams: [], parentTeams: [], hasMore: true, nextCursor: 'inactive-71' }; }
+                return { fullAccessTeams: [{ id: 'team-active', name: 'Active team' }], parentTeams: [], hasMore: false, nextCursor: null };
+            }
+        `
+    }));
+    await page.goto(`${baseURL}/dashboard.html`);
+    await expect(page.getByRole('button', { name: 'Load more' })).toBeVisible();
+    await expect(page.getByText('No Teams Yet', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('No active teams in this batch', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Load more' }).click();
+    await expect(page.locator('[data-team-card="team-active"]')).toBeVisible();
+    expect(errors).toEqual([]);
+});

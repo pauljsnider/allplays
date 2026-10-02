@@ -819,6 +819,44 @@ test('platform-admin dashboard discovery returns bounded stable pages with proje
     ]);
 });
 
+test('admin pages fill active teams across bounded raw batches without skipping the continuation', async () => {
+    const teams = Object.fromEntries(Array.from({ length: 7 }, (_, index) => [
+        `teams/team-${index}`, { name: `Team ${index}`, ...(index < 3 ? { active: false } : {}) }
+    ]));
+    const { callables, firestore } = loadCallables({ 'users/platform-admin': { isAdmin: true }, ...teams });
+    const context = authContext('platform-admin', { email: 'platform@example.com' });
+    const request = { includeAllTeams: true, dashboardTeamPageVersion: 1, pageSize: 2 };
+    const first = await callables.listManagedTeams(request, context);
+    assert.deepEqual(first.items.map(team => team.id), ['team-3', 'team-4']);
+    assert.equal(first.nextCursor, 'team-4');
+    assert.equal(first.hasMore, true);
+    assert.equal(firestore._queryLog.filter(query => query.path === 'teams').length, 3);
+    const second = await callables.listManagedTeams({ ...request, cursor: first.nextCursor }, context);
+    assert.deepEqual(second.items.map(team => team.id), ['team-5', 'team-6']);
+    assert.equal(second.hasMore, false);
+    assert.equal(second.nextCursor, null);
+});
+
+test('inactive admin inventory preserves continuation when the raw scan budget is exhausted', async () => {
+    const hidden = [{ active: false }, { archived: true }, { status: 'inactive' }, { status: 'disabled' }, { status: ' Archived ' }, { active: false }, { archived: true }, { status: 'inactive' }];
+    const teams = Object.fromEntries([...hidden, {}].map((fields, index) => [
+        `teams/team-${index}`, { name: `Team ${index}`, ...fields }
+    ]));
+    const { callables, firestore } = loadCallables({ 'users/platform-admin': { isAdmin: true }, ...teams });
+    const context = authContext('platform-admin', { email: 'platform@example.com' });
+    const request = { includeAllTeams: true, dashboardTeamPageVersion: 1, pageSize: 2 };
+    const first = await callables.listManagedTeams(request, context);
+    assert.deepEqual(first.items, []);
+    assert.equal(first.hasMore, true);
+    assert.equal(first.nextCursor, 'team-5');
+    const queries = firestore._queryLog.filter(query => query.path === 'teams');
+    assert.equal(queries.length, 3);
+    assert.deepEqual(queries.map(query => query.limitCount), [3, 3, 3]);
+    const second = await callables.listManagedTeams({ ...request, cursor: first.nextCursor }, context);
+    assert.deepEqual(second.items.map(team => team.id), ['team-8']);
+    assert.equal(second.hasMore, false);
+});
+
 test('legacy platform-admin clients still receive the complete team inventory', async () => {
     const teams = Object.fromEntries(Array.from({ length: 52 }, (_, index) => [
         `teams/team-${index}`, { name: `Team ${index}`, active: true }
