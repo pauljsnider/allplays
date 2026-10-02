@@ -4086,13 +4086,25 @@ service cloud.firestore {
 
         // Live Events subcollection - for real-time game broadcasting
         match /liveEvents/{eventId} {
+          function canListLiveEvents(teamId, gameId) {
+            let gameData = get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data;
+            return gameData.get('status', '') in ['completed', 'final'] ||
+                   gameData.get('liveStatus', '') in ['completed', 'final'] ||
+                   (request.query.limit != null &&
+                    request.query.limit > 0 &&
+                    request.query.limit <= 20);
+          }
+
           function hasValidLiveEventAttribution(data) {
             return (!data.keys().hasAny(['createdBy']) || data.createdBy == null || data.createdBy == request.auth.uid) &&
                    (!data.keys().hasAny(['actorUid']) || data.actorUid == null || data.actorUid == request.auth.uid);
           }
 
-          allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&
-                         canReadGameSubcollectionDocument(teamId, gameId);
+          allow get: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                        canReadGameSubcollectionDocument(teamId, gameId);
+          allow list: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                         canReadGameSubcollectionDocument(teamId, gameId) &&
+                         canListLiveEvents(teamId, gameId);
           allow create: if !gameUsesDiamondScorebook(teamId, gameId) &&
                            (isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId)) &&
                            hasValidLiveEventAttribution(request.resource.data);  // Stat tracker writes

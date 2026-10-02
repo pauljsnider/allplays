@@ -16,6 +16,54 @@ function getOutcomeCount(outcome, name) {
   return value;
 }
 
+async function runReminderWorkers({
+  items,
+  concurrency,
+  worker
+} = {}) {
+  requirePositiveInteger(concurrency, 'concurrency');
+  if (typeof worker !== 'function') {
+    throw new Error('worker is required.');
+  }
+
+  const values = Array.from(items || []);
+  if (!values.length) {
+    return {
+      examinedCount: 0,
+      sentCount: 0,
+      failedCount: 0
+    };
+  }
+
+  const results = new Array(values.length);
+  const workerCount = Math.min(concurrency, values.length);
+  let nextIndex = 0;
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < values.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      try {
+        results[currentIndex] = {
+          sent: Boolean(await worker(values[currentIndex], currentIndex)),
+          failed: false
+        };
+      } catch {
+        results[currentIndex] = {
+          sent: false,
+          failed: true
+        };
+      }
+    }
+  }));
+
+  return {
+    examinedCount: values.length,
+    sentCount: results.filter((result) => result.sent).length,
+    failedCount: results.filter((result) => result.failed).length
+  };
+}
+
 async function drainOrderedPages({
   loadPage,
   processPage,
@@ -156,6 +204,7 @@ module.exports = {
   PRE_EVENT_REMINDER_QUERY_PAGE_SIZE,
   PRE_EVENT_REMINDER_MAX_PAGES_PER_RUN,
   PRE_EVENT_REMINDER_MAX_RUNTIME_MS,
+  runReminderWorkers,
   drainOrderedPages,
   drainDueReminderPages
 };

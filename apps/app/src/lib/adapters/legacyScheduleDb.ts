@@ -388,7 +388,7 @@ export async function broadcastLiveEvent(teamId: string, gameId: string, payload
     return await Promise.resolve(legacyBroadcastLiveEvent(teamId, gameId, payload));
 }
 
-export async function getLiveEvents(teamId: string, gameId: string, options: { fullHistory?: boolean } = {}) {
+export async function getLiveEvents(teamId: string, gameId: string, options: { fullHistory?: boolean; maxEvents?: number } = {}) {
     // Foul totals and undo history cannot be reconstructed from a recent-feed window.
     if (options.fullHistory) return await Promise.resolve(legacyGetLiveEvents(teamId, gameId));
     const game = await Promise.resolve(legacyGetGame(teamId, gameId));
@@ -404,7 +404,7 @@ export async function getLiveEvents(teamId: string, gameId: string, options: { f
     const eventsQuery = legacyFirebaseQuery(
         eventsRef,
         legacyFirebaseOrderBy('createdAt', 'desc'),
-        legacyFirebaseLimit(20)
+        legacyFirebaseLimit(options.maxEvents ?? 20)
     );
     const snapshot = await legacyFirebaseGetDocs(eventsQuery);
     return snapshot.docs

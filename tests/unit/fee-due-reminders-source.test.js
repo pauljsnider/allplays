@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const { runReminderWorkers } = require('../../functions/pre-event-reminder-dispatcher-core.cjs');
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const firestoreIndexes = JSON.parse(readFileSync(new URL('../../firestore.indexes.json', import.meta.url), 'utf8'));
@@ -37,6 +41,128 @@ const resolveFeeReminderThresholdHours = getHelper('resolveFeeReminderThresholdH
 const wasFeeReminderSentForThreshold = getHelper('wasFeeReminderSentForThreshold', 'function formatFeeReminderWindowLabel');
 const formatFeeReminderWindowLabel = getHelper('formatFeeReminderWindowLabel', 'async function resolveFeeReminderCandidateUserIds');
 const { getFeeReminderDueDateMillis, isFeeDueReminderCandidateEligible } = getEligibilityHelpers();
+
+describe('runReminderWorkers', () => {
+    it('never exceeds the configured concurrency limit', async () => {
+        const items = Array.from({ length: 6 }, (_, index) => ({ index, sent: true }));
+        const startedIndexes = [];
+        let activeWorkers = 0;
+        let maxActiveWorkers = 0;
+        let releaseWorkers;
+        const workerGate = new Promise((resolve) => {
+            releaseWorkers = resolve;
+        });
+
+        const summaryPromise = runReminderWorkers({
+            items,
+            concurrency: 2,
+            worker: async (item, index) => {
+                startedIndexes.push(index);
+                activeWorkers += 1;
+                maxActiveWorkers = Math.max(maxActiveWorkers, activeWorkers);
+                await workerGate;
+                activeWorkers -= 1;
+                return item.sent;
+            }
+        });
+
+        expect(startedIndexes).toEqual([0, 1]);
+        expect(activeWorkers).toBe(2);
+        releaseWorkers();
+
+        await expect(summaryPromise).resolves.toEqual({
+            examinedCount: 6,
+            sentCount: 6,
+            failedCount: 0
+        });
+        expect(maxActiveWorkers).toBe(2);
+        expect(startedIndexes).toHaveLength(items.length);
+        expect([...startedIndexes].sort((left, right) => left - right)).toEqual([0, 1, 2, 3, 4, 5]);
+    });
+
+    it('returns zero counters without invoking the worker for empty input', async () => {
+        let workerCalls = 0;
+
+        await expect(runReminderWorkers({
+            items: [],
+            concurrency: 3,
+            worker: async () => {
+                workerCalls += 1;
+                return true;
+            }
+        })).resolves.toEqual({
+            examinedCount: 0,
+            sentCount: 0,
+            failedCount: 0
+        });
+        expect(workerCalls).toBe(0);
+    });
+
+    it('reports deterministic examined and sent counters for successful workers', async () => {
+        const items = [true, false, true, false, true];
+
+        await expect(runReminderWorkers({
+            items,
+            concurrency: 3,
+            worker: async (sent) => sent
+        })).resolves.toEqual({
+            examinedCount: 5,
+            sentCount: 3,
+            failedCount: 0
+        });
+    });
+
+    it('reports every worker rejection without leaving queued items unexamined', async () => {
+        const items = ['first', 'second', 'third', 'fourth'];
+        const examinedIndexes = [];
+
+        await expect(runReminderWorkers({
+            items,
+            concurrency: 2,
+            worker: async (_item, index) => {
+                examinedIndexes.push(index);
+                throw new Error(`worker ${index} failed`);
+            }
+        })).resolves.toEqual({
+            examinedCount: 4,
+            sentCount: 0,
+            failedCount: 4
+        });
+        expect(examinedIndexes.sort((left, right) => left - right)).toEqual([0, 1, 2, 3]);
+    });
+
+    it('returns deterministic counters after mixed workers settle out of order', async () => {
+        const items = [
+            { sent: true, failed: false, delayTurns: 4 },
+            { sent: false, failed: true, delayTurns: 0 },
+            { sent: false, failed: false, delayTurns: 3 },
+            { sent: true, failed: false, delayTurns: 1 },
+            { sent: false, failed: true, delayTurns: 2 },
+            { sent: true, failed: false, delayTurns: 0 }
+        ];
+        const examinedIndexes = [];
+
+        await expect(runReminderWorkers({
+            items,
+            concurrency: 2,
+            worker: async (item, index) => {
+                examinedIndexes.push(index);
+                for (let turn = 0; turn < item.delayTurns; turn += 1) {
+                    await Promise.resolve();
+                }
+                if (item.failed) {
+                    throw new Error(`worker ${index} failed`);
+                }
+                return item.sent;
+            }
+        })).resolves.toEqual({
+            examinedCount: 6,
+            sentCount: 3,
+            failedCount: 2
+        });
+        expect(examinedIndexes.sort((left, right) => left - right)).toEqual([0, 1, 2, 3, 4, 5]);
+    });
+});
 
 describe('fee due reminder helper logic', () => {
     it('builds a player key from team and player ids when the recipient does not store one', () => {
