@@ -200,6 +200,239 @@ test('dashboard replaces the loading spinner with a retry when bounded team disc
     await expect(page.getByText('Loading your teams...')).toHaveCount(0);
     expect(await page.evaluate(() => window.__dashboardTeamLoadOptions)).toEqual({
         includeAllTeams: true,
+        pageSize: 24,
         timeoutMs: 10000
     });
+});
+
+test('platform-admin dashboard appends paged teams and preserves cards across a retry', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error));
+    await page.route('https://www.googletagmanager.com/**', (route) => route.abort());
+    await page.route('https://cdn.tailwindcss.com/**', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: 'window.tailwind = {};'
+    }));
+    await page.route(/\/js\/telemetry\.js(?:\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: ''
+    }));
+    await page.route(/\/js\/auth\.js(?:\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `
+            export function checkAuth(callback) {
+                callback({ uid: 'admin-1', email: 'admin@example.com', isAdmin: true });
+                return () => {};
+            }
+        `
+    }));
+    await page.route(/\/js\/utils\.js(?:\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `
+            export function renderHeader() {}
+            export function renderFooter() {}
+            export function escapeHtml(value) { return String(value || ''); }
+        `
+    }));
+    await page.route(/\/js\/db\.js(?:\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `
+            window.__dashboardUnreadRequests = [];
+            export async function getUnreadChatCounts(_uid, teamIds) {
+                window.__dashboardUnreadRequests.push([...teamIds]);
+                return Object.fromEntries(teamIds.map((teamId) => [teamId, 0]));
+            }
+            export async function deleteTeam() {}
+        `
+    }));
+    await page.route(/\/js\/bounded-retry\.js(?:\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `
+            export function startBoundedRetry({ initialValue, run, onExhausted }) {
+                Promise.resolve(run(initialValue)).catch((error) => onExhausted(initialValue, error));
+                return () => {};
+            }
+        `
+    }));
+    await page.route(/\/js\/dashboard-team-load\.js(?:\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `
+            window.__dashboardTeamPageRequests = [];
+            let requestCount = 0;
+            export async function loadDashboardTeams(options) {
+                window.__dashboardTeamPageRequests.push({ ...options });
+                requestCount += 1;
+                if (requestCount === 1) {
+                    return {
+                        fullAccessTeams: [{ id: 'team-a', name: 'Alpha' }],
+                        parentTeams: [],
+                        nextCursor: 'team-a',
+                        hasMore: true
+                    };
+                }
+                if (requestCount === 2) throw new Error('temporary second-page failure');
+                return {
+                    fullAccessTeams: [
+                        { id: 'team-a', name: 'Alpha duplicate' },
+                        { id: 'team-b', name: 'Bravo' }
+                    ],
+                    parentTeams: [],
+                    nextCursor: null,
+                    hasMore: false
+                };
+            }
+        `
+    }));
+
+    await page.goto(`${baseURL}/dashboard.html`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('[data-team-card="team-a"]')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Load more' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__dashboardUnreadRequests)).toEqual([['team-a']]);
+
+    await page.getByRole('button', { name: 'Load more' }).click();
+    await expect(page.locator('#load-more-teams-status')).toContainText('Try again');
+    await expect(page.locator('[data-team-card="team-a"]')).toBeVisible();
+    await expect(page.locator('[data-team-card]')).toHaveCount(1);
+
+    await page.getByRole('button', { name: 'Load more' }).click();
+    await expect(page.locator('[data-team-card="team-b"]')).toBeVisible();
+    await expect(page.locator('[data-team-card="team-a"]')).toHaveCount(1);
+    await expect(page.getByRole('button', { name: 'Load more' })).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => window.__dashboardUnreadRequests)).toEqual([
+        ['team-a'],
+        ['team-b']
+    ]);
+    expect(await page.evaluate(() => window.__dashboardTeamPageRequests)).toEqual([
+        { includeAllTeams: true, pageSize: 24, timeoutMs: 10000 },
+        { includeAllTeams: true, pageSize: 24, cursor: 'team-a', timeoutMs: 10000 },
+        { includeAllTeams: true, pageSize: 24, cursor: 'team-a', timeoutMs: 10000 }
+    ]);
+    expect(pageErrors).toEqual([]);
+});
+
+async function mockAdminPages(page, dbBody) {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error));
+    await page.route('https://www.googletagmanager.com/**', (route) => route.abort());
+    await page.route('https://cdn.tailwindcss.com/**', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: 'window.tailwind = {};'
+    }));
+    await page.route(/\/js\/telemetry\.js(?:\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: ''
+    }));
+    await page.route(/\/js\/auth\.js(?:\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `
+            export function checkAuth(callback) {
+                callback({ uid: 'admin-1', email: 'admin@example.com', isAdmin: true });
+                return () => {};
+            }
+        `
+    }));
+    await page.route(/\/js\/utils\.js(?:\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `
+            export function renderHeader() {}
+            export function renderFooter() {}
+            export function escapeHtml(value) { return String(value || ''); }
+        `
+    }));
+
+    await page.route(/\/js\/db\.js(?:\?.*)?$/, route => route.fulfill({
+        contentType: 'application/javascript', body: dbBody
+    }));
+    await page.route(/\/js\/dashboard-team-load\.js(?:\?.*)?$/, route => route.fulfill({
+        contentType: 'application/javascript', body: `
+            let first = true;
+            export async function loadDashboardTeams() {
+                if (first) {
+                    first = false;
+                    return { fullAccessTeams: [{ id: 'team-a', name: 'Alpha', ownerId: 'admin-1' }], parentTeams: [], hasMore: true, nextCursor: 'team-a' };
+                }
+                return new Promise(resolve => { window.releaseTeamPage = () => resolve({
+                    fullAccessTeams: [{ id: 'team-a', name: 'Alpha' }, { id: 'team-b', name: 'Bravo' }], parentTeams: [], hasMore: false, nextCursor: null
+                }); });
+            }
+        `
+    }));
+    return pageErrors;
+}
+
+test('deactivated teams stay removed when an in-flight page returns stale data', async ({ page, baseURL }) => {
+    const errors = await mockAdminPages(page, `
+        export async function deleteTeam() {}
+        export async function getUnreadChatCounts(_uid, ids) { return Object.fromEntries(ids.map(id => [id, 0])); }
+    `);
+    page.on('dialog', dialog => dialog.accept());
+    await page.goto(`${baseURL}/dashboard.html`);
+    await page.getByRole('button', { name: 'Load more' }).click();
+    await expect.poll(() => page.evaluate(() => typeof window.releaseTeamPage)).toBe('function');
+    await page.locator('.delete-team-btn[data-team-id="team-a"]').click();
+    await expect(page.locator('[data-team-card="team-a"]')).toHaveCount(0);
+    await page.evaluate(() => window.releaseTeamPage());
+    await expect(page.locator('[data-team-card="team-b"]')).toBeVisible();
+    await expect(page.locator('[data-team-card="team-a"]')).toHaveCount(0);
+    expect(errors).toEqual([]);
+});
+
+test('loading another page preserves unread recovery for earlier teams', async ({ page, baseURL }) => {
+    const errors = await mockAdminPages(page, `
+        let first = true;
+        export async function deleteTeam() {}
+        export async function getUnreadChatCounts(_uid, ids) {
+            if (ids.includes('team-a') && first) {
+                first = false;
+                return new Promise(resolve => { window.releaseUnread = () => resolve({}); });
+            }
+            return Object.fromEntries(ids.map(id => [id, id === 'team-a' ? 7 : 0]));
+        }
+    `);
+    await page.clock.install();
+    await page.goto(`${baseURL}/dashboard.html`);
+    await expect.poll(() => page.evaluate(() => typeof window.releaseUnread)).toBe('function');
+    await page.getByRole('button', { name: 'Load more' }).click();
+    await expect.poll(() => page.evaluate(() => typeof window.releaseTeamPage)).toBe('function');
+    await page.evaluate(() => window.releaseTeamPage());
+    await expect(page.locator('[data-team-card="team-b"]')).toBeVisible();
+    await page.evaluate(() => window.releaseUnread());
+    await page.clock.runFor(5100);
+    await expect(page.locator('[data-team-card="team-a"] [data-unread-chat-badge]')).toHaveText('7');
+    await expect(page.locator('[data-team-card="team-b"] [data-unread-chat-unknown]')).toHaveCount(0);
+    expect(errors).toEqual([]);
+});
+
+
+test('loading another page keeps exhausted unread recovery visible', async ({ page, baseURL }) => {
+    const errors = await mockAdminPages(page, `
+        export async function deleteTeam() {}
+        export async function getUnreadChatCounts(_uid, ids) {
+            return ids.includes('team-a') ? {} : { 'team-b': 0 };
+        }
+    `);
+    await page.clock.install();
+    await page.goto(`${baseURL}/dashboard.html`);
+    await expect(page.locator('[data-team-card="team-a"]')).toBeVisible();
+    await page.clock.runFor(15100);
+    await expect(page.locator('#unread-chat-status')).toBeVisible();
+    await page.getByRole('button', { name: 'Load more' }).click();
+    await expect.poll(() => page.evaluate(() => typeof window.releaseTeamPage)).toBe('function');
+    await page.evaluate(() => window.releaseTeamPage());
+    await expect(page.locator('[data-team-card="team-b"]')).toBeVisible();
+    await expect(page.locator('#unread-chat-status')).toBeVisible();
+    await expect(page.locator('[data-team-card="team-a"] [data-unread-chat-unknown]')).toHaveAttribute('title', 'Unread messages are unavailable');
+    expect(errors).toEqual([]);
 });

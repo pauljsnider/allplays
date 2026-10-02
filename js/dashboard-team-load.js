@@ -17,7 +17,7 @@ function withDeadline(operation, timeoutMs, onTimeout) {
     return Promise.race([operation, timeoutPromise]).finally(() => clearTimeout(timeoutId));
 }
 
-function normalizeTeamList(value) {
+function normalizeTeamList(value, { orderById = false } = {}) {
     const teamsById = new Map();
     (Array.isArray(value) ? value : []).forEach((team) => {
         if (!team || typeof team !== 'object' || Array.isArray(team)) return;
@@ -26,7 +26,9 @@ function normalizeTeamList(value) {
         teamsById.set(teamId, team);
     });
     return filterTeamsByActive(Array.from(teamsById.values()))
-        .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')));
+        .sort(orderById
+            ? (left, right) => String(left.id || '').localeCompare(String(right.id || ''))
+            : (left, right) => String(left.name || '').localeCompare(String(right.name || '')));
 }
 
 function requireCompleteDashboardTeamResult(result, { includeAllTeams }) {
@@ -39,13 +41,7 @@ function requireCompleteDashboardTeamResult(result, { includeAllTeams }) {
         error.code = 'dashboard-team-discovery-invalid';
         throw error;
     }
-    if (includeAllTeams && result.includesAllTeams !== true) {
-        const error = new Error('Dashboard teams response did not include every team.');
-        error.code = 'dashboard-team-discovery-incomplete-admin';
-        throw error;
-    }
-
-    const fullAccessTeams = normalizeTeamList(result.items);
+    const fullAccessTeams = normalizeTeamList(result.items, { orderById: includeAllTeams });
     const fullAccessTeamIds = new Set(fullAccessTeams.map((team) => team.id));
     const parentTeams = normalizeTeamList(result.parentItems)
         .filter((team) => !fullAccessTeamIds.has(team.id));
@@ -55,7 +51,18 @@ function requireCompleteDashboardTeamResult(result, { includeAllTeams }) {
         error.partialResult = { fullAccessTeams, parentTeams };
         throw error;
     }
-    return { fullAccessTeams, parentTeams };
+    if (!includeAllTeams) return { fullAccessTeams, parentTeams };
+
+    const hasMore = result.hasMore === true;
+    const nextCursor = typeof result.nextCursor === 'string' && result.nextCursor.trim()
+        ? result.nextCursor.trim()
+        : null;
+    if (hasMore && !nextCursor) {
+        const error = new Error('Dashboard teams response is missing its continuation cursor.');
+        error.code = 'dashboard-team-discovery-invalid';
+        throw error;
+    }
+    return { fullAccessTeams, parentTeams, nextCursor, hasMore };
 }
 
 async function fetchDashboardTeamsViaRest(requestData, abortSignal) {
@@ -114,7 +121,12 @@ export async function loadDashboardTeams(options = {}) {
         : DEFAULT_DASHBOARD_TEAM_TIMEOUT_MS;
     const requestData = {
         includeParentTeams: true,
-        ...(includeAllTeams ? { includeAllTeams: true } : {})
+        ...(includeAllTeams ? {
+            includeAllTeams: true,
+            dashboardTeamPageVersion: 1,
+            ...(Number.isFinite(options.pageSize) ? { pageSize: options.pageSize } : {}),
+            ...(typeof options.cursor === 'string' && options.cursor ? { cursor: options.cursor } : {})
+        } : {})
     };
     const callable = httpsCallable(functions, 'listManagedTeams');
     const callPromise = callable(requestData).then((response) => response?.data);

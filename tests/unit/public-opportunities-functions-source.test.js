@@ -234,15 +234,18 @@ describe('public opportunity callable wiring', () => {
       source.indexOf('\nexports.getPublicTeamProfile')
     );
 
-    expect(source).toContain('async function listPlatformAdminTeamDocuments(caller)');
-    expect(source).toContain("const snapshot = await firestore.collection('teams')");
+    expect(source).toContain('async function listPlatformAdminTeamDocuments(caller, options = {})');
+    expect(source).toContain("let query = firestore.collection('teams')");
     expect(source).toContain('.select(...DASHBOARD_TEAM_FIELD_PATHS)');
+    expect(source).toContain('const MAX_PLATFORM_ADMIN_DASHBOARD_TEAM_PAGE_SIZE = 50;');
     expect(source).toContain('function serializeDashboardManagedTeamProfile(teamId, team = {})');
     const platformAdminTeamSource = source.slice(
-      source.indexOf('async function listPlatformAdminTeamDocuments(caller)'),
+      source.indexOf('async function listPlatformAdminTeamDocuments(caller, options = {})'),
       source.indexOf('async function listCallableParentTeamDocuments(caller)')
     );
-    expect(platformAdminTeamSource).not.toContain(".orderBy('name')");
+    expect(platformAdminTeamSource).toContain('.orderBy(admin.firestore.FieldPath.documentId())');
+    expect(platformAdminTeamSource).toContain('.limit(pageSize + 1)');
+    expect(platformAdminTeamSource).toContain('query = query.startAfter(cursor);');
     expect(source).toContain('async function listCallableParentTeamDocuments(caller)');
     expect(source).toContain("const hasCanonicalTeamIds = Object.prototype.hasOwnProperty.call(user, 'parentTeamIds');");
     expect(source).toContain('hasCanonicalTeamIds && !canonicalTeamIdsAreValid');

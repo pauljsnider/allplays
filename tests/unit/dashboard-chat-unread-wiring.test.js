@@ -24,10 +24,11 @@ describe('dashboard chat unread wiring', () => {
         expect(html).toContain('data-unread-chat-unknown');
         expect(html).toContain('id="unread-chat-status"');
         expect(html).toContain('id="retry-unread-chat"');
-        expect(html).toContain('cancelUnreadChatRetries = startBoundedRetry({');
+        expect(html).toContain('batch.cancel = startBoundedRetry({');
         expect(html).toContain('onExhausted: (unavailableTeamIds, error) => {');
         expect(html).not.toContain('setTimeout(() => loadUnreadChatBadges');
-        expect(html).toContain('unreadCounts = { ...unreadCounts, ...(counts || {}) };');
+        expect(html).toContain('unreadCounts[teamId] = count;');
+        expect(html).toContain('startUnreadChatBadges(newlyLoadedTeams.map((team) => team.id));');
         expect(html).toContain('data-team-chat-link=');
         expect(html).not.toContain('unreadCounts = counts || {};\n                        renderTeamLists();');
         expect(html).not.toContain('const unreadCounts = teamIds.length > 0 ? await getUnreadChatCounts');
@@ -46,7 +47,7 @@ describe('dashboard chat unread wiring', () => {
         expect(authJs).toContain('user.profileEmail = profile.email;');
         expect(html).not.toContain('profile.email');
         expect(html).not.toContain('user.email = profile.email;');
-        expect(html).toContain("import { loadDashboardTeams } from './js/dashboard-team-load.js?v=4';");
+        expect(html).toContain("import { loadDashboardTeams } from './js/dashboard-team-load.js?v=6';");
         expect(html).toContain('includeAllTeams: user.isAdmin === true');
         expect(html).not.toContain('getUserTeamsWithAccess(');
         expect(html).not.toContain('getUserTeamsWithAccess(user.uid, user.email || profile?.email)');

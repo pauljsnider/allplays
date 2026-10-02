@@ -129,7 +129,7 @@ function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null
                 return doc(`${path}/${id || `auto-${nextAutoId++}`}`);
             },
             async get() {
-                queryLog.push({ path, filters: clone(filters), limitCount });
+                queryLog.push({ path, filters: clone(filters), orders: clone(orders), limitCount });
                 const forcedFailure = queryFailures.find((failure) => (
                     failure?.path === path
                     && (!failure.field || filters.some(({ field, operator, value }) => (
@@ -767,54 +767,88 @@ test('dashboard team discovery fails closed when canonical parentTeamIds is malf
     assert.deepEqual(result.parentItems, []);
 });
 
-test('platform-admin dashboard discovery loads every team and acknowledges completeness', async () => {
-    const { callables } = loadCallables({
+test('platform-admin dashboard discovery returns bounded stable pages with projected fields', async () => {
+    const teams = Object.fromEntries(Array.from({ length: 52 }, (_value, index) => {
+        const id = `team-${String(index).padStart(3, '0')}`;
+        return [`teams/${id}`, {
+            name: `Team ${String(51 - index).padStart(3, '0')}`,
+            ownerId: `owner-${index}`,
+            active: true,
+            privateBillingCustomerId: `private-${index}`
+        }];
+    }));
+    const { callables, firestore } = loadCallables({
         'users/platform-admin': {
-            isAdmin: true,
-            parentTeamIds: [
-                ...Array.from({ length: 181 }, (_value, index) => `parent-team-${index}`),
-                'not/a/team-id'
-            ],
-            parentOf: [{ teamId: 'legacy-parent-team', playerId: 'legacy-player' }]
+            isAdmin: true
         },
-        'teams/team-owned-elsewhere': {
-            name: 'Alpha',
-            ownerId: 'owner-1',
-            active: true,
-            privateBillingCustomerId: 'must-not-leak'
-        },
-        'teams/team-private': {
-            name: 'Bravo',
-            ownerId: 'owner-2',
-            active: true,
-            isPublic: false
-        },
-        'teams/team-legacy': {
-            teamName: 'Charlie',
-            ownerId: 'owner-3',
-            active: true,
-            isPublic: false
-        }
+        ...teams
     });
 
+    const firstPage = await callables.listManagedTeams(
+        { includeAllTeams: true, includeParentTeams: true, dashboardTeamPageVersion: 1, pageSize: 500 },
+        authContext('platform-admin', { email: 'platform@example.com' })
+    );
+    const secondPage = await callables.listManagedTeams(
+        { includeAllTeams: true, includeParentTeams: true, dashboardTeamPageVersion: 1, pageSize: 500, cursor: firstPage.nextCursor },
+        authContext('platform-admin', { email: 'platform@example.com' })
+    );
+
+    assert.equal(firstPage.dashboardTeamLoadVersion, 1);
+    assert.equal(firstPage.isPartial, false);
+    assert.equal(firstPage.items.length, 50);
+    assert.equal(firstPage.hasMore, true);
+    assert.equal(firstPage.includesAllTeams, false);
+    assert.equal(firstPage.nextCursor, 'team-049');
+    assert.deepEqual(firstPage.items.map((team) => team.id),
+        Array.from({ length: 50 }, (_value, index) => `team-${String(index).padStart(3, '0')}`));
+    assert.deepEqual(secondPage.items.map((team) => team.id), ['team-050', 'team-051']);
+    assert.equal(secondPage.hasMore, false);
+    assert.equal(secondPage.includesAllTeams, false);
+    assert.equal(secondPage.nextCursor, null);
+    assert.equal(new Set([...firstPage.items, ...secondPage.items].map((team) => team.id)).size, 52);
+    assert.deepEqual(firstPage.parentItems, []);
+    assert.equal(firstPage.items[0].ownerId, 'owner-0');
+    assert.equal('adminEmails' in firstPage.items[0], false);
+    assert.equal('ownerEmail' in firstPage.items[0], false);
+    assert.equal('privateBillingCustomerId' in firstPage.items[0], false);
+    const teamQueries = firestore._queryLog.filter((query) => query.path === 'teams');
+    assert.deepEqual(teamQueries.map((query) => query.limitCount), [51, 51]);
+    assert.deepEqual(teamQueries.map((query) => query.orders), [
+        [{ field: '__name__', direction: 'asc' }],
+        [{ field: '__name__', direction: 'asc' }]
+    ]);
+});
+
+test('legacy platform-admin clients still receive the complete team inventory', async () => {
+    const teams = Object.fromEntries(Array.from({ length: 52 }, (_, index) => [
+        `teams/team-${index}`, { name: `Team ${index}`, active: true }
+    ]));
+    const { callables } = loadCallables({ 'users/platform-admin': { isAdmin: true }, ...teams });
     const result = await callables.listManagedTeams(
         { includeAllTeams: true, includeParentTeams: true },
         authContext('platform-admin', { email: 'platform@example.com' })
     );
-
-    assert.equal(result.dashboardTeamLoadVersion, 1);
+    assert.equal(result.items.length, 52);
     assert.equal(result.includesAllTeams, true);
-    assert.equal(result.isPartial, false);
-    assert.deepEqual(result.items.map((team) => ({ id: team.id, name: team.name })), [
-        { id: 'team-owned-elsewhere', name: 'Alpha' },
-        { id: 'team-private', name: 'Bravo' },
-        { id: 'team-legacy', name: 'Charlie' }
-    ]);
-    assert.deepEqual(result.parentItems, []);
-    assert.equal(result.items[0].ownerId, 'owner-1');
-    assert.equal('adminEmails' in result.items[0], false);
-    assert.equal('ownerEmail' in result.items[0], false);
-    assert.equal('privateBillingCustomerId' in result.items[0], false);
+    assert.equal(result.hasMore, false);
+    assert.equal(result.nextCursor, null);
+});
+
+test('admin pagination opt-in bounds default pages and rejects unsupported versions', async () => {
+    const teams = Object.fromEntries(Array.from({ length: 30 }, (_, index) => [
+        `teams/team-${index}`, { name: `Team ${index}`, active: true }
+    ]));
+    const { callables, firestore } = loadCallables({ 'users/platform-admin': { isAdmin: true }, ...teams });
+    const context = authContext('platform-admin', { email: 'platform@example.com' });
+    const result = await callables.listManagedTeams({ includeAllTeams: true, dashboardTeamPageVersion: 1 }, context);
+    assert.equal(result.items.length, 24);
+    assert.equal(result.hasMore, true);
+    assert.equal(result.includesAllTeams, false);
+    assert.equal(firestore._queryLog.find(query => query.path === 'teams').limitCount, 25);
+    await assert.rejects(
+        callables.listManagedTeams({ includeAllTeams: true, dashboardTeamPageVersion: 2 }, context),
+        error => error.code === 'invalid-argument'
+    );
 });
 
 test('non-admin callers cannot request the platform-wide dashboard projection', async () => {

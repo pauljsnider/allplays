@@ -93,7 +93,7 @@
 
     <script type="module">
         import { deleteTeam, getUnreadChatCounts } from './js/db.js?v=4433199';
-        import { loadDashboardTeams } from './js/dashboard-team-load.js?v=4';
+        import { loadDashboardTeams } from './js/dashboard-team-load.js?v=6';
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=443375';
         import { checkAuth } from './js/auth.js?v=4433203';
         import { startBoundedRetry } from './js/bounded-retry.js?v=2';
@@ -172,10 +172,13 @@
                 // would be a redundant read on every page load.
                 renderHeader(document.getElementById('header-container'), user);
 
-                const { fullAccessTeams: coachTeams, parentTeams } = await loadDashboardTeams({
+                const dashboardTeamPageSize = 24;
+                const initialTeamPage = await loadDashboardTeams({
                     includeAllTeams: user.isAdmin === true,
+                    ...(user.isAdmin === true ? { pageSize: dashboardTeamPageSize } : {}),
                     timeoutMs: 10000
                 });
+                const { fullAccessTeams: coachTeams, parentTeams } = initialTeamPage;
 
                 const fullAccessMap = new Map();
                 coachTeams.forEach(t => {
@@ -189,6 +192,10 @@
                 });
 
                 const fullAccessTeams = Array.from(fullAccessMap.values());
+                let nextTeamCursor = initialTeamPage.nextCursor || null;
+                let hasMoreTeams = initialTeamPage.hasMore === true;
+                let loadMoreTeamsInProgress = false;
+                let loadMoreTeamsError = '';
                 const container = document.getElementById('my-teams-list');
                 const subtitle = document.getElementById('my-teams-subtitle');
                 const createTeamCta = document.getElementById('create-team-cta');
@@ -202,7 +209,8 @@
                     parentDashboardCta?.classList.remove('hidden');
                 }
 
-                // Fetch unread chat counts for all teams
+                // Fetch unread chat counts for this page; later pages enqueue only
+                // the team IDs they add.
                 const allTeams = [...fullAccessTeams, ...parentOnlyTeams];
                 const teamIds = allTeams.map(t => t.id);
                 const unreadLookupUser = {
@@ -220,7 +228,9 @@
                 }, {});
                 let unreadCounts = {};
                 const unavailableUnreadTeamIds = new Set();
-                let cancelUnreadChatRetries = () => {};
+                const deactivatedTeamIds = new Set();
+                const unreadRetryBatches = new Set();
+                const pendingUnreadTeamIds = new Set();
 
                 function renderNoTeamsState() {
                     return `
@@ -399,13 +409,21 @@
                             const teamId = buttonEl.dataset.teamId;
                             const teamName = buttonEl.dataset.teamName;
                             if (!confirm(`Deactivate team "${teamName}"? Team data will be retained for history.`)) return;
-                            const card = buttonEl.closest('[data-team-card]');
                             const originalText = buttonEl.textContent;
                             buttonEl.disabled = true;
                             buttonEl.textContent = 'Deactivating...';
                             try {
                                 await deleteTeam(teamId);
-                                if (card) card.remove();
+                                deactivatedTeamIds.add(teamId);
+                                for (const teams of [fullAccessTeams, parentOnlyTeams]) {
+                                    const index = teams.findIndex(team => team.id === teamId);
+                                    if (index >= 0) teams.splice(index, 1);
+                                }
+                                delete conversationLookupByTeam[teamId];
+                                delete unreadCounts[teamId];
+                                unavailableUnreadTeamIds.delete(teamId);
+                                setUnreadStatusVisible(unavailableUnreadTeamIds.size > 0);
+                                renderTeamLists();
                             } catch (err) {
                                 console.error('Deactivate team failed', err);
                                 alert('Error deactivating team. ' + (err?.message || 'Please try again.'));
@@ -459,8 +477,18 @@
                 }
 
                 function renderTeamLists() {
+                    const loadMoreSection = user.isAdmin === true && hasMoreTeams ? `
+                        <div class="pt-2 text-center">
+                            <button id="load-more-teams" type="button" ${loadMoreTeamsInProgress ? 'disabled' : ''}
+                                class="inline-flex items-center justify-center bg-white border border-primary-300 text-primary-700 px-6 py-3 rounded-xl hover:bg-primary-50 transition font-semibold disabled:cursor-wait disabled:opacity-60">
+                                ${loadMoreTeamsInProgress ? 'Loading more teams...' : 'Load more'}
+                            </button>
+                            ${loadMoreTeamsError ? `<p id="load-more-teams-status" class="mt-2 text-sm text-red-600" role="status">${escapeHtml(loadMoreTeamsError)}</p>` : ''}
+                        </div>
+                    ` : '';
                     if (fullAccessTeams.length === 0 && parentOnlyTeams.length === 0) {
-                        container.innerHTML = renderNoTeamsState();
+                        container.innerHTML = `${renderNoTeamsState()}${loadMoreSection}`;
+                        container.querySelector('#load-more-teams')?.addEventListener('click', loadMoreTeams);
                     } else if (fullAccessTeams.length === 0 && parentOnlyTeams.length > 0) {
                         container.innerHTML = `
                         <div id="parent-only-notice" class="rounded-xl bg-amber-50 border border-amber-200 p-4 mb-6">
@@ -469,8 +497,10 @@
                         <div id="parent-only-teams-grid" class="space-y-6">
                             ${parentOnlyTeams.map((team, index) => renderTeamCard(team, { eager: index === 0 })).join('')}
                         </div>
+                        ${loadMoreSection}
                     `;
                         attachDeleteHandlers(container);
+                        container.querySelector('#load-more-teams')?.addEventListener('click', loadMoreTeams);
                     } else {
                         const parentSection = fullAccessTeams.length > 0 && parentOnlyTeams.length > 0 ? `
                         <div id="parent-teams-section" class="mt-6">
@@ -492,8 +522,10 @@
                             ${fullAccessTeams.map((team, index) => renderTeamCard(team, { eager: index === 0 })).join('')}
                         </div>
                         ${parentSection}
+                        ${loadMoreSection}
                     `;
                         attachDeleteHandlers(container);
+                        container.querySelector('#load-more-teams')?.addEventListener('click', loadMoreTeams);
 
                         const toggle = container.querySelector('#parent-teams-toggle');
                         const collapsible = container.querySelector('#parent-teams-collapsible');
@@ -509,6 +541,50 @@
                     }
                 }
 
+                async function loadMoreTeams() {
+                    if (user.isAdmin !== true || !hasMoreTeams || !nextTeamCursor || loadMoreTeamsInProgress) return;
+                    const requestedCursor = nextTeamCursor;
+                    loadMoreTeamsInProgress = true;
+                    loadMoreTeamsError = '';
+                    renderTeamLists();
+                    try {
+                        const page = await loadDashboardTeams({
+                            includeAllTeams: true,
+                            pageSize: dashboardTeamPageSize,
+                            cursor: requestedCursor,
+                            timeoutMs: 10000
+                        });
+                        const knownTeamIds = new Set([
+                            ...fullAccessTeams.map((team) => team.id),
+                            ...parentOnlyTeams.map((team) => team.id)
+                        ]);
+                        const newlyLoadedTeams = page.fullAccessTeams
+                            .filter((team) => !knownTeamIds.has(team.id) && !deactivatedTeamIds.has(team.id))
+                            .map((team) => ({ ...team, _access: 'full' }));
+                        newlyLoadedTeams.forEach((team) => {
+                            knownTeamIds.add(team.id);
+                            fullAccessTeams.push(team);
+                            conversationLookupByTeam[team.id] = {
+                                user: unreadLookupUser,
+                                team,
+                                canModerate: true
+                            };
+                        });
+                        nextTeamCursor = page.nextCursor || null;
+                        hasMoreTeams = page.hasMore === true;
+                        loadMoreTeamsInProgress = false;
+                        renderTeamLists();
+                        if (newlyLoadedTeams.length > 0) {
+                            startUnreadChatBadges(newlyLoadedTeams.map((team) => team.id));
+                        }
+                    } catch (error) {
+                        loadMoreTeamsInProgress = false;
+                        loadMoreTeamsError = 'More teams could not be loaded. Try again.';
+                        renderTeamLists();
+                        console.warn('Unable to load another dashboard team page:', error);
+                    }
+                }
+
                 // Team access is the critical result. Render it immediately,
                 // then enrich chat badges in the background with a hard bound.
                 renderTeamLists();
@@ -517,43 +593,69 @@
                 function setUnreadStatusVisible(visible) {
                     unreadStatus?.classList.toggle('hidden', !visible);
                 }
-                function startUnreadChatBadges(pendingTeamIds) {
-                    cancelUnreadChatRetries();
-                    pendingTeamIds.forEach((teamId) => unavailableUnreadTeamIds.delete(teamId));
-                    setUnreadStatusVisible(false);
+                function startUnreadChatBadges(teamIdsToLoad) {
+                    const pendingTeamIds = teamIdsToLoad.filter(teamId => (
+                        !pendingUnreadTeamIds.has(teamId) && !deactivatedTeamIds.has(teamId)
+                        && !Object.prototype.hasOwnProperty.call(unreadCounts, teamId)
+                    ));
+                    if (pendingTeamIds.length === 0) return;
+                    const batch = { cancel: () => {} };
+                    unreadRetryBatches.add(batch);
+                    const finishBatch = () => {
+                        unreadRetryBatches.delete(batch);
+                        pendingTeamIds.forEach(teamId => pendingUnreadTeamIds.delete(teamId));
+                    };
+                    pendingTeamIds.forEach(teamId => {
+                        pendingUnreadTeamIds.add(teamId);
+                        unavailableUnreadTeamIds.delete(teamId);
+                    });
+                    setUnreadStatusVisible(unavailableUnreadTeamIds.size > 0);
                     updateUnreadChatBadges();
-                    cancelUnreadChatRetries = startBoundedRetry({
+                    batch.cancel = startBoundedRetry({
                         initialValue: pendingTeamIds,
                         maxAttempts: 3,
                         run: (requestedTeamIds) => getUnreadChatCounts(user.uid, requestedTeamIds, {
                             conversationLookupByTeam,
                             deadlineAt: Date.now() + 5000
                         }).then((counts) => {
-                            unreadCounts = { ...unreadCounts, ...(counts || {}) };
-                            Object.keys(counts || {}).forEach((teamId) => unavailableUnreadTeamIds.delete(teamId));
+                            Object.entries(counts || {}).forEach(([teamId, count]) => {
+                                if (deactivatedTeamIds.has(teamId)) return;
+                                unreadCounts[teamId] = count;
+                                unavailableUnreadTeamIds.delete(teamId);
+                            });
                             updateUnreadChatBadges();
+                            setUnreadStatusVisible(unavailableUnreadTeamIds.size > 0);
                             return requestedTeamIds.filter((teamId) => (
-                                !Object.prototype.hasOwnProperty.call(unreadCounts, teamId)
+                                !deactivatedTeamIds.has(teamId)
+                                && !Object.prototype.hasOwnProperty.call(unreadCounts, teamId)
                             ));
                         }),
-                        shouldRetry: (unknownTeamIds) => unknownTeamIds.length > 0
-                            ? unknownTeamIds
-                            : undefined,
+                        shouldRetry: (unknownTeamIds) => {
+                            if (unknownTeamIds.length > 0) return unknownTeamIds;
+                            finishBatch();
+                            return undefined;
+                        },
                         onExhausted: (unavailableTeamIds, error) => {
-                            unavailableTeamIds.forEach((teamId) => unavailableUnreadTeamIds.add(teamId));
+                            finishBatch();
+                            unavailableTeamIds.forEach((teamId) => {
+                                if (!deactivatedTeamIds.has(teamId)) unavailableUnreadTeamIds.add(teamId);
+                            });
                             updateUnreadChatBadges();
-                            setUnreadStatusVisible(true);
+                            setUnreadStatusVisible(unavailableUnreadTeamIds.size > 0);
                             console.warn('Unable to load dashboard unread counts after bounded retries:', error || unavailableTeamIds);
                         }
                     });
                 }
                 retryUnreadButton?.addEventListener('click', () => {
-                    const pendingTeamIds = teamIds.filter((teamId) => (
+                    const pendingTeamIds = [...fullAccessTeams, ...parentOnlyTeams].map((team) => team.id).filter((teamId) => (
                         !Object.prototype.hasOwnProperty.call(unreadCounts, teamId)
                     ));
                     if (pendingTeamIds.length > 0) startUnreadChatBadges(pendingTeamIds);
                 });
-                window.addEventListener('pagehide', () => cancelUnreadChatRetries(), { once: true });
+                window.addEventListener('pagehide', () => {
+                    unreadRetryBatches.forEach(batch => batch.cancel());
+                    unreadRetryBatches.clear();
+                }, { once: true });
                 if (teamIds.length > 0) startUnreadChatBadges(teamIds);
 
             } catch (error) {

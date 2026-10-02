@@ -20928,6 +20928,10 @@ const MAX_MANAGED_CHAT_METADATA_QUERIES = 30;
 const MAX_MANAGED_CHAT_METADATA_DOCUMENTS = 1000;
 const MAX_CALLABLE_DISCOVERY_CONCURRENCY = 6;
 const MAX_DASHBOARD_PARENT_TEAMS = 180;
+// Platform-admin dashboards page by document ID and intentionally read one
+// lookahead document so hasMore is exact without scanning the collection.
+const DEFAULT_PLATFORM_ADMIN_DASHBOARD_TEAM_PAGE_SIZE = 24;
+const MAX_PLATFORM_ADMIN_DASHBOARD_TEAM_PAGE_SIZE = 50;
 const DASHBOARD_TEAM_LOAD_VERSION = 1;
 const DASHBOARD_TEAM_FIELD_PATHS = Object.freeze([
   'name',
@@ -20975,18 +20979,42 @@ async function runSettledWithConcurrencyLimit(items, limit, worker) {
   });
 }
 
-async function listPlatformAdminTeamDocuments(caller) {
-  if (!isOpportunityPlatformAdmin(caller)) {
-    throw new functions.https.HttpsError('permission-denied', 'Platform admin access is required to load every team.');
+function normalizePlatformAdminDashboardPageSize(value) {
+  const requested = Number(value);
+  if (!Number.isFinite(requested)) return DEFAULT_PLATFORM_ADMIN_DASHBOARD_TEAM_PAGE_SIZE;
+  return Math.min(MAX_PLATFORM_ADMIN_DASHBOARD_TEAM_PAGE_SIZE, Math.max(1, Math.trunc(requested)));
+}
+
+function normalizePlatformAdminDashboardCursor(value) {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string' || value !== value.trim() || value.length > 1500 || value.includes('/')) {
+    throw new functions.https.HttpsError('invalid-argument', 'The dashboard team cursor is invalid.');
   }
-  const snapshot = await firestore.collection('teams')
+  return value;
+}
+
+async function listPlatformAdminTeamDocuments(caller, options = {}) {
+  if (!isOpportunityPlatformAdmin(caller)) {
+    throw new functions.https.HttpsError('permission-denied', 'Platform admin access is required to load platform-wide teams.');
+  }
+  const pageSize = normalizePlatformAdminDashboardPageSize(options.pageSize);
+  const cursor = normalizePlatformAdminDashboardCursor(options.cursor);
+  let query = firestore.collection('teams')
     .select(...DASHBOARD_TEAM_FIELD_PATHS)
-    .get();
-  const teams = new Map(snapshot.docs.map((teamSnap) => [teamSnap.id, teamSnap]));
+    .orderBy(admin.firestore.FieldPath.documentId());
+  // Cached clients predate pagination and require the complete projection.
+  const paginated = options.dashboardTeamPageVersion === 1;
+  if (paginated && cursor) query = query.startAfter(cursor);
+  const snapshot = await (paginated ? query.limit(pageSize + 1) : query).get();
+  const hasMore = paginated && snapshot.docs.length > pageSize;
+  const pageDocs = paginated ? snapshot.docs.slice(0, pageSize) : snapshot.docs;
+  const teams = new Map(pageDocs.map((teamSnap) => [teamSnap.id, teamSnap]));
   teams.discoveryQueryCount = 1;
   teams.successfulDiscoveryQueryCount = 1;
   teams.discoveryErrors = [];
   teams.isPartial = false;
+  teams.hasMore = hasMore;
+  teams.nextCursor = hasMore && pageDocs.length > 0 ? pageDocs.at(-1).id : null;
   return teams;
 }
 
@@ -21024,11 +21052,16 @@ exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => 
   const includeAllTeams = data?.includeAllTeams === true;
   const includeParentTeams = data?.includeParentTeams === true;
   if (includeAllTeams && !isOpportunityPlatformAdmin(caller)) {
-    throw new functions.https.HttpsError('permission-denied', 'Platform admin access is required to load every team.');
+    throw new functions.https.HttpsError('permission-denied', 'Platform admin access is required to load platform-wide teams.');
+  }
+  if (includeAllTeams && data?.dashboardTeamPageVersion != null && data.dashboardTeamPageVersion !== 1) {
+    throw new functions.https.HttpsError('invalid-argument', 'Unsupported dashboard team page version.');
   }
   const includeChatMetadata = data?.includeChatMetadata === true;
   const [staffTeams, parentTeamResult] = await Promise.all([
-    includeAllTeams ? listPlatformAdminTeamDocuments(caller) : listStaffTeamDocuments(caller),
+    includeAllTeams
+      ? listPlatformAdminTeamDocuments(caller, { pageSize: data?.pageSize, cursor: data?.cursor, dashboardTeamPageVersion: data?.dashboardTeamPageVersion })
+      : listStaffTeamDocuments(caller),
     !includeAllTeams && (includeParentTeams || includeChatMetadata)
       ? listCallableParentTeamDocuments(caller)
       : Promise.resolve({ teamSnaps: [], isPartial: false })
@@ -21125,12 +21158,16 @@ exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => 
       };
     })
     .filter(Boolean)
-    .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')));
+    .sort(includeAllTeams
+      ? (left, right) => String(left.id || '').localeCompare(String(right.id || ''))
+      : (left, right) => String(left.name || '').localeCompare(String(right.name || '')));
   return {
     items,
     ...(includeParentTeams ? { parentItems } : {}),
     dashboardTeamLoadVersion: DASHBOARD_TEAM_LOAD_VERSION,
-    includesAllTeams: includeAllTeams,
+    includesAllTeams: includeAllTeams && staffTeams.hasMore !== true && !data?.cursor,
+    nextCursor: includeAllTeams ? staffTeams.nextCursor : null,
+    hasMore: includeAllTeams ? staffTeams.hasMore === true : false,
     isPartial: staffTeams.isPartial === true
       || (includeParentTeams && parentTeamResult.isPartial)
       || chatTeamDiscoveryPartial
