@@ -124,7 +124,8 @@ describe('production smoke authenticated setup timeout', () => {
         );
 
         expect(routeHelper).toContain('await expect.poll(');
-        expect(routeHelper).toContain('timeout: 25_000');
+        expect(routeHelper).toContain('deadline = Date.now() + 25_000');
+        expect(routeHelper).toContain('timeout: remaining()');
         expect(routeHelper).toContain(
             'message: `Expected a meaningful fixture link containing ${requiredHref}`'
         );
@@ -148,7 +149,7 @@ describe('production smoke authenticated setup timeout', () => {
         }
 
         expect(helper).toMatch(
-            /export async function openAuthenticatedAppRoute[\s\S]*?page\.goto\([\s\S]*?await assertAuthenticatedAppRoute\(page, route, options\);/
+            /export async function openAuthenticatedAppRoute[\s\S]*?page\.goto\([\s\S]*?await assertAuthenticatedAppRoute\(page, route, \{ \.\.\.options, deadline: startedAt \+ 25_000 \}\);/
         );
     });
 

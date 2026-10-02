@@ -1,4 +1,5 @@
-import { expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import { withAppFailureDiagnostic } from './app-route-diagnostic.js';
 
 const DEFAULT_FATAL_CONSOLE_PATTERNS = [
     /Missing Firebase image config/i,
@@ -131,6 +132,11 @@ export function createBootIssueCollector(page, options = {}) {
 }
 
 export async function assertPageBootsWithoutFatalErrors(page, options) {
+    return withAppFailureDiagnostic({ page }, options.testInfo || test.info(),
+        () => assertPageBoots(page, options), { baseline: true });
+}
+
+async function assertPageBoots(page, options) {
     const {
         baseURL,
         path,
