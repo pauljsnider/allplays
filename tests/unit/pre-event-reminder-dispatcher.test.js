@@ -288,6 +288,144 @@ describe('drainOrderedPages', () => {
         });
     });
 
+    it('does not process a first page whose load exhausts the runtime budget', async () => {
+        let currentTimeMs = 0;
+        const initialCursor = { value: 'resume-here' };
+        const loadPage = vi.fn(async () => {
+            currentTimeMs = 150;
+            return {
+                docs: [{ id: 'a' }],
+                nextCursor: { value: 'after-a' }
+            };
+        });
+        const processPage = vi.fn(async () => ({ sentCount: 1, failedCount: 0 }));
+
+        const summary = await drainOrderedPages({
+            pageSize: 2,
+            maxPages: 5,
+            maxRuntimeMs: 100,
+            initialCursor,
+            getCurrentTimeMs: () => currentTimeMs,
+            loadPage,
+            processPage
+        });
+
+        expect(loadPage).toHaveBeenCalledTimes(1);
+        expect(processPage).not.toHaveBeenCalled();
+        expect(summary).toEqual({
+            pagesAttempted: 1,
+            examinedCount: 1,
+            sentCount: 0,
+            failedCount: 0,
+            stoppedBecause: 'maxRuntimeMs',
+            lastCursor: initialCursor
+        });
+    });
+
+    it('preserves completed work when a later page load exhausts the runtime budget', async () => {
+        let currentTimeMs = 0;
+        const loadPage = vi.fn(async ({ pageNumber }) => {
+            if (pageNumber === 1) {
+                currentTimeMs = 10;
+                return {
+                    docs: [{ id: 'a' }, { id: 'b' }],
+                    nextCursor: 'cursor-1'
+                };
+            }
+            currentTimeMs = 150;
+            return {
+                docs: [{ id: 'c' }],
+                nextCursor: 'cursor-2'
+            };
+        });
+        const processPage = vi.fn(async () => {
+            currentTimeMs = 20;
+            return { sentCount: 1, failedCount: 1 };
+        });
+
+        const summary = await drainOrderedPages({
+            pageSize: 2,
+            maxPages: 5,
+            maxRuntimeMs: 100,
+            getCurrentTimeMs: () => currentTimeMs,
+            loadPage,
+            processPage
+        });
+
+        expect(loadPage).toHaveBeenCalledTimes(2);
+        expect(processPage).toHaveBeenCalledTimes(1);
+        expect(summary).toEqual({
+            pagesAttempted: 2,
+            examinedCount: 3,
+            sentCount: 1,
+            failedCount: 1,
+            stoppedBecause: 'maxRuntimeMs',
+            lastCursor: 'cursor-1'
+        });
+    });
+
+    it('does not start processing when a page load reaches the exact deadline', async () => {
+        let currentTimeMs = 0;
+        const initialCursor = { value: 'resume-here' };
+        const processPage = vi.fn(async () => ({ sentCount: 1, failedCount: 0 }));
+
+        const summary = await drainOrderedPages({
+            pageSize: 2,
+            maxPages: 5,
+            maxRuntimeMs: 100,
+            initialCursor,
+            getCurrentTimeMs: () => currentTimeMs,
+            loadPage: async () => {
+                currentTimeMs = 100;
+                return {
+                    docs: [{ id: 'a' }],
+                    nextCursor: { value: 'after-a' }
+                };
+            },
+            processPage
+        });
+
+        expect(processPage).not.toHaveBeenCalled();
+        expect(summary).toEqual({
+            pagesAttempted: 1,
+            examinedCount: 1,
+            sentCount: 0,
+            failedCount: 0,
+            stoppedBecause: 'maxRuntimeMs',
+            lastCursor: initialCursor
+        });
+    });
+
+    it('completes processing that starts under budget even if the callback reaches the deadline', async () => {
+        let currentTimeMs = 0;
+        const processPage = vi.fn(async () => {
+            currentTimeMs = 100;
+            return { sentCount: 1, failedCount: 0 };
+        });
+
+        const summary = await drainOrderedPages({
+            pageSize: 2,
+            maxPages: 5,
+            maxRuntimeMs: 100,
+            getCurrentTimeMs: () => currentTimeMs,
+            loadPage: async () => {
+                currentTimeMs = 99;
+                return { docs: [{ id: 'a' }], nextCursor: null };
+            },
+            processPage
+        });
+
+        expect(processPage).toHaveBeenCalledTimes(1);
+        expect(summary).toEqual({
+            pagesAttempted: 1,
+            examinedCount: 1,
+            sentCount: 1,
+            failedCount: 0,
+            stoppedBecause: 'drained',
+            lastCursor: null
+        });
+    });
+
     it('aggregates counters and treats a short page at the cap as drained', async () => {
         const pages = [
             { docs: [{ id: 'a' }, { id: 'b' }], nextCursor: 'cursor-1' },

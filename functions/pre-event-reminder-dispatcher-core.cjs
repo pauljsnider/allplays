@@ -64,6 +64,12 @@ async function runReminderWorkers({
   };
 }
 
+/**
+ * Drains ordered pages within a cooperative runtime budget.
+ * `pagesAttempted` and `examinedCount` describe returned loads and documents,
+ * while outcome counts and `lastCursor` advance only after a page is safely
+ * complete. Budget checks cannot interrupt callbacks that have already started.
+ */
 async function drainOrderedPages({
   loadPage,
   processPage,
@@ -110,13 +116,18 @@ async function drainOrderedPages({
 
     summary.pagesAttempted = pageNumber;
     summary.examinedCount += docs.length;
-    summary.lastCursor = nextCursor;
+
+    if ((getCurrentTimeMs() - startedAtMs) >= maxRuntimeMs) {
+      summary.stoppedBecause = 'maxRuntimeMs';
+      return summary;
+    }
 
     if (docs.length) {
       const outcome = await processPage(docs, { pageNumber, cursor, nextCursor }) || {};
       summary.sentCount += getOutcomeCount(outcome, 'sentCount');
       summary.failedCount += getOutcomeCount(outcome, 'failedCount');
     }
+    summary.lastCursor = nextCursor;
 
     if (docs.length < pageSize || nextCursor === null) {
       return summary;
