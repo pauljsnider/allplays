@@ -301,6 +301,8 @@ const {
   PRE_EVENT_REMINDER_QUERY_PAGE_SIZE,
   PRE_EVENT_REMINDER_MAX_PAGES_PER_RUN,
   PRE_EVENT_REMINDER_MAX_RUNTIME_MS,
+  drainOrderedPages,
+  runReminderWorkers,
   drainDueReminderPages
 } = require('./pre-event-reminder-dispatcher-core.cjs');
 const {
@@ -14652,6 +14654,10 @@ function getNewOpenOfficiatingSlots(beforeGame = {}, afterGame = {}) {
 
 const FEE_REMINDER_CLAIM_LEASE_MS = 10 * 60 * 1000;
 const FEE_REMINDER_STALE_RECOVERY_GRACE_MS = 48 * 60 * 60 * 1000;
+const FEE_REMINDER_QUERY_PAGE_SIZE = PRE_EVENT_REMINDER_QUERY_PAGE_SIZE;
+const FEE_REMINDER_MAX_PAGES_PER_RUN = PRE_EVENT_REMINDER_MAX_PAGES_PER_RUN;
+const FEE_REMINDER_MAX_RUNTIME_MS = PRE_EVENT_REMINDER_MAX_RUNTIME_MS;
+const FEE_REMINDER_WORKER_CONCURRENCY = 5;
 
 exports._internal = {
   createStripeTeamPassCheckoutLegacyForTest,
@@ -14680,6 +14686,10 @@ exports._internal = {
   finalizeFeeDueReminderClaim,
   FEE_REMINDER_CLAIM_LEASE_MS,
   FEE_REMINDER_STALE_RECOVERY_GRACE_MS,
+  FEE_REMINDER_QUERY_PAGE_SIZE,
+  FEE_REMINDER_MAX_PAGES_PER_RUN,
+  FEE_REMINDER_MAX_RUNTIME_MS,
+  FEE_REMINDER_WORKER_CONCURRENCY,
   FIRESTORE_BATCH_SAFE_WRITE_LIMIT,
   NOTIFICATION_RECIPIENT_DEVICE_SYNC_CONCURRENCY,
   NOTIFICATION_INBOX_WRITE_CONCURRENCY,
@@ -15892,24 +15902,37 @@ async function sendFeeUnpaidDueReminders() {
   const nowMillis = now.toMillis();
   const maxReminderThresholdLater = admin.firestore.Timestamp.fromMillis(now.toMillis() + 72 * 60 * 60 * 1000);
   const teamReminderThresholdHours = new Map();
+  const schedulerStartedAtMillis = Date.now();
+  const examinedRecipientPaths = new Set();
+  let firstRetryableFailure = null;
 
-  // Keep leased recipients in the retry set even if they cross their due time
-  // while a crashed attempt's lease is active.
-  const [upcomingSnap, leasedSnap] = await Promise.all([
-    firestore.collectionGroup('feeRecipients')
-      .where('status', 'in', ['unpaid', 'pending'])
-      .where('dueDate', '>=', now)
-      .where('dueDate', '<=', maxReminderThresholdLater)
-      .get(),
-    firestore.collectionGroup('feeRecipients')
-      .where('reminderDeliveryClaimExpiresAtMillis', '>', 0)
-      .get()
-  ]);
-  const reminderDocs = [...new Map(
-    [...upcomingSnap.docs, ...leasedSnap.docs].map((docSnap) => [docSnap.ref.path, docSnap])
-  ).values()];
+  const takeUnseenFeeReminderDocs = (docs) => docs.filter((doc) => {
+    if (examinedRecipientPaths.has(doc.ref.path)) return false;
+    examinedRecipientPaths.add(doc.ref.path);
+    return true;
+  });
 
-  const promises = reminderDocs.map(async (doc) => {
+  const drainFeeReminderPages = async (options) => {
+    const remainingRuntimeMs = FEE_REMINDER_MAX_RUNTIME_MS - (Date.now() - schedulerStartedAtMillis);
+    if (remainingRuntimeMs <= 0) {
+      return {
+        pagesAttempted: 0,
+        examinedCount: 0,
+        sentCount: 0,
+        failedCount: 0,
+        stoppedBecause: 'maxRuntimeMs',
+        lastCursor: null
+      };
+    }
+    return drainOrderedPages({
+      ...options,
+      pageSize: FEE_REMINDER_QUERY_PAGE_SIZE,
+      maxPages: FEE_REMINDER_MAX_PAGES_PER_RUN,
+      maxRuntimeMs: remainingRuntimeMs
+    });
+  };
+
+  const processReminderDoc = async (doc) => {
     let data = doc.data();
     const pathParts = doc.ref.path.split('/');
     // Path structure: teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}
@@ -16071,27 +16094,118 @@ async function sendFeeUnpaidDueReminders() {
       }
     } catch (err) {
       console.error('sendFeeUnpaidDueReminders: failed to notify', { teamId, candidateUserIds: buildFeeReminderCandidateUserIds(data), error: err });
-      if (
-        isNotificationAuthResolutionFailure(err)
-        || isFeeReminderClaimActiveFailure(err)
-        || isFeeReminderPreEffectFailure(err)
-      ) throw err;
-      return null;
+      throw err;
+    }
+  };
+
+  const runFeeReminderWorkers = async (docs) => {
+    const workerSummary = await runReminderWorkers({
+      items: docs,
+      concurrency: FEE_REMINDER_WORKER_CONCURRENCY,
+      worker: async (doc) => {
+        try {
+          return Boolean(await processReminderDoc(doc));
+        } catch (error) {
+          if (
+            !firstRetryableFailure
+            && (
+              isNotificationAuthResolutionFailure(error)
+              || isFeeReminderClaimActiveFailure(error)
+              || isFeeReminderPreEffectFailure(error)
+            )
+          ) {
+            firstRetryableFailure = error;
+          }
+          throw error;
+        }
+      }
+    });
+    return workerSummary;
+  };
+
+  // Recover leased recipients first so the oldest interrupted deliveries are
+  // not starved by a large upcoming backlog. The shared path set keeps the
+  // upcoming pass from submitting overlapping recipients a second time.
+  const leasedSummary = await drainFeeReminderPages({
+    loadPage: async ({ cursor, limit }) => {
+      let query = firestore.collectionGroup('feeRecipients')
+        .where('reminderDeliveryClaimExpiresAtMillis', '>', 0)
+        .orderBy('reminderDeliveryClaimExpiresAtMillis')
+        .limit(limit || FEE_REMINDER_QUERY_PAGE_SIZE);
+      if (cursor) {
+        query = query.startAfter(cursor);
+      }
+      const leasedSnap = await query.get();
+      return {
+        docs: leasedSnap.docs,
+        nextCursor: leasedSnap.docs[leasedSnap.docs.length - 1] || null
+      };
+    },
+    processPage: async (docs) => {
+      const unseenDocs = takeUnseenFeeReminderDocs(docs);
+      return runFeeReminderWorkers(unseenDocs);
     }
   });
 
-  const results = await Promise.allSettled(promises);
-  const retryableFailure = results.find((result) => (
-    result.status === 'rejected'
-    && (
-      isNotificationAuthResolutionFailure(result.reason)
-      || isFeeReminderClaimActiveFailure(result.reason)
-      || isFeeReminderPreEffectFailure(result.reason)
-    )
-  ));
-  if (retryableFailure) throw retryableFailure.reason;
-  const sent = results.filter((r) => r.status === 'fulfilled' && r.value).length;
-  console.log(`sendFeeUnpaidDueReminders: processed ${reminderDocs.length} docs, sent ${sent} reminders`);
+  functions.logger.info('sendFeeUnpaidDueReminders: leased delivery complete', {
+    pagesAttempted: leasedSummary.pagesAttempted,
+    stoppedBecause: leasedSummary.stoppedBecause,
+    examinedCount: leasedSummary.examinedCount,
+    sentCount: leasedSummary.sentCount,
+    failedCount: leasedSummary.failedCount
+  });
+
+  const upcomingSummary = await drainFeeReminderPages({
+    loadPage: async ({ cursor, limit }) => {
+      let query = firestore.collectionGroup('feeRecipients')
+        .where('status', 'in', ['unpaid', 'pending'])
+        .where('dueDate', '>=', now)
+        .where('dueDate', '<=', maxReminderThresholdLater)
+        .orderBy('dueDate')
+        .limit(limit || FEE_REMINDER_QUERY_PAGE_SIZE);
+      if (cursor) {
+        query = query.startAfter(cursor);
+      }
+      const upcomingSnap = await query.get();
+      return {
+        docs: upcomingSnap.docs,
+        nextCursor: upcomingSnap.docs[upcomingSnap.docs.length - 1] || null
+      };
+    },
+    processPage: async (docs) => {
+      const unseenDocs = takeUnseenFeeReminderDocs(docs);
+      return runFeeReminderWorkers(unseenDocs);
+    }
+  });
+
+  functions.logger.info('sendFeeUnpaidDueReminders: upcoming delivery complete', {
+    pagesAttempted: upcomingSummary.pagesAttempted,
+    stoppedBecause: upcomingSummary.stoppedBecause,
+    examinedCount: upcomingSummary.examinedCount,
+    sentCount: upcomingSummary.sentCount,
+    failedCount: upcomingSummary.failedCount
+  });
+
+  const pagesAttempted = leasedSummary.pagesAttempted + upcomingSummary.pagesAttempted;
+  const stoppedBecause = [leasedSummary, upcomingSummary]
+    .some((summary) => summary.stoppedBecause === 'maxRuntimeMs')
+    ? 'maxRuntimeMs'
+    : [leasedSummary, upcomingSummary].some((summary) => summary.stoppedBecause === 'maxPages')
+      ? 'maxPages'
+      : 'drained';
+  const sentCount = upcomingSummary.sentCount + leasedSummary.sentCount;
+  const failedCount = upcomingSummary.failedCount + leasedSummary.failedCount;
+  functions.logger.info('sendFeeUnpaidDueReminders: delivery complete', {
+    pagesAttempted,
+    stoppedBecause,
+    examinedCount: examinedRecipientPaths.size,
+    sentCount,
+    failedCount,
+    leasedStoppedBecause: leasedSummary.stoppedBecause,
+    upcomingStoppedBecause: upcomingSummary.stoppedBecause
+  });
+  console.log(`sendFeeUnpaidDueReminders: processed ${examinedRecipientPaths.size} docs, sent ${sentCount} reminders`);
+  if (firstRetryableFailure) throw firstRetryableFailure;
 }
 
 exports.sendFeeUnpaidDueReminders = retryableNotificationFunctions.pubsub

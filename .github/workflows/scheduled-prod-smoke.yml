@@ -84,3 +84,23 @@ jobs:
           SMOKE_PARENT_PASSWORD: ${{ secrets.SMOKE_PARENT_PASSWORD }}
           SMOKE_AUTH_EMAIL: ${{ secrets.SMOKE_AUTH_EMAIL }}
           SMOKE_AUTH_PASSWORD: ${{ secrets.SMOKE_AUTH_PASSWORD }}
+
+      - name: Upload sanitized authenticated route diagnostics
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: authenticated-route-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results/**/app-route-diagnostic.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload sanitized baseline boot diagnostics
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: baseline-boot-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results/**/boot-path-diagnostic.json
+          if-no-files-found: ignore
+          retention-days: 7

@@ -250,6 +250,29 @@ describe('fee due reminder source wiring', () => {
         expect(functionsSource).toContain(".where('reminderDeliveryClaimExpiresAtMillis', '>', 0)");
     });
 
+    it('pages upcoming and leased recipients through bounded drains and worker primitives', () => {
+        expect(functionsSource).toContain('FEE_REMINDER_QUERY_PAGE_SIZE = PRE_EVENT_REMINDER_QUERY_PAGE_SIZE');
+        expect(functionsSource).toContain('FEE_REMINDER_WORKER_CONCURRENCY = 5');
+        expect(functionsSource).toContain('return drainOrderedPages({');
+        expect(functionsSource).toContain('const upcomingSummary = await drainFeeReminderPages({');
+        expect(functionsSource).toContain('const leasedSummary = await drainFeeReminderPages({');
+        expect(functionsSource).toContain(".orderBy('dueDate')");
+        expect(functionsSource).toContain(".orderBy('reminderDeliveryClaimExpiresAtMillis')");
+        expect(functionsSource).toContain('.limit(limit || FEE_REMINDER_QUERY_PAGE_SIZE)');
+        expect(functionsSource).toContain('query = query.startAfter(cursor);');
+        expect(functionsSource).toContain('const unseenDocs = takeUnseenFeeReminderDocs(docs);');
+        expect(functionsSource).toContain('examinedRecipientPaths.add(doc.ref.path);');
+        expect(functionsSource).toContain('const workerSummary = await runReminderWorkers({');
+        expect(functionsSource).toContain('concurrency: FEE_REMINDER_WORKER_CONCURRENCY');
+        expect(functionsSource).toContain("stoppedBecause: upcomingSummary.stoppedBecause");
+        expect(functionsSource).toContain('examinedCount: upcomingSummary.examinedCount');
+        expect(functionsSource).toContain('sentCount: upcomingSummary.sentCount');
+        expect(functionsSource).toContain('failedCount: upcomingSummary.failedCount');
+        expect(functionsSource).toContain("stoppedBecause: leasedSummary.stoppedBecause");
+        expect(functionsSource).toContain('examinedCount: examinedRecipientPaths.size');
+        expect(functionsSource).toContain("'sendFeeUnpaidDueReminders: delivery complete'");
+    });
+
     it('declares collection-group indexes for upcoming and leased reminder queries', () => {
         expect(firestoreIndexes.indexes).toContainEqual({
             collectionGroup: 'feeRecipients',
