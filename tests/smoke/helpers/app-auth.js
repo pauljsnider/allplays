@@ -1,4 +1,5 @@
 import { expect } from '@playwright/test';
+import { routeTimings } from './app-route-diagnostic.js';
 
 export const AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS = 240_000;
 const AUTHENTICATED_CONTEXT_CLOSE_TIMEOUT_MS = 5_000;
@@ -191,16 +192,40 @@ export async function assertAuthenticatedAppRoute(page, route, options = {}) {
     const {
         heading,
         forbidden = [/Unable to load/i, /\bnot found\b/i, /temporarily unavailable/i],
-        requiredHref = ''
+        requiredHref = '',
+        panelHeading,
+        seededFees = false,
+        deadline = Date.now() + 25_000
     } = options;
-    await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toContain(`#${route.split('?')[0]}`);
-    await expect(page.locator('main')).toBeVisible({ timeout: 20_000 });
+    const remaining = () => {
+        const timeout = deadline - Date.now();
+        if (timeout <= 0) throw new Error('Authenticated route readiness exceeded its 25-second budget');
+        return timeout;
+    };
+    await expect.poll(() => new URL(page.url()).hash.split('?')[0], { timeout: remaining() }).toBe(`#${route.split('?')[0]}`);
+    await expect(page.locator('main')).toBeVisible({ timeout: remaining() });
     if (heading) {
-        await expect(page.getByRole('heading', { name: heading }).first()).toBeVisible({ timeout: 25_000 });
+        await expect(page.getByRole('heading', { name: heading }).first()).toBeVisible({ timeout: remaining() });
     } else {
-        await expect(page.getByRole('heading').first()).toBeVisible({ timeout: 25_000 });
+        await expect(page.getByRole('heading').first()).toBeVisible({ timeout: remaining() });
     }
-    const body = await page.locator('body').innerText();
+    const timing = routeTimings.get(page);
+    if (timing) timing.shellMs = Date.now() - timing.startedAt;
+    if (panelHeading) {
+        await expect(page.getByRole('heading', { name: panelHeading, exact: true })).toBeVisible({ timeout: remaining() });
+        if (timing) timing.panelMs = Date.now() - timing.startedAt;
+    }
+    if (seededFees) {
+        // Fee headers/metrics mount while loading; only a loaded fee card has
+        // both Amount and Due. The production smoke parent is fixture-backed.
+        const feeCard = page.locator('main section')
+            .filter({ has: page.getByText('Amount', { exact: true }) })
+            .filter({ has: page.getByText('Due', { exact: true }) }).first();
+        await expect(feeCard).toBeVisible({ timeout: remaining() });
+        await expect(page.getByText('Loading fees', { exact: true })).not.toBeVisible({ timeout: remaining() });
+        await expect(page.locator('main')).not.toContainText('No fees in this view', { timeout: remaining() });
+    }
+    const body = await page.locator('body').innerText({ timeout: remaining() });
     for (const pattern of forbidden) expect(body).not.toMatch(pattern);
     if (requiredHref) {
         await expect.poll(
@@ -208,7 +233,7 @@ export async function assertAuthenticatedAppRoute(page, route, options = {}) {
                 links.some((link) => String(link.getAttribute('href') || '').includes(String(expected)))
             ), requiredHref),
             {
-                timeout: 25_000,
+                timeout: remaining(),
                 message: `Expected a meaningful fixture link containing ${requiredHref}`
             }
         ).toBe(true);
@@ -216,8 +241,11 @@ export async function assertAuthenticatedAppRoute(page, route, options = {}) {
 }
 
 export async function openAuthenticatedAppRoute(page, appBaseUrl, route, options = {}) {
-    await page.goto(buildAppSmokeUrl(appBaseUrl, route), { waitUntil: 'domcontentloaded' });
-    await assertAuthenticatedAppRoute(page, route, options);
+    const startedAt = Date.now();
+    const url = buildAppSmokeUrl(appBaseUrl, route);
+    routeTimings.set(page, { url, startedAt });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25_000 });
+    await assertAuthenticatedAppRoute(page, route, { ...options, deadline: startedAt + 25_000 });
 }
 
 export async function assertNotificationInbox(page) {
