@@ -1612,6 +1612,108 @@ test('sendFeeUnpaidDueReminders pages upcoming recipients and reports bounded de
     }
 });
 
+test('sendFeeUnpaidDueReminders pages expired leases and deduplicates overlapping upcoming recipients', async () => {
+    const nowMillis = Date.parse('2026-06-28T12:00:00.000Z');
+    const recipientCount = 101;
+    const initialDocs = Object.fromEntries(Array.from({ length: recipientCount }, (_, index) => {
+        const recipientId = `leased-recipient-${String(index + 1).padStart(3, '0')}`;
+        return [
+            `teams/team-1/feeBatches/batch-1/feeRecipients/${recipientId}`,
+            {
+                status: 'unpaid',
+                parentUserId: 'parent-1',
+                feeTitle: `Leased fee ${index + 1}`,
+                amountCents: 2000 + index,
+                dueDate: new Date(nowMillis + (index + 1) * 60 * 1000).toISOString(),
+                reminderDeliveryClaimId: `expired-claim-${index + 1}`,
+                reminderDeliveryClaimExpiresAtMillis: nowMillis - recipientCount + index
+            }
+        ];
+    }));
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentTeamIds: ['team-1'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        initialDocs,
+        nowMillis
+    });
+
+    try {
+        await moduleExports.sendFeeUnpaidDueReminders();
+
+        const pageSize = moduleExports._internal.FEE_REMINDER_QUERY_PAGE_SIZE;
+        const leasedQueries = env.feeRecipientQueryLog.filter((entry) => (
+            entry.filters.some((filter) => filter.field === 'reminderDeliveryClaimExpiresAtMillis')
+        ));
+        assert.equal(pageSize, 50);
+        assert.equal(leasedQueries.length, 3);
+        assert.deepEqual(leasedQueries.map((entry) => entry.limit), [pageSize, pageSize, pageSize]);
+        assert.deepEqual(leasedQueries.map((entry) => entry.resultPaths.length), [pageSize, pageSize, 1]);
+        assert.deepEqual(leasedQueries.map((entry) => entry.order?.field), [
+            'reminderDeliveryClaimExpiresAtMillis',
+            'reminderDeliveryClaimExpiresAtMillis',
+            'reminderDeliveryClaimExpiresAtMillis'
+        ]);
+        assert.equal(leasedQueries[0].cursorPath, null);
+        assert.equal(leasedQueries[1].cursorPath, leasedQueries[0].resultPaths.at(-1));
+        assert.equal(leasedQueries[2].cursorPath, leasedQueries[1].resultPaths.at(-1));
+
+        const upcomingQueries = env.feeRecipientQueryLog.filter((entry) => (
+            entry.filters.some((filter) => filter.field === 'dueDate')
+        ));
+        assert.equal(upcomingQueries.length, 3);
+        assert.equal(upcomingQueries.flatMap((entry) => entry.resultPaths).length, recipientCount);
+
+        const pageThreeRecipientId = 'leased-recipient-101';
+        const matchingPushes = env.messagingCalls.filter((call) => (
+            call.data.appRoute?.endsWith(`&recipientId=${pageThreeRecipientId}`)
+        ));
+        const matchingInboxWrites = env.inboxWrites.filter((write) => (
+            write.value?.appRoute?.endsWith(`&recipientId=${pageThreeRecipientId}`)
+        ));
+        assert.equal(env.messagingCalls.length, recipientCount);
+        assert.equal(env.inboxWrites.length, recipientCount);
+        assert.equal(matchingPushes.length, 1);
+        assert.equal(matchingInboxWrites.length, 1);
+
+        const finalRecipient = env.getStoredDoc(
+            `teams/team-1/feeBatches/batch-1/feeRecipients/${pageThreeRecipientId}`
+        );
+        assert.ok(finalRecipient.reminderSentAt);
+        assert.equal(finalRecipient.reminderDeliveryClaimId, undefined);
+        assert.equal(finalRecipient.reminderDeliveryClaimExpiresAtMillis, undefined);
+
+        const leasedCompletionLog = env.platformLogs.find(({ level, args }) => (
+            level === 'info' && args[0] === 'sendFeeUnpaidDueReminders: leased delivery complete'
+        ));
+        assert.deepEqual(leasedCompletionLog?.args[1], {
+            pagesAttempted: 3,
+            stoppedBecause: 'drained',
+            examinedCount: recipientCount,
+            sentCount: recipientCount,
+            failedCount: 0
+        });
+        const completionLog = env.platformLogs.find(({ level, args }) => (
+            level === 'info' && args[0] === 'sendFeeUnpaidDueReminders: delivery complete'
+        ));
+        assert.deepEqual(completionLog?.args[1], {
+            pagesAttempted: 6,
+            stoppedBecause: 'drained',
+            examinedCount: recipientCount,
+            sentCount: recipientCount,
+            failedCount: 0,
+            leasedStoppedBecause: 'drained',
+            upcomingStoppedBecause: 'drained'
+        });
+    } finally {
+        cleanup();
+    }
+});
+
 test('sendFeeUnpaidDueReminders excludes paid fees and parents with disabled fee notifications', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
