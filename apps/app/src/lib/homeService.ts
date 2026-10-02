@@ -420,6 +420,7 @@ export async function loadParentScheduleSummary(
     {
       ttlMs: homeSummaryTtlMs,
       force: options.force || hasScopedStaffTeams,
+      inFlightScope: options.previewParentChildren ? 'home-parent-preview' : undefined,
       maxStaleMs: homeMaxStaleMs,
       staleWhileRevalidate: true,
       onRefresh: options.onPartial,

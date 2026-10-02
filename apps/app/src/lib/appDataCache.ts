@@ -18,6 +18,8 @@ const logger = createLogger('app-data-cache');
 type LoadCachedAppDataOptions<T> = {
   ttlMs?: number;
   force?: boolean;
+  /** Deduplicate only with callers in the same request scope while sharing the cached value. */
+  inFlightScope?: string;
   persist?: boolean;
   maxStaleMs?: number;
   staleWhileRevalidate?: boolean;
@@ -67,6 +69,7 @@ export function loadCachedAppData<T>(
   {
     ttlMs = defaultTtlMs,
     force = false,
+    inFlightScope,
     persist = true,
     maxStaleMs = defaultMaxStaleMs,
     staleWhileRevalidate = false,
@@ -78,11 +81,15 @@ export function loadCachedAppData<T>(
 ): Promise<T> {
   const now = Date.now();
   const existing = hydrateMemoryCache<T>(key, now, maxStaleMs);
+  const inFlightKey = inFlightScope ? `${key}:in-flight:${inFlightScope}` : key;
+  const inFlightEntry = inFlightKey === key
+    ? existing
+    : cache.get(inFlightKey) as CacheEntry<T> | undefined;
   if (!force && existing && hasCachedValue(existing) && existing.expiresAt > now) {
     return Promise.resolve(existing.value);
   }
-  if (!force && existing?.promise) {
-    return existing.promise;
+  if (!force && inFlightEntry?.promise) {
+    return inFlightEntry.promise;
   }
   if (
     !force
@@ -94,6 +101,7 @@ export function loadCachedAppData<T>(
     const refreshPromise = loadAndStoreCachedAppData(key, loader, existing, {
       ttlMs,
       persist,
+      inFlightKey,
       onRefresh: onRefresh || onBackgroundRefresh
         ? (value) => {
           onRefresh?.(value);
@@ -109,7 +117,7 @@ export function loadCachedAppData<T>(
     return Promise.resolve(existing.value as T);
   }
 
-  return loadAndStoreCachedAppData(key, loader, existing, { ttlMs, persist, onRefresh, shouldCache });
+  return loadAndStoreCachedAppData(key, loader, existing, { ttlMs, persist, inFlightKey, onRefresh, shouldCache });
 }
 
 export function clearAppDataCache(prefix = '') {
@@ -125,7 +133,11 @@ export function clearAppDataCache(prefix = '') {
 
 export function invalidateCachedAppData(key: string) {
   cacheKeyInvalidationVersions.set(key, getCacheKeyInvalidationVersion(key) + 1);
-  cache.delete(key);
+  [...cache.keys()].forEach((cacheKey) => {
+    if (cacheKey === key || cacheKey.startsWith(`${key}:in-flight:`)) {
+      cache.delete(cacheKey);
+    }
+  });
   removeStoredCacheEntry(key);
 }
 
@@ -136,9 +148,16 @@ function loadAndStoreCachedAppData<T>(
   {
     ttlMs,
     persist,
+    inFlightKey,
     onRefresh,
     shouldCache
-  }: { ttlMs: number; persist: boolean; onRefresh?: (value: T) => void; shouldCache?: (value: T) => boolean }
+  }: {
+    ttlMs: number;
+    persist: boolean;
+    inFlightKey: string;
+    onRefresh?: (value: T) => void;
+    shouldCache?: (value: T) => boolean;
+  }
 ) {
   const loadInvalidationVersion = cacheInvalidationVersion;
   const loadKeyInvalidationVersion = getCacheKeyInvalidationVersion(key);
@@ -147,9 +166,11 @@ function loadAndStoreCachedAppData<T>(
       loadInvalidationVersion !== cacheInvalidationVersion
       || loadKeyInvalidationVersion !== getCacheKeyInvalidationVersion(key)
     ) {
-      const current = cache.get(key);
+      const current = cache.get(inFlightKey);
       if (current?.promise === promise) {
-        if (existing && hasCachedValue(existing)) {
+        if (inFlightKey !== key) {
+          cache.delete(inFlightKey);
+        } else if (existing && hasCachedValue(existing)) {
           cache.set(key, {
             value: existing.value,
             expiresAt: existing.expiresAt,
@@ -164,15 +185,25 @@ function loadAndStoreCachedAppData<T>(
     }
 
     if (shouldCache && !shouldCache(value)) {
-      if (existing && hasCachedValue(existing)) {
-        cache.set(key, {
-          value: existing.value,
-          expiresAt: existing.expiresAt,
-          hydratedFromStorage: existing.hydratedFromStorage
-        });
-      } else {
-        cache.delete(key);
+      const current = cache.get(inFlightKey);
+      if (current?.promise === promise) {
+        if (inFlightKey !== key) {
+          cache.delete(inFlightKey);
+        } else if (existing && hasCachedValue(existing)) {
+          cache.set(key, {
+            value: existing.value,
+            expiresAt: existing.expiresAt,
+            hydratedFromStorage: existing.hydratedFromStorage
+          });
+        } else {
+          cache.delete(key);
+        }
       }
+      onRefresh?.(value);
+      return value;
+    }
+
+    if (cache.get(inFlightKey)?.promise !== promise) {
       onRefresh?.(value);
       return value;
     }
@@ -182,14 +213,20 @@ function loadAndStoreCachedAppData<T>(
       expiresAt: Date.now() + ttlMs,
       hydratedFromStorage: false
     };
+    if (inFlightKey !== key) {
+      const current = cache.get(inFlightKey);
+      if (current?.promise === promise) cache.delete(inFlightKey);
+    }
     cache.set(key, entry);
     if (persist) writeStoredCacheEntry(key, entry);
     onRefresh?.(value);
     return value;
   }).catch((error) => {
-    const current = cache.get(key);
+    const current = cache.get(inFlightKey);
     if (current?.promise === promise) {
-      if (existing && hasCachedValue(existing)) {
+      if (inFlightKey !== key) {
+        cache.delete(inFlightKey);
+      } else if (existing && hasCachedValue(existing)) {
         cache.set(key, {
           value: existing.value,
           expiresAt: existing.expiresAt,
@@ -202,8 +239,8 @@ function loadAndStoreCachedAppData<T>(
     throw error;
   });
 
-  cache.set(key, {
-    ...(existing && hasCachedValue(existing) ? { value: existing.value } : {}),
+  cache.set(inFlightKey, {
+    ...(inFlightKey === key && existing && hasCachedValue(existing) ? { value: existing.value } : {}),
     promise,
     expiresAt: existing?.expiresAt ?? Date.now() + ttlMs,
     hydratedFromStorage: existing?.hydratedFromStorage

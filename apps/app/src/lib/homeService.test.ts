@@ -130,6 +130,40 @@ describe('homeService Teams bootstrap reuse', () => {
         expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenLastCalledWith(user, expect.objectContaining({ previewParentChildren: undefined }));
     });
 
+    it('keeps Home previews when a non-preview schedule summary is already in flight', async () => {
+        const preview = {
+            children: [{ teamId: 'team-1', teamName: 'Fast Falcons', playerId: 'player-1', playerName: 'Avery Ace' }],
+            events: [],
+            staffTeams: [],
+            isPartial: true
+        };
+        const complete = { ...preview, isPartial: false };
+        const pendingNonPreview = deferred<typeof complete>();
+        const pendingHome = deferred<typeof complete>();
+        const onPartial = vi.fn();
+        scheduleServiceMocks.loadParentSchedule
+            .mockImplementationOnce((_user, options) => {
+                expect(options.previewParentChildren).toBeUndefined();
+                return pendingNonPreview.promise;
+            })
+            .mockImplementationOnce((_user, options) => {
+                expect(options.previewParentChildren).toBe(true);
+                options.onPartial(preview);
+                return pendingHome.promise;
+            });
+
+        const nonPreviewLoad = loadParentScheduleSummary(user);
+        const homeLoad = loadParentHomeSummaryBootstrap(user, { onPartial });
+
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+        expect(onPartial).toHaveBeenCalledWith(expect.objectContaining({ schedule: preview }));
+
+        pendingNonPreview.resolve(complete);
+        pendingHome.resolve(complete);
+        await expect(nonPreviewLoad).resolves.toEqual(complete);
+        await expect(homeLoad).resolves.toEqual(expect.objectContaining({ schedule: complete }));
+    });
+
     it('shares one native profile and managed-team projection across Home schedule and chat', async () => {
         nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
         const profile = { parentOf: [], coachOf: ['team-owned'] };
