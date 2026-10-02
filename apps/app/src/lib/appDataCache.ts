@@ -25,6 +25,8 @@ type LoadCachedAppDataOptions<T> = {
   persist?: boolean;
   maxStaleMs?: number;
   staleWhileRevalidate?: boolean;
+  /** Observe background request lifetime separately from the immediate cached return. */
+  onBackgroundLoad?: (request: { promise: Promise<T>; value: T; usableUntil: number }) => void;
   onRefresh?: (value: T) => void;
   onBackgroundRefresh?: (value: T) => void;
   onRefreshError?: (error: unknown) => void;
@@ -82,6 +84,7 @@ export function loadCachedAppData<T>(
     staleWhileRevalidate = false,
     onRefresh,
     onBackgroundRefresh,
+    onBackgroundLoad,
     onRefreshError,
     shouldCache
   }: LoadCachedAppDataOptions<T> = {}
@@ -117,6 +120,7 @@ export function loadCachedAppData<T>(
         : undefined,
       shouldCache
     });
+    onBackgroundLoad?.({ promise: refreshPromise, value: existing.value as T, usableUntil: existing.expiresAt + maxStaleMs });
     refreshPromise.catch((error) => {
       logger.warn('Background refresh failed.', { error });
       onRefreshError?.(error);

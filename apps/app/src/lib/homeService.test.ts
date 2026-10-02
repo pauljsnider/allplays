@@ -362,6 +362,111 @@ describe('homeService Teams bootstrap reuse', () => {
         });
     });
 
+    it.each(['complete', 'partial', 'error'])('shares a stale Home refresh until %s settlement', async (outcome) => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        const stale = { children: [], events: [] } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(stale);
+        await loadParentScheduleSummary(user, { previewParentChildren: true });
+        vi.setSystemTime(46000);
+        const refresh = deferred<any>();
+        scheduleServiceMocks.loadParentSchedule.mockReturnValue(refresh.promise);
+        const first = { previewParentChildren: true, onPartial: vi.fn(), onRefresh: vi.fn(), onBackgroundError: vi.fn() };
+        const second = { previewParentChildren: true, onPartial: vi.fn(), onRefresh: vi.fn(), onBackgroundError: vi.fn() };
+        expect(await loadParentScheduleSummary(user, first)).toBe(stale);
+        expect(await loadParentScheduleSummary(user, second)).toBe(stale);
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+        scheduleServiceMocks.loadParentSchedule.mock.calls[1][1].onPartial({ ...stale, isPartial: true });
+        expect(first.onPartial).not.toHaveBeenCalled();
+        expect(second.onPartial).not.toHaveBeenCalled();
+        const result = { ...stale, isPartial: outcome === 'partial' };
+        const error = new Error('refresh unavailable');
+        if (outcome === 'error') refresh.reject(error);
+        else refresh.resolve(result);
+        await vi.waitFor(() => {
+            for (const subscriber of [first, second]) {
+                if (outcome === 'error') expect(subscriber.onBackgroundError).toHaveBeenCalledWith(error);
+                else expect(subscriber.onRefresh).toHaveBeenCalledWith(result);
+            }
+        });
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValue(stale);
+        await loadParentScheduleSummary(user, { previewParentChildren: true });
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(outcome === 'complete' ? 2 : 3);
+    });
+
+    it('waits for the shared refresh once the stale Home value expires', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        const stale = { children: [], events: [] } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(stale);
+        await loadParentScheduleSummary(user, { previewParentChildren: true });
+        vi.setSystemTime(46000);
+        const refresh = deferred<any>();
+        scheduleServiceMocks.loadParentSchedule.mockReturnValue(refresh.promise);
+        expect(await loadParentScheduleSummary(user, { previewParentChildren: true })).toBe(stale);
+        vi.setSystemTime(345000);
+        const returned = vi.fn();
+        const expired = loadParentScheduleSummary(user, { previewParentChildren: true }).then(returned);
+        await Promise.resolve();
+        expect(returned).not.toHaveBeenCalled();
+        const fresh = { ...stale, staffTeams: [] };
+        refresh.resolve(fresh);
+        await expired;
+        expect(returned).toHaveBeenCalledWith(fresh);
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(['invalidate', 'force', 'other-user'])('isolates a stale refresh from a newer %s request', async (boundary) => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        const stale = { children: [], events: [] } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(stale);
+        await loadParentScheduleSummary(user, { previewParentChildren: true });
+        vi.setSystemTime(46000);
+        const oldRefresh = deferred<any>();
+        const newRefresh = deferred<any>();
+        scheduleServiceMocks.loadParentSchedule.mockReturnValueOnce(oldRefresh.promise).mockReturnValueOnce(newRefresh.promise);
+        const oldCallback = vi.fn();
+        expect(await loadParentScheduleSummary(user, { previewParentChildren: true, onRefresh: oldCallback })).toBe(stale);
+        if (boundary === 'invalidate') invalidateCachedAppData(getParentScheduleSummaryCacheKey(user.uid));
+        const nextUser = boundary === 'other-user' ? { ...user, uid: 'parent-2' } : user;
+        const newCallback = vi.fn();
+        const next = loadParentScheduleSummary(nextUser, {
+            previewParentChildren: true, force: boundary === 'force', onPartial: newCallback
+        });
+        const oldResult = { ...stale, staffTeams: [{ teamId: 'old', teamName: 'Old' }] };
+        oldRefresh.resolve(oldResult);
+        await vi.waitFor(() => expect(oldCallback).toHaveBeenCalledWith(oldResult));
+        expect(newCallback).not.toHaveBeenCalled();
+        // Settling the previous request must not delete the new request's registry entry.
+        const joined = loadParentScheduleSummary(nextUser, { previewParentChildren: true });
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(3);
+        const newResult = { ...stale, staffTeams: [{ teamId: 'new', teamName: 'New' }] };
+        newRefresh.resolve(newResult);
+        expect(await next).toBe(newResult);
+        expect(await joined).toBe(newResult);
+        expect(getCachedAppData(getParentScheduleSummaryCacheKey(nextUser.uid))).toBe(newResult);
+    });
+
+    it('suppresses synchronous discovery partials when returning a cached Home', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        const stale = { children: [], events: [] } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(stale);
+        await loadParentScheduleSummary(user, { previewParentChildren: true });
+        vi.setSystemTime(46000);
+        const refresh = deferred<any>();
+        scheduleServiceMocks.loadParentSchedule.mockImplementationOnce((_user, options) => {
+            options.onPartial({ ...stale, isPartial: true });
+            return refresh.promise;
+        });
+        const onPartial = vi.fn();
+        expect(await loadParentScheduleSummary(user, { previewParentChildren: true, onPartial })).toBe(stale);
+        expect(onPartial).not.toHaveBeenCalled();
+        refresh.resolve(stale);
+        await vi.waitFor(() => expect(onPartial).toHaveBeenCalledTimes(1));
+    });
+
     it('reports a complete stale-summary background refresh separately from initial partials', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-08-13T12:00:00.000Z'));

@@ -518,6 +518,26 @@ describe('Home', () => {
     expect(document.querySelector('a[href="/players/team-1/player-1"]')).toBeNull();
   });
 
+  it('ignores background refresh callbacks after Home unmounts', async () => {
+    let options: any;
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementationOnce((_user: unknown, nextOptions: any) => {
+      options = nextOptions;
+      return Promise.resolve({ home: baseHome, schedule: { children: [], events: [] } });
+    });
+    const view = renderHome(signedInAuth, '/home?section=players');
+    await screen.findByRole('heading', { name: 'My players' });
+    view.unmount();
+    const calls = homeServiceMocks.loadParentHomeSummaryBootstrap.mock.calls.length;
+    const secondaryCalls = homeServiceMocks.loadParentHomeWithSecondaryData.mock.calls.length;
+    act(() => {
+      options.onPartial({ home: baseHome, schedule: { children: [], events: [], isPartial: true } });
+      options.onRefresh({ home: baseHome, schedule: { children: [], events: [] } });
+      options.onBackgroundError(new Error('late refresh failure'));
+    });
+    expect(homeServiceMocks.loadParentHomeSummaryBootstrap).toHaveBeenCalledTimes(calls);
+    expect(homeServiceMocks.loadParentHomeWithSecondaryData).toHaveBeenCalledTimes(secondaryCalls);
+  });
+
   it('renders a dedicated welcome instead of personalized Home for signed-out users', async () => {
     renderHome(signedOutAuth, '/home?section=feed');
 

@@ -34,7 +34,9 @@ const logger = createLogger('home');
 
 type ParentSchedulePreviewState = {
   invalidationToken: string;
-  callbacks: Map<(schedule: ParentScheduleLoadResult) => void, number>;
+  callbacks: Set<(schedule: ParentScheduleLoadResult) => void>;
+  subscribers: Set<ParentScheduleSummaryOptions>;
+  background?: { promise: Promise<ParentScheduleLoadResult>; value: ParentScheduleLoadResult; usableUntil: number };
   latest?: ParentScheduleLoadResult;
   promise?: Promise<ParentScheduleLoadResult>;
 };
@@ -423,21 +425,29 @@ export async function loadParentScheduleSummary(
   if (options.previewParentChildren && !force) {
     const activePreview = parentSchedulePreviewStates.get(cacheKey);
     if (activePreview?.promise && activePreview.invalidationToken === invalidationToken) {
-      const release = registerParentSchedulePreviewCallback(activePreview, options.onPartial);
-      try {
-        return await activePreview.promise;
-      } finally {
-        release();
+      activePreview.subscribers.add(options);
+      if (activePreview.background) {
+        return Date.now() < activePreview.background.usableUntil
+          ? activePreview.background.value
+          : activePreview.background.promise;
       }
+      registerParentSchedulePreviewCallback(activePreview, options.onPartial);
+      return activePreview.promise;
     }
   }
 
   const previewState: ParentSchedulePreviewState | undefined = options.previewParentChildren
-    ? { invalidationToken, callbacks: new Map<(schedule: ParentScheduleLoadResult) => void, number>() }
+    ? { invalidationToken, callbacks: new Set<(schedule: ParentScheduleLoadResult) => void>(), subscribers: new Set([options]) }
     : undefined;
-  const releasePreviewCallback = previewState
-    ? registerParentSchedulePreviewCallback(previewState, options.onPartial)
-    : undefined;
+  if (previewState) registerParentSchedulePreviewCallback(previewState, options.onPartial);
+  let initializing = true;
+  const initialPartials: ParentScheduleLoadResult[] = [];
+  const cleanup = () => {
+    if (!previewState) return;
+    previewState.callbacks.clear();
+    previewState.subscribers.clear();
+    if (parentSchedulePreviewStates.get(cacheKey) === previewState) parentSchedulePreviewStates.delete(cacheKey);
+  };
   if (previewState) parentSchedulePreviewStates.set(cacheKey, previewState);
   const previewScope = previewState ? `home-parent-preview:${++parentSchedulePreviewRequestId}` : undefined;
   const loadPromise = loadCachedAppData(
@@ -452,7 +462,10 @@ export async function loadParentScheduleSummary(
         nativeStaffTeamsLoader: options.nativeContext.loadManagedTeams
       } : {}),
       ...(previewState
-        ? { onPartial: (schedule: ParentScheduleLoadResult) => emitParentSchedulePreview(previewState, schedule) }
+        ? { onPartial: (schedule: ParentScheduleLoadResult) => {
+          if (initializing) initialPartials.push(schedule);
+          else if (!previewState.background) emitParentSchedulePreview(previewState, schedule);
+        } }
         : options.onPartial ? { onPartial: options.onPartial } : {})
     }),
     {
@@ -461,20 +474,35 @@ export async function loadParentScheduleSummary(
       inFlightScope: previewScope,
       maxStaleMs: homeMaxStaleMs,
       staleWhileRevalidate: true,
-      onRefresh: options.onPartial,
-      onBackgroundRefresh: options.onRefresh,
-      onRefreshError: options.onBackgroundError,
+      onBackgroundLoad: previewState ? (request) => {
+        previewState.background = request;
+        // Success cleans up after refresh callbacks; the error callback owns failure cleanup.
+        void request.promise.then(cleanup, () => undefined);
+      } : undefined,
+      onRefresh: previewState
+        ? (schedule) => previewState.subscribers.forEach((subscriber) => subscriber.onPartial?.(schedule))
+        : options.onPartial,
+      onBackgroundRefresh: previewState
+        ? (schedule) => previewState.subscribers.forEach((subscriber) => subscriber.onRefresh?.(schedule))
+        : options.onRefresh,
+      onRefreshError: previewState
+        ? (error) => {
+          try { previewState.subscribers.forEach((subscriber) => subscriber.onBackgroundError?.(error)); }
+          finally { cleanup(); }
+        }
+        : options.onBackgroundError,
       shouldCache: (result) => result?.isPartial !== true
     }
   );
-  if (previewState) previewState.promise = loadPromise;
+  initializing = false;
+  if (previewState) {
+    previewState.promise = loadPromise;
+    if (!previewState.background) initialPartials.forEach((schedule) => emitParentSchedulePreview(previewState, schedule));
+  }
   try {
     return await loadPromise;
   } finally {
-    releasePreviewCallback?.();
-    if (previewState && parentSchedulePreviewStates.get(cacheKey) === previewState) {
-      parentSchedulePreviewStates.delete(cacheKey);
-    }
+    if (!previewState?.background) cleanup();
   }
 }
 
@@ -482,19 +510,14 @@ function registerParentSchedulePreviewCallback(
   state: ParentSchedulePreviewState,
   callback?: (schedule: ParentScheduleLoadResult) => void
 ) {
-  if (!callback) return () => undefined;
-  state.callbacks.set(callback, (state.callbacks.get(callback) ?? 0) + 1);
+  if (!callback) return;
+  state.callbacks.add(callback);
   if (state.latest) callback(state.latest);
-  return () => {
-    const registrations = state.callbacks.get(callback) ?? 0;
-    if (registrations <= 1) state.callbacks.delete(callback);
-    else state.callbacks.set(callback, registrations - 1);
-  };
 }
 
 function emitParentSchedulePreview(state: ParentSchedulePreviewState, schedule: ParentScheduleLoadResult) {
   state.latest = schedule;
-  state.callbacks.forEach((_registrations, callback) => callback(schedule));
+  state.callbacks.forEach((callback) => callback(schedule));
 }
 
 function normalizeStaffTeams(schedule: ParentScheduleLoadResult): ParentHomeInboxTeam[] {

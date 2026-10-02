@@ -21,6 +21,38 @@ afterEach(() => {
   vi.resetModules();
 });
 
+describe('appDataCache background lifetime', () => {
+  it('exposes refresh settlement separately from the immediate cached value', async () => {
+    const { loadCachedAppData } = await import('./appDataCache');
+    const now = vi.spyOn(Date, 'now').mockReturnValue(0);
+    try {
+      const observer = vi.fn();
+      await loadCachedAppData('lifetime', async () => 'cached', { ttlMs: 10, onBackgroundLoad: observer });
+      expect(observer).not.toHaveBeenCalled();
+      now.mockReturnValue(5);
+      await expect(loadCachedAppData('lifetime', async () => 'unused', { onBackgroundLoad: observer })).resolves.toBe('cached');
+      expect(observer).not.toHaveBeenCalled();
+      now.mockReturnValue(11);
+      const pending = deferred<string>();
+      await expect(loadCachedAppData('lifetime', () => pending.promise, {
+        staleWhileRevalidate: true, maxStaleMs: 100, onBackgroundLoad: observer
+      })).resolves.toBe('cached');
+      expect(observer).toHaveBeenCalledTimes(1);
+      const request = observer.mock.calls[0][0];
+      expect(request.value).toBe('cached');
+      expect(request.usableUntil).toBe(110);
+      const settled = vi.fn();
+      void request.promise.then(settled);
+      await Promise.resolve();
+      expect(settled).not.toHaveBeenCalled();
+      pending.resolve('fresh');
+      await expect(request.promise).resolves.toBe('fresh');
+    } finally {
+      now.mockRestore();
+    }
+  });
+});
+
 describe('appDataCache shared write ordering', () => {
   it('keeps a newer unscoped result when it completes before an older scoped load', async () => {
     const cacheModule = await import('./appDataCache');
