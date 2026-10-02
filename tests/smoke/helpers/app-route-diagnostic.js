@@ -33,7 +33,7 @@ function assetPath(url) {
         const { pathname } = new URL(url);
         const chunk = pathname.match(/^\/app\/assets\/(FeesTool|ParentTools|index)-[A-Za-z0-9_-]{8}\.js$/);
         if (chunk) return `/app/assets/${chunk[1]}-[hash].js`;
-        if (['/js/officiating-slots.js', '/js/firebase-auth.js', '/player.html', '/team.html'].includes(pathname)) return pathname;
+        if (['/js/officiating-slots.js', '/js/firebase-auth.js', '/js/vendor/firebase-auth.js', '/player.html', '/team.html'].includes(pathname)) return pathname;
     } catch { /* Unrecognized URLs are omitted. */ }
     return '[other-asset]';
 }
@@ -97,7 +97,7 @@ export async function withAppFailureDiagnostic(session, testInfo, callback, { ba
                             shellMs: timing.shellMs ?? null, panelMs: timing.panelMs ?? null } : null,
                         events
                     });
-                    // Retain safe evidence even before artifact-upload support lands.
+                    // Retain safe reporter evidence even if artifact upload is unavailable.
                     console.log(`SMOKE_FAILURE_DIAGNOSTIC ${diagnostic}`);
                     await writeFile(file, diagnostic);
                 })(),
