@@ -3,6 +3,7 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { parse } from 'yaml';
 import { writeRedactedDiagnostic } from '../smoke/helpers/candidate-auth-diagnostic.js';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
@@ -107,7 +108,16 @@ describe('candidate-host authenticated smoke coverage', () => {
         expect(workflow).toContain('id: core_config');
         expect(workflow).toContain('id: canonical_prod');
         expect(workflow).toContain('id: canonical_core');
-        expect(workflow.match(/continue-on-error: true/g)).toHaveLength(4);
+        const jobs = Object.values(parse(workflow).jobs);
+        for (const job of jobs) expect(job['continue-on-error']).toBeUndefined();
+        const continuedSteps = jobs.flatMap((job) => job.steps || [])
+            .filter((step) => Object.hasOwn(step, 'continue-on-error'));
+        for (const step of continuedSteps) expect(step['continue-on-error']).toBe(true);
+        expect(continuedSteps.map((step) => step.id || step.name).sort()).toEqual([
+            'firebase_public', 'firebase_auth', 'canonical_prod', 'canonical_core',
+            'Upload sanitized baseline boot diagnostics',
+            'Upload sanitized authenticated route diagnostics'
+        ].sort());
         expect(workflow).toContain('if: always()');
         expect(workflow).toContain('steps.firebase_public.outcome');
         expect(workflow).toContain('steps.firebase_auth.outcome');

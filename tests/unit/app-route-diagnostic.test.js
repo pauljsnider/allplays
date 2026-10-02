@@ -20,7 +20,7 @@ describe('authenticated smoke failure diagnostics', () => {
         try {
             const result = await withAppFailureDiagnostic({ page }, { retry: 1, outputPath: (name) => path.join(folder, name) }, async () => {
                 routeTimings.set(page, { startedAt: Date.now(), url: page.url() });
-                for (const url of ['https://user:short@host/js/firebase-auth.js?apiKey=short', 'https://host/private-person/secret.js', 'https://host/app/assets/FeesTool-12345678.js?token=short']) {
+                for (const url of ['https://user:short@host/js/firebase-auth.js?apiKey=short', 'https://user:short@host/js/vendor/firebase-auth.js?token=short#secret', 'https://host/js/vendor/private-person.js', 'https://host/js/vendor/firebase-auth.js/private-person', 'https://host/private-person/secret.js', 'https://host/app/assets/FeesTool-12345678.js?token=short']) {
                     page.emit('requestfailed', { resourceType: () => 'script', url: () => url, failure: () => ({ errorText: 'ERR_CONNECTION_CLOSED token=short person@example.com' }) });
                 }
                 page.emit('pageerror', Error('Name: Private Person, bearer short, person@example.com'));
@@ -31,7 +31,7 @@ describe('authenticated smoke failure diagnostics', () => {
             expect(text).not.toMatch(/short|secret|private-person|Private Person|example|do not serialize/);
             const resultData = JSON.parse(text);
             expect(resultData).toMatchObject({ retry: 1, route: '/teams/:id/fees', state: { feesLoading: null }, navigation: { route: '/teams/:id/fees' } });
-            expect(resultData.events.map((event) => event.asset)).toEqual(['/js/firebase-auth.js', '[other-asset]', '/app/assets/FeesTool-[hash].js', undefined]);
+            expect(resultData.events.map((event) => event.asset)).toEqual(['/js/firebase-auth.js', '/js/vendor/firebase-auth.js', '[other-asset]', '[other-asset]', '[other-asset]', '/app/assets/FeesTool-[hash].js', undefined]);
             expect(page.eventNames()).toEqual([]);
         } finally { await rm(folder, { recursive: true, force: true }); }
     });
