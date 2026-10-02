@@ -785,11 +785,11 @@ test('platform-admin dashboard discovery returns bounded stable pages with proje
     });
 
     const firstPage = await callables.listManagedTeams(
-        { includeAllTeams: true, includeParentTeams: true, pageSize: 500 },
+        { includeAllTeams: true, includeParentTeams: true, dashboardTeamPageVersion: 1, pageSize: 500 },
         authContext('platform-admin', { email: 'platform@example.com' })
     );
     const secondPage = await callables.listManagedTeams(
-        { includeAllTeams: true, includeParentTeams: true, pageSize: 500, cursor: firstPage.nextCursor },
+        { includeAllTeams: true, includeParentTeams: true, dashboardTeamPageVersion: 1, pageSize: 500, cursor: firstPage.nextCursor },
         authContext('platform-admin', { email: 'platform@example.com' })
     );
 
@@ -797,11 +797,13 @@ test('platform-admin dashboard discovery returns bounded stable pages with proje
     assert.equal(firstPage.isPartial, false);
     assert.equal(firstPage.items.length, 50);
     assert.equal(firstPage.hasMore, true);
+    assert.equal(firstPage.includesAllTeams, false);
     assert.equal(firstPage.nextCursor, 'team-049');
     assert.deepEqual(firstPage.items.map((team) => team.id),
         Array.from({ length: 50 }, (_value, index) => `team-${String(index).padStart(3, '0')}`));
     assert.deepEqual(secondPage.items.map((team) => team.id), ['team-050', 'team-051']);
     assert.equal(secondPage.hasMore, false);
+    assert.equal(secondPage.includesAllTeams, false);
     assert.equal(secondPage.nextCursor, null);
     assert.equal(new Set([...firstPage.items, ...secondPage.items].map((team) => team.id)).size, 52);
     assert.deepEqual(firstPage.parentItems, []);
@@ -815,6 +817,38 @@ test('platform-admin dashboard discovery returns bounded stable pages with proje
         [{ field: '__name__', direction: 'asc' }],
         [{ field: '__name__', direction: 'asc' }]
     ]);
+});
+
+test('legacy platform-admin clients still receive the complete team inventory', async () => {
+    const teams = Object.fromEntries(Array.from({ length: 52 }, (_, index) => [
+        `teams/team-${index}`, { name: `Team ${index}`, active: true }
+    ]));
+    const { callables } = loadCallables({ 'users/platform-admin': { isAdmin: true }, ...teams });
+    const result = await callables.listManagedTeams(
+        { includeAllTeams: true, includeParentTeams: true },
+        authContext('platform-admin', { email: 'platform@example.com' })
+    );
+    assert.equal(result.items.length, 52);
+    assert.equal(result.includesAllTeams, true);
+    assert.equal(result.hasMore, false);
+    assert.equal(result.nextCursor, null);
+});
+
+test('admin pagination opt-in bounds default pages and rejects unsupported versions', async () => {
+    const teams = Object.fromEntries(Array.from({ length: 30 }, (_, index) => [
+        `teams/team-${index}`, { name: `Team ${index}`, active: true }
+    ]));
+    const { callables, firestore } = loadCallables({ 'users/platform-admin': { isAdmin: true }, ...teams });
+    const context = authContext('platform-admin', { email: 'platform@example.com' });
+    const result = await callables.listManagedTeams({ includeAllTeams: true, dashboardTeamPageVersion: 1 }, context);
+    assert.equal(result.items.length, 24);
+    assert.equal(result.hasMore, true);
+    assert.equal(result.includesAllTeams, false);
+    assert.equal(firestore._queryLog.find(query => query.path === 'teams').limitCount, 25);
+    await assert.rejects(
+        callables.listManagedTeams({ includeAllTeams: true, dashboardTeamPageVersion: 2 }, context),
+        error => error.code === 'invalid-argument'
+    );
 });
 
 test('non-admin callers cannot request the platform-wide dashboard projection', async () => {

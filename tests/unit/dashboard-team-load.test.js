@@ -18,7 +18,7 @@ vi.mock('../../js/firebase-app-check-rest.js?v=1', () => ({
     getPrimaryAppCheckHeaders: vi.fn(async (headers) => headers)
 }));
 
-const { loadDashboardTeams } = await import('../../js/dashboard-team-load.js?v=5');
+const { loadDashboardTeams } = await import('../../js/dashboard-team-load.js?v=6');
 
 function dashboardResult({
     items = [],
@@ -240,6 +240,7 @@ describe('dashboard team load', () => {
         expect(firebaseMocks.listManagedTeams).toHaveBeenCalledWith({
             includeParentTeams: true,
             includeAllTeams: true,
+            dashboardTeamPageVersion: 1,
             pageSize: 25,
             cursor: 'team-a'
         });

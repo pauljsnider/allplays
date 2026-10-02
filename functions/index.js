@@ -21002,10 +21002,12 @@ async function listPlatformAdminTeamDocuments(caller, options = {}) {
   let query = firestore.collection('teams')
     .select(...DASHBOARD_TEAM_FIELD_PATHS)
     .orderBy(admin.firestore.FieldPath.documentId());
-  if (cursor) query = query.startAfter(cursor);
-  const snapshot = await query.limit(pageSize + 1).get();
-  const hasMore = snapshot.docs.length > pageSize;
-  const pageDocs = snapshot.docs.slice(0, pageSize);
+  // Cached clients predate pagination and require the complete projection.
+  const paginated = options.dashboardTeamPageVersion === 1;
+  if (paginated && cursor) query = query.startAfter(cursor);
+  const snapshot = await (paginated ? query.limit(pageSize + 1) : query).get();
+  const hasMore = paginated && snapshot.docs.length > pageSize;
+  const pageDocs = paginated ? snapshot.docs.slice(0, pageSize) : snapshot.docs;
   const teams = new Map(pageDocs.map((teamSnap) => [teamSnap.id, teamSnap]));
   teams.discoveryQueryCount = 1;
   teams.successfulDiscoveryQueryCount = 1;
@@ -21052,10 +21054,13 @@ exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => 
   if (includeAllTeams && !isOpportunityPlatformAdmin(caller)) {
     throw new functions.https.HttpsError('permission-denied', 'Platform admin access is required to load platform-wide teams.');
   }
+  if (includeAllTeams && data?.dashboardTeamPageVersion != null && data.dashboardTeamPageVersion !== 1) {
+    throw new functions.https.HttpsError('invalid-argument', 'Unsupported dashboard team page version.');
+  }
   const includeChatMetadata = data?.includeChatMetadata === true;
   const [staffTeams, parentTeamResult] = await Promise.all([
     includeAllTeams
-      ? listPlatformAdminTeamDocuments(caller, { pageSize: data?.pageSize, cursor: data?.cursor })
+      ? listPlatformAdminTeamDocuments(caller, { pageSize: data?.pageSize, cursor: data?.cursor, dashboardTeamPageVersion: data?.dashboardTeamPageVersion })
       : listStaffTeamDocuments(caller),
     !includeAllTeams && (includeParentTeams || includeChatMetadata)
       ? listCallableParentTeamDocuments(caller)
@@ -21160,7 +21165,7 @@ exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => 
     items,
     ...(includeParentTeams ? { parentItems } : {}),
     dashboardTeamLoadVersion: DASHBOARD_TEAM_LOAD_VERSION,
-    includesAllTeams: includeAllTeams,
+    includesAllTeams: includeAllTeams && staffTeams.hasMore !== true && !data?.cursor,
     nextCursor: includeAllTeams ? staffTeams.nextCursor : null,
     hasMore: includeAllTeams ? staffTeams.hasMore === true : false,
     isPartial: staffTeams.isPartial === true

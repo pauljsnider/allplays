@@ -93,7 +93,7 @@
 
     <script type="module">
         import { deleteTeam, getUnreadChatCounts } from './js/db.js?v=4433199';
-        import { loadDashboardTeams } from './js/dashboard-team-load.js?v=5';
+        import { loadDashboardTeams } from './js/dashboard-team-load.js?v=6';
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=443375';
         import { checkAuth } from './js/auth.js?v=4433203';
         import { startBoundedRetry } from './js/bounded-retry.js?v=2';
@@ -228,7 +228,9 @@
                 }, {});
                 let unreadCounts = {};
                 const unavailableUnreadTeamIds = new Set();
-                let cancelUnreadChatRetries = () => {};
+                const deactivatedTeamIds = new Set();
+                const unreadRetryBatches = new Set();
+                const pendingUnreadTeamIds = new Set();
 
                 function renderNoTeamsState() {
                     return `
@@ -407,13 +409,21 @@
                             const teamId = buttonEl.dataset.teamId;
                             const teamName = buttonEl.dataset.teamName;
                             if (!confirm(`Deactivate team "${teamName}"? Team data will be retained for history.`)) return;
-                            const card = buttonEl.closest('[data-team-card]');
                             const originalText = buttonEl.textContent;
                             buttonEl.disabled = true;
                             buttonEl.textContent = 'Deactivating...';
                             try {
                                 await deleteTeam(teamId);
-                                if (card) card.remove();
+                                deactivatedTeamIds.add(teamId);
+                                for (const teams of [fullAccessTeams, parentOnlyTeams]) {
+                                    const index = teams.findIndex(team => team.id === teamId);
+                                    if (index >= 0) teams.splice(index, 1);
+                                }
+                                delete conversationLookupByTeam[teamId];
+                                delete unreadCounts[teamId];
+                                unavailableUnreadTeamIds.delete(teamId);
+                                setUnreadStatusVisible(unavailableUnreadTeamIds.size > 0);
+                                renderTeamLists();
                             } catch (err) {
                                 console.error('Deactivate team failed', err);
                                 alert('Error deactivating team. ' + (err?.message || 'Please try again.'));
@@ -549,7 +559,7 @@
                             ...parentOnlyTeams.map((team) => team.id)
                         ]);
                         const newlyLoadedTeams = page.fullAccessTeams
-                            .filter((team) => !knownTeamIds.has(team.id))
+                            .filter((team) => !knownTeamIds.has(team.id) && !deactivatedTeamIds.has(team.id))
                             .map((team) => ({ ...team, _access: 'full' }));
                         newlyLoadedTeams.forEach((team) => {
                             knownTeamIds.add(team.id);
@@ -583,32 +593,55 @@
                 function setUnreadStatusVisible(visible) {
                     unreadStatus?.classList.toggle('hidden', !visible);
                 }
-                function startUnreadChatBadges(pendingTeamIds) {
-                    cancelUnreadChatRetries();
-                    pendingTeamIds.forEach((teamId) => unavailableUnreadTeamIds.delete(teamId));
-                    setUnreadStatusVisible(false);
+                function startUnreadChatBadges(teamIdsToLoad) {
+                    const pendingTeamIds = teamIdsToLoad.filter(teamId => (
+                        !pendingUnreadTeamIds.has(teamId) && !deactivatedTeamIds.has(teamId)
+                        && !Object.prototype.hasOwnProperty.call(unreadCounts, teamId)
+                    ));
+                    if (pendingTeamIds.length === 0) return;
+                    const batch = { cancel: () => {} };
+                    unreadRetryBatches.add(batch);
+                    const finishBatch = () => {
+                        unreadRetryBatches.delete(batch);
+                        pendingTeamIds.forEach(teamId => pendingUnreadTeamIds.delete(teamId));
+                    };
+                    pendingTeamIds.forEach(teamId => {
+                        pendingUnreadTeamIds.add(teamId);
+                        unavailableUnreadTeamIds.delete(teamId);
+                    });
+                    setUnreadStatusVisible(unavailableUnreadTeamIds.size > 0);
                     updateUnreadChatBadges();
-                    cancelUnreadChatRetries = startBoundedRetry({
+                    batch.cancel = startBoundedRetry({
                         initialValue: pendingTeamIds,
                         maxAttempts: 3,
                         run: (requestedTeamIds) => getUnreadChatCounts(user.uid, requestedTeamIds, {
                             conversationLookupByTeam,
                             deadlineAt: Date.now() + 5000
                         }).then((counts) => {
-                            unreadCounts = { ...unreadCounts, ...(counts || {}) };
-                            Object.keys(counts || {}).forEach((teamId) => unavailableUnreadTeamIds.delete(teamId));
+                            Object.entries(counts || {}).forEach(([teamId, count]) => {
+                                if (deactivatedTeamIds.has(teamId)) return;
+                                unreadCounts[teamId] = count;
+                                unavailableUnreadTeamIds.delete(teamId);
+                            });
                             updateUnreadChatBadges();
+                            setUnreadStatusVisible(unavailableUnreadTeamIds.size > 0);
                             return requestedTeamIds.filter((teamId) => (
-                                !Object.prototype.hasOwnProperty.call(unreadCounts, teamId)
+                                !deactivatedTeamIds.has(teamId)
+                                && !Object.prototype.hasOwnProperty.call(unreadCounts, teamId)
                             ));
                         }),
-                        shouldRetry: (unknownTeamIds) => unknownTeamIds.length > 0
-                            ? unknownTeamIds
-                            : undefined,
+                        shouldRetry: (unknownTeamIds) => {
+                            if (unknownTeamIds.length > 0) return unknownTeamIds;
+                            finishBatch();
+                            return undefined;
+                        },
                         onExhausted: (unavailableTeamIds, error) => {
-                            unavailableTeamIds.forEach((teamId) => unavailableUnreadTeamIds.add(teamId));
+                            finishBatch();
+                            unavailableTeamIds.forEach((teamId) => {
+                                if (!deactivatedTeamIds.has(teamId)) unavailableUnreadTeamIds.add(teamId);
+                            });
                             updateUnreadChatBadges();
-                            setUnreadStatusVisible(true);
+                            setUnreadStatusVisible(unavailableUnreadTeamIds.size > 0);
                             console.warn('Unable to load dashboard unread counts after bounded retries:', error || unavailableTeamIds);
                         }
                     });
@@ -619,7 +652,10 @@
                     ));
                     if (pendingTeamIds.length > 0) startUnreadChatBadges(pendingTeamIds);
                 });
-                window.addEventListener('pagehide', () => cancelUnreadChatRetries(), { once: true });
+                window.addEventListener('pagehide', () => {
+                    unreadRetryBatches.forEach(batch => batch.cancel());
+                    unreadRetryBatches.clear();
+                }, { once: true });
                 if (teamIds.length > 0) startUnreadChatBadges(teamIds);
 
             } catch (error) {

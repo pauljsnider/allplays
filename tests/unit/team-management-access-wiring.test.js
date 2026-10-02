@@ -8,7 +8,7 @@ function readRepoFile(relativePath) {
 describe('team management page access wiring', () => {
     it('loads dashboard staff and parent teams through one bounded server-authoritative request', () => {
         const html = readRepoFile('dashboard.html');
-        expect(html).toContain("import { loadDashboardTeams } from './js/dashboard-team-load.js?v=5';");
+        expect(html).toContain("import { loadDashboardTeams } from './js/dashboard-team-load.js?v=6';");
         expect(html).toContain('const initialTeamPage = await loadDashboardTeams({');
         expect(html).toContain('const { fullAccessTeams: coachTeams, parentTeams } = initialTeamPage;');
         expect(html).toContain('includeAllTeams: user.isAdmin === true,');

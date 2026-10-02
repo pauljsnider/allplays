@@ -123,6 +123,7 @@ export async function loadDashboardTeams(options = {}) {
         includeParentTeams: true,
         ...(includeAllTeams ? {
             includeAllTeams: true,
+            dashboardTeamPageVersion: 1,
             ...(Number.isFinite(options.pageSize) ? { pageSize: options.pageSize } : {}),
             ...(typeof options.cursor === 'string' && options.cursor ? { cursor: options.cursor } : {})
         } : {})
