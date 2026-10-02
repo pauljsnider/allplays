@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
     checkAuth: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=4433199', () => ({
+vi.mock('../../js/db.js?v=4433200', () => ({
     getDelegatedTeamContext: mocks.getDelegatedTeamContext,
     getTeamMediaFolders: mocks.getTeamMediaFolders,
     getTeamMediaItemsPage: mocks.getTeamMediaItemsPage,
@@ -36,7 +36,7 @@ vi.mock('../../js/db.js?v=4433199', () => ({
     updateTeamMediaItem: vi.fn()
 }));
 
-vi.mock('../../js/auth.js?v=4433203', () => ({
+vi.mock('../../js/auth.js?v=4433204', () => ({
     checkAuth: mocks.checkAuth
 }));
 
