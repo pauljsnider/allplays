@@ -13,6 +13,7 @@ import {
     doc,
     getDoc,
     getDocs,
+    limit,
     orderBy,
     query,
     serverTimestamp,
@@ -59,7 +60,12 @@ const diamondLiveGenerationBlock = extractMatchBlock(rulesSource, 'match /diamon
 
 describe('firestore rules — live game read visibility helpers', () => {
     it('keeps live events, chat, and reactions behind the shared game visibility helper', () => {
-        for (const block of [liveEventsBlock, liveChatBlock, liveReactionsBlock]) {
+        expect(liveEventsBlock).toContain('allow get: if !gameUsesDiamondScorebook(teamId, gameId) &&');
+        expect(liveEventsBlock).toContain('allow list: if !gameUsesDiamondScorebook(teamId, gameId) &&');
+        expect(liveEventsBlock).not.toContain('allow read:');
+        expect(liveEventsBlock.match(/canReadGameSubcollectionDocument\(teamId, gameId\)/g)).toHaveLength(2);
+
+        for (const block of [liveChatBlock, liveReactionsBlock]) {
             expect(block).toContain('allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&');
             expect(block).toContain('canReadGameSubcollectionDocument(teamId, gameId);');
         }
@@ -70,6 +76,14 @@ describe('firestore rules — live game read visibility helpers', () => {
         expect(liveEventsBlock).not.toContain('allow read: if true;');
         expect(liveChatBlock).not.toContain('allow read: if true;');
         expect(liveReactionsBlock).not.toContain('allow read: if true;');
+    });
+
+    it('requires positive active-game live event list limits at or below 20', () => {
+        expect(liveEventsBlock).toContain("gameData.get('status', '') in ['completed', 'final']");
+        expect(liveEventsBlock).toContain("gameData.get('liveStatus', '') in ['completed', 'final']");
+        expect(liveEventsBlock).toContain('request.query.limit != null');
+        expect(liveEventsBlock).toContain('request.query.limit > 0');
+        expect(liveEventsBlock).toContain('request.query.limit <= 20');
     });
 
     it('preserves the shared helper coverage for private and shareable game reads', () => {
@@ -275,6 +289,26 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('live interaction lifecycl
                 senderId: 'fan-1',
                 createdAt: new Date(0)
             });
+            await setDoc(doc(firestore, 'teams/shareable-team/games/active-game/liveEvents/active-event'), {
+                description: 'Active public event',
+                createdAt: new Date(4)
+            });
+            await setDoc(doc(firestore, 'teams/private-team/games/active-game/liveEvents/private-event'), {
+                description: 'Active private event',
+                createdAt: new Date(3)
+            });
+            await setDoc(doc(firestore, 'teams/cross-tenant-team/games/active-game/liveEvents/private-event'), {
+                description: 'Cross-tenant event',
+                createdAt: new Date(2)
+            });
+            await setDoc(doc(firestore, 'teams/shareable-team/games/status-completed/liveEvents/completed-event'), {
+                description: 'Completed game event',
+                createdAt: new Date(1)
+            });
+            await setDoc(doc(firestore, 'teams/shareable-team/games/live-status-final/liveEvents/final-event'), {
+                description: 'Final game event',
+                createdAt: new Date(0)
+            });
         });
     });
 
@@ -311,6 +345,56 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('live interaction lifecycl
         await assertSucceeds(reactionWrite(firestore, 'shareable-team', 'active-game', 'shareable-reaction'));
         await assertSucceeds(chatWrite(firestore, 'private-team', 'active-game', 'private-chat'));
         await assertSucceeds(reactionWrite(firestore, 'private-team', 'active-game', 'private-reaction'));
+    });
+
+    it('requires bounded active-game live event lists for authorized readers', async () => {
+        const firestore = fanDb();
+        const publicEvents = collection(
+            firestore,
+            'teams/shareable-team/games/active-game/liveEvents'
+        );
+        const privateEvents = collection(
+            firestore,
+            'teams/private-team/games/active-game/liveEvents'
+        );
+
+        await assertFails(getDocs(publicEvents));
+        await assertSucceeds(getDocs(query(publicEvents, limit(1))));
+        await assertSucceeds(getDocs(query(publicEvents, limit(20))));
+        await assertFails(getDocs(query(publicEvents, limit(21))));
+        await assertSucceeds(getDocs(query(privateEvents, limit(20))));
+    });
+
+    it('preserves authorized point reads and completed-game replay lists', async () => {
+        const firestore = fanDb();
+
+        await assertSucceeds(getDoc(doc(
+            firestore,
+            'teams/shareable-team/games/active-game/liveEvents/active-event'
+        )));
+        await assertSucceeds(getDoc(doc(
+            firestore,
+            'teams/private-team/games/active-game/liveEvents/private-event'
+        )));
+        await assertSucceeds(getDocs(collection(
+            firestore,
+            'teams/shareable-team/games/status-completed/liveEvents'
+        )));
+        await assertSucceeds(getDocs(collection(
+            firestore,
+            'teams/shareable-team/games/live-status-final/liveEvents'
+        )));
+    });
+
+    it('keeps unauthorized private live event reads denied even when bounded', async () => {
+        const firestore = fanDb();
+        const privateEventPath = 'teams/cross-tenant-team/games/active-game/liveEvents/private-event';
+
+        await assertFails(getDoc(doc(firestore, privateEventPath)));
+        await assertFails(getDocs(query(
+            collection(firestore, 'teams/cross-tenant-team/games/active-game/liveEvents'),
+            limit(20)
+        )));
     });
 
     it('denies direct Diamond writes while exposing only the current generation path', async () => {
@@ -379,10 +463,13 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('live interaction lifecycl
                 firestore,
                 `teams/shareable-team/games/diamond-game/${collectionName}/${documentId}`
             )));
-            await assertFails(getDocs(collection(
+            const collectionRef = collection(
                 firestore,
                 `teams/shareable-team/games/diamond-game/${collectionName}`
-            )));
+            );
+            await assertFails(getDocs(collectionName === 'liveEvents'
+                ? query(collectionRef, limit(20))
+                : collectionRef));
         }
         await assertSucceeds(getDocs(query(
             collection(firestore, `${generationRoot}/chat`),
