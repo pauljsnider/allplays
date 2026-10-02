@@ -240,15 +240,6 @@ jobs:
           SMOKE_AUTH_EMAIL: ${{ secrets.SMOKE_AUTH_EMAIL }}
           SMOKE_AUTH_PASSWORD: ${{ secrets.SMOKE_AUTH_PASSWORD }}
 
-      - name: Upload sanitized baseline boot diagnostics
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: baseline-boot-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
-          path: test-results/**/boot-path-diagnostic.json
-          if-no-files-found: ignore
-          retention-days: 7
-
       - name: Run fixture-backed core production smoke
         if: steps.core_config.outputs.enabled == 'true'
         id: canonical_core
@@ -283,15 +274,6 @@ jobs:
           SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
           SMOKE_PARENT_EMAIL: ${{ secrets.SMOKE_PARENT_EMAIL }}
           SMOKE_PARENT_PASSWORD: ${{ secrets.SMOKE_PARENT_PASSWORD }}
-
-      - name: Upload sanitized authenticated route diagnostics
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: authenticated-route-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
-          path: test-results/**/app-route-diagnostic.json
-          if-no-files-found: ignore
-          retention-days: 7
 
       - name: Aggregate production smoke signals
         if: always()

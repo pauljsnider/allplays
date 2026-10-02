@@ -90,13 +90,16 @@ export async function withAppFailureDiagnostic(session, testInfo, callback, { ba
                     const timing = routeTimings.get(page);
                     const file = testInfo.outputPath(baseline ? 'boot-path-diagnostic.json' : 'app-route-diagnostic.json');
                     await mkdir(path.dirname(file), { recursive: true });
-                    await writeFile(file, JSON.stringify({
+                    const diagnostic = JSON.stringify({
                         retry: testInfo.retry, elapsedMs: Date.now() - startedAt,
                         route: routeTemplate(page.url(), baseline), activeTabs: activeTabs.filter(Boolean), state,
                         navigation: timing ? { route: routeTemplate(timing.url), elapsedMs: Date.now() - timing.startedAt,
                             shellMs: timing.shellMs ?? null, panelMs: timing.panelMs ?? null } : null,
                         events
-                    }, null, 2));
+                    });
+                    // Retain safe evidence even before artifact-upload support lands.
+                    console.log(`SMOKE_FAILURE_DIAGNOSTIC ${diagnostic}`);
+                    await writeFile(file, diagnostic);
                 })(),
                 new Promise((resolve) => { timer = setTimeout(resolve, 1_000); })
             ]);
