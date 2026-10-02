@@ -139,12 +139,13 @@ export function runGh(args) {
     });
 }
 
-function loadWorkflowRuns(repository, workflowFile, event, executeGh) {
+function loadWorkflowRuns(repository, workflowFile, event, executeGh, headSha) {
     let parsed;
     try {
         parsed = JSON.parse(executeGh([
             'api', '--method', 'GET', `repos/${repository}/actions/workflows/${workflowFile}/runs`,
-            '-f', 'branch=master', '-f', `event=${event}`, '-F', 'per_page=20'
+            '-f', 'branch=master', '-f', `event=${event}`, '-F', 'per_page=20',
+            ...(headSha ? ['-f', `head_sha=${headSha}`] : [])
         ]));
     } catch (error) {
         throw new Error(`Unable to load ${workflowFile} runs.`, { cause: error });
@@ -183,8 +184,8 @@ export function verifyCriticalWorkflowHealthFromEnvironment(environment = proces
     const result = evaluateCriticalWorkflowHealth({
         now: dependencies.now || new Date(),
         masterSha,
-        deploy: loadWorkflowRuns(repository, monitoredWorkflows.deploy, 'push', executeGh),
-        smoke: loadWorkflowRuns(repository, monitoredWorkflows.smoke, 'workflow_run', executeGh),
+        deploy: loadWorkflowRuns(repository, monitoredWorkflows.deploy, 'push', executeGh, masterSha),
+        smoke: loadWorkflowRuns(repository, monitoredWorkflows.smoke, 'workflow_run', executeGh, masterSha),
         recovery: loadWorkflowRuns(repository, monitoredWorkflows.recovery, 'schedule', executeGh)
     });
 

@@ -114,7 +114,7 @@ describe('critical workflow health evaluation', () => {
 });
 
 describe('critical workflow API boundary', () => {
-    it('queries exact workflow files and event types in the production repository', () => {
+    it('queries deploy and smoke for the resolved master SHA while leaving recovery unfiltered by SHA', () => {
         const calls = [];
         const executeGh = vi.fn((args) => {
             calls.push(args);
@@ -136,8 +136,63 @@ describe('critical workflow API boundary', () => {
         expect(result.masterSha).toBe(sha);
         expect(calls[0]).toEqual(['api', '--method', 'GET', `repos/${OBSERVABILITY_REPOSITORY}/git/ref/heads/master`]);
         expect(calls).toHaveLength(4);
-        expect(calls.slice(1).map((args) => args.find((arg) => String(arg).startsWith('event='))))
-            .toEqual(['event=push', 'event=workflow_run', 'event=schedule']);
+        expect(calls.slice(1)).toEqual([
+            [
+                'api', '--method', 'GET', `repos/${OBSERVABILITY_REPOSITORY}/actions/workflows/deploy-prod.yml/runs`,
+                '-f', 'branch=master', '-f', 'event=push', '-F', 'per_page=20', '-f', `head_sha=${sha}`
+            ],
+            [
+                'api', '--method', 'GET', `repos/${OBSERVABILITY_REPOSITORY}/actions/workflows/post-deploy-smoke.yml/runs`,
+                '-f', 'branch=master', '-f', 'event=workflow_run', '-F', 'per_page=20', '-f', `head_sha=${sha}`
+            ],
+            [
+                'api', '--method', 'GET', `repos/${OBSERVABILITY_REPOSITORY}/actions/workflows/firestore-recovery-health.yml/runs`,
+                '-f', 'branch=master', '-f', 'event=schedule', '-F', 'per_page=20'
+            ]
+        ]);
+    });
+
+    it('finds the exact successful deploy beyond unfiltered results but remains unhealthy when smoke failed', () => {
+        const oldSha = 'b'.repeat(40);
+        const executeGh = vi.fn((args) => {
+            if (args.includes(`repos/${OBSERVABILITY_REPOSITORY}/git/ref/heads/master`)) {
+                return JSON.stringify({ ref: OBSERVABILITY_REF, object: { type: 'commit', sha } });
+            }
+            const file = args.find((arg) => String(arg).includes('/actions/workflows/'));
+            if (file.includes('firestore-recovery-health.yml')) {
+                return JSON.stringify(response([run({ id: 3, head_sha: oldSha })]));
+            }
+            if (!args.includes(`head_sha=${sha}`)) {
+                return JSON.stringify(response(Array.from({ length: 20 }, (_, index) => run({
+                    id: 100 + index, head_sha: oldSha, updated_at: '2030-05-01T11:30:00.000Z'
+                }))));
+            }
+            return JSON.stringify(response([file.includes('deploy-prod.yml')
+                ? run({ id: 1 })
+                : run({ id: 2, conclusion: 'failure' })]));
+        });
+        const previousExitCode = process.exitCode;
+        try {
+            process.exitCode = 0;
+            const result = verifyCriticalWorkflowHealthFromEnvironment({
+                GITHUB_REPOSITORY: OBSERVABILITY_REPOSITORY,
+                GITHUB_REF: OBSERVABILITY_REF,
+                GITHUB_SHA: oldSha,
+                GH_TOKEN: 'test-token'
+            }, { executeGh, now });
+            expect(result).toEqual({
+                healthy: false,
+                masterSha: sha,
+                signals: [
+                    { name: 'production-deploy', healthy: true, state: 'success', runId: 1 },
+                    { name: 'production-smoke', healthy: false, state: 'completed_failure', runId: 2 },
+                    { name: 'firestore-recovery', healthy: true, state: 'success', runId: 3 }
+                ]
+            });
+            expect(process.exitCode).toBe(1);
+        } finally {
+            process.exitCode = previousExitCode;
+        }
     });
 
     it('fails closed when the live master ref is not immutable commit evidence', () => {
