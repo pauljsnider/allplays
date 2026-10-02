@@ -105,3 +105,30 @@ test('callback failure preserves identity, redacts secrets, and records redirect
     expect(JSON.stringify(diagnostic)).not.toMatch(/secret|short-password|person@|private name|Bearer/);
     await expect(withAppFailureDiagnostic({ page }, { outputPath: () => { throw Error('disk failure'); } }, () => { throw failure; })).rejects.toBe(failure);
 });
+
+for (const state of ['Player not found', 'Error loading player details']) {
+    test(`baseline readiness timeout retains ${state} and transport evidence`, async ({ page }, testInfo) => {
+        const { assertPageBootsWithoutFatalErrors } = await import('./helpers/boot-path.js');
+        await page.route('http://smoke.invalid/**', (request) => request.fulfill({
+            contentType: 'text/html', body: `<main><div>${state}</div></main><script>console.error('Error loading player details: private-person secret-token');</script>`
+        }));
+        await page.route('**/js/firebase-auth.js*', (request) => request.abort('connectionclosed'));
+        await page.addInitScript(() => window.addEventListener('DOMContentLoaded', () => {
+            const script = document.createElement('script'); script.src = '/js/firebase-auth.js?token=secret-token'; document.body.append(script);
+        }));
+        const failure = await assertPageBootsWithoutFatalErrors(page, {
+            baseURL: 'http://smoke.invalid/', path: 'player.html?teamId=private-team&playerId=private-person',
+            readySelectors: ['#player-header'], testInfo
+        }).catch((error) => error);
+        expect(failure).toBeInstanceOf(AggregateError);
+        const text = await readFile(testInfo.outputPath('boot-path-diagnostic.json'), 'utf8');
+        const diagnostic = JSON.parse(text);
+        expect(diagnostic).toMatchObject({ route: '/player.html', state: {
+            playerHeaderAttached: false, playerNotFound: state === 'Player not found', playerLoadError: state === 'Error loading player details'
+        } });
+        expect(diagnostic.events).toContainEqual(expect.objectContaining({ type: 'response', status: 200, asset: '/player.html' }));
+        expect(diagnostic.events).toContainEqual(expect.objectContaining({ type: 'requestfailed', error: 'ERR_CONNECTION_CLOSED' }));
+        expect(diagnostic.events).toContainEqual(expect.objectContaining({ type: 'console', error: 'player-load-failed' }));
+        expect(text).not.toMatch(/private-team|private-person|secret-token|teamId|playerId/);
+    });
+}

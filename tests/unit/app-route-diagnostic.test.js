@@ -47,6 +47,14 @@ describe('authenticated smoke failure diagnostics', () => {
             expect(upload.with.path).toBe('test-results/**/app-route-diagnostic.json');
             expect(upload.with['retention-days']).toBe(7);
             expect(upload.uses).toBe('actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02');
+            const baseline = steps.find((step) => step.name === 'Upload sanitized baseline boot diagnostics');
+            expect(baseline.if).toBe('always()');
+            expect(baseline.with.path).toBe('test-results/**/boot-path-diagnostic.json');
+            expect(baseline.with['retention-days']).toBe(7);
+            if (name === 'post-deploy-smoke') {
+                expect(steps.indexOf(baseline)).toBeGreaterThan(steps.findIndex((step) => step.id === 'canonical_prod'));
+                expect(steps.indexOf(baseline)).toBeLessThan(steps.findIndex((step) => step.id === 'canonical_core'));
+            }
         }
     });
 
