@@ -109,6 +109,27 @@ describe('homeService Teams bootstrap reuse', () => {
         vi.useRealTimers();
     });
 
+    it('opts only Home bootstrap into parent previews and does not cache incomplete discovery as complete', async () => {
+        const incomplete = { children: [], events: [], staffTeams: [], isPartial: true };
+        const pending = deferred<typeof incomplete>();
+        const onPartial = vi.fn();
+        scheduleServiceMocks.loadParentSchedule.mockImplementationOnce((_user, options) => {
+            options.onPartial(incomplete);
+            return pending.promise;
+        }).mockResolvedValue(incomplete);
+        const bootstrap = loadParentHomeSummaryBootstrap(user, { onPartial });
+        expect(onPartial).toHaveBeenCalledWith(expect.objectContaining({ schedule: incomplete }));
+        expect(window.localStorage.length).toBe(0);
+        pending.resolve(incomplete);
+        expect((await bootstrap).schedule.isPartial).toBe(true);
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenLastCalledWith(user, expect.objectContaining({ previewParentChildren: true }));
+        await loadParentHomeSummaryBootstrap(user);
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+        expect(window.localStorage.length).toBe(0);
+        await loadParentScheduleSummary(user);
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenLastCalledWith(user, expect.objectContaining({ previewParentChildren: undefined }));
+    });
+
     it('shares one native profile and managed-team projection across Home schedule and chat', async () => {
         nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
         const profile = { parentOf: [], coachOf: ['team-owned'] };

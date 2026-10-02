@@ -479,6 +479,8 @@ export type ParentScheduleLoadOptions = {
   /** Request-scoped native Home loaders shared with chat to avoid duplicate profile/access reads. */
   nativeProfileLoader?: () => Promise<Record<string, unknown>>;
   nativeStaffTeamsLoader?: () => Promise<{ teams: any[]; isPartial: boolean }>;
+  /** Home-only opt-in: preview parent children before staff discovery completes. */
+  previewParentChildren?: boolean;
   /** Stream the resolved player/team shell and completed team schedules while the full load continues. */
   onPartial?: (result: ParentScheduleLoadResult) => void;
 };
@@ -5211,7 +5213,12 @@ export async function hydrateParentScheduleDetails(schedule: ParentScheduleLoadR
   return schedule;
 }
 
-async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<string, unknown>, options: ParentScheduleLoadOptions = {}) {
+async function buildParentScheduleTeamChildren(
+  user: AuthUser,
+  profile: Record<string, unknown>,
+  options: ParentScheduleLoadOptions = {},
+  onVerifiedChildren?: (children: ParentScheduleChild[]) => void
+) {
   const expandStaffPlayers = options.expandStaffPlayers !== false;
   const targetTeamId = compactString(options.targetTeamId);
   const delegatedGameId = compactString(options.delegatedGameId);
@@ -5222,6 +5229,9 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
       }
     : await resolveParentScheduleChildren(user, profile as Record<string, unknown>, { targetTeamId });
   const children = childResult.children;
+  // Children come from the existing access/active checks or a trusted complete scope.
+  // Home may preview that subset while independent staff discovery continues.
+  if (children.length) onVerifiedChildren?.(children);
   const byTeam = new Map<string, ParentScheduleChild[]>();
   const delegatedTeamContexts = new Map<string, Record<string, unknown>>();
   children.forEach((child) => {
@@ -5632,7 +5642,13 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
       ...options,
       expandStaffPlayers,
       parentScope: canReuseParentScope ? options.parentScope : undefined
-    });
+    }, options.previewParentChildren && options.onPartial ? (verifiedChildren) => {
+      try {
+        options.onPartial?.({ children: verifiedChildren, events: [], staffTeams: [], isPartial: true });
+      } catch (error) {
+        logScheduleWarning('Parent schedule partial callback failed.', 'parent-schedule-partial-callback', error);
+      }
+    } : undefined);
     if (options.targetTeamId && !targetAccessVerified) {
       throw new Error('The requested team schedule could not be verified. Retry before showing events.');
     }

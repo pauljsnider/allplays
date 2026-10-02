@@ -478,6 +478,46 @@ describe('Home', () => {
     expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledWith('home');
   });
 
+  it('renders verified player links while the partial Home summary is still pending', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementationOnce((_user: unknown, options: any) => {
+      options?.onPartial?.({ home: baseHome, schedule: { children: [], events: [], isPartial: true } });
+      return new Promise(() => {});
+    });
+
+    renderHome(signedInAuth, '/home?section=players');
+
+    expect(await screen.findByRole('heading', { name: 'My players' })).toBeTruthy();
+    expect(document.querySelector('a[href="/players/team-1/player-1"]')).toBeTruthy();
+    expect(homeServiceMocks.loadParentHomeWithSecondaryData).not.toHaveBeenCalled();
+    expect(screen.queryByText('No players linked yet')).toBeNull();
+  });
+
+  it.each(['superseded', 'user-switched'])('ignores parent previews from a %s Home load', async (mode) => {
+    let oldOptions: any;
+    const freshHome = { ...baseHome, players: [{ ...baseHome.players[0], playerId: 'fresh-player', playerName: 'Fresh Player' }] };
+    homeServiceMocks.loadParentHomeSummaryBootstrap
+      .mockImplementationOnce((_user: unknown, options: any) => {
+        oldOptions = options;
+        return new Promise(() => {});
+      })
+      .mockImplementationOnce((_user: unknown, options: any) => {
+        options.onPartial({ home: freshHome, schedule: { children: [], events: [], isPartial: true } });
+        return new Promise(() => {});
+      });
+    const wrap = (auth: AuthState) => <MemoryRouter initialEntries={['/home?section=players']}><Home auth={auth} /></MemoryRouter>;
+    const view = render(wrap(signedInAuth));
+    await waitFor(() => expect(oldOptions).toBeTruthy());
+    if (mode === 'user-switched') {
+      view.rerender(wrap({ ...signedInAuth, user: { ...signedInAuth.user!, uid: 'other-user' } }));
+    } else {
+      act(() => oldOptions.onRefresh({ home: freshHome, schedule: { children: [], events: [], isPartial: false } }));
+    }
+    expect(await screen.findByText('Fresh Player')).toBeTruthy();
+    act(() => oldOptions.onPartial({ home: baseHome, schedule: { children: [], events: [], isPartial: true } }));
+    expect(document.querySelector('a[href="/players/team-1/fresh-player"]')).toBeTruthy();
+    expect(document.querySelector('a[href="/players/team-1/player-1"]')).toBeNull();
+  });
+
   it('renders a dedicated welcome instead of personalized Home for signed-out users', async () => {
     renderHome(signedOutAuth, '/home?section=feed');
 

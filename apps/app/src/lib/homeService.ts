@@ -50,6 +50,7 @@ type ParentHomeSummaryOptions = {
 };
 
 type ParentScheduleSummaryOptions = ParentHomeSummaryOptions & {
+  previewParentChildren?: boolean;
   onPartial?: (schedule: ParentScheduleLoadResult) => void;
   onRefresh?: (schedule: ParentScheduleLoadResult) => void;
 };
@@ -177,6 +178,7 @@ export async function loadParentHomeSummaryBootstrap(
     ...(nativeContext ? { nativeContext } : {})
   });
   const schedule = await loadParentScheduleSummary(user, {
+    previewParentChildren: true,
     force: options.force,
     scheduleScope: options.scheduleScope,
     nativeContext,
@@ -409,6 +411,7 @@ export async function loadParentScheduleSummary(
     () => loadParentSchedule(user, {
       hydrateDetails: false,
       expandStaffPlayers: false,
+      previewParentChildren: options.previewParentChildren,
       parentScope: options.scheduleScope,
       nativeProfileLoader: options.nativeContext?.loadProfile,
       nativeStaffTeamsLoader: options.nativeContext?.loadManagedTeams,
