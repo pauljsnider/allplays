@@ -15902,14 +15902,35 @@ async function sendFeeUnpaidDueReminders() {
   const nowMillis = now.toMillis();
   const maxReminderThresholdLater = admin.firestore.Timestamp.fromMillis(now.toMillis() + 72 * 60 * 60 * 1000);
   const teamReminderThresholdHours = new Map();
-
-  // Keep leased recipients in the retry set even if they cross their due time
-  // while a crashed attempt's lease is active.
-  const leasedSnap = await firestore.collectionGroup('feeRecipients')
-    .where('reminderDeliveryClaimExpiresAtMillis', '>', 0)
-    .get();
+  const schedulerStartedAtMillis = Date.now();
   const examinedRecipientPaths = new Set();
   let firstRetryableFailure = null;
+
+  const takeUnseenFeeReminderDocs = (docs) => docs.filter((doc) => {
+    if (examinedRecipientPaths.has(doc.ref.path)) return false;
+    examinedRecipientPaths.add(doc.ref.path);
+    return true;
+  });
+
+  const drainFeeReminderPages = async (options) => {
+    const remainingRuntimeMs = FEE_REMINDER_MAX_RUNTIME_MS - (Date.now() - schedulerStartedAtMillis);
+    if (remainingRuntimeMs <= 0) {
+      return {
+        pagesAttempted: 0,
+        examinedCount: 0,
+        sentCount: 0,
+        failedCount: 0,
+        stoppedBecause: 'maxRuntimeMs',
+        lastCursor: null
+      };
+    }
+    return drainOrderedPages({
+      ...options,
+      pageSize: FEE_REMINDER_QUERY_PAGE_SIZE,
+      maxPages: FEE_REMINDER_MAX_PAGES_PER_RUN,
+      maxRuntimeMs: remainingRuntimeMs
+    });
+  };
 
   const processReminderDoc = async (doc) => {
     let data = doc.data();
@@ -16102,10 +16123,39 @@ async function sendFeeUnpaidDueReminders() {
     return workerSummary;
   };
 
-  const upcomingSummary = await drainOrderedPages({
-    pageSize: FEE_REMINDER_QUERY_PAGE_SIZE,
-    maxPages: FEE_REMINDER_MAX_PAGES_PER_RUN,
-    maxRuntimeMs: FEE_REMINDER_MAX_RUNTIME_MS,
+  // Recover leased recipients first so the oldest interrupted deliveries are
+  // not starved by a large upcoming backlog. The shared path set keeps the
+  // upcoming pass from submitting overlapping recipients a second time.
+  const leasedSummary = await drainFeeReminderPages({
+    loadPage: async ({ cursor, limit }) => {
+      let query = firestore.collectionGroup('feeRecipients')
+        .where('reminderDeliveryClaimExpiresAtMillis', '>', 0)
+        .orderBy('reminderDeliveryClaimExpiresAtMillis')
+        .limit(limit || FEE_REMINDER_QUERY_PAGE_SIZE);
+      if (cursor) {
+        query = query.startAfter(cursor);
+      }
+      const leasedSnap = await query.get();
+      return {
+        docs: leasedSnap.docs,
+        nextCursor: leasedSnap.docs[leasedSnap.docs.length - 1] || null
+      };
+    },
+    processPage: async (docs) => {
+      const unseenDocs = takeUnseenFeeReminderDocs(docs);
+      return runFeeReminderWorkers(unseenDocs);
+    }
+  });
+
+  functions.logger.info('sendFeeUnpaidDueReminders: leased delivery complete', {
+    pagesAttempted: leasedSummary.pagesAttempted,
+    stoppedBecause: leasedSummary.stoppedBecause,
+    examinedCount: leasedSummary.examinedCount,
+    sentCount: leasedSummary.sentCount,
+    failedCount: leasedSummary.failedCount
+  });
+
+  const upcomingSummary = await drainFeeReminderPages({
     loadPage: async ({ cursor, limit }) => {
       let query = firestore.collectionGroup('feeRecipients')
         .where('status', 'in', ['unpaid', 'pending'])
@@ -16123,8 +16173,8 @@ async function sendFeeUnpaidDueReminders() {
       };
     },
     processPage: async (docs) => {
-      docs.forEach((doc) => examinedRecipientPaths.add(doc.ref.path));
-      return runFeeReminderWorkers(docs);
+      const unseenDocs = takeUnseenFeeReminderDocs(docs);
+      return runFeeReminderWorkers(unseenDocs);
     }
   });
 
@@ -16136,11 +16186,25 @@ async function sendFeeUnpaidDueReminders() {
     failedCount: upcomingSummary.failedCount
   });
 
-  const leasedDocs = leasedSnap.docs.filter((doc) => !examinedRecipientPaths.has(doc.ref.path));
-  const leasedSummary = await runFeeReminderWorkers(leasedDocs);
-  const processedCount = upcomingSummary.examinedCount + leasedSummary.examinedCount;
+  const pagesAttempted = leasedSummary.pagesAttempted + upcomingSummary.pagesAttempted;
+  const stoppedBecause = [leasedSummary, upcomingSummary]
+    .some((summary) => summary.stoppedBecause === 'maxRuntimeMs')
+    ? 'maxRuntimeMs'
+    : [leasedSummary, upcomingSummary].some((summary) => summary.stoppedBecause === 'maxPages')
+      ? 'maxPages'
+      : 'drained';
   const sentCount = upcomingSummary.sentCount + leasedSummary.sentCount;
-  console.log(`sendFeeUnpaidDueReminders: processed ${processedCount} docs, sent ${sentCount} reminders`);
+  const failedCount = upcomingSummary.failedCount + leasedSummary.failedCount;
+  functions.logger.info('sendFeeUnpaidDueReminders: delivery complete', {
+    pagesAttempted,
+    stoppedBecause,
+    examinedCount: examinedRecipientPaths.size,
+    sentCount,
+    failedCount,
+    leasedStoppedBecause: leasedSummary.stoppedBecause,
+    upcomingStoppedBecause: upcomingSummary.stoppedBecause
+  });
+  console.log(`sendFeeUnpaidDueReminders: processed ${examinedRecipientPaths.size} docs, sent ${sentCount} reminders`);
   if (firstRetryableFailure) throw firstRetryableFailure;
 }
 
