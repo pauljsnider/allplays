@@ -192,6 +192,57 @@ describe('homeService Teams bootstrap reuse', () => {
         await expect(secondHomeLoad).resolves.toEqual(expect.objectContaining({ schedule: complete }));
     });
 
+    it('isolates previews from overlapping forced Home generations and keeps the newer cache value', async () => {
+        const olderPreview = {
+            children: [{ teamId: 'team-old', teamName: 'Old Team', playerId: 'old-player', playerName: 'Old Player' }],
+            events: [],
+            staffTeams: [],
+            isPartial: true
+        };
+        const newerPreview = {
+            children: [{ teamId: 'team-new', teamName: 'New Team', playerId: 'new-player', playerName: 'New Player' }],
+            events: [],
+            staffTeams: [],
+            isPartial: true
+        };
+        const olderComplete = { ...olderPreview, isPartial: false };
+        const newerComplete = { ...newerPreview, isPartial: false };
+        const older = deferred<typeof olderComplete>();
+        const newer = deferred<typeof newerComplete>();
+        const olderOnPartial = vi.fn();
+        const newerOnPartial = vi.fn();
+        let olderOptions: any;
+        let newerOptions: any;
+        scheduleServiceMocks.loadParentSchedule
+            .mockImplementationOnce((_user, options) => {
+                olderOptions = options;
+                return older.promise;
+            })
+            .mockImplementationOnce((_user, options) => {
+                newerOptions = options;
+                return newer.promise;
+            });
+
+        const olderHome = loadParentHomeSummaryBootstrap(user, { force: true, onPartial: olderOnPartial });
+        const newerHome = loadParentHomeSummaryBootstrap(user, { force: true, onPartial: newerOnPartial });
+        newerOptions.onPartial(newerPreview);
+        olderOptions.onPartial(olderPreview);
+
+        expect(olderOnPartial).toHaveBeenCalledWith(expect.objectContaining({ schedule: olderPreview }));
+        expect(olderOnPartial).not.toHaveBeenCalledWith(expect.objectContaining({ schedule: newerPreview }));
+        expect(newerOnPartial).toHaveBeenCalledWith(expect.objectContaining({ schedule: newerPreview }));
+        expect(newerOnPartial).not.toHaveBeenCalledWith(expect.objectContaining({ schedule: olderPreview }));
+
+        newer.resolve(newerComplete);
+        await expect(newerHome).resolves.toEqual(expect.objectContaining({ schedule: newerComplete }));
+        older.resolve(olderComplete);
+        await expect(olderHome).resolves.toEqual(expect.objectContaining({ schedule: olderComplete }));
+
+        scheduleServiceMocks.loadParentSchedule.mockClear();
+        await expect(loadParentScheduleSummary(user)).resolves.toEqual(newerComplete);
+        expect(scheduleServiceMocks.loadParentSchedule).not.toHaveBeenCalled();
+    });
+
     it('shares one native profile and managed-team projection across Home schedule and chat', async () => {
         nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
         const profile = { parentOf: [], coachOf: ['team-owned'] };

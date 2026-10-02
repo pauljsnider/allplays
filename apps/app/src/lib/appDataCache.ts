@@ -13,6 +13,8 @@ const storagePrefix = 'allplays:appDataCache:';
 const cache = new Map<string, CacheEntry<unknown>>();
 let cacheInvalidationVersion = 0;
 const cacheKeyInvalidationVersions = new Map<string, number>();
+const cacheKeyLoadGenerations = new Map<string, number>();
+const cacheKeyCommittedGenerations = new Map<string, number>();
 const logger = createLogger('app-data-cache');
 
 type LoadCachedAppDataOptions<T> = {
@@ -81,10 +83,10 @@ export function loadCachedAppData<T>(
 ): Promise<T> {
   const now = Date.now();
   const existing = hydrateMemoryCache<T>(key, now, maxStaleMs);
-  const inFlightKey = inFlightScope ? `${key}:in-flight:${inFlightScope}` : key;
-  const inFlightEntry = inFlightKey === key
-    ? existing
-    : cache.get(inFlightKey) as CacheEntry<T> | undefined;
+  // Keep request ownership separate from the shared value so one scope cannot
+  // replace another scope's in-flight marker when it commits to the base key.
+  const inFlightKey = `${key}:in-flight:${inFlightScope || 'default'}`;
+  const inFlightEntry = cache.get(inFlightKey) as CacheEntry<T> | undefined;
   if (!force && existing && hasCachedValue(existing) && existing.expiresAt > now) {
     return Promise.resolve(existing.value);
   }
@@ -161,6 +163,7 @@ function loadAndStoreCachedAppData<T>(
 ) {
   const loadInvalidationVersion = cacheInvalidationVersion;
   const loadKeyInvalidationVersion = getCacheKeyInvalidationVersion(key);
+  const loadGeneration = getNextCacheKeyLoadGeneration(key);
   const promise = loader().then((value) => {
     if (
       loadInvalidationVersion !== cacheInvalidationVersion
@@ -168,17 +171,7 @@ function loadAndStoreCachedAppData<T>(
     ) {
       const current = cache.get(inFlightKey);
       if (current?.promise === promise) {
-        if (inFlightKey !== key) {
-          cache.delete(inFlightKey);
-        } else if (existing && hasCachedValue(existing)) {
-          cache.set(key, {
-            value: existing.value,
-            expiresAt: existing.expiresAt,
-            hydratedFromStorage: existing.hydratedFromStorage
-          });
-        } else {
-          cache.delete(key);
-        }
+        cache.delete(inFlightKey);
       }
       onRefresh?.(value);
       return value;
@@ -187,17 +180,7 @@ function loadAndStoreCachedAppData<T>(
     if (shouldCache && !shouldCache(value)) {
       const current = cache.get(inFlightKey);
       if (current?.promise === promise) {
-        if (inFlightKey !== key) {
-          cache.delete(inFlightKey);
-        } else if (existing && hasCachedValue(existing)) {
-          cache.set(key, {
-            value: existing.value,
-            expiresAt: existing.expiresAt,
-            hydratedFromStorage: existing.hydratedFromStorage
-          });
-        } else {
-          cache.delete(key);
-        }
+        cache.delete(inFlightKey);
       }
       onRefresh?.(value);
       return value;
@@ -213,39 +196,43 @@ function loadAndStoreCachedAppData<T>(
       expiresAt: Date.now() + ttlMs,
       hydratedFromStorage: false
     };
-    if (inFlightKey !== key) {
-      const current = cache.get(inFlightKey);
-      if (current?.promise === promise) cache.delete(inFlightKey);
+    cache.delete(inFlightKey);
+    // A successful newer request wins regardless of completion order. Partial
+    // and failed requests never advance the committed generation, so an older successful
+    // request may still supply the best available cached value.
+    if (loadGeneration < getCacheKeyCommittedGeneration(key)) {
+      onRefresh?.(value);
+      return value;
     }
     cache.set(key, entry);
+    cacheKeyCommittedGenerations.set(key, loadGeneration);
     if (persist) writeStoredCacheEntry(key, entry);
     onRefresh?.(value);
     return value;
   }).catch((error) => {
     const current = cache.get(inFlightKey);
     if (current?.promise === promise) {
-      if (inFlightKey !== key) {
-        cache.delete(inFlightKey);
-      } else if (existing && hasCachedValue(existing)) {
-        cache.set(key, {
-          value: existing.value,
-          expiresAt: existing.expiresAt,
-          hydratedFromStorage: existing.hydratedFromStorage
-        });
-      } else {
-        cache.delete(key);
-      }
+      cache.delete(inFlightKey);
     }
     throw error;
   });
 
   cache.set(inFlightKey, {
-    ...(inFlightKey === key && existing && hasCachedValue(existing) ? { value: existing.value } : {}),
     promise,
     expiresAt: existing?.expiresAt ?? Date.now() + ttlMs,
     hydratedFromStorage: existing?.hydratedFromStorage
   });
   return promise;
+}
+
+function getNextCacheKeyLoadGeneration(key: string) {
+  const generation = (cacheKeyLoadGenerations.get(key) ?? 0) + 1;
+  cacheKeyLoadGenerations.set(key, generation);
+  return generation;
+}
+
+function getCacheKeyCommittedGeneration(key: string) {
+  return cacheKeyCommittedGenerations.get(key) ?? 0;
 }
 
 function getCacheKeyInvalidationVersion(key: string) {

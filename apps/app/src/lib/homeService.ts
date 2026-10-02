@@ -32,12 +32,13 @@ const teamsSummaryTtlMs = 30 * 1000;
 const logger = createLogger('home');
 
 type ParentSchedulePreviewState = {
-  callbacks: Set<(schedule: ParentScheduleLoadResult) => void>;
+  callbacks: Map<(schedule: ParentScheduleLoadResult) => void, number>;
   latest?: ParentScheduleLoadResult;
-  callers: number;
+  promise?: Promise<ParentScheduleLoadResult>;
 };
 
 const parentSchedulePreviewStates = new Map<string, ParentSchedulePreviewState>();
+let parentSchedulePreviewRequestId = 0;
 
 type ParentHomeNativeLoadContext = {
   loadProfile: () => Promise<Record<string, unknown>>;
@@ -415,9 +416,27 @@ export async function loadParentScheduleSummary(
   if (!user?.uid) return { children: [], events: [] };
   const hasScopedStaffTeams = Boolean(options.scheduleScope?.staffTeams?.length);
   const cacheKey = getParentScheduleSummaryCacheKey(user.uid);
-  const previewState = options.previewParentChildren
-    ? registerParentSchedulePreviewCaller(cacheKey, options.onPartial)
+  const force = Boolean(options.force || hasScopedStaffTeams);
+  if (options.previewParentChildren && !force) {
+    const activePreview = parentSchedulePreviewStates.get(cacheKey);
+    if (activePreview?.promise) {
+      const release = registerParentSchedulePreviewCallback(activePreview, options.onPartial);
+      try {
+        return await activePreview.promise;
+      } finally {
+        release();
+      }
+    }
+  }
+
+  const previewState: ParentSchedulePreviewState | undefined = options.previewParentChildren
+    ? { callbacks: new Map<(schedule: ParentScheduleLoadResult) => void, number>() }
     : undefined;
+  const releasePreviewCallback = previewState
+    ? registerParentSchedulePreviewCallback(previewState, options.onPartial)
+    : undefined;
+  if (previewState) parentSchedulePreviewStates.set(cacheKey, previewState);
+  const previewScope = previewState ? `home-parent-preview:${++parentSchedulePreviewRequestId}` : undefined;
   const loadPromise = loadCachedAppData(
     cacheKey,
     () => loadParentSchedule(user, {
@@ -430,13 +449,13 @@ export async function loadParentScheduleSummary(
         nativeStaffTeamsLoader: options.nativeContext.loadManagedTeams
       } : {}),
       ...(previewState
-        ? { onPartial: (schedule: ParentScheduleLoadResult) => emitParentSchedulePreview(cacheKey, schedule) }
+        ? { onPartial: (schedule: ParentScheduleLoadResult) => emitParentSchedulePreview(previewState, schedule) }
         : options.onPartial ? { onPartial: options.onPartial } : {})
     }),
     {
       ttlMs: homeSummaryTtlMs,
-      force: options.force || hasScopedStaffTeams,
-      inFlightScope: options.previewParentChildren ? 'home-parent-preview' : undefined,
+      force,
+      inFlightScope: previewScope,
       maxStaleMs: homeMaxStaleMs,
       staleWhileRevalidate: true,
       onRefresh: options.onPartial,
@@ -445,41 +464,34 @@ export async function loadParentScheduleSummary(
       shouldCache: (result) => result?.isPartial !== true
     }
   );
+  if (previewState) previewState.promise = loadPromise;
   try {
     return await loadPromise;
   } finally {
-    previewState?.release();
+    releasePreviewCallback?.();
+    if (previewState && parentSchedulePreviewStates.get(cacheKey) === previewState) {
+      parentSchedulePreviewStates.delete(cacheKey);
+    }
   }
 }
 
-function registerParentSchedulePreviewCaller(
-  cacheKey: string,
+function registerParentSchedulePreviewCallback(
+  state: ParentSchedulePreviewState,
   callback?: (schedule: ParentScheduleLoadResult) => void
 ) {
-  const state = parentSchedulePreviewStates.get(cacheKey) || {
-    callbacks: new Set<(schedule: ParentScheduleLoadResult) => void>(),
-    callers: 0
-  };
-  state.callers += 1;
-  if (callback) {
-    state.callbacks.add(callback);
-    if (state.latest) callback(state.latest);
-  }
-  parentSchedulePreviewStates.set(cacheKey, state);
-  return {
-    release: () => {
-      if (callback) state.callbacks.delete(callback);
-      state.callers -= 1;
-      if (state.callers === 0) parentSchedulePreviewStates.delete(cacheKey);
-    }
+  if (!callback) return () => undefined;
+  state.callbacks.set(callback, (state.callbacks.get(callback) ?? 0) + 1);
+  if (state.latest) callback(state.latest);
+  return () => {
+    const registrations = state.callbacks.get(callback) ?? 0;
+    if (registrations <= 1) state.callbacks.delete(callback);
+    else state.callbacks.set(callback, registrations - 1);
   };
 }
 
-function emitParentSchedulePreview(cacheKey: string, schedule: ParentScheduleLoadResult) {
-  const state = parentSchedulePreviewStates.get(cacheKey);
-  if (!state) return;
+function emitParentSchedulePreview(state: ParentSchedulePreviewState, schedule: ParentScheduleLoadResult) {
   state.latest = schedule;
-  state.callbacks.forEach((callback) => callback(schedule));
+  state.callbacks.forEach((_registrations, callback) => callback(schedule));
 }
 
 function normalizeStaffTeams(schedule: ParentScheduleLoadResult): ParentHomeInboxTeam[] {
