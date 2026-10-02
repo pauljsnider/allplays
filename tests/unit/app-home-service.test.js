@@ -495,7 +495,7 @@ describe('React app Home service', () => {
 
         const home = await loadParentHomeSummary(user, { force: true });
 
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, { hydrateDetails: false, expandStaffPlayers: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, { hydrateDetails: false, expandStaffPlayers: false, previewParentChildren: true });
         expect(chatMocks.loadChatInbox).not.toHaveBeenCalled();
         expect(dbMocks.listParentTeamFeeRecipients).not.toHaveBeenCalled();
         expect(home.players).toHaveLength(1);
@@ -575,7 +575,7 @@ describe('React app Home service', () => {
         const detailed = await loadParentHomeWithSecondaryData(user, { force: true, schedule: summary.schedule });
 
         expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(1);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, { hydrateDetails: false, expandStaffPlayers: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, { hydrateDetails: false, expandStaffPlayers: false, previewParentChildren: true });
         expect(scheduleMocks.hydrateParentScheduleDetails).toHaveBeenCalledTimes(1);
         expect(scheduleMocks.hydrateParentScheduleDetails).toHaveBeenCalledWith(expect.objectContaining({
             children: [expect.objectContaining({ teamId: 'team-1', playerId: 'player-1' })],
