@@ -186,17 +186,15 @@ function loadAndStoreCachedAppData<T>(
       return value;
     }
 
-    if (cache.get(inFlightKey)?.promise !== promise) {
-      onRefresh?.(value);
-      return value;
-    }
-
     const entry = {
       value,
       expiresAt: Date.now() + ttlMs,
       hydratedFromStorage: false
     };
-    cache.delete(inFlightKey);
+    const current = cache.get(inFlightKey);
+    if (current?.promise === promise) {
+      cache.delete(inFlightKey);
+    }
     // A successful newer request wins regardless of completion order. Partial
     // and failed requests never advance the committed generation, so an older successful
     // request may still supply the best available cached value.

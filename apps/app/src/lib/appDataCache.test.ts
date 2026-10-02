@@ -129,6 +129,57 @@ describe('appDataCache shared write ordering', () => {
       expect(cacheModule.getCachedAppData(key)).toBe('successful');
     }
   );
+
+  it.each([
+    ['successful-first', 'partial'],
+    ['successful-first', 'error'],
+    ['newer-first', 'partial'],
+    ['newer-first', 'error']
+  ] as const)(
+    'commits an older successful forced load in the same scope (%s, newer %s)',
+    async (completionOrder, newerOutcome) => {
+      const cacheModule = await import('./appDataCache');
+      const key = `same-scope-${completionOrder}-${newerOutcome}`;
+      const storedKey = `allplays:appDataCache:${encodeURIComponent(key)}`;
+      await cacheModule.loadCachedAppData(key, async () => 'stale');
+      const successful = deferred<string>();
+      const newer = deferred<string>();
+      const successfulLoad = cacheModule.loadCachedAppData(key, () => successful.promise, {
+        force: true,
+        inFlightScope: 'home-preview'
+      });
+      const newerLoad = cacheModule.loadCachedAppData(key, () => newer.promise, {
+        force: true,
+        inFlightScope: 'home-preview',
+        shouldCache: (value) => value !== 'partial'
+      });
+
+      const finishSuccessful = async () => {
+        successful.resolve('successful');
+        await expect(successfulLoad).resolves.toBe('successful');
+      };
+      const finishNewer = async () => {
+        if (newerOutcome === 'partial') {
+          newer.resolve('partial');
+          await expect(newerLoad).resolves.toBe('partial');
+        } else {
+          newer.reject(new Error('refresh failed'));
+          await expect(newerLoad).rejects.toThrow('refresh failed');
+        }
+      };
+
+      if (completionOrder === 'successful-first') {
+        await finishSuccessful();
+        await finishNewer();
+      } else {
+        await finishNewer();
+        await finishSuccessful();
+      }
+
+      expect(cacheModule.getCachedAppData(key)).toBe('successful');
+      expect(JSON.parse(window.localStorage.getItem(storedKey) || '{}').value).toBe('successful');
+    }
+  );
 });
 
 describe('appDataCache replay lifecycle fidelity', () => {
