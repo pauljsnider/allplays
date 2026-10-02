@@ -11,6 +11,8 @@ import {
     redactSmokeDiagnostic
 } from './helpers/app-auth.js';
 
+import { withAppFailureDiagnostic } from './helpers/app-route-diagnostic.js';
+
 const config = getAppSmokeConfig();
 const suite = process.env.SMOKE_SUITE || '';
 const enabled = Boolean(config.appBaseUrl) && ['production', 'extended-production'].includes(suite);
@@ -68,8 +70,10 @@ test.afterAll(async () => {
 
 async function withAuthenticatedPage(session, callback) {
     const { page, issues } = session;
-    await callback(page);
-    expect(issues.map((issue) => redactSmokeDiagnostic(issue, secretValues))).toEqual([]);
+    await withAppFailureDiagnostic(session, test.info(), async () => {
+        await callback(page);
+        expect(issues.map((issue) => redactSmokeDiagnostic(issue, secretValues))).toEqual([]);
+    });
 }
 
 test('staff account reaches every critical app workflow with smoke fixtures', async () => {
@@ -153,19 +157,19 @@ test('parent account reaches every critical family workflow with linked fixtures
         });
         await openAuthenticatedAppRoute(page, config.appBaseUrl, `/messages/${encodeURIComponent(config.teamId)}`, { heading: 'Conversations' });
         await expect(page.locator('.chat-composer-textarea')).toBeVisible({ timeout: 20_000 });
-        await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/registrations', { heading: 'Family workflows' });
+        await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/registrations', { heading: 'Family workflows', panelHeading: 'Registrations' });
         await expect(page.getByText('Registrations', { exact: true }).first()).toBeVisible();
         await expect(page.locator('main')).not.toContainText('No open registrations');
-        await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/fees', { heading: 'Family workflows' });
+        await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/fees', { heading: 'Family workflows', panelHeading: 'Team fees', seededFees: true });
         await expect(page.getByText('Team fees', { exact: true })).toBeVisible();
         await expect(page.locator('main')).not.toContainText('No fees in this view');
-        await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/access', { heading: 'Family workflows' });
+        await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/access', { heading: 'Family workflows', panelHeading: 'Access requests' });
         await expect(page.getByText('Access requests', { exact: true })).toBeVisible();
-        await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/household', { heading: 'Family workflows' });
+        await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/household', { heading: 'Family workflows', panelHeading: 'Create invite' });
         await expect(page.getByRole('heading', { name: 'Create invite' })).toBeVisible();
-        await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/share', { heading: 'Family workflows' });
+        await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/share', { heading: 'Family workflows', panelHeading: 'Family share' });
         await expect(page.getByText('Family share', { exact: true })).toBeVisible();
-        await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/certificates', { heading: 'Family workflows' });
+        await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/certificates', { heading: 'Family workflows', panelHeading: 'Awards' });
         await expect(page.getByText('Awards', { exact: true })).toBeVisible();
         await expect(page.locator('main')).not.toContainText('No published awards');
         await openAuthenticatedAppRoute(page, config.appBaseUrl, playerPath);
