@@ -1,6 +1,7 @@
 # Classic bounded-read contract — narrowed local review candidate
 
-SCOPE CHANGED after independent review. This candidate starts directly from
+SCOPE CHANGED after independent review, then guarded for newly reachable Cancel.
+This candidate is based on
 production base `a488531e7b31f9a51c2ebbbc4844cc14db121b8b`; it does not contain
 reset cleanup, reset permission guards, marker sequencing or rule changes from
 the earlier unpublished `cb8b553bb` proposal. No production data was changed.
@@ -9,7 +10,9 @@ the earlier unpublished `cb8b553bb` proposal. No production data was changed.
 
 1. Classic's zero-activity Start Timer preflight uses the existing full-history
    paginated `getLiveEvents` helper and its array length, replacing a remaining
-   unbounded read. Choosing Resume is covered; Start Over reset is not repaired.
+   unbounded read. Existing data offers Resume or Cancel only. Cancel returns
+   without local or persisted mutation for every role. The unsafe Start Over
+   branch is removed from this preflight; the separate Reset button is unchanged.
 2. Stat-sheet replacement preflight only needs to know whether live history
    exists, so its page-owned query now requests `limit(1)`.
 
@@ -28,7 +31,7 @@ Auth identity/bootstrap and callable transport are adapted for tests. The
 callable executes the production delegated-team-context core against seeded
 emulator documents; no fabricated authorization result is returned.
 
-The 17 tests cover:
+The 23 tests cover:
 
 - 0/20/21/40/41 tied timestamps, no missing/duplicate history, 15 roster rows,
   restored score, real chat subscription and viewer count.
@@ -38,7 +41,12 @@ The 17 tests cover:
   read/write the private game; signed-out Classic redirects to auth.
 - Revocation after page one fails without partially restored history.
 - Legacy report events are not invented as live events.
-- Fresh zero-activity owner's Start Timer preflight succeeds when choosing Resume.
+- Existing zero-score owner/admin games Resume with retained stats and a persisted
+  running clock. Cancel for owner/admin/delegate leaves the full game document,
+  aggregate/event/liveEvent collections, rendered roster/log and timer unchanged.
+- Genuinely empty owner/admin games (no events/aggregates/liveEvents, empty
+  opponentStats, false liveHasData, scheduled liveStatus) start without a dialog
+  and persist a running clock.
 - Stat-sheet's exact page-owned live-history read expression succeeds for
   owner/admin/delegate. This is not AI/upload/replacement end-to-end coverage.
 
@@ -67,11 +75,13 @@ and concurrency evidence in a separate unpublished branch/worktree.
   concurrency regression remains RED. A same-client action lock is insufficient.
 - Existing delegated reset UI can attempt writes forbidden by owner/admin rules.
 - Existing reset cleanup still attempts an unbounded live-event read and immutable
-  deletes. This candidate deliberately leaves reset behavior exactly at base.
+  deletes. The separate Reset button/function remains exactly at base. The
+  newly reachable preflight no longer offers Start Over or invokes reset at all.
 
 Do not publish the experimental reset branch or claim that all tracking workflows
 are safe. Reset ordering/authorization needs a separate scoped design review.
-The clean candidate neither fixes nor weakens those boundaries.
+The candidate prevents the read fix from exposing destructive Cancel behavior;
+it does not repair the separate Reset button or weaken its server boundaries.
 
 ## Run and proposed CI integration (not activated)
 
@@ -104,6 +114,10 @@ Missing/nonloopback emulator fails rather than silently skipping.
 Before either runtime fix: fresh Start Timer and all three stat-sheet role reads
 failed under actual rules (4 failures). The exact pre-4b03 unbounded shared helper
 also failed the initial 41-event page boot regression in the earlier proof.
-The clean candidate passes 17 browser/rules tests, 45 focused unit tests and 19
+A delegated Cancel regression against `303b69d11` then proved the newly reachable
+Start Over branch published reset/clock events and changed state. It fails before
+the Resume-or-Cancel guard. A genuinely empty owner game also fails against the
+original production HTML, proving the query issue did not depend on fixture data.
+The guarded candidate passes 23 browser/rules tests, 45 focused unit tests and 19
 existing tracker smoke tests, plus cache-bust guard and diff whitespace checks.
 No GitHub CI, publishing, protection change or deployment has occurred.

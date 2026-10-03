@@ -2404,7 +2404,7 @@
         // Timer functions
         async function startTimer() {
             if (!gameState.isRunning) {
-                // Only consider clearing DB if we have no local activity yet
+                // Check for saved state before starting a game with no local activity yet.
                 const hasLocalActivity = gameState.elapsed > 0 ||
                     homeScore > 0 ||
                     awayScore > 0 ||
@@ -2427,99 +2427,8 @@
                     });
 
                     if (persistedState.hasPersistedData) {
-                        const shouldResume = confirm('This game already has tracked data. Continue where you left off?\n\nClick Cancel to start over and clear previous stats.');
-                        if (!shouldResume) {
-                            clearLiveSyncTimeouts();
-
-                            gameState.playerStats = {};
-                            gameState.gameLog = [];
-                            gameState.liveNotes = [];
-                            gameState.playerFieldStatus = createFieldState(players);
-                            homeScore = 0;
-                            awayScore = 0;
-
-                            gameState.servingTeam = 'home';
-                            resetBaseballScorekeepingState();
-                            if (!gameState.isBaseballScorekeeping) {
-                                gameState.currentPeriod = getDefaultLivePeriod({ team: currentTeam, config: currentConfig, game: currentGame });
-                                updateActivePeriodButtons();
-                            }
-                            gameState.footballState = createFootballLiveState();
-                            applyFootballStateToControls();
-                            opponentPlayers.forEach((opp) => {
-                                const existing = gameState.opponentStats[opp.id] || {};
-                                gameState.opponentStats[opp.id] = {
-                                    ...existing,
-                                    name: existing.name || opp.name || '',
-                                    number: existing.number || ''
-                                };
-                                currentConfig.columns.forEach((col) => {
-                                    gameState.opponentStats[opp.id][col.toLowerCase()] = 0;
-                                });
-                            });
-
-                            const resetLineup = getLiveLineup(gameState.playerFieldStatus, players);
-                            await runTrackLiveResetPersistence({
-                                publishResetEvent: ({ resetEventId }) => broadcastLiveEvent(currentTeamId, currentGameId, {
-                                    ...(resetEventId ? { eventId: resetEventId } : {}),
-                                    type: 'reset',
-                                    period: gameState.currentPeriod,
-                                    gameClockMs: 0,
-                                    homeScore: 0,
-                                    awayScore: 0,
-                                    onCourt: resetLineup.onCourt,
-                                    bench: resetLineup.bench,
-                                    baseballState: gameState.isBaseballScorekeeping ? gameState.baseballState : null,
-                                    description: `Tracker restarted from zero. Cleared: ${persistedState.summary}.`,
-                                    createdBy: currentUser?.uid || null
-                                }),
-                                updateResetState: async ({ resetEventId }) => {
-                                    await updateGame(
-                                        currentTeamId,
-                                        currentGameId,
-                                        {
-                                            ...buildTrackLiveResetUpdate({
-                                                currentGame,
-                                                currentConfig,
-                                                period: gameState.currentPeriod,
-                                                liveLineup: resetLineup,
-                                                liveResetEventId: resetEventId
-                                            }),
-                                            ...(gameState.isBaseballScorekeeping ? { liveBaseballState: gameState.baseballState } : {}),
-                                            ...(isFootballTrackingConfig() ? { liveFootballState: gameState.footballState } : {})
-                                        }
-                                    );
-                                    currentGame.liveStatus = 'scheduled';
-                                    currentGame.liveHasData = false;
-                                    currentGame.homeScore = 0;
-                                    currentGame.awayScore = 0;
-                                    currentGame.servingTeam = 'home';
-                                    currentGame.opponentStats = {};
-                                },
-                                cleanupPersistedState: async () => {
-                                    const deletions = [
-                                        ...eventsSnap.docs.map(docItem => deleteDoc(docItem.ref)),
-                                        ...statsSnap.docs.map(docItem => deleteDoc(docItem.ref))
-                                    ];
-                                    const results = await Promise.allSettled(deletions);
-                                    const failedDeletes = results.filter((result) => result.status === 'rejected');
-                                    if (failedDeletes.length) {
-                                        console.warn('Some persisted tracking records could not be deleted:', failedDeletes);
-                                    }
-                                },
-                                logWarn: (...args) => console.warn(...args),
-                                logError: (message, error) => console.warn(message, error)
-                            });
-
-                            updateScoreDisplay();
-                            renderGameLog();
-                            renderLiveNotes();
-                            renderBaseballScorekeeping();
-                            if (!gameState.isBaseballScorekeeping && !isFootballTrackingConfig()) {
-                                renderStatsTable();
-                                renderOpponentTable();
-                            }
-                        }
+                        const shouldResume = confirm('This game already has tracked data. Continue where you left off?\n\nCancel leaves existing data unchanged.');
+                        if (!shouldResume) return;
                     }
                 }
 

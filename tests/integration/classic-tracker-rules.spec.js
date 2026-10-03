@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertFails } from '@firebase/rules-unit-testing';
-import { collection, doc, getDoc, getDocs, limit, orderBy, query, setDoc, updateDoc } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, setDoc, updateDoc } from 'firebase/firestore';
 import contextCore from '../../functions/delegated-team-context-core.cjs';
 
 // Never point this harness at a real project or silently omit the rules engine.
@@ -80,6 +80,18 @@ async function seed(count = 41, { reset = false, legacy = false } = {}) {
 
 async function boot(page, uid = 'owner', { revokeAfterPage = false, acceptConfirm = false } = {}) {
     const user = uid ? { uid, email: `${uid}@example.com`, emailVerified: true, displayName: uid } : null;
+    await page.addInitScript(() => {
+        const add = EventTarget.prototype.addEventListener;
+        EventTarget.prototype.addEventListener = function (type, callback, options) {
+            if (this.id === 'startBtn' && type === 'click') {
+                return add.call(this, type, function (event) {
+                    window.__startCompletion = Promise.resolve(callback.call(this, event));
+                    return window.__startCompletion;
+                }, options);
+            }
+            return add.call(this, type, callback, options);
+        };
+    });
     const alerts = [];
     const errors = [];
     page.on('dialog', async dialog => {
@@ -243,19 +255,23 @@ test('legacy report events are not invented as live history', async ({ page }) =
     expect(await read(`${gamePath}/events/legacy-7`)).toEqual({ type: 'goal', value: 1 });
 });
 
-// Exercise the zero-activity preflight as well as resumed game initialization.
-test('fresh zero-score Classic game can start its timer', async ({ page }) => {
+// Existing zero-score records require confirmation before resuming.
+for (const uid of ['owner', 'staff']) {
+test(`${uid} Resume preserves existing zero-score tracked data and starts timer`, async ({ page }) => {
     await seed(0);
     await privileged(async db => {
         await updateDoc(doc(db, gamePath), { homeScore: 0, awayScore: 0, liveClockMs: 0 });
         await updateDoc(doc(db, `${gamePath}/aggregatedStats/p1`), { 'stats.pts': 0 });
     });
-    const diagnostics = await boot(page, 'owner', { acceptConfirm: true });
+    const diagnostics = await boot(page, uid, { acceptConfirm: true });
     await expect(page.locator('#statsTableBody tr')).toHaveCount(15);
     await page.locator('#startBtn').click();
     await expect(page.locator('#startBtn')).toBeDisabled();
+    await expect.poll(async () => (await read(gamePath)).liveClockRunning).toBe(true);
+    expect((await read(`${gamePath}/aggregatedStats/p1`)).stats.pts).toBe(0);
     expect(diagnostics.errors).toEqual([]);
 });
+}
 
 for (const uid of ['owner', 'staff', 'delegate']) {
     // Runs the exact page-owned read expression against the real browser SDK and
@@ -272,5 +288,66 @@ for (const uid of ['owner', 'staff', 'delegate']) {
                 `return (${expression}).size;`)(sdk.db, sdk.getDocs, sdk.collection, sdk.query, sdk.limit, 'team-1', 'game-1');
         }, expression);
         expect(count).toBe(1);
+    });
+}
+
+
+async function persistedGameSnapshot() {
+    return privileged(async db => ({
+        game: (await getDoc(doc(db, gamePath))).data(),
+        collections: await Promise.all(['aggregatedStats', 'events', 'liveEvents'].map(async name => {
+            const snapshot = await getDocs(collection(db, `${gamePath}/${name}`));
+            return snapshot.docs.map(item => ({ id: item.id, ...item.data() }));
+        }))
+    }));
+}
+
+for (const uid of ['owner', 'staff', 'delegate']) {
+    test(`${uid} Cancel at existing-data preflight leaves all state unchanged`, async ({ page }) => {
+        await seed(0, { legacy: true });
+        await privileged(async db => {
+            await updateDoc(doc(db, gamePath), { homeScore: 0, awayScore: 0, liveClockMs: 0 });
+            await updateDoc(doc(db, `${gamePath}/aggregatedStats/p1`), { 'stats.pts': 0, 'stats.fouls': 2 });
+        });
+        const diagnostics = await boot(page, uid); // Dismiss the confirmation = Cancel.
+        await expect(page.locator('#statsTableBody tr')).toHaveCount(15);
+        const before = await persistedGameSnapshot();
+        const logBefore = await page.locator('#gameLog').innerHTML();
+        const rosterBefore = await page.locator('#statsTableBody').innerHTML();
+        await page.locator('#startBtn').click();
+        await page.evaluate(async () => await window.__startCompletion);
+        expect.soft(await persistedGameSnapshot()).toEqual(before);
+        await expect.soft(page.locator('#startBtn')).toBeEnabled();
+        expect.soft(await page.locator('#gameLog').innerHTML()).toBe(logBefore);
+        expect.soft(await page.locator('#statsTableBody').innerHTML()).toBe(rosterBefore);
+        await expect(page.locator('#home-score')).toHaveText('0');
+        expect(diagnostics.alerts).toEqual(['This game already has tracked data. Continue where you left off?\n\nCancel leaves existing data unchanged.']);
+        expect(diagnostics.errors).toEqual([]);
+    });
+}
+
+
+for (const uid of ['owner', 'staff']) {
+    test(`${uid} genuinely empty game starts without a confirmation and persists clock`, async ({ page }) => {
+        await seed(0);
+        await privileged(async db => {
+            for (const name of ['events', 'aggregatedStats', 'liveEvents']) {
+                const snapshot = await getDocs(collection(db, `${gamePath}/${name}`));
+                await Promise.all(snapshot.docs.map(item => deleteDoc(item.ref)));
+            }
+            await updateDoc(doc(db, gamePath), { homeScore: 0, awayScore: 0, liveClockMs: 0,
+                liveClockRunning: false, opponentStats: {}, liveHasData: false, liveStatus: 'scheduled' });
+        });
+        const before = await persistedGameSnapshot();
+        expect(before.collections).toEqual([[], [], []]);
+        const diagnostics = await boot(page, uid);
+        await expect(page.locator('#statsTableBody tr')).toHaveCount(15);
+        await page.locator('#startBtn').click();
+        await page.evaluate(async () => await window.__startCompletion);
+        await expect(page.locator('#startBtn')).toBeDisabled();
+        await expect.poll(async () => (await read(gamePath)).liveClockRunning).toBe(true);
+        await expect.poll(async () => (await read(gamePath)).liveStatus).toBe('live');
+        expect(diagnostics.alerts).toEqual([]);
+        expect(diagnostics.errors).toEqual([]);
     });
 }
