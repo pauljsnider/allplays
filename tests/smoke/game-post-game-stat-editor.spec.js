@@ -689,7 +689,14 @@ async function installMocks(
                     saveStore(store);
                 }
             };
-            return callback(transaction);
+            const result = await callback(transaction);
+            const committed = loadStore();
+            if (committed.rejectAfterReplayCommit === true) {
+                committed.rejectAfterReplayCommit = false;
+                saveStore(committed);
+                throw new Error('Replay committed but its response was lost');
+            }
+            return result;
         }
     `;
 
@@ -2486,7 +2493,7 @@ test("completed-game manager links, replaces, and removes a YouTube replay", asy
   scenario.game.videoUrl = "https://youtu.be/PK1HyC37doc";
   await installMocks(page, scenario);
 
-  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+  await page.goto(`${baseURL}/game.html?editReplay=1#teamId=team-1&gameId=game-1`, {
     waitUntil: "domcontentloaded",
   });
   await expect.poll(() => pageErrors).toEqual([]);
@@ -2494,6 +2501,7 @@ test("completed-game manager links, replaces, and removes a YouTube replay", asy
   const replayAdmin = page.locator("#replay-video-admin");
   const replayAction = page.locator("#replay-report-action");
   await expect(replayAdmin).toBeVisible();
+  await expect(page.locator("#replay-video-url")).toBeFocused();
   await expect(page.locator("#replay-video-current")).toContainText(
     "A non-YouTube replay is attached",
   );
@@ -2539,6 +2547,13 @@ test("completed-game manager links, replaces, and removes a YouTube replay", asy
   expect(store.game.recordedVideo).toBeUndefined();
   expect(store.game.replayVideoPublicUrl).toBeUndefined();
   expect(store.game.videoUrl).toBe("https://youtu.be/PK1HyC37doc");
+
+  await page.locator("#replay-video-url").fill("https://youtu.be/PK1HyC37doc");
+  await page.locator("#replay-video-title").fill("Unsaved title");
+  await page.locator("#replay-video-cancel").click();
+  await expect(page.locator("#replay-video-url")).toHaveValue("https://www.youtube.com/watch?v=0IuY8Oryi1k");
+  await expect(page.locator("#replay-video-title")).toHaveValue("Vipers vs Captains replay");
+  expect((await readStore(page)).game).toEqual(store.game);
 
   await page
     .locator("#replay-video-url")
@@ -2589,6 +2604,43 @@ test("completed-game manager links, replaces, and removes a YouTube replay", asy
   expect(store.game.replayVideoFallbackDisabled).toBeUndefined();
   expect(pageErrors).toEqual([]);
 });
+
+for (const action of ["save", "remove"]) {
+  test(`replay Cancel preserves uncertainty after a committed ${action} loses its response`, async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    page.on("dialog", (dialog) => dialog.accept());
+    const scenario = createScenario();
+    scenario.game.replayVideo = {
+      provider: "youtube", videoId: "PK1HyC37doc", status: "ready",
+      publicUrl: "https://www.youtube.com/watch?v=PK1HyC37doc",
+      embedUrl: "https://www.youtube.com/embed/PK1HyC37doc"
+    };
+    scenario.rejectAfterReplayCommit = true;
+    await installMocks(page, scenario);
+    await page.goto(`${baseURL}/game.html?editReplay=1#teamId=team-1&gameId=game-1`, { waitUntil: "domcontentloaded" });
+    await expect.poll(() => pageErrors).toEqual([]);
+    await expect(page.locator("#replay-video-admin")).toBeVisible();
+    if (action === "save") {
+      await page.locator("#replay-video-url").fill("https://youtu.be/dQw4w9WgXcQ");
+      await page.locator("#replay-video-save").click();
+    } else {
+      await page.locator("#replay-video-remove").click();
+    }
+    const warning = action === "save" ? "Could not confirm whether the replay was saved" : "Could not confirm whether the replay was removed";
+    await expect(page.locator("#replay-video-status")).toContainText(warning);
+    const committed = (await readStore(page)).game;
+    if (action === "save") expect(committed.replayVideo.videoId).toBe("dQw4w9WgXcQ");
+    else expect(committed.replayVideo).toBeNull();
+    await page.locator("#replay-video-cancel").click();
+    await expect(page.locator("#replay-video-status")).toContainText(warning);
+    await expect(page.locator("#replay-video-status")).not.toContainText("unchanged");
+    await expect(page.locator("#replay-video-save")).toBeDisabled();
+    await expect(page.locator("#replay-video-remove")).toBeDisabled();
+    expect((await readStore(page)).game).toEqual(committed);
+    expect((await readStore(page)).runTransactionCalls).toHaveLength(1);
+  });
+}
 
 test("completed statsheet game with only an attached clip does not advertise a full replay", async ({
   page,

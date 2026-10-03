@@ -39,7 +39,7 @@ import {
 } from '../../lib/scheduleHub';
 import { useShellLayout } from '../../lib/useShellLayout';
 import { CompactMeta } from '../../components/schedule/CompactMeta';
-import { GameReplayEditor } from '../../components/schedule/GameReplayEditor';
+import { GameReplayEditor, canManageGameReplay } from '../../components/schedule/GameReplayEditor';
 import {
   buildCoachesOnlyGameNoteScopeKey,
   CoachesOnlyGameNotesPanel
@@ -489,6 +489,13 @@ function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: Parent
         </div>
         <button type="button" className="secondary-button" onClick={() => setOpen((current) => !current)}>{open ? 'Hide editor' : 'Edit game'}</button>
       </div>
+      {canManageGameReplay(event, auth) ? (
+        <button type="button" className="secondary-button mt-3" onClick={() => {
+          const heading = document.getElementById('game-replay-heading');
+          heading?.scrollIntoView({ block: 'center' });
+          heading?.focus({ preventScroll: true });
+        }}>Edit recording link</button>
+      ) : null}
       {open ? (
         <form className="mt-3 space-y-3" onSubmit={saveGame}>
           <div className="grid gap-3 sm:grid-cols-2">

@@ -2093,6 +2093,8 @@ test('app completed-game manager links, replaces, and removes a YouTube replay',
 
     const replaySection = page.getByRole('region', { name: 'YouTube replay' });
     await expect(replaySection).toBeVisible();
+    await page.getByRole('region', { name: 'Edit game schedule' }).getByRole('button', { name: 'Edit recording link' }).click();
+    await expect(replaySection.getByRole('heading', { name: 'YouTube replay' })).toBeFocused();
     await replaySection.getByRole('button', { name: 'Link YouTube replay' }).click();
     await replaySection.getByLabel('YouTube video URL').fill('https://youtu.be/0IuY8Oryi1k?si=share');
     await replaySection.getByRole('button', { name: 'Save replay' }).click();
