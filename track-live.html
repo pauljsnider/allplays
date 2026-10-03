@@ -2411,16 +2411,16 @@
                     (gameState.gameLog && gameState.gameLog.length > 0);
 
                 if (!hasLocalActivity) {
-                    const [eventsSnap, statsSnap, liveEventsSnap] = await Promise.all([
+                    const [eventsSnap, statsSnap, liveEvents] = await Promise.all([
                         getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`)),
                         getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`)),
-                        getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`))
+                        getLiveEvents(currentTeamId, currentGameId)
                     ]);
 
                     const persistedState = summarizePersistedTrackingState({
                         eventsCount: eventsSnap.size,
                         statsCount: statsSnap.size,
-                        liveEventsCount: liveEventsSnap.size,
+                        liveEventsCount: liveEvents.length,
                         hasScores: (currentGame?.homeScore || 0) > 0 || (currentGame?.awayScore || 0) > 0,
                         hasOpponentStats: !!(currentGame?.opponentStats && Object.keys(currentGame.opponentStats).length > 0),
                         hasLiveFlag: !!currentGame?.liveHasData || currentGame?.liveStatus === 'live'

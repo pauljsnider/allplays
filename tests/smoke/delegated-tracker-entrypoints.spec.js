@@ -109,6 +109,8 @@ export function checkAuth(callback) {
 
 const FIREBASE_STUB = `
 export const db = {};
+export function query(ref) { return ref; }
+export function limit(count) { return count; }
 export function writeBatch() { return { set() {}, update() {}, delete() {}, commit: async () => {} }; }
 export function doc(_db, path) { return { path }; }
 export async function setDoc() {}
