@@ -753,7 +753,9 @@ test.describe('edit schedule season record fields', () => {
         await page.goto(`${serverOrigin}/edit-schedule.html#teamId=team-1`, { waitUntil: 'domcontentloaded' });
         await expect(page.locator('#schedule-list')).toContainText('Tigers');
 
+        await expect(page.getByRole('link', { name: 'Recording', exact: true })).toHaveAttribute('href', 'game.html?editReplay=1#teamId=team-1&gameId=game-tournament-1');
         await page.getByRole('button', { name: 'Edit' }).click();
+        await expect(page.getByRole('link', { name: 'Edit recording link' })).toHaveAttribute('href', 'game.html?editReplay=1#teamId=team-1&gameId=game-tournament-1');
         await expect(page.locator('#submit-game-btn')).toHaveText('Update Game');
         await expect(page.locator('#seasonLabel')).toHaveValue('2026 Spring');
         await expect(page.locator('#competitionType')).toHaveValue('tournament');
@@ -767,6 +769,8 @@ test.describe('edit schedule season record fields', () => {
         expect(updateCall.gameData.seasonLabel).toBe('2026 Spring');
         expect(updateCall.gameData.competitionType).toBe('tournament');
         expect(updateCall.gameData.countsTowardSeasonRecord).toBe(false);
+        await expect(page.locator('#game-recording-edit')).toBeHidden();
+        await expect(page.locator('#game-recording-edit-link')).not.toHaveAttribute('href');
     });
 
     test('infers a new league game season label and persists record opt-in', async ({ page }) => {
