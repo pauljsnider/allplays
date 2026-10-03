@@ -2486,7 +2486,7 @@ test("completed-game manager links, replaces, and removes a YouTube replay", asy
   scenario.game.videoUrl = "https://youtu.be/PK1HyC37doc";
   await installMocks(page, scenario);
 
-  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+  await page.goto(`${baseURL}/game.html?editReplay=1#teamId=team-1&gameId=game-1`, {
     waitUntil: "domcontentloaded",
   });
   await expect.poll(() => pageErrors).toEqual([]);
@@ -2494,6 +2494,7 @@ test("completed-game manager links, replaces, and removes a YouTube replay", asy
   const replayAdmin = page.locator("#replay-video-admin");
   const replayAction = page.locator("#replay-report-action");
   await expect(replayAdmin).toBeVisible();
+  await expect(page.locator("#replay-video-url")).toBeFocused();
   await expect(page.locator("#replay-video-current")).toContainText(
     "A non-YouTube replay is attached",
   );
@@ -2539,6 +2540,13 @@ test("completed-game manager links, replaces, and removes a YouTube replay", asy
   expect(store.game.recordedVideo).toBeUndefined();
   expect(store.game.replayVideoPublicUrl).toBeUndefined();
   expect(store.game.videoUrl).toBe("https://youtu.be/PK1HyC37doc");
+
+  await page.locator("#replay-video-url").fill("https://youtu.be/PK1HyC37doc");
+  await page.locator("#replay-video-title").fill("Unsaved title");
+  await page.locator("#replay-video-cancel").click();
+  await expect(page.locator("#replay-video-url")).toHaveValue("https://www.youtube.com/watch?v=0IuY8Oryi1k");
+  await expect(page.locator("#replay-video-title")).toHaveValue("Vipers vs Captains replay");
+  expect((await readStore(page)).game).toEqual(store.game);
 
   await page
     .locator("#replay-video-url")

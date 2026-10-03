@@ -110,6 +110,7 @@
                             class="hidden min-h-11 px-4 py-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 font-semibold text-sm disabled:cursor-not-allowed disabled:opacity-60">
                             Remove replay
                         </button>
+                        <button id="replay-video-cancel" type="button" class="px-4 py-2 rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50">Cancel edits</button>
                         <span id="replay-video-status" class="text-sm text-gray-500" role="status" aria-live="polite"></span>
                     </div>
                 </form>
@@ -566,7 +567,7 @@
             if (replayForm) replayForm.setAttribute('aria-busy', 'false');
             ['summary-save-btn', 'summary-generate-btn', 'stat-sheet-upload-btn', 'stat-sheet-save',
                 'stat-sheet-cancel', 'stat-sheet-remove', 'replay-video-url', 'replay-video-title',
-                'replay-video-save', 'replay-video-remove', 'edit-stats-btn', 'stats-prev-btn',
+                'replay-video-save', 'replay-video-remove', 'replay-video-cancel', 'edit-stats-btn', 'stats-prev-btn',
                 'stats-next-btn', 'stats-dnp-toggle', 'stats-save-btn', 'stats-save-prev-btn',
                 'stats-save-next-btn', 'stats-cancel-btn', 'edit-team-stats-btn',
                 'team-stats-save-btn', 'team-stats-cancel-btn'].forEach((id) => {
@@ -751,6 +752,7 @@
             const titleInput = document.getElementById('replay-video-title');
             const saveButton = document.getElementById('replay-video-save');
             const removeButton = document.getElementById('replay-video-remove');
+            const cancelButton = document.getElementById('replay-video-cancel');
             const current = document.getElementById('replay-video-current');
             const status = document.getElementById('replay-video-status');
             const gameCompleted = isCompletedGameForReplay(game);
@@ -781,6 +783,7 @@
                 titleInput.disabled = isBusy;
                 saveButton.disabled = isBusy;
                 removeButton.disabled = isBusy;
+                cancelButton.disabled = isBusy;
             }
 
             function renderCurrentReplay({ resetInputs = true, keepSectionVisible = false } = {}) {
@@ -812,7 +815,7 @@
                 saveButton.textContent = hasOtherReplay ? 'Replace with YouTube replay' : 'Link replay';
                 removeButton.classList.toggle('hidden', !canRemoveCurrentReplay());
                 if (resetInputs) {
-                    urlInput.value = '';
+                    urlInput.value = linkedReplay?.publicUrl || '';
                     titleInput.value = String(game.replayVideo?.title || defaultTitle).trim() || defaultTitle;
                 }
                 if (!canLinkReplayVideo && !hasGameReplayArchiveEvidence(game) && !keepSectionVisible) {
@@ -887,6 +890,17 @@
             }
 
             renderCurrentReplay();
+            cancelButton.classList.toggle('hidden', !canLinkReplayVideo);
+            addAuthBoundEventListener(cancelButton, 'click', () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
+                renderCurrentReplay();
+                setReplayVideoStatus(status, 'Edits cancelled. The saved recording is unchanged.');
+                urlInput.focus();
+            }, actionContext);
+            if (canLinkReplayVideo && new URLSearchParams(window.location.search).get('editReplay') === '1') {
+                section.scrollIntoView({ block: 'start' });
+                urlInput.focus({ preventScroll: true });
+            }
 
             addAuthBoundEventListener(form, 'submit', async (event) => {
                 event.preventDefault();

@@ -64,6 +64,7 @@ describe('edit schedule game row rendering', () => {
         expect(html).not.toContain('track-game-btn');
         expect(html).not.toContain('Command Center');
         expect(html).not.toContain('cancel-game-btn');
+        expect(html).not.toContain('editReplay=1');
     });
 
     it('treats American-spelled canceled games as untrackable too', () => {
@@ -97,6 +98,7 @@ describe('edit schedule game row rendering', () => {
 
         expect(html).toContain('Live Now');
         expect(html).not.toContain('>View Live</a>');
+        expect(html).not.toContain('editReplay=1');
     });
 
     it('uses liveStatus to show replay links for completed broadcasts', () => {
@@ -114,6 +116,8 @@ describe('edit schedule game row rendering', () => {
         });
 
         expect(html).toContain('Report</a>');
+        expect(html).toContain('game.html?editReplay=1#teamId=team-1&gameId=game-replay');
+        expect(html).toContain('Recording</a>');
         expect(html).toContain('live-game.html?teamId=team-1&gameId=game-replay&replay=true');
         expect(html).toContain('Watch Replay');
     });
