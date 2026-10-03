@@ -2,7 +2,7 @@
 
 Base: cf7b8936ab70453054e96524d30c66bf7a9913aa.
 
-The existing replay implementation from #4831 is the canonical contract. An additional real Rules emulator check found pre-existing expression-budget failures for authorized replay writes; production persistence remains blocked pending separate diagnosis/review, and this UI PR does not change Rules. This change makes it discoverable from the legacy schedule list and edit form and the React/Capacitor game editor, and adds cancel/reset to the legacy report editor. It does not change permissions, lifecycle, persistence, scores, stats, or events.
+The existing replay implementation from #4831 is the canonical contract. A real Rules emulator check found a pre-existing expression-budget failure for selected-videographer replay writes. Independent verified-auth owner link/remove and negative mixed-field tests pass against the production-compatible baseline. The role-specific candidate is held for separate review; this UI PR does not change Rules. This change makes it discoverable from the legacy schedule list and edit form and the React/Capacitor game editor, and adds cancel/reset to the legacy report editor. It does not change permissions, lifecycle, persistence, scores, stats, or events.
 
 ## Paths and schema
 
