@@ -1957,6 +1957,31 @@ describe('Schedule', () => {
     });
   });
 
+  it('retains staff choices with empty events during pending rediscovery, then honors authoritative removal', async () => {
+    const child = { teamId: 'team-parent', teamName: 'Parent Team', playerId: 'child', playerName: 'Child' };
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+      profile: {}, children: [child], staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }], isPartial: true
+    });
+    let finishDiscovery!: (value: any) => void;
+    scheduleServiceMocks.loadParentSchedule.mockImplementationOnce((_user: unknown, options: any) => {
+      // Model the service contract: only explicitly opted-in callers receive this early payload.
+      if (options.previewParentChildren) options.onPartial({ children: [child], events: [], staffTeams: [], isPartial: true });
+      return new Promise((resolve) => { finishDiscovery = resolve; });
+    });
+    renderSchedule('/schedule?scope=staff');
+    const teamFilter = await screen.findByLabelText('Team filter');
+    expect(await within(teamFilter).findByRole('option', { name: 'Vipers' })).toBeTruthy();
+    await waitFor(() => expect(finishDiscovery).toBeTypeOf('function'));
+    expect(scheduleServiceMocks.loadParentSchedule.mock.calls[0][1].previewParentChildren).not.toBe(true);
+    expect(screen.getByRole('button', { name: /manage schedule/i })).toBeTruthy();
+    await act(async () => finishDiscovery({ children: [child], events: [], staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }], isPartial: false }));
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({ profile: {}, children: [child], staffTeams: [], isPartial: false });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({ children: [child], events: [], staffTeams: [], isPartial: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh schedule' }));
+    await waitFor(() => expect(screen.queryByRole('option', { name: 'Vipers' })).toBeNull());
+    expect(screen.queryByRole('button', { name: /manage schedule/i })).toBeNull();
+  });
+
   it('keeps a verified in-app-created staff team from a partial scope response in the filter and editor', async () => {
     scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
       profile: {},
