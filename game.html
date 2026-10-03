@@ -776,13 +776,14 @@
                 ? 'Link the finished YouTube broadcast to this game so families can watch the exact replay.'
                 : 'This game is no longer final. You can remove its existing replay association, but you cannot add or replace one.';
             const defaultTitle = `${team?.name || 'Team'} vs ${game?.opponent || 'Opponent'} replay`.slice(0, 120);
+            let replayWriteUnconfirmed = false;
 
             function setBusy(isBusy) {
                 form.setAttribute('aria-busy', String(isBusy));
                 urlInput.disabled = isBusy;
                 titleInput.disabled = isBusy;
-                saveButton.disabled = isBusy;
-                removeButton.disabled = isBusy;
+                saveButton.disabled = isBusy || replayWriteUnconfirmed;
+                removeButton.disabled = isBusy || replayWriteUnconfirmed;
                 cancelButton.disabled = isBusy;
             }
 
@@ -894,7 +895,9 @@
             addAuthBoundEventListener(cancelButton, 'click', () => {
                 if (!isAuthBoundActionCurrent(actionContext)) return;
                 renderCurrentReplay();
-                setReplayVideoStatus(status, 'Edits cancelled. The saved recording is unchanged.');
+                if (!replayWriteUnconfirmed) {
+                    setReplayVideoStatus(status, 'Edits cancelled. The saved recording is unchanged.');
+                }
                 urlInput.focus();
             }, actionContext);
             if (canLinkReplayVideo && new URLSearchParams(window.location.search).get('editReplay') === '1') {
@@ -905,6 +908,7 @@
             addAuthBoundEventListener(form, 'submit', async (event) => {
                 event.preventDefault();
                 if (!isAuthBoundActionCurrent(actionContext)) return;
+                if (replayWriteUnconfirmed) return;
                 const rawUrl = urlInput.value.trim();
                 if (rawUrl.length > 2048) {
                     setReplayVideoStatus(status, 'Use a YouTube link shorter than 2,048 characters.', { error: true });
@@ -955,6 +959,7 @@
                     setReplayVideoStatus(status, 'Replay linked. The Watch Replay button now opens this video.');
                 } catch (error) {
                     if (!isAuthBoundActionCurrent(actionContext)) return;
+                    replayWriteUnconfirmed = true;
                     console.error('Error linking YouTube replay:', error);
                     setReplayVideoStatus(status, 'Could not confirm whether the replay was saved. Refresh this report and check the linked replay before trying again.', { error: true });
                 } finally {
@@ -964,7 +969,7 @@
 
             addAuthBoundEventListener(removeButton, 'click', async () => {
                 if (!isAuthBoundActionCurrent(actionContext)) return;
-                if (!canRemoveCurrentReplay()) return;
+                if (replayWriteUnconfirmed || !canRemoveCurrentReplay()) return;
                 if (!window.confirm('Remove the replay from this game? The source video will remain with its provider.')) return;
                 if (!isAuthBoundActionCurrent(actionContext)) return;
 
@@ -984,6 +989,7 @@
                     if (!canLinkReplayVideo) heading.focus();
                 } catch (error) {
                     if (!isAuthBoundActionCurrent(actionContext)) return;
+                    replayWriteUnconfirmed = true;
                     console.error('Error removing YouTube replay:', error);
                     setReplayVideoStatus(status, 'Could not confirm whether the replay was removed. Refresh this report and check the linked replay before trying again.', { error: true });
                 } finally {
