@@ -13,7 +13,7 @@ active runtime surfaces:
 - Root `*.html`, `js/`, `css/`, and `img/`: the legacy static web product.
 - `apps/app/`: the React/TypeScript app, hosted at `/app/` and packaged for iOS
   and Android through Capacitor.
-- `functions/`: deployed Firebase Functions on Node 20.
+- `functions/`: deployed Firebase Functions on Node 22.
 - `services/chatgpt-mcp/`: a read-only, user-credentialed Node 22 MCP service.
 
 The main Firebase project, `game-flow-c6311`, owns Auth, Firestore, Functions,
@@ -54,8 +54,7 @@ Read the relevant reference before a broad change:
 
 ## Runtime and Package Manager
 
-- Use Node 22 and npm 10+ for the root, React app, and MCP service. Firebase
-  Functions deploy on Node 20.
+- Use Node 22 and npm 10+ for the root, React app, Functions, and MCP service.
 - npm and `package-lock.json` are canonical in CI. Use `npm ci` for clean
   installs and `npm --prefix <directory> ...` for nested packages.
 - Do not introduce a pnpm/Yarn lockfile or package-manager workspace.
