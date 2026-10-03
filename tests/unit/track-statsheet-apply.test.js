@@ -203,7 +203,7 @@ describe('track statsheet apply helpers', () => {
 
     it('atomically clears mutable tracked state while removing stale replay eligibility', () => {
         expect(trackStatsheetSource).toContain("const privateStatsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`));");
-        expect(trackStatsheetSource).toContain("const liveEventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));");
+        expect(trackStatsheetSource).toContain("const liveEventsSnap = await getDocs(query(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`), limit(1)));");
         expect(trackStatsheetSource).toContain('const FIRESTORE_BATCH_WRITE_LIMIT = 500;');
         expect(trackStatsheetSource).toContain('const replacementCleanupWriteCount = eventsSnap.size + statsSnap.size + privateStatsSnap.size;');
         expect(trackStatsheetSource).toContain('const hasExistingTrackedData = replacementCleanupWriteCount > 0 || liveEventsSnap.size > 0;');

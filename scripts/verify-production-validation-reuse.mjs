@@ -152,6 +152,7 @@ export function evaluateProductionValidationReuse({
                 'change-impact',
                 'regression-integration / firebase-rules-deploy-guard',
                 'regression-integration / roster-chat-media-replay-smoke',
+                'regression-integration / classic-browser-rules-contract',
                 'mobile-build',
                 'preview-smoke'
             ]
