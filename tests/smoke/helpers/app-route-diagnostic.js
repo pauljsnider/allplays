@@ -40,6 +40,20 @@ function assetPath(url) {
     return '[other-asset]';
 }
 
+// Fixed categories identify which service failed without serializing hosts,
+// endpoint paths, project/document IDs, query strings or credentials.
+function requestService(url) {
+    try {
+        const host = new URL(url).hostname;
+        if (['allplays.ai', 'game-flow-c6311.web.app', 'game-flow-c6311.firebaseapp.com'].includes(host)) return 'app-host';
+        if (host === 'identitytoolkit.googleapis.com') return 'firebase-auth';
+        if (host === 'securetoken.googleapis.com') return 'firebase-token';
+        if (host === 'firestore.googleapis.com') return 'firestore';
+        if (host === 'firebasestorage.googleapis.com') return 'firebase-storage';
+    } catch { /* Unknown requests retain only resource type and status. */ }
+    return '[other-service]';
+}
+
 function responseHeader(name, value) {
     // Reject rather than truncate: even a short unknown token can be private.
     if (typeof value !== 'string' || value.length > 160 || /[^\x20-\x7e]/.test(value)) return undefined;
@@ -104,7 +118,7 @@ async function collectResponseMetadata(responses) {
     }
 }
 
-export async function withAppFailureDiagnostic(session, testInfo, callback, { baseline = false } = {}) {
+export async function withAppFailureDiagnostic(session, testInfo, callback, { baseline = false, includeApiFailures = false } = {}) {
     const { page } = session;
     const startedAt = Date.now();
     routeTimings.delete(page);
@@ -117,6 +131,9 @@ export async function withAppFailureDiagnostic(session, testInfo, callback, { ba
         return entry;
     };
     const resourceTypes = baseline ? ['script', 'stylesheet', 'document', 'fetch', 'xhr'] : ['script', 'stylesheet', 'document'];
+    if (includeApiFailures) resourceTypes.push('fetch', 'xhr', 'image', 'media', 'font');
+    const requestContext = (request) => includeApiFailures
+        ? { resourceType: request.resourceType(), service: requestService(request.url()) } : {};
     const listeners = {
         console: (message) => {
             if (baseline && message.type() === 'error') record({ type: 'console', error: errorKind(message.text()) });
@@ -124,7 +141,7 @@ export async function withAppFailureDiagnostic(session, testInfo, callback, { ba
         pageerror: (error) => record({ type: 'pageerror', error: errorKind(error.message) }),
         requestfailed: (request) => {
             if (resourceTypes.includes(request.resourceType())) {
-                record({ type: 'requestfailed', asset: assetPath(request.url()), error: errorKind(request.failure()?.errorText) });
+                record({ ...requestContext(request), type: 'requestfailed', asset: assetPath(request.url()), error: errorKind(request.failure()?.errorText) });
             }
         },
         response: (response) => {
@@ -132,7 +149,7 @@ export async function withAppFailureDiagnostic(session, testInfo, callback, { ba
             if (!Number.isInteger(status) || status < 100 || status > 599) return;
             if (!resourceTypes.includes(response.request().resourceType())) return;
             if (status < 400 && !(baseline && response.request().resourceType() === 'document')) return;
-            const event = record({ type: 'response', asset: assetPath(response.url()), status, observedUtc: new Date().toISOString() });
+            const event = record({ ...requestContext(response.request()), type: 'response', asset: assetPath(response.url()), status, observedUtc: new Date().toISOString() });
             if (event && status >= 400 && event.asset !== '[other-asset]') responses.push({ response, event });
         }
     };
