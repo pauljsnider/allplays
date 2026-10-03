@@ -29,7 +29,7 @@ function mockResponse({ url = 'https://allplays.ai/js/team-access.js?v=private-v
     type = 'script', headers = safeHeaders, protocol = 'HTTP/2.0', timing = {} } = {}) {
     return {
         url: () => url, status: () => status,
-        request: () => ({ resourceType: () => type, timing: () => timing }),
+        request: () => ({ resourceType: () => type, timing: () => timing, url: () => url }),
         headerValue: vi.fn(async (name) => headers[name] ?? null),
         httpVersion: vi.fn(async () => protocol),
         allHeaders: vi.fn(), headers: vi.fn(), body: vi.fn(), text: vi.fn()
@@ -42,13 +42,13 @@ async function diagnosticFolder() {
     return folder;
 }
 
-async function captureResponses(responses, { page = mockPage(), baseline = true } = {}) {
+async function captureResponses(responses, { page = mockPage(), baseline = true, includeApiFailures = false } = {}) {
     const folder = await diagnosticFolder();
     const failure = Error('original failure with private-fixture');
     const result = await withAppFailureDiagnostic({ page }, { retry: 0, outputPath: (name) => path.join(folder, name) }, () => {
         for (const response of responses) page.emit('response', response);
         throw failure;
-    }, { baseline }).catch((error) => error);
+    }, { baseline, includeApiFailures }).catch((error) => error);
     expect(result).toBe(failure);
     expect(page.eventNames()).toEqual([]);
     const file = path.join(folder, baseline ? 'boot-path-diagnostic.json' : 'app-route-diagnostic.json');
@@ -86,6 +86,36 @@ describe('authenticated smoke failure diagnostics', () => {
         for (const response of responses) {
             expect(response.headerValue.mock.calls.map(([name]) => name).sort()).toEqual(Object.keys(safeHeaders).sort());
             for (const name of ['allHeaders', 'headers', 'body', 'text']) expect(response[name]).not.toHaveBeenCalled();
+        }
+    });
+
+    it('records opt-in API/media failure categories without private request data', async () => {
+        const targets = [
+            ['identitytoolkit.googleapis.com', 'firebase-auth', 'fetch'],
+            ['securetoken.googleapis.com', 'firebase-token', 'xhr'],
+            ['firestore.googleapis.com', 'firestore', 'fetch'],
+            ['firebasestorage.googleapis.com', 'firebase-storage', 'image'],
+            ['allplays.ai', 'app-host', 'font'],
+            ['private-project.cloudfunctions.net', '[other-service]', 'media'],
+            ['identitytoolkit.googleapis.com.private-host', '[other-service]', 'fetch']
+        ];
+        const responses = targets.map(([host, , type]) => mockResponse({
+            url: `https://private-user:private-password@${host}/private-id?token=private-token#private-fragment`, type
+        }));
+        for (const response of responses) {
+            const request = response.request();
+            for (const method of ['headers', 'allHeaders', 'postData', 'postDataJSON']) {
+                request[method] = vi.fn(() => { throw Error('private-data-access'); });
+            }
+            response.request = () => request;
+        }
+        const { data, text } = await captureResponses(responses, { baseline: false, includeApiFailures: true });
+        expect(data.events.map(({ service, resourceType, status, asset }) => ({ service, resourceType, status, asset })))
+            .toEqual(targets.map(([, service, resourceType]) => ({ service, resourceType, status: 503, asset: '[other-asset]' })));
+        expect(text).not.toMatch(/private|https:|googleapis|cloudfunctions|token=|cookie|authorization|bearer/i);
+        for (const response of responses) {
+            for (const method of ['headers', 'allHeaders', 'postData', 'postDataJSON']) expect(response.request()[method]).not.toHaveBeenCalled();
+            for (const method of ['headerValue', 'headers', 'allHeaders', 'body', 'text']) expect(response[method]).not.toHaveBeenCalled();
         }
     });
 
