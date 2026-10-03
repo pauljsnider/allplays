@@ -33,6 +33,7 @@ describe('RSVP precedence cache delivery', () => {
 
     it('versions every deployed auth consumer after auth adopts the fresh db key', () => {
         const authConsumers = {
+            'scripts/build-help-workflow-html-loop.mjs': 'auth.js?v=4433205',
             'accept-invite.html': 'auth.js?v=4433205',
             'dashboard.html': 'auth.js?v=4433205',
             'edit-team.html': 'auth.js?v=4433205',
