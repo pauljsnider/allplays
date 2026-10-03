@@ -83,6 +83,27 @@ describe('pull request CI consolidation', () => {
         expect(agentGuidance).toContain('passed `pr-integration`. Normal PR pushes and labels must not deploy Firebase');
     });
 
+    it('requires the isolated Classic browser/rules job for code and rules changes', () => {
+        const regression = parseYaml(workflow('regression-guards.yml'));
+        const integration = parseYaml(workflow('pr-integration.yml'));
+        const job = regression.jobs['classic-browser-rules-contract'];
+        expect(job.if).toBeUndefined();
+        expect(job['continue-on-error']).toBeUndefined();
+        expect(job.permissions).toEqual({ contents: 'read' });
+        expect(job.steps.find(step => step.name === 'Checkout').with['persist-credentials']).toBe(false);
+        const run = job.steps.find(step => step.name === 'Run Classic browser contract against real Firestore rules');
+        expect(run.run).toContain('emulators:exec --only firestore');
+        expect(run.run).toContain('--project demo-allplays-classic-contract');
+        expect(run.run).toContain('playwright.rules.config.js');
+        expect(run.if).toBeUndefined();
+        expect(run['continue-on-error']).toBeUndefined();
+        expect(integration.jobs['preview-smoke'].needs).toContain('regression-integration');
+        expect(integration.jobs['regression-integration'].if).toContain("lane != 'spec-only'");
+        for (const step of job.steps) {
+            if (step.uses) expect(step.uses).toMatch(/@[a-f0-9]{40}$/);
+        }
+    });
+
     it('reuses version-bound Playwright browsers in the regression workflow', () => {
         const regression = workflow('regression-guards.yml');
         const parsed = parseYaml(regression);

@@ -23,7 +23,7 @@ describe('admin dashboard statistics scope', () => {
 
         const adminHtml = fs.readFileSync('admin.html', 'utf8');
 
-        expect(adminJs).toContain("import { checkAuth } from './auth.js?v=4433204';");
+        expect(adminJs).toContain("import { checkAuth } from './auth.js?v=4433205';");
         expect(adminJs).not.toContain("import { checkAuth } from './auth.js?v=55';");
         expect(adminJs).toContain('loadInitialAdminBootstrap({');
         expect(adminJs).toContain('getTeamsPage: getAdminTeamsPage');
@@ -60,8 +60,9 @@ describe('admin dashboard statistics scope', () => {
         expect(getAllUsersBody).not.toContain('limitQuery(100)');
     });
 
-    it('bounds dashboard game reads to the loaded team page and a recent time window', () => {
+    it('uses distinct bounded game windows for dashboard and Teams-tab page reads', () => {
         const adminJs = fs.readFileSync('js/admin.js', 'utf8');
+        const officialsHelperJs = fs.readFileSync('js/admin-team-officials.js', 'utf8');
         const loadGameStatsBody = adminJs.match(/async function loadGameStatsForTeams[\s\S]*?async function loadDashboardData/)?.[0] || '';
 
         expect(adminJs).toContain('const DASHBOARD_GAME_LOOKBACK_DAYS = 30;');
@@ -70,6 +71,9 @@ describe('admin dashboard statistics scope', () => {
         expect(loadGameStatsBody).toContain("scope === 'dashboard'");
         expect(loadGameStatsBody).toContain('buildDashboardGameQueryWindow()');
         expect(loadGameStatsBody).toContain('await getGames(team.id, dashboardGameQueryWindow)');
+        expect(loadGameStatsBody).toContain('await loadAdminTeamOfficialsCoverageGames(teams, getGames)');
+        expect(loadGameStatsBody).not.toContain('await getGames(team.id);');
+        expect(officialsHelperJs).toContain('await getGamesForTeam(team.id, coverageWindow)');
         expect(loadGameStatsBody).not.toContain('getCountFromServer');
         expect(adminJs).not.toContain('loadDashboardAllTimeGameStats');
     });
@@ -88,7 +92,7 @@ describe('admin dashboard statistics scope', () => {
         expect(adminJs).toContain('With Recent Games');
     });
 
-    it('defers full-history team game reads until the Teams tab or explicit pagination', () => {
+    it('defers bounded team coverage reads until the Teams tab or explicit pagination', () => {
         const adminJs = fs.readFileSync('js/admin.js', 'utf8');
         const handleTabBody = adminJs.match(/async function handleTabChange[\s\S]*?function setupTabs/)?.[0] || '';
 

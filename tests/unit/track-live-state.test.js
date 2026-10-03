@@ -437,7 +437,7 @@ describe('track live state helpers', () => {
     const trackLiveHtml = readFileSync(new URL('../../track-live.html', import.meta.url), 'utf8');
 
     expect(trackLiveHtml).toContain('buildTrackLiveResumeState');
-    expect(trackLiveHtml).toContain("orderBy('createdAt', 'asc')");
+    expect(trackLiveHtml).toContain('const liveEvents = await getLiveEvents(teamId, gameId);');
     expect(trackLiveHtml).toContain('gameState.gameLog = resumedTrackingState.gameLog;');
     expect(trackLiveHtml).toContain('gameState.liveNotes = resumedTrackingState.liveNotes;');
     expect(trackLiveHtml).toContain('summaryField.value = resumedTrackingState.summaryText;');

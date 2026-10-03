@@ -824,7 +824,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443376'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443377'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -9111,9 +9111,18 @@ export function subscribeLiveEvents(teamId, gameId, callback, onError) {
  */
 export async function getLiveEvents(teamId, gameId) {
     const eventsRef = getGameSubcollectionRef(teamId, gameId, 'liveEvents');
-    const q = query(eventsRef, orderBy('createdAt', 'asc'));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const events = [];
+    let cursor = null;
+    // Active games permit at most 20 events per read, including manager reads.
+    // Use the document cursor so events sharing a timestamp are not skipped.
+    while (true) {
+        const constraints = [orderBy('createdAt', 'asc'), limit(20)];
+        if (cursor) constraints.push(startAfter(cursor));
+        const snapshot = await getDocs(query(eventsRef, ...constraints));
+        events.push(...snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        if (snapshot.docs.length < 20) return events;
+        cursor = snapshot.docs[snapshot.docs.length - 1];
+    }
 }
 
 /**

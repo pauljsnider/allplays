@@ -106,6 +106,9 @@ must not regain competing pull-request or master-push triggers.
 
 - `firebase-rules-deploy-guard`: `npm run ci:firebase-rules`.
 - `roster-chat-media-replay-smoke`: focused Playwright fallback regression.
+- `classic-browser-rules-contract`: actual Classic page/database code against the
+  full Firestore rules in a demo-only emulator. Runs for all code/rules changes;
+  the required `preview-smoke` aggregate includes its result.
 
 ### Expensive path-filtered integration
 

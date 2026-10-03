@@ -15,7 +15,7 @@ import {
     getTelemetryRouteDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
-} from './db.js?v=4433200';
+} from './db.js?v=4433201';
 import {
     db,
     collection,
@@ -30,8 +30,8 @@ import {
     updateDoc,
     serverTimestamp
 } from './firebase.js?v=33';
-import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443376';
-import { checkAuth } from './auth.js?v=4433204';
+import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443377';
+import { checkAuth } from './auth.js?v=4433205';
 import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=2';
 import {
     adminRegistrationDefaults,
@@ -53,7 +53,7 @@ import {
     formatOfficialUserSummary,
     getOfficialUserSummary
 } from './admin-user-official-links.js?v=4';
-import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=2';
+import { buildAdminTeamOfficialsSummary, loadAdminTeamOfficialsCoverageGames } from './admin-team-officials.js?v=3';
 import {
     createDebouncedAdminTeamSearch,
     normalizeAdminTeamSearchTerm,
@@ -448,21 +448,21 @@ async function loadGameStatsForTeams(teams = allTeams, { scope = 'page' } = {}) 
         return;
     }
 
-    const dashboardGameQueryWindow = scope === 'dashboard'
-        ? buildDashboardGameQueryWindow()
-        : null;
-    const gamesPromises = teams.map(async (team) => {
-        try {
-            const games = dashboardGameQueryWindow
-                ? await getGames(team.id, dashboardGameQueryWindow)
-                : await getGames(team.id);
-            return games.map(g => ({ ...g, teamId: team.id, teamName: team.name }));
-        } catch (e) {
-            return [];
-        }
-    });
-    const gamesArrays = await Promise.all(gamesPromises);
-    const nextGames = gamesArrays.flat();
+    let nextGames;
+    if (scope === 'dashboard') {
+        const dashboardGameQueryWindow = buildDashboardGameQueryWindow();
+        const gamesArrays = await Promise.all(teams.map(async (team) => {
+            try {
+                const games = await getGames(team.id, dashboardGameQueryWindow);
+                return games.map(g => ({ ...g, teamId: team.id, teamName: team.name }));
+            } catch (e) {
+                return [];
+            }
+        }));
+        nextGames = gamesArrays.flat();
+    } else {
+        nextGames = await loadAdminTeamOfficialsCoverageGames(teams, getGames);
+    }
 
     if (scope === 'dashboard') {
         dashboardGames = nextGames;

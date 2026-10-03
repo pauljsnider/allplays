@@ -198,12 +198,12 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getGameDayTeamContext, getGame, getPlayers, getConfigs, collection, getDocs, uploadStatSheetPhoto, deleteUploadedMediaObjects } from './js/db.js?v=4433200';
+    import { getGameDayTeamContext, getGame, getPlayers, getConfigs, collection, getDocs, uploadStatSheetPhoto, deleteUploadedMediaObjects } from './js/db.js?v=4433201';
     import { db } from './js/firebase.js?v=33';
-    import { writeBatch, doc, setDoc } from './js/firebase.js?v=33';
-    import { renderHeader, renderFooter, getUrlParams, escapeHtml, formatDate } from './js/utils.js?v=443376';
-    import { checkAuth } from './js/auth.js?v=4433204';
-    import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443351';
+    import { writeBatch, doc, setDoc, query, limit } from './js/firebase.js?v=33';
+    import { renderHeader, renderFooter, getUrlParams, escapeHtml, formatDate } from './js/utils.js?v=443377';
+    import { checkAuth } from './js/auth.js?v=4433205';
+    import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443352';
     import { ensureImageAuth, getImageAuthError } from './js/firebase-images.js?v=18';
     import { validateTrackStatsheetApplyRows, buildTrackStatsheetApplyPlan } from './js/track-statsheet-apply.js?v=5';
     import { getApp } from './js/vendor/firebase-app.js';
@@ -782,7 +782,8 @@ RETURN JSON:
         applyStatus.textContent = 'Checking existing game data…';
         const eventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
         const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
-        const liveEventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));
+        // Only existence is needed; active-game rules require a bounded read.
+        const liveEventsSnap = await getDocs(query(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`), limit(1)));
         const privateStatsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`));
         // liveEvents are append-only under Firestore rules. Keep that audit history
         // while replacing the mutable tracker state in one atomic commit.
@@ -1001,7 +1002,7 @@ Write the match report now:`;
       try {
         if (summaryText) {
           status.textContent = 'Saving summary…';
-          const { updateGame } = await import('./js/db.js?v=4433200');
+          const { updateGame } = await import('./js/db.js?v=4433201');
           await updateGame(currentTeamId, currentGameId, { summary: summaryText });
           status.textContent = 'Summary saved!';
         }
