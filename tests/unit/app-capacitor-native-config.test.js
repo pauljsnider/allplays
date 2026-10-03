@@ -25,16 +25,16 @@ describe('Capacitor native config', () => {
             expect(rootPackageLock.packages[`node_modules/${dependency}`].version).toBe('8.5.2');
         });
 
-        expect(rootPackage.dependencies['@capacitor/camera']).toBe('^8.2.4');
-        expect(rootPackageLock.packages[''].dependencies['@capacitor/camera']).toBe('^8.2.4');
-        expect(rootPackageLock.packages['node_modules/@capacitor/camera'].version).toBe('8.2.4');
+        expect(rootPackage.dependencies['@capacitor/camera']).toBe('^8.2.5');
+        expect(rootPackageLock.packages[''].dependencies['@capacitor/camera']).toBe('^8.2.5');
+        expect(rootPackageLock.packages['node_modules/@capacitor/camera'].version).toBe('8.2.5');
 
         expect(appPackage.dependencies['@capacitor/core']).toBe('^8.5.2');
-        expect(appPackage.dependencies['@capacitor/camera']).toBe('^8.2.4');
+        expect(appPackage.dependencies['@capacitor/camera']).toBe('^8.2.5');
         expect(appPackageLock.packages[''].dependencies['@capacitor/core']).toBe('^8.5.2');
-        expect(appPackageLock.packages[''].dependencies['@capacitor/camera']).toBe('^8.2.4');
+        expect(appPackageLock.packages[''].dependencies['@capacitor/camera']).toBe('^8.2.5');
         expect(appPackageLock.packages['node_modules/@capacitor/core'].version).toBe('8.5.2');
-        expect(appPackageLock.packages['node_modules/@capacitor/camera'].version).toBe('8.2.4');
+        expect(appPackageLock.packages['node_modules/@capacitor/camera'].version).toBe('8.2.5');
     });
 
     it('keeps the synchronized iOS SwiftPM runtime aligned with the JavaScript lockfile', () => {
@@ -304,10 +304,14 @@ describe('Capacitor native config', () => {
             '@capacitor-firebase/authentication': { specifier: '^8.5.2', version: '8.5.2' },
             '@capacitor-firebase/messaging': { specifier: '^8.5.2', version: '8.5.2' },
             '@capacitor-firebase/performance': { specifier: '^8.5.2', version: '8.5.2' },
-            '@capacitor/camera': { specifier: '^8.2.4', version: '8.2.4' },
+            '@capacitor/app': { specifier: '^8.1.2', version: '8.1.2' },
+            '@capacitor/browser': { specifier: '^8.0.5', version: '8.0.5' },
+            '@capacitor/camera': { specifier: '^8.2.5', version: '8.2.5' },
             '@capacitor/core': { specifier: '^8.5.2', version: '8.5.2' },
-            '@capacitor/filesystem': { specifier: '^8.1.3', version: '8.1.3' },
-            '@capacitor/share': { specifier: '^8.0.2', version: '8.0.2' },
+            '@capacitor/filesystem': { specifier: '^8.1.4', version: '8.1.4' },
+            '@capacitor/keyboard': { specifier: '^8.0.6', version: '8.0.6' },
+            '@capacitor/share': { specifier: '^8.0.3', version: '8.0.3' },
+            '@capacitor/status-bar': { specifier: '^8.0.4', version: '8.0.4' },
             '@capgo/capacitor-speech-recognition': { specifier: '^8.3.2', version: '8.3.2' },
             firebase: { specifier: '12.19.0', version: '12.19.0' },
             'web-vitals': { specifier: '^6.2.2', version: '6.2.2' }
