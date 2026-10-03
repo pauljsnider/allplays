@@ -75,6 +75,7 @@ function evidence() {
                     'change-impact',
                     'regression-integration / firebase-rules-deploy-guard',
                     'regression-integration / roster-chat-media-replay-smoke',
+                    'regression-integration / classic-browser-rules-contract',
                     'mobile-build',
                     'preview-smoke'
                 ].map((name) => ({
@@ -211,10 +212,11 @@ describe('production exact-head validation reuse', () => {
         });
     });
 
-    it('rejects integration reuse when either regression guard did not pass', () => {
+    it('rejects integration reuse when any regression guard did not pass', () => {
         for (const regressionJob of [
             'regression-integration / firebase-rules-deploy-guard',
-            'regression-integration / roster-chat-media-replay-smoke'
+            'regression-integration / roster-chat-media-replay-smoke',
+            'regression-integration / classic-browser-rules-contract'
         ]) {
             const input = evidence();
             input.runJobs[102].jobs.find((job) => job.name === regressionJob).conclusion = 'skipped';
@@ -249,6 +251,20 @@ describe('production exact-head validation reuse', () => {
         expect(workflow.jobs['regression-guards'].needs).toBe('validation-source');
         expect(workflow.jobs['regression-guards'].if).toContain("reuse_pr_validation != 'true'");
         expect(workflow.jobs['production-validation-gate'].if).toBe('always()');
+    });
+
+    it('runs the same demo-only browser/rules contract when production validation cannot be reused', () => {
+        const steps = workflow.jobs['regression-guards'].steps;
+        const run = steps.find(step => step.name === 'Run Classic browser contract against real Firestore rules');
+        expect(run.run).toContain('emulators:exec --only firestore');
+        expect(run.run).toContain('--project demo-allplays-classic-contract');
+        expect(run.run).toContain('playwright.rules.config.js');
+        expect(run.if).toBeUndefined();
+        expect(run['continue-on-error']).toBeUndefined();
+        expect(steps.find(step => step.name === 'Setup Java').with['java-version']).toBe(21);
+        const input = evidence();
+        input.runJobs[102].jobs = input.runJobs[102].jobs.filter(job => !job.name.endsWith('/ classic-browser-rules-contract'));
+        expect(evaluateProductionValidationReuse(input).reusable).toBe(false);
     });
 
     it('continues the fail-closed deploy chain after reusable validation skips duplicate jobs', () => {

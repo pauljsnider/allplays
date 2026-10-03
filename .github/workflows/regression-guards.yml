@@ -84,3 +84,49 @@ jobs:
         with:
           name: regression-guards-http-log
           path: /tmp/allplays-regression-guards.log
+
+  classic-browser-rules-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Classic browser contract against real Firestore rules
+        run: >-
+          npx firebase emulators:exec --only firestore
+          --project demo-allplays-classic-contract
+          'npx playwright test --config playwright.rules.config.js --reporter=line'
+
+      - name: Upload local diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: classic-browser-rules-diagnostics
+          path: |
+            firestore-debug.log
+            test-results/
+          retention-days: 7
