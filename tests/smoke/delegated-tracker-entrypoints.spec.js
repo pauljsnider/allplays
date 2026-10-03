@@ -66,6 +66,7 @@ export async function getGame() {
         opponentStats: {}
     };
 }
+export async function getLiveEvents() { return []; }
 export async function getPlayers() { return [{ id: 'player-1', name: 'Avery', number: '4' }]; }
 export async function getConfigs() { return [{ id: 'config-1', name: ${JSON.stringify(`${sport} standard`)}, baseType: ${JSON.stringify(sport)}, columns: ['PTS'] }]; }
 export async function getMyRsvp() { return { userId: 'helper-1', response: 'going' }; }
