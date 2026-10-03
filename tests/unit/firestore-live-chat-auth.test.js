@@ -16,6 +16,7 @@ import {
     limit,
     orderBy,
     query,
+    startAfter,
     serverTimestamp,
     setDoc,
 } from 'firebase/firestore';
@@ -384,6 +385,32 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('live interaction lifecycl
             firestore,
             'teams/shareable-team/games/live-status-final/liveEvents'
         )));
+    });
+
+    it('paginates 41 tied active-game events for the owner while rejecting wide and unauthenticated private queries', async () => {
+        const eventPath = 'teams/private-team/games/active-game/liveEvents';
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await deleteDoc(doc(context.firestore(), `${eventPath}/private-event`));
+            for (let i = 0; i < 41; i++) {
+                await setDoc(doc(context.firestore(), `${eventPath}/event-${String(i).padStart(2, '0')}`), { createdAt: new Date(0) });
+            }
+        });
+        const owner = testEnv.authenticatedContext('private-owner', { email: 'owner@example.com', email_verified: true }).firestore();
+        const events = collection(owner, eventPath);
+        await assertFails(getDocs(query(events, orderBy('createdAt', 'asc'))));
+        await assertFails(getDocs(query(events, orderBy('createdAt', 'asc'), limit(21))));
+        await assertFails(getDocs(query(collection(testEnv.unauthenticatedContext().firestore(), eventPath), orderBy('createdAt', 'asc'), limit(20))));
+        const ids = [];
+        let cursor;
+        while (true) {
+            const constraints = [orderBy('createdAt', 'asc'), limit(20)];
+            if (cursor) constraints.push(startAfter(cursor));
+            const page = await assertSucceeds(getDocs(query(events, ...constraints)));
+            ids.push(...page.docs.map((item) => item.id));
+            if (page.docs.length < 20) break;
+            cursor = page.docs.at(-1);
+        }
+        expect(ids).toEqual(Array.from({ length: 41 }, (_, i) => `event-${String(i).padStart(2, '0')}`));
     });
 
     it('keeps unauthorized private live event reads denied even when bounded', async () => {

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { buildTrackLiveResumeState } from '../../js/track-live-state.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const firebaseMocks = vi.hoisted(() => ({
@@ -5,6 +7,7 @@ const firebaseMocks = vi.hoisted(() => ({
     getDocs: vi.fn(),
     onSnapshot: vi.fn(),
     orderBy: vi.fn((field, direction) => ({ type: 'orderBy', field, direction })),
+    startAfter: vi.fn((cursor) => ({ type: 'startAfter', cursor })),
     limit: vi.fn((value) => ({ type: 'limit', value })),
     query: vi.fn((collectionRef, ...constraints) => ({ collectionRef, constraints }))
 }));
@@ -30,7 +33,7 @@ vi.mock('../../js/firebase.js?v=33', () => ({
     arrayRemove: vi.fn(),
     deleteField: vi.fn(),
     limit: firebaseMocks.limit,
-    startAfter: vi.fn(),
+    startAfter: firebaseMocks.startAfter,
     getCountFromServer: vi.fn(),
     onSnapshot: firebaseMocks.onSnapshot,
     serverTimestamp: vi.fn(),
@@ -88,17 +91,56 @@ describe('live event query bounds', () => {
         );
     });
 
-    it('keeps completed-game replay loading the full ascending timeline', async () => {
-        const allEvents = createEventDocs(25);
-        firebaseMocks.getDocs.mockResolvedValue({ docs: allEvents });
+    function servePages(allEvents) {
+        firebaseMocks.getDocs.mockImplementation(async ({ constraints }) => {
+            expect(constraints).toContainEqual({ type: 'limit', value: 20 });
+            expect(constraints).toContainEqual({ type: 'orderBy', field: 'createdAt', direction: 'asc' });
+            const cursor = constraints.find((item) => item.type === 'startAfter')?.cursor;
+            const offset = cursor ? allEvents.indexOf(cursor) + 1 : 0;
+            if (cursor) expect(allEvents).toContain(cursor);
+            return { docs: allEvents.slice(offset, offset + 20) };
+        });
+    }
 
+    it.each([0, 1, 20, 21, 40, 41])('loads all %i events with bounded ascending document-cursor reads', async (count) => {
+        const allEvents = createEventDocs(count).map((event) => ({
+            ...event,
+            data: () => ({ createdAt: new Date(0), type: 'stat', statKey: 'pts', value: 2 })
+        }));
+        servePages(allEvents);
         await expect(getLiveEvents('team-1', 'game-1')).resolves.toEqual(
             allEvents.map((event) => ({ id: event.id, ...event.data() }))
         );
-        expect(firebaseMocks.query).toHaveBeenCalledWith(
-            { path: 'teams/team-1/games/game-1/liveEvents' },
-            { type: 'orderBy', field: 'createdAt', direction: 'asc' }
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(Math.floor(count / 20) + 1);
+        for (let index = 0; index < Math.floor(count / 20); index++) {
+            expect(firebaseMocks.startAfter).toHaveBeenNthCalledWith(index + 1, allEvents[(index + 1) * 20 - 1]);
+        }
+    });
+
+    it('preserves reset and undo events across resume page boundaries', async () => {
+        const allEvents = createEventDocs(41).map((event, index) => ({
+            ...event,
+            data: () => ({ createdAt: new Date(index), type: index === 20 ? 'reset' : index === 40 ? 'undo' : 'stat', statKey: 'pts', value: 2, playerId: 'p1' })
+        }));
+        servePages(allEvents);
+        const events = await getLiveEvents('team-1', 'game-1');
+        expect(buildTrackLiveResumeState({ liveEvents: events })).toEqual(
+            buildTrackLiveResumeState({ liveEvents: allEvents.map((event) => ({ id: event.id, ...event.data() })) })
         );
-        expect(firebaseMocks.limit).not.toHaveBeenCalled();
+        expect(events).toHaveLength(41);
+    });
+
+    it('propagates later-page errors instead of returning partial resume history', async () => {
+        servePages(createEventDocs(41));
+        const error = Object.assign(new Error('denied'), { code: 'permission-denied' });
+        firebaseMocks.getDocs.mockResolvedValueOnce({ docs: createEventDocs(20) }).mockRejectedValueOnce(error);
+        await expect(getLiveEvents('team-1', 'game-1')).rejects.toBe(error);
+    });
+
+    it('loads the complete history before constructing Classic resume state', () => {
+        const source = readFileSync(new URL('../../track-live.html', import.meta.url), 'utf8');
+        expect(source).toContain('const liveEvents = await getLiveEvents(teamId, gameId);');
+        expect(source).toMatch(/buildTrackLiveResumeState\(\{\s*liveEvents,/);
+        expect(source).not.toContain('const liveEventsSnapshot = await getDocs(query(');
     });
 });
