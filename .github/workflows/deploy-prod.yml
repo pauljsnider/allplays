@@ -229,18 +229,27 @@ jobs:
     needs: validation-source
     if: needs.validation-source.outputs.reuse_pr_validation != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: 21
 
       - name: Install dependencies
         run: npm ci
@@ -259,12 +268,21 @@ jobs:
         env:
           SMOKE_BASE_URL: http://127.0.0.1:4173
 
+      - name: Run Classic browser contract against real Firestore rules
+        run: >-
+          npx firebase emulators:exec --only firestore
+          --project demo-allplays-classic-contract
+          'npx playwright test --config playwright.rules.config.js --reporter=line'
+
       - name: Upload server log on failure
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: prod-regression-guards-http-log
-          path: /tmp/allplays-prod-regression-guards.log
+          path: |
+            /tmp/allplays-prod-regression-guards.log
+            firestore-debug.log
+            test-results/
 
   production-validation-gate:
     needs: [validation-source, unit-tests, regression-guards]

@@ -1,10 +1,10 @@
-# Classic bounded-read contract — narrowed local review candidate
+# Classic bounded-read and startup safety contract
 
-SCOPE CHANGED after independent review, then guarded for newly reachable Cancel.
-This candidate is based on
-production base `a488531e7b31f9a51c2ebbbc4844cc14db121b8b`; it does not contain
-reset cleanup, reset permission guards, marker sequencing or rule changes from
-the earlier unpublished `cb8b553bb` proposal. No production data was changed.
+The runtime/test patch reviewed at `f238f563d` was refreshed without conflicts
+onto `f6792f3c1b63c7b231d3ee21f238afc1e1ec4ff3`. Its seven files were unchanged
+by the rebase. The rollout adds the isolated emulator CI job and matching
+production validation coverage. Reset redesign and permission expansion remain
+excluded; no production game data is used by these tests.
 
 ## Runtime changes
 
@@ -83,7 +83,7 @@ are safe. Reset ordering/authorization needs a separate scoped design review.
 The candidate prevents the read fix from exposing destructive Cancel behavior;
 it does not repair the separate Reset button or weaken its server boundaries.
 
-## Run and proposed CI integration (not activated)
+## Run and CI integration
 
 With existing Node 22 dependencies, Java 21 and Playwright Chromium:
 
@@ -99,15 +99,20 @@ FIRESTORE_EMULATOR_HOST=127.0.0.1:8188 \
   npx playwright test --config playwright.rules.config.js --reporter=line
 ```
 
-After review/approval, add a job to the existing reusable regression-guards
-workflow with its existing pinned checkout/setup-node/upload-artifact actions,
-Temurin 21 from pr-fast, npm ci --ignore-scripts, Chromium install and the above
-emulator command. Use only contents:read; no secrets/OIDC/deployment credentials.
-Do not add PR triggers or branch-protection changes. The existing preview-smoke
-aggregate already requires regression-integration, which runs for every
+The existing reusable regression-guards workflow runs
+`classic-browser-rules-contract` with SHA-pinned checkout/setup-node/setup-java,
+Temurin 21, npm ci --ignore-scripts, Chromium and the emulator command above.
+Permissions are contents:read only, checkout credentials are not persisted, and
+there are no secrets, OIDC, deployment credentials or added PR triggers.
+The required preview-smoke aggregate includes regression-integration for every
 non-spec-only ready PR, including rules-only changes. The classifier marks only
 spec/*.md as spec-only; rules, HTML, JS and these tests/configs take the code lane.
 Missing/nonloopback emulator fails rather than silently skipping.
+
+Production validation reuse explicitly requires this exact-head job to have
+passed. If reusable PR evidence is missing, the credential-free deploy-prod
+regression job runs the identical emulator command before the existing production
+validation gate. No protection, rule or credential boundary is weakened.
 
 ## Local validation
 
@@ -120,4 +125,5 @@ the Resume-or-Cancel guard. A genuinely empty owner game also fails against the
 original production HTML, proving the query issue did not depend on fixture data.
 The guarded candidate passes 23 browser/rules tests, 45 focused unit tests and 19
 existing tracker smoke tests, plus cache-bust guard and diff whitespace checks.
-No GitHub CI, publishing, protection change or deployment has occurred.
+The protected PR/deployment workflows record the rollout checks separately;
+local results are not substituted for those required checks.
