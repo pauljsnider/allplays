@@ -12,7 +12,7 @@ describe('production smoke authenticated setup timeout', () => {
     it('uses an explicit bounded setup budget for every credentialed role suite', () => {
         expect(helper).toContain('export const AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS = 240_000;');
 
-        for (const source of [authenticatedCore, adminCore, authenticatedExtended, legacyAuthenticatedCore]) {
+        for (const source of [authenticatedCore, authenticatedExtended, legacyAuthenticatedCore]) {
             expect(source).toContain('AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS');
             expect(source).toMatch(
                 /test\.beforeAll\(async \(\{ browser \}\) => \{\s+test\.setTimeout\(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS\);/
@@ -25,6 +25,10 @@ describe('production smoke authenticated setup timeout', () => {
             expect(boundedSetup).toMatch(/createAuthenticatedAppSession(?:s)?\(browser,/);
             expect(source).toMatch(/test\.afterAll\(async \(\) => \{[\s\S]*?closeAuthenticatedAppSession\(/);
         }
+
+        expect(adminCore).toContain('test.setTimeout(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS + 30_000)');
+        expect(adminCore).toContain("test.use({ serviceWorkers: 'block' })");
+        expect(adminCore).toContain('async ({ page }, testInfo)');
 
         expect(authenticatedImageWrites).toContain('AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS');
         expect(authenticatedImageWrites).toMatch(
@@ -65,7 +69,7 @@ describe('production smoke authenticated setup timeout', () => {
         expect(authenticatedSessionHelper).not.toContain('page.reload(');
 
         for (const source of [authenticatedCore, adminCore, authenticatedExtended]) {
-            expect(source).toContain('createAuthenticatedAppSession');
+            expect(source).toContain(source === adminCore ? 'signInToApp(page,' : 'createAuthenticatedAppSession');
             expect(source).not.toContain('createAuthenticatedStorageState');
             expect(source).not.toContain('storageState:');
         }

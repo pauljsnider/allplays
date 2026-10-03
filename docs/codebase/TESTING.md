@@ -190,6 +190,16 @@ incident issues.
 Manual workflows cover candidate-host deployment, signed mobile release, and
 visual baseline generation.
 
+Admin core smoke wraps sign-in through Home assertions with the existing
+`withAppFailureDiagnostic` helper. On failure, the existing artifact upload
+retains `app-route-diagnostic.json`: bounded failed-resource events, fixed service
+categories, and allowlisted public asset metadata. It excludes raw URLs, query
+strings, private IDs, credentials, cookies, auth headers, and request/response
+bodies; unknown targets remain redacted. Traces stay off and strict flaky
+failure policy is unchanged. Historical failures without artifacts cannot be
+localized retroactively. The separate Classic Reset redesign remains deferred;
+see [Classic rules contract limitations](../testing/classic-rules-contract.md).
+
 ## 8) Coverage and Quality Signals
 
 - App coverage uses V8 through `npm --prefix apps/app run test:coverage`.
