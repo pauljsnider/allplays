@@ -6,9 +6,212 @@ import { isActiveGameForLive, isCompletedGameForReplay } from './youtubeReplay';
 const cacheKey = 'replay-lifecycle-non-finite';
 const storageKey = `allplays:appDataCache:${encodeURIComponent(cacheKey)}`;
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 afterEach(() => {
   window.localStorage.clear();
   vi.resetModules();
+});
+
+describe('appDataCache background lifetime', () => {
+  it('exposes refresh settlement separately from the immediate cached value', async () => {
+    const { loadCachedAppData } = await import('./appDataCache');
+    const now = vi.spyOn(Date, 'now').mockReturnValue(0);
+    try {
+      const observer = vi.fn();
+      await loadCachedAppData('lifetime', async () => 'cached', { ttlMs: 10, onBackgroundLoad: observer });
+      expect(observer).not.toHaveBeenCalled();
+      now.mockReturnValue(5);
+      await expect(loadCachedAppData('lifetime', async () => 'unused', { onBackgroundLoad: observer })).resolves.toBe('cached');
+      expect(observer).not.toHaveBeenCalled();
+      now.mockReturnValue(11);
+      const pending = deferred<string>();
+      await expect(loadCachedAppData('lifetime', () => pending.promise, {
+        staleWhileRevalidate: true, maxStaleMs: 100, onBackgroundLoad: observer
+      })).resolves.toBe('cached');
+      expect(observer).toHaveBeenCalledTimes(1);
+      const request = observer.mock.calls[0][0];
+      expect(request.value).toBe('cached');
+      expect(request.usableUntil).toBe(110);
+      const settled = vi.fn();
+      void request.promise.then(settled);
+      await Promise.resolve();
+      expect(settled).not.toHaveBeenCalled();
+      pending.resolve('fresh');
+      await expect(request.promise).resolves.toBe('fresh');
+    } finally {
+      now.mockRestore();
+    }
+  });
+});
+
+describe('appDataCache shared write ordering', () => {
+  it('keeps a newer unscoped result when it completes before an older scoped load', async () => {
+    const cacheModule = await import('./appDataCache');
+    const key = 'shared-write-newer-first';
+    const storedKey = `allplays:appDataCache:${encodeURIComponent(key)}`;
+    const older = deferred<string>();
+    const newer = deferred<string>();
+    const olderRefresh = vi.fn();
+    const newerRefresh = vi.fn();
+
+    const olderLoad = cacheModule.loadCachedAppData(key, () => older.promise, {
+      force: true,
+      inFlightScope: 'home-preview',
+      onRefresh: olderRefresh
+    });
+    const newerLoad = cacheModule.loadCachedAppData(key, () => newer.promise, {
+      force: true,
+      onRefresh: newerRefresh
+    });
+
+    newer.resolve('newer');
+    await expect(newerLoad).resolves.toBe('newer');
+    older.resolve('older');
+    await expect(olderLoad).resolves.toBe('older');
+
+    expect(olderRefresh).toHaveBeenCalledWith('older');
+    expect(newerRefresh).toHaveBeenCalledWith('newer');
+    expect(cacheModule.getCachedAppData(key)).toBe('newer');
+    expect(JSON.parse(window.localStorage.getItem(storedKey) || '{}').value).toBe('newer');
+  });
+
+  it('allows an older scoped result temporarily, then replaces it with the newer load', async () => {
+    const cacheModule = await import('./appDataCache');
+    const key = 'shared-write-older-first';
+    const older = deferred<string>();
+    const newer = deferred<string>();
+    const olderLoad = cacheModule.loadCachedAppData(key, () => older.promise, {
+      force: true,
+      inFlightScope: 'home-preview'
+    });
+    const newerLoad = cacheModule.loadCachedAppData(key, () => newer.promise, { force: true });
+
+    older.resolve('older');
+    await expect(olderLoad).resolves.toBe('older');
+    expect(cacheModule.getCachedAppData(key)).toBe('older');
+    newer.resolve('newer');
+    await expect(newerLoad).resolves.toBe('newer');
+    expect(cacheModule.getCachedAppData(key)).toBe('newer');
+  });
+
+  it('does not repopulate memory or persisted data after overlapping loads are invalidated', async () => {
+    const cacheModule = await import('./appDataCache');
+    const key = 'shared-write-invalidated';
+    const storedKey = `allplays:appDataCache:${encodeURIComponent(key)}`;
+    const scoped = deferred<string>();
+    const unscoped = deferred<string>();
+    const scopedRefresh = vi.fn();
+    const unscopedRefresh = vi.fn();
+    const scopedLoad = cacheModule.loadCachedAppData(key, () => scoped.promise, {
+      force: true,
+      inFlightScope: 'home-preview',
+      onRefresh: scopedRefresh
+    });
+    const unscopedLoad = cacheModule.loadCachedAppData(key, () => unscoped.promise, {
+      force: true,
+      onRefresh: unscopedRefresh
+    });
+
+    cacheModule.invalidateCachedAppData(key);
+    unscoped.resolve('newer');
+    scoped.resolve('older');
+    await expect(unscopedLoad).resolves.toBe('newer');
+    await expect(scopedLoad).resolves.toBe('older');
+
+    expect(scopedRefresh).toHaveBeenCalledWith('older');
+    expect(unscopedRefresh).toHaveBeenCalledWith('newer');
+    expect(cacheModule.getCachedAppData(key)).toBeNull();
+    expect(window.localStorage.getItem(storedKey)).toBeNull();
+  });
+
+  it.each(['partial', 'error'] as const)(
+    'retains the successful scoped result when a newer load ends in %s',
+    async (outcome) => {
+      const cacheModule = await import('./appDataCache');
+      const key = `shared-write-${outcome}`;
+      const successful = deferred<string>();
+      const newer = deferred<string>();
+      const successfulLoad = cacheModule.loadCachedAppData(key, () => successful.promise, {
+        force: true,
+        inFlightScope: 'home-preview'
+      });
+      const newerLoad = cacheModule.loadCachedAppData(key, () => newer.promise, {
+        force: true,
+        shouldCache: (value) => value !== 'partial'
+      });
+
+      if (outcome === 'partial') {
+        newer.resolve('partial');
+        await expect(newerLoad).resolves.toBe('partial');
+      } else {
+        newer.reject(new Error('refresh failed'));
+        await expect(newerLoad).rejects.toThrow('refresh failed');
+      }
+      successful.resolve('successful');
+      await expect(successfulLoad).resolves.toBe('successful');
+      expect(cacheModule.getCachedAppData(key)).toBe('successful');
+    }
+  );
+
+  it.each([
+    ['successful-first', 'partial'],
+    ['successful-first', 'error'],
+    ['newer-first', 'partial'],
+    ['newer-first', 'error']
+  ] as const)(
+    'commits an older successful forced load in the same scope (%s, newer %s)',
+    async (completionOrder, newerOutcome) => {
+      const cacheModule = await import('./appDataCache');
+      const key = `same-scope-${completionOrder}-${newerOutcome}`;
+      const storedKey = `allplays:appDataCache:${encodeURIComponent(key)}`;
+      await cacheModule.loadCachedAppData(key, async () => 'stale');
+      const successful = deferred<string>();
+      const newer = deferred<string>();
+      const successfulLoad = cacheModule.loadCachedAppData(key, () => successful.promise, {
+        force: true,
+        inFlightScope: 'home-preview'
+      });
+      const newerLoad = cacheModule.loadCachedAppData(key, () => newer.promise, {
+        force: true,
+        inFlightScope: 'home-preview',
+        shouldCache: (value) => value !== 'partial'
+      });
+
+      const finishSuccessful = async () => {
+        successful.resolve('successful');
+        await expect(successfulLoad).resolves.toBe('successful');
+      };
+      const finishNewer = async () => {
+        if (newerOutcome === 'partial') {
+          newer.resolve('partial');
+          await expect(newerLoad).resolves.toBe('partial');
+        } else {
+          newer.reject(new Error('refresh failed'));
+          await expect(newerLoad).rejects.toThrow('refresh failed');
+        }
+      };
+
+      if (completionOrder === 'successful-first') {
+        await finishSuccessful();
+        await finishNewer();
+      } else {
+        await finishNewer();
+        await finishSuccessful();
+      }
+
+      expect(cacheModule.getCachedAppData(key)).toBe('successful');
+      expect(JSON.parse(window.localStorage.getItem(storedKey) || '{}').value).toBe('successful');
+    }
+  );
 });
 
 describe('appDataCache replay lifecycle fidelity', () => {
