@@ -99,7 +99,7 @@ const {
   getGameDayTeamContext,
   getTeams,
   getUserTeamsWithAccess
-} = await import('../../js/db.js?v=4433201');
+} = await import('../../js/db.js?v=4433202');
 
 describe('team access query resilience', () => {
   beforeEach(() => {
@@ -508,6 +508,7 @@ describe('game access query resilience', () => {
           status: 'completed',
           sourceStatus: 'completed',
           liveStatus: 'scheduled',
+          hasRecordedReplay: false,
           summary: 'Final',
           tournament: { divisionName: '10U Gold', poolName: 'Pool A' },
           opponentStats: { opponent1: { name: 'Opponent One', points: 2 } },
@@ -539,6 +540,7 @@ describe('game access query resilience', () => {
         statSheetPhotoUrl: 'https://images.example.test/stat-sheet.png',
         status: 'completed',
         liveStatus: 'scheduled',
+        hasRecordedReplay: false,
         isPublicProjection: true
       })
     ]);

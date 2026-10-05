@@ -1,4 +1,4 @@
-import { stubReplayPlayback, expectReplayPlayback, RAW_REPLAY_AUTH_FIXTURE, stubDelayedProfileAuth, verifyRawReplayAuthIsolation, verifyReplayProjectionPolling, verifyExplicitReplayRevalidation } from './replay-playback-fixture.js';
+import { stubReplayPlayback, expectNoReplayPlaybackProbe, expectReplayPlayback, RAW_REPLAY_AUTH_FIXTURE, stubDelayedProfileAuth, verifyRawReplayAuthIsolation, verifyReplayProjectionPolling, verifyExplicitReplayRevalidation } from './replay-playback-fixture.js';
 import { expect, test } from '@playwright/test';
 
 function collectPageErrors(page) {
@@ -390,7 +390,9 @@ async function stubRealOverlayModules(page) {
                     ? null
                     : (window.__OVERLAY_PUBLIC_VIDEO_URL__ || 'https://www.youtube.com/watch?v=PK1HyC37doc'),
                 isPublicProjection: true,
-                hasRecordedReplay: window.__OVERLAY_REPLAY_MARKER__ === true,
+                ...(typeof window.__OVERLAY_REPLAY_MARKER__ === 'boolean'
+                    ? { hasRecordedReplay: window.__OVERLAY_REPLAY_MARKER__ }
+                    : {}),
                 liveResetAt: window.__OVERLAY_RESET_REPLAY__ ? 200000 : undefined,
                 liveLineup: { onCourt: ['p9'], bench: ['p4'] },
                 liveStats: { p9: { goals: 5 } },
@@ -2377,6 +2379,21 @@ for (const scenario of ['unchanged', 'denied', 'deleted', 'error', 'changed', 'a
         await verifyReplayProjectionPolling(page, { scenario, selector: '#overlay-video', errors });
     });
 }
+
+test('overlay explicit false replay marker skips playback callable reads', async ({ page, baseURL }) => {
+    const errors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_AUTH_USER__ = null;
+        window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
+        window.__OVERLAY_NO_PUBLIC_VIDEO__ = true;
+        window.__OVERLAY_COMPLETED_GAME__ = true;
+        window.__OVERLAY_REPLAY_MARKER__ = false;
+    });
+    await stubRealOverlayModules(page);
+    await stubReplayPlayback(page, 'allowed');
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`);
+    await expectNoReplayPlaybackProbe(page, { selector: '#overlay-video', errors });
+});
 
 for (const scenario of ['allowed', 'denied', 'deleted', 'private', 'error', 'slow', 'slow-success', 'auth', 'pagehide', 'bfcache', 'visibility', 'unload', 'ordinary']) {
     test(`overlay explicit replay scheduled revalidation ${scenario}`, async ({ page, baseURL }) => {

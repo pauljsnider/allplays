@@ -34,7 +34,7 @@ import {
     resolveSafeProfilePhotoWriteUrl
 } from './safe-image-url.js?v=1';
 import { buildGameWatchShareUrl } from './game-share-links.js?v=1';
-import { shareOrCopy } from './utils.js?v=443377';
+import { shareOrCopy } from './utils.js?v=443378';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import { DIAMOND_ENGINE, buildDiamondViewerUrl } from './diamond-scorebook-routing.js?v=2';
 
@@ -235,7 +235,7 @@ function usesCompactPanelLayout() {
 }
 
 function loadOverlayDatabase() {
-    return import('./db.js?v=4433201');
+    return import('./db.js?v=4433202');
 }
 
 function getTimestampMs(value) {
@@ -1131,7 +1131,7 @@ async function initializeChatComposer(database, teamId, gameId) {
 
     try {
         const [authTools, chatTools] = await Promise.all([
-            import('./auth.js?v=4433205'),
+            import('./auth.js?v=4433206'),
             import('./live-game-chat.js?v=4')
         ]);
         uiState.chatServices = {
@@ -1961,7 +1961,7 @@ async function startDemoReplayMode(params) {
         { controllableReplay: true }
     );
     uiState.videoDurationMs = 15_000;
-    const stateTools = await import('./live-game-state.js?v=48');
+    const stateTools = await import('./live-game-state.js?v=49');
     await loadReplaySnapshot({
         getLiveEvents: async () => replayEvents,
         getLiveChatHistory: async () => replayChat,
@@ -2116,7 +2116,7 @@ async function startRealMode(params) {
         const [database, videoTools, stateTools] = await Promise.all([
             loadOverlayDatabase(),
             import('./live-game-video.js?v=443319'),
-            import('./live-game-state.js?v=48')
+            import('./live-game-state.js?v=49')
         ]);
         uiState.optionalTeamStatus = 'pending';
         const teamPromise = loadWithBoundedRetry(
@@ -2185,7 +2185,8 @@ async function startRealMode(params) {
                     isReplay
                 });
                 needsAuthorizedReplay = playbackGame?.isPublicProjection === true
-                    && (playbackGame?.hasRecordedReplay === true || !playbackGame?.videoUrl)
+                    && (playbackGame?.hasRecordedReplay === true
+                        || (playbackGame?.hasRecordedReplay == null && !playbackGame?.videoUrl))
                     && hasCompletedReplayLifecycle(playbackGame);
                 if (needsAuthorizedReplay) {
                     // Revalidate on every poll without destroying an unchanged

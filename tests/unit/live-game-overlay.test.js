@@ -62,6 +62,15 @@ function processLiveEventSnapshots(snapshots) {
 }
 
 describe('live game overlay page', () => {
+    it('limits legacy replay probes to projections without an explicit replay marker', () => {
+        expect(currentLiveGameSource).toContain(
+            'state.game?.hasRecordedReplay == null && !state.game?.videoUrl'
+        );
+        expect(source).toContain(
+            'playbackGame?.hasRecordedReplay == null && !playbackGame?.videoUrl'
+        );
+    });
+
     it('keeps exactly the newest 20 events from overlapping live snapshots in chronological order', () => {
         const events = Array.from({ length: 25 }, (_, index) => ({
             id: `event-${index + 1}`,
@@ -139,8 +148,8 @@ describe('live game overlay page', () => {
         expect(source).toContain("params.demo === '1'");
         expect(source).toContain("params.replay === 'true'");
         expect(source).toContain('startDemoReplayMode');
-        expect(source).toContain("return import('./db.js?v=4433201')");
-        expect(source).toContain("import('./live-game-state.js?v=48')");
+        expect(source).toContain("return import('./db.js?v=4433202')");
+        expect(source).toContain("import('./live-game-state.js?v=49')");
         expect(source).toContain('stateTools.applyResetEventState');
         expect(source).toContain('reconcileOverlayLiveEvents');
         expect(source).toContain("from './live-game-overlay-model.js?v=28'");
@@ -157,7 +166,7 @@ describe('live game overlay page', () => {
         expect(source).toContain('database.subscribeReactions');
         expect(source).toContain('getOverlayLiveClockMs');
         expect(source).toContain('syncLiveClockAnchor');
-        expect(source).toContain("import('./auth.js?v=4433205')");
+        expect(source).toContain("import('./auth.js?v=4433206')");
         expect(source).toContain("import('./live-game-chat.js?v=4')");
         expect(currentLiveGameSource).toContain("from './live-game-overlay-model.js?v=28'");
         expect(currentLiveGameSource).toContain("from './live-game-video.js?v=443319'");
@@ -196,7 +205,7 @@ describe('live game overlay page', () => {
         expect(source).not.toContain('trackViewerPresence(');
         expect(source).toContain('sendChatReaction');
         expect(source).toContain("from './game-share-links.js?v=1'");
-        expect(source).toContain("from './utils.js?v=443377'");
+        expect(source).toContain("from './utils.js?v=443378'");
         expect(source).toContain("from './live-game-announcer.js?v=1'");
         expect(source).toContain("import('./team-entitlements.js?v=9')");
         expect(source).toContain('isRecordedReplayTeamPassGateEnabled');

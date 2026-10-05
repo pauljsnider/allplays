@@ -17,12 +17,12 @@ import {
   updateGame,
   uploadGameClip,
   deleteUploadedMediaObjects
-} from './db.js?v=4433201';
-import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443377';
+} from './db.js?v=4433202';
+import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443378';
 import { hasFullTeamAccess } from './team-access.js?v=44338';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
 import { computePanelVisibility } from './live-stream-utils.js?v=2';
-import { checkAuth } from './auth.js?v=4433205';
+import { checkAuth } from './auth.js?v=4433206';
 import { isViewerChatEnabled } from './live-game-chat.js?v=4';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import {
@@ -40,7 +40,7 @@ import { buildGameReportShareUrl, buildGameWatchShareUrl } from './game-share-li
 import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=48';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=49';
 import { getDefaultLivePeriod } from './live-sport-config.js?v=2';
 import { BROADCAST_STREAM_HEARTBEAT_MS, buildBroadcastRuntimeSession } from './game-day-broadcast.js?v=5';
 import { createSafeImageElement, resolveSafeProfilePhotoUrl, resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';
@@ -839,7 +839,8 @@ function refreshVideoPanel(options) {
 async function refreshVideoPanelNow({ force = false } = {}) {
   const requestId = ++replayPlaybackRequestId;
   let nextPlayback = resolveVideoPlayback();
-  if (state.game?.isPublicProjection === true && (state.game?.hasRecordedReplay === true || !state.game?.videoUrl)
+  if (state.game?.isPublicProjection === true && (state.game?.hasRecordedReplay === true
+      || (state.game?.hasRecordedReplay == null && !state.game?.videoUrl))
       && hasCompletedReplayLifecycle(state.game)) {
     const unavailable = {
       mode: 'none', hasVideo: false, sourceUrl: null, publicUrl: null,
