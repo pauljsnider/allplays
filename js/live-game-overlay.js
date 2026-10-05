@@ -34,7 +34,7 @@ import {
     resolveSafeProfilePhotoWriteUrl
 } from './safe-image-url.js?v=1';
 import { buildGameWatchShareUrl } from './game-share-links.js?v=1';
-import { shareOrCopy } from './utils.js?v=443377';
+import { shareOrCopy } from './utils.js?v=443378';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import { DIAMOND_ENGINE, buildDiamondViewerUrl } from './diamond-scorebook-routing.js?v=2';
 
@@ -235,7 +235,7 @@ function usesCompactPanelLayout() {
 }
 
 function loadOverlayDatabase() {
-    return import('./db.js?v=4433201');
+    return import('./db.js?v=4433202');
 }
 
 function getTimestampMs(value) {
@@ -1131,7 +1131,7 @@ async function initializeChatComposer(database, teamId, gameId) {
 
     try {
         const [authTools, chatTools] = await Promise.all([
-            import('./auth.js?v=4433205'),
+            import('./auth.js?v=4433206'),
             import('./live-game-chat.js?v=4')
         ]);
         uiState.chatServices = {
@@ -1175,6 +1175,7 @@ async function initializeChatComposer(database, teamId, gameId) {
             if (previousUid !== nextUid) uiState.anonName = '';
             if (user) ensureChatDisplayName();
             refreshChatAvailability();
+            if (previousUid !== nextUid) void uiState.refreshReplayPlayback?.();
         }, { skipEmailVerificationCheck: true });
         if (typeof unsubscribeAuth === 'function') uiState.unsubscribers.push(unsubscribeAuth);
         refreshChatAvailability();
@@ -1960,7 +1961,7 @@ async function startDemoReplayMode(params) {
         { controllableReplay: true }
     );
     uiState.videoDurationMs = 15_000;
-    const stateTools = await import('./live-game-state.js?v=48');
+    const stateTools = await import('./live-game-state.js?v=49');
     await loadReplaySnapshot({
         getLiveEvents: async () => replayEvents,
         getLiveChatHistory: async () => replayChat,
@@ -2115,7 +2116,7 @@ async function startRealMode(params) {
         const [database, videoTools, stateTools] = await Promise.all([
             loadOverlayDatabase(),
             import('./live-game-video.js?v=443319'),
-            import('./live-game-state.js?v=48')
+            import('./live-game-state.js?v=49')
         ]);
         uiState.optionalTeamStatus = 'pending';
         const teamPromise = loadWithBoundedRetry(
@@ -2165,20 +2166,44 @@ async function startRealMode(params) {
         if (isReplay) uiState.game.liveStatus = 'replay';
         renderAll();
         renderChatComposer();
-        const renderVideoSafely = async () => {
+        let playbackAuthReady = Promise.resolve(true);
+        let replayPlaybackProjection = null;
+        let replayPlaybackRevalidator = null;
+        const renderVideoNow = async () => {
             const requestId = ++uiState.videoRequestId;
             uiState.replayPlaybackAvailable = false;
             configureGameActions();
+            let needsAuthorizedReplay = false;
             try {
+                // Replay timeline snapshots use synthetic "replay" statuses.
+                // Playback eligibility must retain the server-read lifecycle.
+                const playbackGame = isReplay ? game : uiState.game.game;
                 let options = videoTools.resolveReplayVideoOptions({
                     team: uiState.game.team,
-                    game: uiState.game.game,
+                    game: playbackGame,
                     players: uiState.game.players,
                     isReplay
                 });
+                needsAuthorizedReplay = playbackGame?.isPublicProjection === true
+                    && (playbackGame?.hasRecordedReplay === true
+                        || (typeof playbackGame?.hasRecordedReplay !== 'boolean' && !playbackGame?.videoUrl))
+                    && hasCompletedReplayLifecycle(playbackGame);
+                if (needsAuthorizedReplay) {
+                    // Revalidate on every poll without destroying an unchanged
+                    // player. Changed projection data and raw auth events still
+                    // invalidate immediately; denial/failure clears below.
+                    const projection = JSON.stringify(playbackGame);
+                    if (projection !== replayPlaybackProjection) showVideoFallback('Checking replay access…');
+                    replayPlaybackProjection = projection;
+                    if (!await playbackAuthReady || requestId !== uiState.videoRequestId) return false;
+                    const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=3');
+                    if (requestId !== uiState.videoRequestId) return false;
+                    options = await resolveAuthorizedReplayPlayback({ teamId, gameId });
+                    if (requestId !== uiState.videoRequestId) return false;
+                }
                 let usesSanitizedPublicProjection = options.isPublicProjectionVideo === true;
-                if (options.mode === 'none') {
-                    const publicProjectionOptions = resolvePublicProjectionVideoOptions(uiState.game.game, {
+                if (options.mode === 'none' && !needsAuthorizedReplay) {
+                    const publicProjectionOptions = resolvePublicProjectionVideoOptions(playbackGame, {
                         parentHost: window.location.hostname
                     });
                     if (publicProjectionOptions) {
@@ -2190,7 +2215,7 @@ async function startRealMode(params) {
                 configureGameActions();
                 uiState.videoDurationMs = Number.isFinite(options.durationMs) ? options.durationMs : 0;
                 if (!usesSanitizedPublicProjection && options.isRecordedReplay === true && options.sourceUrl) {
-                    const gameGateOverride = getRecordedReplayGameGateOverride(uiState.game.game);
+                    const gameGateOverride = getRecordedReplayGameGateOverride(playbackGame);
                     if (typeof gameGateOverride !== 'boolean' && uiState.optionalTeamStatus === 'pending') {
                         showReplayAccessGate({ state: 'checking' });
                         return true;
@@ -2202,12 +2227,12 @@ async function startRealMode(params) {
                     const entitlements = await import('./team-entitlements.js?v=9');
                     if (requestId !== uiState.videoRequestId) return false;
                     const gateEnabled = entitlements.isRecordedReplayTeamPassGateEnabled({
-                        game: uiState.game.game,
+                        game: playbackGame,
                         team: uiState.game.team
                     });
                     if (gateEnabled) {
                         const seasonId = entitlements.resolveTeamEntitlementSeasonId({
-                            game: uiState.game.game,
+                            game: playbackGame,
                             team: uiState.game.team
                         });
                         const entitlementKey = `${teamId}:${seasonId}`;
@@ -2246,14 +2271,59 @@ async function startRealMode(params) {
                 else showVideoFallback(options.replayState?.message || 'No video feed is configured for this game yet.');
                 return true;
             } catch (error) {
+                if (requestId !== uiState.videoRequestId) return false;
                 console.warn('Overlay video refresh failed:', error);
-                if (elements.iframe.hidden && elements.recordedVideo.hidden) {
+                if (needsAuthorizedReplay || elements.iframe.hidden && elements.recordedVideo.hidden) {
                     showVideoFallback('The video feed is temporarily unavailable. Live score and play updates remain connected.');
                 }
                 setConnectionIssue('video', 'Video refresh is delayed. Score, clock, plays, and chat continue independently.');
                 return false;
             }
         };
+        const renderVideoSafely = async () => {
+            if (!await playbackAuthReady) return false;
+            return replayPlaybackRevalidator ? replayPlaybackRevalidator.refresh() : renderVideoNow();
+        };
+        uiState.refreshReplayPlayback = renderVideoSafely;
+        if (game.isPublicProjection === true) {
+            // Do not delay score/chat subscriptions on a video-only module.
+            // Authorized playback itself waits until this observer is installed.
+            playbackAuthReady = (async () => {
+                const { observeReplayPlaybackAuth, createReplayPlaybackRevalidator } = await import('./game-replay-playback.js?v=3');
+                if (isReplay && game.hasRecordedReplay !== false && hasCompletedReplayLifecycle(game)) {
+                    replayPlaybackRevalidator = createReplayPlaybackRevalidator({
+                        refresh: renderVideoNow,
+                        invalidate: (message) => {
+                            ++uiState.videoRequestId;
+                            showVideoFallback(message);
+                        }
+                    });
+                }
+                const unsubscribe = await observeReplayPlaybackAuth(() => {
+                    if (replayPlaybackRevalidator) {
+                        void replayPlaybackRevalidator.invalidateAndRefresh();
+                        return;
+                    }
+                    const playbackGame = isReplay ? game : uiState.game.game;
+                    if (!hasCompletedReplayLifecycle(playbackGame)) return;
+                    ++uiState.videoRequestId;
+                    showVideoFallback('Checking replay access…');
+                    void renderVideoSafely();
+                });
+                if (replayPlaybackRevalidator) {
+                    // beforeunload may precede BFCache; retain the raw observer
+                    // until an actual non-persisted pagehide ends this document.
+                    window.addEventListener('pagehide', (event) => {
+                        if (!event.persisted) unsubscribe();
+                    });
+                } else uiState.unsubscribers.push(unsubscribe);
+                return true;
+            })().catch(() => {
+                ++uiState.videoRequestId;
+                showVideoFallback('Replay video is temporarily unavailable. Reload to try again.');
+                return false;
+            });
+        }
         void renderVideoSafely().then((success) => {
             if (success) setConnectionIssue('video');
         });

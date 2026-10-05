@@ -8,6 +8,7 @@ import {
 } from './homeLogic';
 import { createLogger } from './logger';
 import {
+  getAppDataCacheInvalidationToken,
   getParentHomeSecondaryCacheKey,
   getParentScheduleSummaryCacheKey,
   getTeamsSummaryBootstrapCacheKey,
@@ -31,6 +32,18 @@ const homeMaxStaleMs = 5 * 60 * 1000;
 const teamsSummaryTtlMs = 30 * 1000;
 const logger = createLogger('home');
 
+type ParentSchedulePreviewState = {
+  invalidationToken: string;
+  callbacks: Set<(schedule: ParentScheduleLoadResult) => void>;
+  subscribers: Set<ParentScheduleSummaryOptions>;
+  background?: { promise: Promise<ParentScheduleLoadResult>; value: ParentScheduleLoadResult; usableUntil: number };
+  latest?: ParentScheduleLoadResult;
+  promise?: Promise<ParentScheduleLoadResult>;
+};
+
+const parentSchedulePreviewStates = new Map<string, ParentSchedulePreviewState>();
+let parentSchedulePreviewRequestId = 0;
+
 type ParentHomeNativeLoadContext = {
   loadProfile: () => Promise<Record<string, unknown>>;
   loadManagedTeams: () => Promise<{ teams: any[]; isPartial: boolean }>;
@@ -50,6 +63,7 @@ type ParentHomeSummaryOptions = {
 };
 
 type ParentScheduleSummaryOptions = ParentHomeSummaryOptions & {
+  previewParentChildren?: boolean;
   onPartial?: (schedule: ParentScheduleLoadResult) => void;
   onRefresh?: (schedule: ParentScheduleLoadResult) => void;
 };
@@ -177,6 +191,7 @@ export async function loadParentHomeSummaryBootstrap(
     ...(nativeContext ? { nativeContext } : {})
   });
   const schedule = await loadParentScheduleSummary(user, {
+    previewParentChildren: true,
     force: options.force,
     scheduleScope: options.scheduleScope,
     nativeContext,
@@ -404,27 +419,110 @@ export async function loadParentScheduleSummary(
 ): Promise<ParentScheduleLoadResult> {
   if (!user?.uid) return { children: [], events: [] };
   const hasScopedStaffTeams = Boolean(options.scheduleScope?.staffTeams?.length);
-  return loadCachedAppData(
-    getParentScheduleSummaryCacheKey(user.uid),
+  const cacheKey = getParentScheduleSummaryCacheKey(user.uid);
+  const force = Boolean(options.force || hasScopedStaffTeams);
+  const invalidationToken = getAppDataCacheInvalidationToken(cacheKey);
+  if (options.previewParentChildren && !force) {
+    const activePreview = parentSchedulePreviewStates.get(cacheKey);
+    if (activePreview?.promise && activePreview.invalidationToken === invalidationToken) {
+      activePreview.subscribers.add(options);
+      if (activePreview.background) {
+        return Date.now() < activePreview.background.usableUntil
+          ? activePreview.background.value
+          : activePreview.background.promise;
+      }
+      registerParentSchedulePreviewCallback(activePreview, options.onPartial);
+      return activePreview.promise;
+    }
+  }
+
+  const previewState: ParentSchedulePreviewState | undefined = options.previewParentChildren
+    ? { invalidationToken, callbacks: new Set<(schedule: ParentScheduleLoadResult) => void>(), subscribers: new Set([options]) }
+    : undefined;
+  if (previewState) registerParentSchedulePreviewCallback(previewState, options.onPartial);
+  let initializing = true;
+  const initialPartials: ParentScheduleLoadResult[] = [];
+  const cleanup = () => {
+    if (!previewState) return;
+    previewState.callbacks.clear();
+    previewState.subscribers.clear();
+    if (parentSchedulePreviewStates.get(cacheKey) === previewState) parentSchedulePreviewStates.delete(cacheKey);
+  };
+  let terminalSubscribers: ParentScheduleSummaryOptions[] | undefined;
+  const settlePreview = () => {
+    if (!terminalSubscribers) {
+      terminalSubscribers = [...(previewState?.subscribers ?? [])];
+      // Terminal callbacks can synchronously reload Home. Detach before fanout
+      // so reentry reads the committed cache and cannot extend this dispatch.
+      cleanup();
+    }
+    return terminalSubscribers;
+  };
+  if (previewState) parentSchedulePreviewStates.set(cacheKey, previewState);
+  const previewScope = previewState ? `home-parent-preview:${++parentSchedulePreviewRequestId}` : undefined;
+  const loadPromise = loadCachedAppData(
+    cacheKey,
     () => loadParentSchedule(user, {
       hydrateDetails: false,
       expandStaffPlayers: false,
-      parentScope: options.scheduleScope,
-      nativeProfileLoader: options.nativeContext?.loadProfile,
-      nativeStaffTeamsLoader: options.nativeContext?.loadManagedTeams,
-      ...(options.onPartial ? { onPartial: options.onPartial } : {})
+      previewParentChildren: options.previewParentChildren,
+      ...(options.scheduleScope ? { parentScope: options.scheduleScope } : {}),
+      ...(options.nativeContext ? {
+        nativeProfileLoader: options.nativeContext.loadProfile,
+        nativeStaffTeamsLoader: options.nativeContext.loadManagedTeams
+      } : {}),
+      ...(previewState
+        ? { onPartial: (schedule: ParentScheduleLoadResult) => {
+          if (initializing) initialPartials.push(schedule);
+          else if (!previewState.background) emitParentSchedulePreview(previewState, schedule);
+        } }
+        : options.onPartial ? { onPartial: options.onPartial } : {})
     }),
     {
       ttlMs: homeSummaryTtlMs,
-      force: options.force || hasScopedStaffTeams,
+      force,
+      inFlightScope: previewScope,
       maxStaleMs: homeMaxStaleMs,
       staleWhileRevalidate: true,
-      onRefresh: options.onPartial,
-      onBackgroundRefresh: options.onRefresh,
-      onRefreshError: options.onBackgroundError,
+      onBackgroundLoad: previewState ? (request) => {
+        previewState.background = request;
+      } : undefined,
+      onRefresh: previewState
+        ? (schedule) => settlePreview().forEach((subscriber) => subscriber.onPartial?.(schedule))
+        : options.onPartial,
+      onBackgroundRefresh: previewState
+        ? (schedule) => settlePreview().forEach((subscriber) => subscriber.onRefresh?.(schedule))
+        : options.onRefresh,
+      onRefreshError: previewState
+        ? (error) => settlePreview().forEach((subscriber) => subscriber.onBackgroundError?.(error))
+        : options.onBackgroundError,
       shouldCache: (result) => result?.isPartial !== true
     }
   );
+  initializing = false;
+  if (previewState) {
+    previewState.promise = loadPromise;
+    if (!previewState.background) initialPartials.forEach((schedule) => emitParentSchedulePreview(previewState, schedule));
+  }
+  try {
+    return await loadPromise;
+  } finally {
+    if (!previewState?.background) cleanup();
+  }
+}
+
+function registerParentSchedulePreviewCallback(
+  state: ParentSchedulePreviewState,
+  callback?: (schedule: ParentScheduleLoadResult) => void
+) {
+  if (!callback) return;
+  state.callbacks.add(callback);
+  if (state.latest) callback(state.latest);
+}
+
+function emitParentSchedulePreview(state: ParentSchedulePreviewState, schedule: ParentScheduleLoadResult) {
+  state.latest = schedule;
+  state.callbacks.forEach((callback) => callback(schedule));
 }
 
 function normalizeStaffTeams(schedule: ParentScheduleLoadResult): ParentHomeInboxTeam[] {

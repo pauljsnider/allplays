@@ -824,7 +824,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443377'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443378'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -4326,6 +4326,9 @@ function mapPublicGameProjection(game = {}, teamId = '') {
         summary: game?.summary || null,
         publicSummary: game?.summary || null,
         videoUrl: game?.videoUrl || null,
+        ...(typeof game?.hasRecordedReplay === 'boolean'
+            ? { hasRecordedReplay: game.hasRecordedReplay }
+            : {}),
         seasonLabel: game?.seasonLabel || null,
         competitionType: game?.competitionType || null,
         countsTowardSeasonRecord: game?.countsTowardSeasonRecord !== false,

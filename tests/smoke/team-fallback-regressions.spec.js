@@ -1,4 +1,6 @@
+import { stubReplayPlayback, expectReplayPlayback, RAW_REPLAY_AUTH_FIXTURE, stubDelayedProfileAuth, verifyRawReplayAuthIsolation, verifyReplayProjectionPolling, verifyExplicitReplayRevalidation } from './replay-playback-fixture.js';
 import { test, expect } from '@playwright/test';
+import { shouldReloadVideoPlayback } from '../../js/live-game-video.js';
 
 const PERMISSION_ERROR = `
 function permissionDenied() {
@@ -766,7 +768,8 @@ export async function getConfigs() {
 export async function getMyRsvp() {
     return window.__LIVE_GAME_RSVP__ || null;
 }
-export function subscribeGame() {
+export function subscribeGame(_teamId, _gameId, callback) {
+    window.__POLL_REPLAY_GAME__ = async (changes = {}) => callback({ ...await getGame(_teamId, _gameId), ...changes });
     return () => {};
 }
 export async function updateGame(_teamId, _gameId, updates) {
@@ -990,9 +993,7 @@ export function hasCompletedReplayLifecycle(game = {}) {
             && (!liveStatus || finalStatuses.has(liveStatus) || liveStatus === 'scheduled'))
         || (!status && finalStatuses.has(liveStatus));
 }
-export function shouldReloadVideoPlayback() {
-    return true;
-}
+export ${shouldReloadVideoPlayback.toString()}
 `;
 
 const LIVE_GAME_ENTITLEMENTS_STUB = `
@@ -1084,6 +1085,9 @@ async function routeCommonPageStubs(page) {
 }
 
 async function routeLiveGameStubs(page, { authStub = AUTH_STUB } = {}) {
+    await page.route(/\/js\/firebase\.js(?:\?.*)?$/, route => route.fulfill({
+        contentType: 'application/javascript', body: RAW_REPLAY_AUTH_FIXTURE
+    }));
     let telemetryStubRequestCount = 0;
     await page.route(/\/js\/telemetry\.js(?:\?v=\d+)?$/, (route) => {
         telemetryStubRequestCount += 1;
@@ -1727,3 +1731,94 @@ test('selected streaming helper follows the broadcast setup deep link and recove
     });
     expect(pageErrors).toEqual([]);
 });
+
+for (const outcome of ['allowed', 'denied', 'private', 'missing', 'deleted']) {
+    test(`classic public archive recorded playback ${outcome}`, async ({ page, baseURL }) => {
+        const errors = await collectPageErrors(page);
+        await page.addInitScript((outcome) => {
+            window.__LIVE_GAME_TEAM__ = {};
+            window.__LIVE_GAME_GAME__ = {
+                status: 'completed', liveStatus: 'completed', isPublicProjection: true,
+                hasRecordedReplay: ['denied', 'deleted'].includes(outcome) ? true : undefined,
+                videoUrl: ['denied', 'deleted'].includes(outcome) ? 'https://www.youtube.com/watch?v=PK1HyC37doc' : null
+            };
+        }, outcome);
+        await routeLiveGameStubs(page, { authStub: ANONYMOUS_AUTH_STUB });
+        await stubReplayPlayback(page, outcome);
+        await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1&replay=true`);
+        await expectReplayPlayback(page, outcome, '#youtube-stream-iframe', errors);
+    });
+}
+
+for (const inFlight of [false, true]) for (const rejectProfile of [false, true]) {
+    test(`classic raw auth clears ${inFlight ? 'in-flight' : 'existing'} replay while profile is ${rejectProfile ? 'rejected' : 'pending'}`, async ({ page, baseURL }) => {
+        const errors = await collectPageErrors(page);
+        await page.addInitScript((inFlight) => {
+            window.__RAW_REPLAY_USER__ = { uid: 'principal-A' };
+            window.__PLAYBACK_HOLD__ = inFlight;
+            window.__PLAYBACK_OUTCOME__ = 'allowed';
+            window.__LIVE_GAME_TEAM__ = {};
+            window.__LIVE_GAME_GAME__ = { status: 'completed', liveStatus: 'completed', isPublicProjection: true, videoUrl: null };
+        }, inFlight);
+        await routeLiveGameStubs(page, { authStub: ANONYMOUS_AUTH_STUB });
+        await stubReplayPlayback(page, 'allowed');
+        await stubDelayedProfileAuth(page);
+        await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1&replay=true`);
+        await verifyRawReplayAuthIsolation(page, { selector: '#youtube-stream-iframe', inFlight, rejectProfile, errors });
+    });
+}
+
+for (const scenario of ['unchanged', 'denied', 'deleted', 'error', 'changed', 'auth', 'overlap']) {
+    test(`classic completed projection polling ${scenario}`, async ({ page, baseURL }) => {
+        const errors = await collectPageErrors(page);
+        await page.addInitScript(() => {
+            window.__LIVE_GAME_TEAM__ = {};
+            window.__LIVE_GAME_GAME__ = { status: 'completed', liveStatus: 'completed', isPublicProjection: true, videoUrl: null };
+        });
+        await routeLiveGameStubs(page, { authStub: ANONYMOUS_AUTH_STUB });
+        await stubReplayPlayback(page, 'allowed');
+        await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1`);
+        await verifyReplayProjectionPolling(page, { scenario, selector: '#youtube-stream-iframe', errors });
+    });
+}
+
+for (const scenario of ['allowed', 'denied', 'deleted', 'private', 'error', 'slow', 'slow-success', 'auth', 'pagehide', 'bfcache', 'visibility', 'unload', 'ordinary']) {
+    test(`classic explicit replay scheduled revalidation ${scenario}`, async ({ page, baseURL }) => {
+        const errors = collectPageErrors(page);
+        await page.clock.install();
+        await page.addInitScript(() => {
+            window.__RAW_REPLAY_USER__ = { uid: 'same-principal' };
+            window.__OVERLAY_AUTH_USER__ = { uid: 'same-principal' };
+            window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
+            window.__OVERLAY_NO_PUBLIC_VIDEO__ = true;
+            window.__OVERLAY_COMPLETED_GAME__ = true;
+            window.__LIVE_GAME_TEAM__ = {};
+            window.__LIVE_GAME_GAME__ = { status: 'completed', liveStatus: 'completed', isPublicProjection: true, videoUrl: null };
+        });
+        await routeLiveGameStubs(page, { authStub: ANONYMOUS_AUTH_STUB });
+        await stubReplayPlayback(page, 'allowed');
+        await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1${scenario === 'ordinary' ? '' : '&replay=true'}`);
+        await verifyExplicitReplayRevalidation(page, { scenario, selector: '#youtube-stream-iframe', errors: await errors });
+    });
+}
+
+for (const replay of [true, false]) {
+    test(`classic explicit false replay marker skips archive probes in ${replay ? 'replay' : 'watch'}`, async ({ page, baseURL }) => {
+        const errors = await collectPageErrors(page);
+        await page.clock.install();
+        await page.addInitScript(() => { window.__LIVE_GAME_TEAM__ = {}; window.__LIVE_GAME_GAME__ = { status: 'completed', liveStatus: 'completed', isPublicProjection: true, hasRecordedReplay: false, videoUrl: null }; });
+        await routeLiveGameStubs(page, { authStub: ANONYMOUS_AUTH_STUB });
+        await stubReplayPlayback(page, 'allowed');
+        await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1${replay ? '&replay=true' : ''}`);
+        await expect(page.locator('#replay-controls')).toHaveCount(1);
+        if (replay) await expect(page.locator('#replay-current')).toBeVisible();
+        else {
+            await expect.poll(() => page.evaluate(() => typeof window.__POLL_REPLAY_GAME__)).toBe('function');
+            await page.evaluate(async () => { for (let i=0;i<3;i++) await window.__POLL_REPLAY_GAME__(); });
+        }
+        await page.clock.fastForward(60000);
+        expect(await page.evaluate(() => window.__PLAYBACK_READS__?.length || 0)).toBe(0);
+        await expect(page.locator('#youtube-stream-iframe')).not.toHaveAttribute('src', /youtube.com\/embed/);
+        expect(errors).toEqual([]);
+    });
+}

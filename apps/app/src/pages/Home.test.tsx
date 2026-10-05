@@ -27,6 +27,7 @@ const socialServiceMocks = vi.hoisted(() => ({
 }));
 
 const scheduleServiceMocks = vi.hoisted(() => ({
+  loadParentSchedule: vi.fn(),
   loadOfficialAssignmentsAccess: vi.fn()
 }));
 
@@ -476,6 +477,66 @@ describe('Home', () => {
     expect(screen.getByText('Checking responses…')).toBeTruthy();
     expect(screen.queryByText('Loading Home')).toBeNull();
     expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledWith('home');
+  });
+
+  it('renders verified player links while the partial Home summary is still pending', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementationOnce((_user: unknown, options: any) => {
+      options?.onPartial?.({ home: baseHome, schedule: { children: [], events: [], isPartial: true } });
+      return new Promise(() => {});
+    });
+
+    renderHome(signedInAuth, '/home?section=players');
+
+    expect(await screen.findByRole('heading', { name: 'My players' })).toBeTruthy();
+    expect(document.querySelector('a[href="/players/team-1/player-1"]')).toBeTruthy();
+    expect(homeServiceMocks.loadParentHomeWithSecondaryData).not.toHaveBeenCalled();
+    expect(screen.queryByText('No players linked yet')).toBeNull();
+  });
+
+  it.each(['superseded', 'user-switched'])('ignores parent previews from a %s Home load', async (mode) => {
+    let oldOptions: any;
+    const freshHome = { ...baseHome, players: [{ ...baseHome.players[0], playerId: 'fresh-player', playerName: 'Fresh Player' }] };
+    homeServiceMocks.loadParentHomeSummaryBootstrap
+      .mockImplementationOnce((_user: unknown, options: any) => {
+        oldOptions = options;
+        return new Promise(() => {});
+      })
+      .mockImplementationOnce((_user: unknown, options: any) => {
+        options.onPartial({ home: freshHome, schedule: { children: [], events: [], isPartial: true } });
+        return new Promise(() => {});
+      });
+    const wrap = (auth: AuthState) => <MemoryRouter initialEntries={['/home?section=players']}><Home auth={auth} /></MemoryRouter>;
+    const view = render(wrap(signedInAuth));
+    await waitFor(() => expect(oldOptions).toBeTruthy());
+    if (mode === 'user-switched') {
+      view.rerender(wrap({ ...signedInAuth, user: { ...signedInAuth.user!, uid: 'other-user' } }));
+    } else {
+      act(() => oldOptions.onRefresh({ home: freshHome, schedule: { children: [], events: [], isPartial: false } }));
+    }
+    expect(await screen.findByText('Fresh Player')).toBeTruthy();
+    act(() => oldOptions.onPartial({ home: baseHome, schedule: { children: [], events: [], isPartial: true } }));
+    expect(document.querySelector('a[href="/players/team-1/fresh-player"]')).toBeTruthy();
+    expect(document.querySelector('a[href="/players/team-1/player-1"]')).toBeNull();
+  });
+
+  it('ignores background refresh callbacks after Home unmounts', async () => {
+    let options: any;
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementationOnce((_user: unknown, nextOptions: any) => {
+      options = nextOptions;
+      return Promise.resolve({ home: baseHome, schedule: { children: [], events: [] } });
+    });
+    const view = renderHome(signedInAuth, '/home?section=players');
+    await screen.findByRole('heading', { name: 'My players' });
+    view.unmount();
+    const calls = homeServiceMocks.loadParentHomeSummaryBootstrap.mock.calls.length;
+    const secondaryCalls = homeServiceMocks.loadParentHomeWithSecondaryData.mock.calls.length;
+    act(() => {
+      options.onPartial({ home: baseHome, schedule: { children: [], events: [], isPartial: true } });
+      options.onRefresh({ home: baseHome, schedule: { children: [], events: [] } });
+      options.onBackgroundError(new Error('late refresh failure'));
+    });
+    expect(homeServiceMocks.loadParentHomeSummaryBootstrap).toHaveBeenCalledTimes(calls);
+    expect(homeServiceMocks.loadParentHomeWithSecondaryData).toHaveBeenCalledTimes(secondaryCalls);
   });
 
   it('renders a dedicated welcome instead of personalized Home for signed-out users', async () => {
@@ -1281,6 +1342,46 @@ describe('Home', () => {
     });
     expect(await screen.findByText('Second Player highlight')).toBeTruthy();
     expect(screen.queryByText('Pat Player highlight')).toBeNull();
+  });
+
+  it('reenters the real summary cache once with the fresh scope after a stale refresh', async () => {
+    const service = await vi.importActual<typeof import('../lib/homeService')>('../lib/homeService');
+    const cache = await import('../lib/appDataCache');
+    cache.clearAppDataCache();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1000000);
+    const staleSchedule = { children: [], events: [], staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }] };
+    const freshSchedule = { children: [], events: [], staffTeams: [{ teamId: 'team-2', teamName: 'Storm' }] };
+    let resolveRefresh!: (schedule: typeof freshSchedule) => void;
+    const refresh = new Promise<typeof freshSchedule>((resolve) => { resolveRefresh = resolve; });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(staleSchedule).mockReturnValueOnce(refresh);
+    try {
+      await service.loadParentHomeSummaryBootstrap(signedInAuth.user);
+      now.mockReturnValue(1046000);
+      let bootstrapCalls = 0;
+      homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementation((user, options) => {
+        bootstrapCalls += 1;
+        // Bound a live-Set reentrancy regression so a broken implementation fails instead of hanging CI.
+        if (bootstrapCalls > 3) return Promise.reject(new Error('unexpected repeated terminal reentry'));
+        return service.loadParentHomeSummaryBootstrap(user, options);
+      });
+      homeServiceMocks.loadParentHomeWithSecondaryData.mockImplementation(() => new Promise(() => {}));
+      renderHome(signedInAuth, '/home?section=feed');
+      await waitFor(() => expect(homeServiceMocks.loadParentHomeWithSecondaryData).toHaveBeenCalledTimes(1));
+      await act(async () => { resolveRefresh(freshSchedule); });
+      expect(bootstrapCalls).toBe(2);
+      await waitFor(() => {
+        expect(homeServiceMocks.loadParentHomeWithSecondaryData).toHaveBeenLastCalledWith(
+          signedInAuth.user, expect.objectContaining({ force: true, schedule: freshSchedule })
+        );
+      });
+      expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+      expect(socialServiceMocks.loadSocialHome).toHaveBeenLastCalledWith(
+        signedInAuth.user, expect.objectContaining({ teams: [expect.objectContaining({ teamId: 'team-2' })] })
+      );
+    } finally {
+      now.mockRestore();
+      cache.clearAppDataCache();
+    }
   });
 
   it('restarts downstream Home work when a stale summary refresh changes team scope', async () => {
