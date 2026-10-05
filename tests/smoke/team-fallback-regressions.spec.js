@@ -1781,3 +1781,19 @@ for (const scenario of ['unchanged', 'denied', 'deleted', 'error', 'changed', 'a
         await verifyReplayProjectionPolling(page, { scenario, selector: '#youtube-stream-iframe', errors });
     });
 }
+
+for (const scenario of ['denied', 'deleted']) {
+    test(`classic explicit replay revalidates ${scenario} playback without replacing its timeline`, async ({ page, baseURL }) => {
+        const errors = await collectPageErrors(page);
+        await page.addInitScript(() => {
+            window.__LIVE_GAME_TEAM__ = {};
+            window.__LIVE_GAME_GAME__ = { status: 'completed', liveStatus: 'completed', isPublicProjection: true, videoUrl: null };
+        });
+        await routeLiveGameStubs(page, { authStub: ANONYMOUS_AUTH_STUB });
+        await stubReplayPlayback(page, 'allowed');
+        await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1&replay=true`);
+        await verifyReplayProjectionPolling(page, { scenario, selector: '#youtube-stream-iframe', errors });
+        await expect(page.locator('#live-badge-text')).toHaveText('REPLAY');
+        await expect(page.locator('#replay-controls')).toBeVisible();
+    });
+}

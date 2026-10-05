@@ -2167,6 +2167,7 @@ async function startRealMode(params) {
         renderAll();
         renderChatComposer();
         let playbackAuthReady = Promise.resolve(true);
+        let replayPlaybackGame = game;
         let replayPlaybackProjection = null;
         const renderVideoSafely = async () => {
             const requestId = ++uiState.videoRequestId;
@@ -2176,7 +2177,7 @@ async function startRealMode(params) {
             try {
                 // Replay timeline snapshots use synthetic "replay" statuses.
                 // Playback eligibility must retain the server-read lifecycle.
-                const playbackGame = isReplay ? game : uiState.game.game;
+                const playbackGame = isReplay ? replayPlaybackGame : uiState.game.game;
                 let options = videoTools.resolveReplayVideoOptions({
                     team: uiState.game.team,
                     game: playbackGame,
@@ -2285,7 +2286,7 @@ async function startRealMode(params) {
             playbackAuthReady = (async () => {
                 const { observeReplayPlaybackAuth } = await import('./game-replay-playback.js?v=2');
                 const unsubscribe = await observeReplayPlaybackAuth(() => {
-                    const playbackGame = isReplay ? game : uiState.game.game;
+                    const playbackGame = isReplay ? replayPlaybackGame : uiState.game.game;
                     if (!hasCompletedReplayLifecycle(playbackGame)) return;
                     ++uiState.videoRequestId;
                     showVideoFallback('Checking replay access…');
@@ -2343,6 +2344,20 @@ async function startRealMode(params) {
 
         if (isReplay) {
             await loadReplaySnapshot(database, stateTools, teamId, gameId);
+            uiState.unsubscribers.push(database.subscribeGame(teamId, gameId, (updatedGame) => {
+                if (!updatedGame) {
+                    ++uiState.videoRequestId;
+                    showVideoFallback('Replay video is no longer available.');
+                    return;
+                }
+                replayPlaybackGame = updatedGame;
+                void renderVideoSafely().then((success) => {
+                    if (success) setConnectionIssue('video');
+                });
+            }, (error) => {
+                console.warn('Overlay replay access refresh failed:', error);
+                setConnectionIssue('video', 'Replay access refresh is delayed. The current replay remains available while the connection recovers.');
+            }, { publicProjection: game.isPublicProjection === true }));
             return;
         }
 

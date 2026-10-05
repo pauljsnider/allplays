@@ -2373,3 +2373,21 @@ for (const scenario of ['unchanged', 'denied', 'deleted', 'error', 'changed', 'a
         await verifyReplayProjectionPolling(page, { scenario, selector: '#overlay-video', errors });
     });
 }
+
+for (const scenario of ['denied', 'deleted']) {
+    test(`overlay explicit replay revalidates ${scenario} playback without replacing its timeline`, async ({ page, baseURL }) => {
+        const errors = collectPageErrors(page);
+        await page.addInitScript(() => {
+            window.__OVERLAY_AUTH_USER__ = null;
+            window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
+            window.__OVERLAY_NO_PUBLIC_VIDEO__ = true;
+            window.__OVERLAY_COMPLETED_GAME__ = true;
+        });
+        await stubRealOverlayModules(page);
+        await stubReplayPlayback(page, 'allowed');
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`);
+        await verifyReplayProjectionPolling(page, { scenario, selector: '#overlay-video', errors });
+        await expect(page.locator('#live-status')).toHaveText('REPLAY');
+        await expect(page.locator('#replay-controls')).toBeVisible();
+    });
+}
