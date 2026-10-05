@@ -1,4 +1,4 @@
-import { stubReplayPlayback, expectReplayPlayback, RAW_REPLAY_AUTH_FIXTURE, stubDelayedProfileAuth, verifyRawReplayAuthIsolation } from './replay-playback-fixture.js';
+import { stubReplayPlayback, expectReplayPlayback, RAW_REPLAY_AUTH_FIXTURE, stubDelayedProfileAuth, verifyRawReplayAuthIsolation, verifyReplayProjectionPolling } from './replay-playback-fixture.js';
 import { expect, test } from '@playwright/test';
 
 function collectPageErrors(page) {
@@ -436,6 +436,7 @@ async function stubRealOverlayModules(page) {
             export function subscribeGame(_teamId, _gameId, callback, onError, options) {
                 window.__OVERLAY_LIVE_SUBSCRIPTIONS__ = (window.__OVERLAY_LIVE_SUBSCRIPTIONS__ || 0) + 1;
                 window.__OVERLAY_GAME_CALLBACK__ = callback;
+                window.__POLL_REPLAY_GAME__ = async (changes = {}) => callback({ ...game, ...changes });
                 window.__OVERLAY_GAME_ERROR__ = onError;
                 window.__OVERLAY_GAME_OPTIONS__ = options;
                 return () => {};
@@ -2354,5 +2355,21 @@ for (const inFlight of [false, true]) for (const rejectProfile of [false, true])
         await stubDelayedProfileAuth(page);
         await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`);
         await verifyRawReplayAuthIsolation(page, { selector: '#overlay-video', inFlight, rejectProfile, errors });
+    });
+}
+
+for (const scenario of ['unchanged', 'denied', 'deleted', 'error', 'changed', 'auth', 'overlap']) {
+    test(`overlay completed projection polling ${scenario}`, async ({ page, baseURL }) => {
+        const errors = collectPageErrors(page);
+        await page.addInitScript(() => {
+            window.__OVERLAY_AUTH_USER__ = null;
+            window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
+            window.__OVERLAY_NO_PUBLIC_VIDEO__ = true;
+            window.__OVERLAY_COMPLETED_GAME__ = true;
+        });
+        await stubRealOverlayModules(page);
+        await stubReplayPlayback(page, 'allowed');
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`);
+        await verifyReplayProjectionPolling(page, { scenario, selector: '#overlay-video', errors });
     });
 }

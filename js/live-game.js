@@ -829,6 +829,7 @@ function initNativeCameraControls() {
 }
 
 let replayPlaybackRequestId = 0;
+let replayPlaybackProjection = null;
 async function refreshVideoPanel({ force = false } = {}) {
   const requestId = ++replayPlaybackRequestId;
   let nextPlayback = resolveVideoPlayback();
@@ -838,7 +839,12 @@ async function refreshVideoPanel({ force = false } = {}) {
       mode: 'none', hasVideo: false, sourceUrl: null, publicUrl: null,
       replayState: { status: 'unavailable', message: 'Checking replay access…' }
     };
-    setupVideoPanel(unavailable);
+    // Polls revalidate access even when the projection is unchanged. Keep the
+    // current player during that lookup; changed data and raw auth events clear
+    // it immediately, and a denied/failed result clears it below.
+    const projection = JSON.stringify(state.game);
+    if (projection !== replayPlaybackProjection) setupVideoPanel(unavailable);
+    replayPlaybackProjection = projection;
     try {
       const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=2');
       if (requestId !== replayPlaybackRequestId) return false;

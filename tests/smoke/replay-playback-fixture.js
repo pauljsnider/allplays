@@ -43,6 +43,7 @@ export async function stubReplayPlayback(page, outcome) {
                 if (window.__PLAYBACK_HOLD__) await new Promise(resolve => {
                     (window.__PLAYBACK_PENDING__ ||= []).push(resolve);
                 });
+                window.__PLAYBACK_COMPLETED__ = (window.__PLAYBACK_COMPLETED__ || 0) + 1;
                 if (outcome === 'private' || outcome === 'missing') throw new Error(outcome);
                 return { data: outcome === 'allowed' ? {
                     state: 'ready', available: true, replayVideo: {
@@ -103,5 +104,54 @@ export async function verifyRawReplayAuthIsolation(page, { selector, inFlight, r
     }
     await expect(page.locator(selector)).not.toHaveAttribute('src', /youtube\.com\/embed/);
     expect(await page.evaluate(() => window.__ENRICHED_AUTH_CALLS__ || 0)).toBe(transition.before);
+    expect(errors).toEqual([]);
+}
+
+export async function verifyReplayProjectionPolling(page, { scenario, selector, errors }) {
+    await expectReplayPlayback(page, 'allowed', selector, errors);
+    await expect.poll(() => page.evaluate(() => typeof window.__POLL_REPLAY_GAME__)).toBe('function');
+    const player = await page.locator(selector).elementHandle();
+    const frame = await player.contentFrame();
+    await expect.poll(() => frame.title()).toBe('Recording fixture');
+    // A real iframe navigation destroys this player-time sentinel even though
+    // the outer iframe element and final src can look identical afterward.
+    await frame.evaluate(() => { window.fixturePlaybackTime = 37; });
+    if (scenario === 'unchanged') {
+        for (let poll = 0; poll < 3; poll++) {
+            const reads = await page.evaluate(() => window.__PLAYBACK_READS__.length);
+            const completed = await page.evaluate(() => window.__PLAYBACK_COMPLETED__);
+            await page.evaluate(() => window.__POLL_REPLAY_GAME__());
+            await expect.poll(() => page.evaluate(() => window.__PLAYBACK_READS__.length)).toBeGreaterThan(reads);
+            await expect.poll(() => page.evaluate(() => window.__PLAYBACK_COMPLETED__)).toBeGreaterThan(completed);
+            await expectReplayPlayback(page, 'allowed', selector, errors);
+            expect(await player.evaluate((el, selector) => el === document.querySelector(selector), selector)).toBe(true);
+            expect(await frame.evaluate(() => window.fixturePlaybackTime)).toBe(37);
+        }
+    } else {
+        await page.evaluate(() => { window.__PLAYBACK_HOLD__ = true; });
+        if (scenario === 'overlap') {
+            await page.evaluate(() => window.__POLL_REPLAY_GAME__());
+            await expect.poll(() => page.evaluate(() => window.__PLAYBACK_PENDING__?.length || 0)).toBeGreaterThan(0);
+            // Latest denial must beat an older successful response, even when
+            // both requests began from the same unchanged public projection.
+            await page.evaluate(() => { window.__PLAYBACK_HOLD__ = false; });
+        }
+        const immediateSrc = await page.evaluate(async ({ scenario, selector }) => {
+            window.__PLAYBACK_OUTCOME__ = scenario === 'error' ? 'private' : scenario === 'deleted' || scenario === 'changed' ? 'deleted' : 'denied';
+            if (scenario === 'auth') window.__FIRE_RAW_AUTH__({ uid: 'different-principal' });
+            else await window.__POLL_REPLAY_GAME__(scenario === 'changed' ? { hasRecordedReplay: false, videoUrl: null, updatedAt: 'removed' } : {});
+            return document.querySelector(selector).getAttribute('src');
+        }, { scenario, selector });
+        if (scenario === 'changed' || scenario === 'auth') expect(immediateSrc || '').toBe('');
+        else if (scenario !== 'overlap') expect(immediateSrc).toContain('youtube.com/embed');
+        if (scenario !== 'overlap') {
+            await expect.poll(() => page.evaluate(() => window.__PLAYBACK_PENDING__?.length || 0)).toBeGreaterThan(0);
+        } else await expectReplayPlayback(page, 'denied', selector, errors);
+        await page.evaluate(async () => {
+            window.__PLAYBACK_PENDING__.forEach(resolve => resolve());
+            await new Promise(resolve => setTimeout(resolve, 0));
+        });
+        await expectReplayPlayback(page, 'denied', selector, errors);
+    }
     expect(errors).toEqual([]);
 }

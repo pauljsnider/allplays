@@ -2167,10 +2167,12 @@ async function startRealMode(params) {
         renderAll();
         renderChatComposer();
         let playbackAuthReady = Promise.resolve(true);
+        let replayPlaybackProjection = null;
         const renderVideoSafely = async () => {
             const requestId = ++uiState.videoRequestId;
             uiState.replayPlaybackAvailable = false;
             configureGameActions();
+            let needsAuthorizedReplay = false;
             try {
                 // Replay timeline snapshots use synthetic "replay" statuses.
                 // Playback eligibility must retain the server-read lifecycle.
@@ -2181,11 +2183,16 @@ async function startRealMode(params) {
                     players: uiState.game.players,
                     isReplay
                 });
-                const needsAuthorizedReplay = playbackGame?.isPublicProjection === true
+                needsAuthorizedReplay = playbackGame?.isPublicProjection === true
                     && (playbackGame?.hasRecordedReplay === true || !playbackGame?.videoUrl)
                     && hasCompletedReplayLifecycle(playbackGame);
                 if (needsAuthorizedReplay) {
-                    showVideoFallback('Checking replay access…');
+                    // Revalidate on every poll without destroying an unchanged
+                    // player. Changed projection data and raw auth events still
+                    // invalidate immediately; denial/failure clears below.
+                    const projection = JSON.stringify(playbackGame);
+                    if (projection !== replayPlaybackProjection) showVideoFallback('Checking replay access…');
+                    replayPlaybackProjection = projection;
                     if (!await playbackAuthReady || requestId !== uiState.videoRequestId) return false;
                     const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=2');
                     if (requestId !== uiState.videoRequestId) return false;
@@ -2262,8 +2269,9 @@ async function startRealMode(params) {
                 else showVideoFallback(options.replayState?.message || 'No video feed is configured for this game yet.');
                 return true;
             } catch (error) {
+                if (requestId !== uiState.videoRequestId) return false;
                 console.warn('Overlay video refresh failed:', error);
-                if (elements.iframe.hidden && elements.recordedVideo.hidden) {
+                if (needsAuthorizedReplay || elements.iframe.hidden && elements.recordedVideo.hidden) {
                     showVideoFallback('The video feed is temporarily unavailable. Live score and play updates remain connected.');
                 }
                 setConnectionIssue('video', 'Video refresh is delayed. Score, clock, plays, and chat continue independently.');
