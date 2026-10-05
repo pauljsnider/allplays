@@ -1,3 +1,4 @@
+import { stubReplayPlayback, expectReplayPlayback, RAW_REPLAY_AUTH_FIXTURE, stubDelayedProfileAuth, verifyRawReplayAuthIsolation, verifyReplayProjectionPolling, verifyExplicitReplayRevalidation } from './replay-playback-fixture.js';
 import { expect, test } from '@playwright/test';
 
 function collectPageErrors(page) {
@@ -347,6 +348,9 @@ test('local replay fires the recorded game timeline in order without manual seek
 });
 
 async function stubRealOverlayModules(page) {
+    await page.route(/\/js\/firebase\.js(?:\?.*)?$/, route => route.fulfill({
+        contentType: 'application/javascript', body: RAW_REPLAY_AUTH_FIXTURE
+    }));
     await page.route('https://images.example/**', (route) => route.fulfill({
         status: 200,
         contentType: 'image/svg+xml',
@@ -386,6 +390,8 @@ async function stubRealOverlayModules(page) {
                     ? null
                     : (window.__OVERLAY_PUBLIC_VIDEO_URL__ || 'https://www.youtube.com/watch?v=PK1HyC37doc'),
                 isPublicProjection: true,
+                ...(typeof window.__OVERLAY_REPLAY_MARKER__ === 'boolean'
+                    ? { hasRecordedReplay: window.__OVERLAY_REPLAY_MARKER__ } : {}),
                 liveResetAt: window.__OVERLAY_RESET_REPLAY__ ? 200000 : undefined,
                 liveLineup: { onCourt: ['p9'], bench: ['p4'] },
                 liveStats: { p9: { goals: 5 } },
@@ -419,6 +425,9 @@ async function stubRealOverlayModules(page) {
                     (window.__OVERLAY_FAIL_PLAYERS_ONCE__ && window.__OVERLAY_GET_PLAYERS_CALLS__ === 1)) {
                     throw new Error('roster unavailable');
                 }
+                if (window.__OVERLAY_DELAY_PLAYERS__) {
+                    await new Promise((resolve) => { window.__OVERLAY_RELEASE_PLAYERS__ = resolve; });
+                }
                 if (window.__OVERLAY_EMPTY_PLAYERS__) return [];
                 return [
                 { id: 'p9', name: 'Avery Lane', number: '9', position: 'F' },
@@ -428,6 +437,7 @@ async function stubRealOverlayModules(page) {
             export function subscribeGame(_teamId, _gameId, callback, onError, options) {
                 window.__OVERLAY_LIVE_SUBSCRIPTIONS__ = (window.__OVERLAY_LIVE_SUBSCRIPTIONS__ || 0) + 1;
                 window.__OVERLAY_GAME_CALLBACK__ = callback;
+                window.__POLL_REPLAY_GAME__ = async (changes = {}) => callback({ ...game, ...changes });
                 window.__OVERLAY_GAME_ERROR__ = onError;
                 window.__OVERLAY_GAME_OPTIONS__ = options;
                 return () => {};
@@ -587,6 +597,7 @@ async function stubRealOverlayModules(page) {
         status: 200,
         contentType: 'application/javascript',
         body: `export function checkAuth(callback) {
+            window.__OVERLAY_AUTH_CALLBACK__ = callback;
             const user = Object.prototype.hasOwnProperty.call(window, '__OVERLAY_AUTH_USER__')
                 ? window.__OVERLAY_AUTH_USER__
                 : { uid: 'viewer-1', displayName: 'Alex Viewer', photoURL: 'https://images.example/avatar.png' };
@@ -2240,3 +2251,171 @@ test('recorded replay does not advance when browser playback is rejected', async
     expect(await page.locator('#overlay-recorded-video').evaluate((video) => video.__overlayPlayCalls)).toBe(1);
     expect(pageErrors).toEqual([]);
 });
+
+for (const outcome of ['allowed', 'denied', 'private', 'missing', 'deleted']) {
+    test(`overlay public archive recorded playback ${outcome}`, async ({ page, baseURL }) => {
+        const errors = collectPageErrors(page);
+        await page.addInitScript((outcome) => {
+            window.__OVERLAY_AUTH_USER__ = null;
+            window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
+            window.__OVERLAY_NO_PUBLIC_VIDEO__ = !['denied', 'deleted'].includes(outcome);
+            window.__OVERLAY_COMPLETED_GAME__ = true;
+            window.__OVERLAY_REPLAY_MARKER__ = ['denied', 'deleted'].includes(outcome) ? true : undefined;
+            window.__OVERLAY_FAIL_TEAM_CONTEXT__ = true;
+        }, outcome);
+        await stubRealOverlayModules(page);
+        await stubReplayPlayback(page, outcome);
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`);
+        await expectReplayPlayback(page, outcome, '#overlay-video', errors);
+    });
+}
+
+for (const change of ['account-switch', 'sign-out', 'in-flight-sign-out']) {
+    test(`overlay replay authorization refreshes after ${change}`, async ({ page, baseURL }) => {
+        const errors = collectPageErrors(page);
+        await page.addInitScript((change) => {
+            window.__OVERLAY_AUTH_USER__ = { uid: 'first-user' };
+            window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
+            window.__OVERLAY_NO_PUBLIC_VIDEO__ = true;
+            window.__OVERLAY_COMPLETED_GAME__ = true;
+            window.__PLAYBACK_OUTCOME__ = 'allowed';
+            window.__PLAYBACK_HOLD__ = change === 'in-flight-sign-out';
+        }, change);
+        await stubRealOverlayModules(page);
+        await stubReplayPlayback(page, 'allowed');
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`);
+        await expect(page.locator('#live-status')).toHaveText('REPLAY');
+        await expect.poll(() => page.evaluate(() => typeof window.__FIRE_RAW_AUTH__)).toBe('function');
+        if (change === 'in-flight-sign-out') {
+            await expect.poll(() => page.evaluate(() => window.__PLAYBACK_PENDING__?.length || 0)).toBeGreaterThan(0);
+        } else {
+            await expectReplayPlayback(page, 'allowed', '#overlay-video', errors);
+        }
+        const reads = await page.evaluate(() => window.__PLAYBACK_READS__.length);
+        await page.evaluate((change) => {
+            window.__PLAYBACK_HOLD__ = false;
+            window.__PLAYBACK_OUTCOME__ = change === 'account-switch' ? 'allowed' : 'denied';
+            window.__FIRE_RAW_AUTH__(change === 'account-switch' ? { uid: 'second-user' } : null);
+        }, change);
+        if (change === 'in-flight-sign-out') {
+            // Single-flight revalidation waits for the invalidated old read,
+            // while media is already cleared synchronously on raw sign-out.
+            expect(await page.evaluate(() => window.__PLAYBACK_READS__.length)).toBe(reads);
+            await expect(page.locator('#overlay-video')).not.toHaveAttribute('src', /youtube\.com\/embed/);
+            await page.evaluate(async () => {
+                window.__PLAYBACK_PENDING__.forEach(resolve => resolve());
+                await new Promise(resolve => setTimeout(resolve, 0));
+            });
+            await expect(page.locator('#overlay-video')).not.toHaveAttribute('src', /youtube\.com\/embed/);
+        }
+        await expect.poll(() => page.evaluate(() => window.__PLAYBACK_READS__.length)).toBeGreaterThan(reads);
+        await expectReplayPlayback(page, change === 'account-switch' ? 'allowed' : 'denied', '#overlay-video', errors);
+        await expect(page.locator('#live-status')).toHaveText('REPLAY');
+        expect(errors).toEqual([]);
+    });
+}
+
+for (const enrichment of ['team', 'roster']) {
+    test(`overlay replay retains authorized video after delayed ${enrichment} enrichment`, async ({ page, baseURL }) => {
+        const errors = collectPageErrors(page);
+        await page.addInitScript((enrichment) => {
+            window.__OVERLAY_AUTH_USER__ = null;
+            window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
+            window.__OVERLAY_NO_PUBLIC_VIDEO__ = true;
+            window.__OVERLAY_COMPLETED_GAME__ = true;
+            window.__OVERLAY_DELAY_TEAM_CONTEXT__ = enrichment === 'team';
+            window.__OVERLAY_DELAY_PLAYERS__ = enrichment === 'roster';
+        }, enrichment);
+        await stubRealOverlayModules(page);
+        await stubReplayPlayback(page, 'allowed');
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`);
+        await expect(page.locator('#live-status')).toHaveText('REPLAY');
+        await expectReplayPlayback(page, 'allowed', '#overlay-video', errors);
+        const reads = await page.evaluate(() => window.__PLAYBACK_READS__.length);
+        await page.evaluate((enrichment) => {
+            if (enrichment === 'team') window.__OVERLAY_RELEASE_TEAM_CONTEXT__();
+            else window.__OVERLAY_RELEASE_PLAYERS__();
+        }, enrichment);
+        await expect.poll(() => page.evaluate(() => window.__PLAYBACK_READS__.length)).toBeGreaterThan(reads);
+        await expectReplayPlayback(page, 'allowed', '#overlay-video', errors);
+        await expect(page.locator('#live-status')).toHaveText('REPLAY');
+        expect(errors).toEqual([]);
+    });
+}
+
+for (const inFlight of [false, true]) for (const rejectProfile of [false, true]) {
+    test(`overlay raw auth clears ${inFlight ? 'in-flight' : 'existing'} replay while profile is ${rejectProfile ? 'rejected' : 'pending'}`, async ({ page, baseURL }) => {
+        const errors = await collectPageErrors(page);
+        await page.addInitScript((inFlight) => {
+            window.__RAW_REPLAY_USER__ = { uid: 'principal-A' };
+            window.__PLAYBACK_HOLD__ = inFlight;
+            window.__PLAYBACK_OUTCOME__ = 'allowed';
+            window.__OVERLAY_AUTH_USER__ = { uid: 'principal-A' };
+            window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
+            window.__OVERLAY_NO_PUBLIC_VIDEO__ = true;
+            window.__OVERLAY_COMPLETED_GAME__ = true;
+        }, inFlight);
+        await stubRealOverlayModules(page);
+        await stubReplayPlayback(page, 'allowed');
+        await stubDelayedProfileAuth(page);
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`);
+        await verifyRawReplayAuthIsolation(page, { selector: '#overlay-video', inFlight, rejectProfile, errors });
+    });
+}
+
+for (const scenario of ['unchanged', 'denied', 'deleted', 'error', 'changed', 'auth', 'overlap']) {
+    test(`overlay completed projection polling ${scenario}`, async ({ page, baseURL }) => {
+        const errors = collectPageErrors(page);
+        await page.addInitScript(() => {
+            window.__OVERLAY_AUTH_USER__ = null;
+            window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
+            window.__OVERLAY_NO_PUBLIC_VIDEO__ = true;
+            window.__OVERLAY_COMPLETED_GAME__ = true;
+        });
+        await stubRealOverlayModules(page);
+        await stubReplayPlayback(page, 'allowed');
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`);
+        await verifyReplayProjectionPolling(page, { scenario, selector: '#overlay-video', errors });
+    });
+}
+
+for (const scenario of ['allowed', 'denied', 'deleted', 'private', 'error', 'slow', 'slow-success', 'auth', 'pagehide', 'bfcache', 'visibility', 'unload', 'ordinary']) {
+    test(`overlay explicit replay scheduled revalidation ${scenario}`, async ({ page, baseURL }) => {
+        const errors = collectPageErrors(page);
+        await page.clock.install();
+        await page.addInitScript(() => {
+            window.__RAW_REPLAY_USER__ = { uid: 'same-principal' };
+            window.__OVERLAY_AUTH_USER__ = { uid: 'same-principal' };
+            window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
+            window.__OVERLAY_NO_PUBLIC_VIDEO__ = true;
+            window.__OVERLAY_COMPLETED_GAME__ = true;
+            window.__LIVE_GAME_TEAM__ = {};
+            window.__LIVE_GAME_GAME__ = { status: 'completed', liveStatus: 'completed', isPublicProjection: true, videoUrl: null };
+        });
+        await stubRealOverlayModules(page);
+        await stubReplayPlayback(page, 'allowed');
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1${scenario === 'ordinary' ? '' : '&replay=true'}`);
+        await verifyExplicitReplayRevalidation(page, { scenario, selector: '#overlay-video', errors: await errors });
+    });
+}
+
+for (const replay of [true, false]) {
+    test(`overlay explicit false replay marker skips archive probes in ${replay ? 'replay' : 'watch'}`, async ({ page, baseURL }) => {
+        const errors = await collectPageErrors(page);
+        await page.clock.install();
+        await page.addInitScript(() => { window.__OVERLAY_AUTH_USER__ = null; window.__OVERLAY_NO_RESOLVED_VIDEO__ = true; window.__OVERLAY_NO_PUBLIC_VIDEO__ = true; window.__OVERLAY_COMPLETED_GAME__ = true; window.__OVERLAY_REPLAY_MARKER__ = false; });
+        await stubRealOverlayModules(page);
+        await stubReplayPlayback(page, 'allowed');
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1${replay ? '&replay=true' : ''}`);
+        await expect(page.locator('#replay-controls')).toHaveCount(1);
+        if (replay) await expect(page.locator('#replay-current')).toBeVisible();
+        else {
+            await expect.poll(() => page.evaluate(() => typeof window.__POLL_REPLAY_GAME__)).toBe('function');
+            await page.evaluate(async () => { for (let i=0;i<3;i++) await window.__POLL_REPLAY_GAME__(); });
+        }
+        await page.clock.fastForward(60000);
+        expect(await page.evaluate(() => window.__PLAYBACK_READS__?.length || 0)).toBe(0);
+        await expect(page.locator('#overlay-video')).not.toHaveAttribute('src', /youtube.com\/embed/);
+        expect(errors).toEqual([]);
+    });
+}

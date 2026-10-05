@@ -99,7 +99,7 @@ const {
   getGameDayTeamContext,
   getTeams,
   getUserTeamsWithAccess
-} = await import('../../js/db.js?v=4433201');
+} = await import('../../js/db.js?v=4433202');
 
 describe('team access query resilience', () => {
   beforeEach(() => {
@@ -640,6 +640,17 @@ describe('game access query resilience', () => {
     expect(projectedEvents.at(-1)).toEqual(expect.objectContaining({ id: 'event-500', summary: 'Practice' }));
     expect(firebaseMocks.getPublicTeamGamesProjection.mock.calls[1][0]).toEqual(expect.objectContaining({ cursor: 'games-page-2' }));
     expect(firebaseMocks.getPublicTeamCalendarProjection.mock.calls[1][0]).toEqual(expect.objectContaining({ cursor: 'calendar-page-2' }));
+  });
+
+  it.each([true, false, undefined])('preserves the public replay marker %s without inventing a legacy marker', async (marker) => {
+    firebaseMocks.getDoc.mockRejectedValue(Object.assign(new Error('denied'), { code: 'permission-denied' }));
+    firebaseMocks.getPublicGameProjection.mockResolvedValue({ data: { item: {
+      id: 'game-2', status: 'completed', videoUrl: null,
+      ...(typeof marker === 'boolean' ? { hasRecordedReplay: marker } : {})
+    } } });
+    const projected = await getGame('team-1', 'game-2');
+    if (typeof marker === 'boolean') expect(projected.hasRecordedReplay).toBe(marker);
+    else expect(projected).not.toHaveProperty('hasRecordedReplay');
   });
 
   it('falls back to a sanitized public game detail when canonical get is denied', async () => {
