@@ -1,4 +1,4 @@
-import { stubReplayPlayback, expectReplayPlayback } from './replay-playback-fixture.js';
+import { stubReplayPlayback, expectReplayPlayback, RAW_REPLAY_AUTH_FIXTURE, stubDelayedProfileAuth, verifyRawReplayAuthIsolation } from './replay-playback-fixture.js';
 import { expect, test } from '@playwright/test';
 
 function collectPageErrors(page) {
@@ -348,6 +348,9 @@ test('local replay fires the recorded game timeline in order without manual seek
 });
 
 async function stubRealOverlayModules(page) {
+    await page.route(/\/js\/firebase\.js(?:\?.*)?$/, route => route.fulfill({
+        contentType: 'application/javascript', body: RAW_REPLAY_AUTH_FIXTURE
+    }));
     await page.route('https://images.example/**', (route) => route.fulfill({
         status: 200,
         contentType: 'image/svg+xml',
@@ -2280,7 +2283,7 @@ for (const change of ['account-switch', 'sign-out', 'in-flight-sign-out']) {
         await stubReplayPlayback(page, 'allowed');
         await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`);
         await expect(page.locator('#live-status')).toHaveText('REPLAY');
-        await expect.poll(() => page.evaluate(() => typeof window.__OVERLAY_AUTH_CALLBACK__)).toBe('function');
+        await expect.poll(() => page.evaluate(() => typeof window.__FIRE_RAW_AUTH__)).toBe('function');
         if (change === 'in-flight-sign-out') {
             await expect.poll(() => page.evaluate(() => window.__PLAYBACK_PENDING__?.length || 0)).toBeGreaterThan(0);
         } else {
@@ -2290,7 +2293,7 @@ for (const change of ['account-switch', 'sign-out', 'in-flight-sign-out']) {
         await page.evaluate((change) => {
             window.__PLAYBACK_HOLD__ = false;
             window.__PLAYBACK_OUTCOME__ = change === 'account-switch' ? 'allowed' : 'denied';
-            window.__OVERLAY_AUTH_CALLBACK__(change === 'account-switch' ? { uid: 'second-user' } : null);
+            window.__FIRE_RAW_AUTH__(change === 'account-switch' ? { uid: 'second-user' } : null);
         }, change);
         await expect.poll(() => page.evaluate(() => window.__PLAYBACK_READS__.length)).toBeGreaterThan(reads);
         await expectReplayPlayback(page, change === 'account-switch' ? 'allowed' : 'denied', '#overlay-video', errors);
@@ -2331,5 +2334,25 @@ for (const enrichment of ['team', 'roster']) {
         await expectReplayPlayback(page, 'allowed', '#overlay-video', errors);
         await expect(page.locator('#live-status')).toHaveText('REPLAY');
         expect(errors).toEqual([]);
+    });
+}
+
+for (const inFlight of [false, true]) for (const rejectProfile of [false, true]) {
+    test(`overlay raw auth clears ${inFlight ? 'in-flight' : 'existing'} replay while profile is ${rejectProfile ? 'rejected' : 'pending'}`, async ({ page, baseURL }) => {
+        const errors = await collectPageErrors(page);
+        await page.addInitScript((inFlight) => {
+            window.__RAW_REPLAY_USER__ = { uid: 'principal-A' };
+            window.__PLAYBACK_HOLD__ = inFlight;
+            window.__PLAYBACK_OUTCOME__ = 'allowed';
+            window.__OVERLAY_AUTH_USER__ = { uid: 'principal-A' };
+            window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
+            window.__OVERLAY_NO_PUBLIC_VIDEO__ = true;
+            window.__OVERLAY_COMPLETED_GAME__ = true;
+        }, inFlight);
+        await stubRealOverlayModules(page);
+        await stubReplayPlayback(page, 'allowed');
+        await stubDelayedProfileAuth(page);
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`);
+        await verifyRawReplayAuthIsolation(page, { selector: '#overlay-video', inFlight, rejectProfile, errors });
     });
 }

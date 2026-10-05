@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { resolveAuthorizedReplayPlayback } from '../../js/game-replay-playback.js';
+import { resolveAuthorizedReplayPlayback, observeReplayPlaybackAuth } from '../../js/game-replay-playback.js';
 
 const replayVideo = {
     provider: 'youtube', videoId: 'T3f9AjVhn9U', status: 'ready',
@@ -31,4 +31,25 @@ describe('server-authorized recorded playback', () => {
         expect(await resolveAuthorizedReplayPlayback({ teamId: 'team', gameId: 'game' }, deps))
             .toMatchObject({ hasVideo: false, sourceUrl: null, publicUrl: null });
     });
+});
+
+it('observes raw Firebase identity without profile enrichment', async () => {
+    const auth = { currentUser: { uid: 'A' } };
+    const callback = vi.fn();
+    const unsubscribe = vi.fn();
+    const onAuthStateChanged = vi.fn(() => unsubscribe);
+    expect(await observeReplayPlaybackAuth(callback, { firebase: { auth, onAuthStateChanged } })).toBe(unsubscribe);
+    expect(onAuthStateChanged).toHaveBeenCalledWith(auth, callback);
+});
+
+it('rejects an old principal response even before a raw observer callback runs', async () => {
+    let resolve;
+    const auth = { currentUser: { uid: 'A' } };
+    const pending = new Promise(done => { resolve = done; });
+    const result = resolveAuthorizedReplayPlayback({ teamId: 'team', gameId: 'game' }, {
+        firebase: { auth, functions: {}, httpsCallable: () => () => pending }
+    });
+    auth.currentUser = { uid: 'B' };
+    resolve({ data: { state: 'ready', available: true, replayVideo } });
+    expect(await result).toMatchObject({ hasVideo: false, sourceUrl: null });
 });

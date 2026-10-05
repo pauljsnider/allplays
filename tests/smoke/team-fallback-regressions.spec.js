@@ -1,4 +1,4 @@
-import { stubReplayPlayback, expectReplayPlayback } from './replay-playback-fixture.js';
+import { stubReplayPlayback, expectReplayPlayback, RAW_REPLAY_AUTH_FIXTURE, stubDelayedProfileAuth, verifyRawReplayAuthIsolation } from './replay-playback-fixture.js';
 import { test, expect } from '@playwright/test';
 
 const PERMISSION_ERROR = `
@@ -1085,6 +1085,9 @@ async function routeCommonPageStubs(page) {
 }
 
 async function routeLiveGameStubs(page, { authStub = AUTH_STUB } = {}) {
+    await page.route(/\/js\/firebase\.js(?:\?.*)?$/, route => route.fulfill({
+        contentType: 'application/javascript', body: RAW_REPLAY_AUTH_FIXTURE
+    }));
     let telemetryStubRequestCount = 0;
     await page.route(/\/js\/telemetry\.js(?:\?v=\d+)?$/, (route) => {
         telemetryStubRequestCount += 1;
@@ -1744,5 +1747,23 @@ for (const outcome of ['allowed', 'denied', 'private', 'missing', 'deleted']) {
         await stubReplayPlayback(page, outcome);
         await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1&replay=true`);
         await expectReplayPlayback(page, outcome, '#youtube-stream-iframe', errors);
+    });
+}
+
+for (const inFlight of [false, true]) for (const rejectProfile of [false, true]) {
+    test(`classic raw auth clears ${inFlight ? 'in-flight' : 'existing'} replay while profile is ${rejectProfile ? 'rejected' : 'pending'}`, async ({ page, baseURL }) => {
+        const errors = await collectPageErrors(page);
+        await page.addInitScript((inFlight) => {
+            window.__RAW_REPLAY_USER__ = { uid: 'principal-A' };
+            window.__PLAYBACK_HOLD__ = inFlight;
+            window.__PLAYBACK_OUTCOME__ = 'allowed';
+            window.__LIVE_GAME_TEAM__ = {};
+            window.__LIVE_GAME_GAME__ = { status: 'completed', liveStatus: 'completed', isPublicProjection: true, videoUrl: null };
+        }, inFlight);
+        await routeLiveGameStubs(page, { authStub: ANONYMOUS_AUTH_STUB });
+        await stubReplayPlayback(page, 'allowed');
+        await stubDelayedProfileAuth(page);
+        await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1&replay=true`);
+        await verifyRawReplayAuthIsolation(page, { selector: '#youtube-stream-iframe', inFlight, rejectProfile, errors });
     });
 }

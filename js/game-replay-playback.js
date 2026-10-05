@@ -8,6 +8,13 @@ export function unavailableReplayPlayback(message = 'Replay video is unavailable
     };
 }
 
+// Observe Firebase identity directly: checkAuth waits for profile/access reads
+// and cannot invalidate principal-scoped media promptly during that wait.
+export async function observeReplayPlaybackAuth(onChange, deps = {}) {
+    const firebase = deps.firebase || await import('./firebase.js?v=33');
+    return firebase.onAuthStateChanged(firebase.auth, onChange);
+}
+
 // Public projections omit private archive URLs (older adapters also omit the
 // archive marker). Only this
 // callable may release playback to the current principal; never cache its URL
@@ -15,8 +22,10 @@ export function unavailableReplayPlayback(message = 'Replay video is unavailable
 export async function resolveAuthorizedReplayPlayback({ teamId, gameId, clipStartMs, clipEndMs }, deps = {}) {
     try {
         const firebase = deps.firebase || await import('./firebase.js?v=33');
+        const principal = firebase.auth?.currentUser || null;
         const readPlayback = firebase.httpsCallable(firebase.functions, 'getGameReplayPlayback');
         const { data } = await readPlayback({ teamId, gameId });
+        if ((firebase.auth?.currentUser || null) !== principal) return unavailableReplayPlayback();
         if (data?.state !== 'ready' || data?.available !== true || !data?.replayVideo) {
             return unavailableReplayPlayback(data?.reason === 'team-pass-required'
                 ? 'Replay access is required to watch this recording.'

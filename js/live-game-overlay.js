@@ -2166,6 +2166,7 @@ async function startRealMode(params) {
         if (isReplay) uiState.game.liveStatus = 'replay';
         renderAll();
         renderChatComposer();
+        let playbackAuthReady = Promise.resolve(true);
         const renderVideoSafely = async () => {
             const requestId = ++uiState.videoRequestId;
             uiState.replayPlaybackAvailable = false;
@@ -2185,7 +2186,8 @@ async function startRealMode(params) {
                     && hasCompletedReplayLifecycle(playbackGame);
                 if (needsAuthorizedReplay) {
                     showVideoFallback('Checking replay access…');
-                    const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=1');
+                    if (!await playbackAuthReady || requestId !== uiState.videoRequestId) return false;
+                    const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=2');
                     if (requestId !== uiState.videoRequestId) return false;
                     options = await resolveAuthorizedReplayPlayback({ teamId, gameId });
                     if (requestId !== uiState.videoRequestId) return false;
@@ -2269,18 +2271,25 @@ async function startRealMode(params) {
             }
         };
         uiState.refreshReplayPlayback = renderVideoSafely;
-        if (isReplay) {
-            // Replay returns before chat/live subscriptions initialize. Its
-            // principal-scoped video still needs its own auth observer.
-            const authTools = await import('./auth.js?v=4433205');
-            let playbackUid;
-            const unsubscribe = authTools.checkAuth((user) => {
-                const nextUid = user?.uid || '';
-                if (playbackUid === nextUid) return;
-                playbackUid = nextUid;
-                void renderVideoSafely();
-            }, { skipEmailVerificationCheck: true });
-            if (typeof unsubscribe === 'function') uiState.unsubscribers.push(unsubscribe);
+        if (game.isPublicProjection === true) {
+            // Do not delay score/chat subscriptions on a video-only module.
+            // Authorized playback itself waits until this observer is installed.
+            playbackAuthReady = (async () => {
+                const { observeReplayPlaybackAuth } = await import('./game-replay-playback.js?v=2');
+                const unsubscribe = await observeReplayPlaybackAuth(() => {
+                    const playbackGame = isReplay ? game : uiState.game.game;
+                    if (!hasCompletedReplayLifecycle(playbackGame)) return;
+                    ++uiState.videoRequestId;
+                    showVideoFallback('Checking replay access…');
+                    void renderVideoSafely();
+                });
+                uiState.unsubscribers.push(unsubscribe);
+                return true;
+            })().catch(() => {
+                ++uiState.videoRequestId;
+                showVideoFallback('Replay video is temporarily unavailable. Reload to try again.');
+                return false;
+            });
         }
         void renderVideoSafely().then((success) => {
             if (success) setConnectionIssue('video');
