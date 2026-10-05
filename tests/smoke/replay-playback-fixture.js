@@ -8,7 +8,10 @@ export async function stubReplayPlayback(page, outcome) {
             return async (input) => {
                 if (name !== 'getGameReplayPlayback') throw new Error('Unexpected callable');
                 window.__PLAYBACK_READS__ = [...(window.__PLAYBACK_READS__ || []), input];
-                const outcome = ${JSON.stringify(outcome)};
+                const outcome = window.__PLAYBACK_OUTCOME__ || ${JSON.stringify(outcome)};
+                if (window.__PLAYBACK_HOLD__) await new Promise(resolve => {
+                    (window.__PLAYBACK_PENDING__ ||= []).push(resolve);
+                });
                 if (outcome === 'private' || outcome === 'missing') throw new Error(outcome);
                 return { data: outcome === 'allowed' ? {
                     state: 'ready', available: true, replayVideo: {

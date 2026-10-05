@@ -2171,15 +2171,18 @@ async function startRealMode(params) {
             uiState.replayPlaybackAvailable = false;
             configureGameActions();
             try {
+                // Replay timeline snapshots use synthetic "replay" statuses.
+                // Playback eligibility must retain the server-read lifecycle.
+                const playbackGame = isReplay ? game : uiState.game.game;
                 let options = videoTools.resolveReplayVideoOptions({
                     team: uiState.game.team,
-                    game: uiState.game.game,
+                    game: playbackGame,
                     players: uiState.game.players,
                     isReplay
                 });
-                const needsAuthorizedReplay = uiState.game.game?.isPublicProjection === true
-                    && (uiState.game.game?.hasRecordedReplay === true || !uiState.game.game?.videoUrl)
-                    && hasCompletedReplayLifecycle(uiState.game.game);
+                const needsAuthorizedReplay = playbackGame?.isPublicProjection === true
+                    && (playbackGame?.hasRecordedReplay === true || !playbackGame?.videoUrl)
+                    && hasCompletedReplayLifecycle(playbackGame);
                 if (needsAuthorizedReplay) {
                     showVideoFallback('Checking replay access…');
                     const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=1');
@@ -2189,7 +2192,7 @@ async function startRealMode(params) {
                 }
                 let usesSanitizedPublicProjection = options.isPublicProjectionVideo === true;
                 if (options.mode === 'none' && !needsAuthorizedReplay) {
-                    const publicProjectionOptions = resolvePublicProjectionVideoOptions(uiState.game.game, {
+                    const publicProjectionOptions = resolvePublicProjectionVideoOptions(playbackGame, {
                         parentHost: window.location.hostname
                     });
                     if (publicProjectionOptions) {
@@ -2201,7 +2204,7 @@ async function startRealMode(params) {
                 configureGameActions();
                 uiState.videoDurationMs = Number.isFinite(options.durationMs) ? options.durationMs : 0;
                 if (!usesSanitizedPublicProjection && options.isRecordedReplay === true && options.sourceUrl) {
-                    const gameGateOverride = getRecordedReplayGameGateOverride(uiState.game.game);
+                    const gameGateOverride = getRecordedReplayGameGateOverride(playbackGame);
                     if (typeof gameGateOverride !== 'boolean' && uiState.optionalTeamStatus === 'pending') {
                         showReplayAccessGate({ state: 'checking' });
                         return true;
@@ -2213,12 +2216,12 @@ async function startRealMode(params) {
                     const entitlements = await import('./team-entitlements.js?v=9');
                     if (requestId !== uiState.videoRequestId) return false;
                     const gateEnabled = entitlements.isRecordedReplayTeamPassGateEnabled({
-                        game: uiState.game.game,
+                        game: playbackGame,
                         team: uiState.game.team
                     });
                     if (gateEnabled) {
                         const seasonId = entitlements.resolveTeamEntitlementSeasonId({
-                            game: uiState.game.game,
+                            game: playbackGame,
                             team: uiState.game.team
                         });
                         const entitlementKey = `${teamId}:${seasonId}`;
@@ -2266,6 +2269,19 @@ async function startRealMode(params) {
             }
         };
         uiState.refreshReplayPlayback = renderVideoSafely;
+        if (isReplay) {
+            // Replay returns before chat/live subscriptions initialize. Its
+            // principal-scoped video still needs its own auth observer.
+            const authTools = await import('./auth.js?v=4433205');
+            let playbackUid;
+            const unsubscribe = authTools.checkAuth((user) => {
+                const nextUid = user?.uid || '';
+                if (playbackUid === nextUid) return;
+                playbackUid = nextUid;
+                void renderVideoSafely();
+            }, { skipEmailVerificationCheck: true });
+            if (typeof unsubscribe === 'function') uiState.unsubscribers.push(unsubscribe);
+        }
         void renderVideoSafely().then((success) => {
             if (success) setConnectionIssue('video');
         });
