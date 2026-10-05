@@ -407,19 +407,19 @@ function updateTabs() {
   });
 }
 
-function resolveVideoPlayback(game = state.game) {
+function resolveVideoPlayback() {
   const playback = resolveReplayVideoOptions({
     team: state.team,
-    game,
+    game: state.game,
     players: state.players,
     isReplay: state.isReplay,
     clipStartMs: state.clipStartMs,
     clipEndMs: state.clipEndMs
   });
-  if (playback?.hasVideo || game?.isPublicProjection !== true) {
+  if (playback?.hasVideo || state.game?.isPublicProjection !== true) {
     return playback;
   }
-  return resolvePublicProjectionVideoOptions(game, {
+  return resolvePublicProjectionVideoOptions(state.game, {
     parentHost: window.location.hostname
   }) || playback;
 }
@@ -830,13 +830,17 @@ function initNativeCameraControls() {
 
 let replayPlaybackRequestId = 0;
 let replayPlaybackProjection = null;
-let replayPlaybackGame = null;
-async function refreshVideoPanel({ force = false } = {}) {
+let replayPlaybackRevalidator = null;
+function refreshVideoPanel(options) {
+  return replayPlaybackRevalidator
+    ? replayPlaybackRevalidator.refresh()
+    : refreshVideoPanelNow(options);
+}
+async function refreshVideoPanelNow({ force = false } = {}) {
   const requestId = ++replayPlaybackRequestId;
-  const playbackGame = state.isReplay ? (replayPlaybackGame || state.game) : state.game;
-  let nextPlayback = resolveVideoPlayback(playbackGame);
-  if (playbackGame?.isPublicProjection === true && (playbackGame?.hasRecordedReplay === true || !playbackGame?.videoUrl)
-      && hasCompletedReplayLifecycle(playbackGame)) {
+  let nextPlayback = resolveVideoPlayback();
+  if (state.game?.isPublicProjection === true && (state.game?.hasRecordedReplay === true || !state.game?.videoUrl)
+      && hasCompletedReplayLifecycle(state.game)) {
     const unavailable = {
       mode: 'none', hasVideo: false, sourceUrl: null, publicUrl: null,
       replayState: { status: 'unavailable', message: 'Checking replay access…' }
@@ -844,11 +848,11 @@ async function refreshVideoPanel({ force = false } = {}) {
     // Polls revalidate access even when the projection is unchanged. Keep the
     // current player during that lookup; changed data and raw auth events clear
     // it immediately, and a denied/failed result clears it below.
-    const projection = JSON.stringify(playbackGame);
+    const projection = JSON.stringify(state.game);
     if (projection !== replayPlaybackProjection) setupVideoPanel(unavailable);
     replayPlaybackProjection = projection;
     try {
-      const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=2');
+      const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=3');
       if (requestId !== replayPlaybackRequestId) return false;
       nextPlayback = await resolveAuthorizedReplayPlayback({
         teamId: state.teamId, gameId: state.gameId,
@@ -3052,7 +3056,6 @@ async function init() {
     photoUrl: game.teamPhotoUrl || game.homeTeamPhoto || null
   };
   state.game = game;
-  replayPlaybackGame = game;
   state.players = players || [];
   state.sport = game?.sport || team?.sport || null;
   state.periods = null;
@@ -3085,8 +3088,21 @@ async function init() {
   }
 
   if (game.isPublicProjection === true) {
-    const { observeReplayPlaybackAuth, unavailableReplayPlayback } = await import('./game-replay-playback.js?v=2');
+    const { observeReplayPlaybackAuth, unavailableReplayPlayback, createReplayPlaybackRevalidator } = await import('./game-replay-playback.js?v=3');
+    if (state.isReplay && hasCompletedReplayLifecycle(game)) {
+      replayPlaybackRevalidator = createReplayPlaybackRevalidator({
+        refresh: () => refreshVideoPanelNow(),
+        invalidate: (message) => {
+          ++replayPlaybackRequestId;
+          setupVideoPanel(unavailableReplayPlayback(message));
+        }
+      });
+    }
     const unsubscribePlaybackAuth = await observeReplayPlaybackAuth(() => {
+      if (replayPlaybackRevalidator) {
+        void replayPlaybackRevalidator.invalidateAndRefresh();
+        return;
+      }
       if (!hasCompletedReplayLifecycle(state.game)) return;
       ++replayPlaybackRequestId;
       setupVideoPanel(unavailableReplayPlayback('Checking replay access…'));
@@ -3094,7 +3110,11 @@ async function init() {
     });
     // Keep this observer through startReplay/stopLiveMode, which clear live
     // subscriptions. Its lifetime is the page, not the live event timeline.
-    window.addEventListener('pagehide', unsubscribePlaybackAuth, { once: true });
+    if (replayPlaybackRevalidator) {
+      window.addEventListener('pagehide', (event) => {
+        if (!event.persisted) unsubscribePlaybackAuth();
+      });
+    } else window.addEventListener('pagehide', unsubscribePlaybackAuth, { once: true });
   }
   refreshVideoPanel({ force: true });
   renderGameInfo();
@@ -3169,22 +3189,6 @@ async function init() {
 
   if (state.isReplay) {
     await startReplay();
-    const unsubscribeReplayAccess = subscribeGame(state.teamId, state.gameId, (updated) => {
-      if (!updated) {
-        ++replayPlaybackRequestId;
-        setupVideoPanel({
-          mode: 'none', hasVideo: false, sourceUrl: null, publicUrl: null,
-          replayState: { status: 'unavailable', message: 'Replay video is no longer available.' }
-        });
-        return;
-      }
-      replayPlaybackGame = updated;
-      void refreshVideoPanel();
-    }, (error) => {
-      console.warn('Replay access refresh failed:', error);
-      setConnectionBanner(true, formatFirestoreError(error));
-    }, { publicProjection: game.isPublicProjection === true });
-    state.unsubscribers.push(unsubscribeReplayAccess);
     return;
   }
 
