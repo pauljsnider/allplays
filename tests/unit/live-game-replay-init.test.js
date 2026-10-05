@@ -276,6 +276,10 @@ function buildModuleSource() {
             /import\s+\{\s*BROADCAST_SETUP_STATUSES,\s*BROADCAST_STREAM_STATUSES,\s*MAX_HIGHLIGHT_CLIP_MS,\s*buildBroadcastSetupSession,\s*buildHighlightShareUrl,\s*buildStreamScoreContext,\s*canAccessNativeCameraCapture,\s*canSaveBroadcastSetupSession,\s*createHighlightClipDraft,\s*hasActiveLiveLifecycle,\s*hasCompletedReplayLifecycle,\s*resolveBroadcastProviderMetadata,\s*resolveBroadcastStreamControlState,\s*resolveReplayVideoOptions,\s*shouldReloadVideoPlayback\s*\}\s+from\s+'\.\/live-game-video\.js\?v=\d+';/,
             'const { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, hasActiveLiveLifecycle, hasCompletedReplayLifecycle, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
         )
+        .replaceAll(
+            "import('./game-replay-playback.js?v=3')",
+            'Promise.resolve(deps.replayPlayback)'
+        )
         .replace(
             /import \{ resolvePublicProjectionVideoOptions \} from '\.\/live-game-overlay-model\.js\?v=\d+';/,
             'const { resolvePublicProjectionVideoOptions } = deps.liveGameOverlayModel;'
@@ -577,6 +581,12 @@ async function bootReplayPage({
             shouldReloadVideoPlayback: (current, next) => current?.mode !== next?.mode
                 || current?.sourceUrl !== next?.sourceUrl
                 || current?.isRecordedReplay !== next?.isRecordedReplay
+        },
+        replayPlayback: {
+            createReplayPlaybackRevalidator: ({ refresh }) => ({ refresh, invalidateAndRefresh: refresh, stop: () => {} }),
+            observeReplayPlaybackAuth: async () => () => {},
+            unavailableReplayPlayback: () => ({ mode: 'none', hasVideo: false, sourceUrl: null }),
+            resolveAuthorizedReplayPlayback: async () => videoOptions
         },
         liveGameOverlayModel: {
             resolvePublicProjectionVideoOptions: () => publicProjectionVideoOptions

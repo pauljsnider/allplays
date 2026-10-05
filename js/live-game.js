@@ -17,12 +17,12 @@ import {
   updateGame,
   uploadGameClip,
   deleteUploadedMediaObjects
-} from './db.js?v=4433201';
-import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443377';
+} from './db.js?v=4433202';
+import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443378';
 import { hasFullTeamAccess } from './team-access.js?v=44338';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
 import { computePanelVisibility } from './live-stream-utils.js?v=2';
-import { checkAuth } from './auth.js?v=4433205';
+import { checkAuth } from './auth.js?v=4433206';
 import { isViewerChatEnabled } from './live-game-chat.js?v=4';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import {
@@ -40,7 +40,7 @@ import { buildGameReportShareUrl, buildGameWatchShareUrl } from './game-share-li
 import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=48';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=49';
 import { getDefaultLivePeriod } from './live-sport-config.js?v=2';
 import { BROADCAST_STREAM_HEARTBEAT_MS, buildBroadcastRuntimeSession } from './game-day-broadcast.js?v=5';
 import { createSafeImageElement, resolveSafeProfilePhotoUrl, resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';
@@ -828,8 +828,42 @@ function initNativeCameraControls() {
   }, { once: true });
 }
 
-function refreshVideoPanel({ force = false } = {}) {
-  const nextPlayback = resolveVideoPlayback();
+let replayPlaybackRequestId = 0;
+let replayPlaybackProjection = null;
+let replayPlaybackRevalidator = null;
+function refreshVideoPanel(options) {
+  return replayPlaybackRevalidator
+    ? replayPlaybackRevalidator.refresh()
+    : refreshVideoPanelNow(options);
+}
+async function refreshVideoPanelNow({ force = false } = {}) {
+  const requestId = ++replayPlaybackRequestId;
+  let nextPlayback = resolveVideoPlayback();
+  if (state.game?.isPublicProjection === true && (state.game?.hasRecordedReplay === true
+      || (typeof state.game?.hasRecordedReplay !== 'boolean' && !state.game?.videoUrl))
+      && hasCompletedReplayLifecycle(state.game)) {
+    const unavailable = {
+      mode: 'none', hasVideo: false, sourceUrl: null, publicUrl: null,
+      replayState: { status: 'unavailable', message: 'Checking replay access…' }
+    };
+    // Polls revalidate access even when the projection is unchanged. Keep the
+    // current player during that lookup; changed data and raw auth events clear
+    // it immediately, and a denied/failed result clears it below.
+    const projection = JSON.stringify(state.game);
+    if (projection !== replayPlaybackProjection) setupVideoPanel(unavailable);
+    replayPlaybackProjection = projection;
+    try {
+      const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=3');
+      if (requestId !== replayPlaybackRequestId) return false;
+      nextPlayback = await resolveAuthorizedReplayPlayback({
+        teamId: state.teamId, gameId: state.gameId,
+        clipStartMs: state.clipStartMs, clipEndMs: state.clipEndMs
+      });
+    } catch {
+      nextPlayback = { ...unavailable, replayState: { status: 'unavailable', message: 'Replay video is temporarily unavailable. Reload to try again.' } };
+    }
+    if (requestId !== replayPlaybackRequestId) return false;
+  }
   renderStreamScoreStatus();
   if (!force && !shouldReloadVideoPlayback(state.videoPlayback, nextPlayback)) {
     state.videoPlayback = nextPlayback;
@@ -3054,6 +3088,35 @@ async function init() {
     state.teamEntitlement = { active: false, reason: 'feature-disabled', seasonId, tier: 'team-pass' };
   }
 
+  if (game.isPublicProjection === true) {
+    const { observeReplayPlaybackAuth, unavailableReplayPlayback, createReplayPlaybackRevalidator } = await import('./game-replay-playback.js?v=3');
+    if (state.isReplay && game.hasRecordedReplay !== false && hasCompletedReplayLifecycle(game)) {
+      replayPlaybackRevalidator = createReplayPlaybackRevalidator({
+        refresh: () => refreshVideoPanelNow(),
+        invalidate: (message) => {
+          ++replayPlaybackRequestId;
+          setupVideoPanel(unavailableReplayPlayback(message));
+        }
+      });
+    }
+    const unsubscribePlaybackAuth = await observeReplayPlaybackAuth(() => {
+      if (replayPlaybackRevalidator) {
+        void replayPlaybackRevalidator.invalidateAndRefresh();
+        return;
+      }
+      if (!hasCompletedReplayLifecycle(state.game)) return;
+      ++replayPlaybackRequestId;
+      setupVideoPanel(unavailableReplayPlayback('Checking replay access…'));
+      void refreshVideoPanel({ force: true });
+    });
+    // Keep this observer through startReplay/stopLiveMode, which clear live
+    // subscriptions. Its lifetime is the page, not the live event timeline.
+    if (replayPlaybackRevalidator) {
+      window.addEventListener('pagehide', (event) => {
+        if (!event.persisted) unsubscribePlaybackAuth();
+      });
+    } else window.addEventListener('pagehide', unsubscribePlaybackAuth, { once: true });
+  }
   refreshVideoPanel({ force: true });
   renderGameInfo();
   renderScoreboard();
