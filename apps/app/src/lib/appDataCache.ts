@@ -13,14 +13,20 @@ const storagePrefix = 'allplays:appDataCache:';
 const cache = new Map<string, CacheEntry<unknown>>();
 let cacheInvalidationVersion = 0;
 const cacheKeyInvalidationVersions = new Map<string, number>();
+const cacheKeyLoadGenerations = new Map<string, number>();
+const cacheKeyCommittedGenerations = new Map<string, number>();
 const logger = createLogger('app-data-cache');
 
 type LoadCachedAppDataOptions<T> = {
   ttlMs?: number;
   force?: boolean;
+  /** Deduplicate only with callers in the same request scope while sharing the cached value. */
+  inFlightScope?: string;
   persist?: boolean;
   maxStaleMs?: number;
   staleWhileRevalidate?: boolean;
+  /** Observe background request lifetime separately from the immediate cached return. */
+  onBackgroundLoad?: (request: { promise: Promise<T>; value: T; usableUntil: number }) => void;
   onRefresh?: (value: T) => void;
   onBackgroundRefresh?: (value: T) => void;
   onRefreshError?: (error: unknown) => void;
@@ -32,6 +38,11 @@ type StoredCacheEntry = {
   value: unknown;
   expiresAt: number;
 };
+
+/** Opaque snapshot of the same invalidation boundary used by cache-owned requests. */
+export function getAppDataCacheInvalidationToken(key: string): string {
+  return `${cacheInvalidationVersion}:${getCacheKeyInvalidationVersion(key)}`;
+}
 
 export function getParentScheduleSummaryCacheKey(userId: string) {
   return `app-schedule-summary:${userId}`;
@@ -67,22 +78,28 @@ export function loadCachedAppData<T>(
   {
     ttlMs = defaultTtlMs,
     force = false,
+    inFlightScope,
     persist = true,
     maxStaleMs = defaultMaxStaleMs,
     staleWhileRevalidate = false,
     onRefresh,
     onBackgroundRefresh,
+    onBackgroundLoad,
     onRefreshError,
     shouldCache
   }: LoadCachedAppDataOptions<T> = {}
 ): Promise<T> {
   const now = Date.now();
   const existing = hydrateMemoryCache<T>(key, now, maxStaleMs);
+  // Keep request ownership separate from the shared value so one scope cannot
+  // replace another scope's in-flight marker when it commits to the base key.
+  const inFlightKey = `${key}:in-flight:${inFlightScope || 'default'}`;
+  const inFlightEntry = cache.get(inFlightKey) as CacheEntry<T> | undefined;
   if (!force && existing && hasCachedValue(existing) && existing.expiresAt > now) {
     return Promise.resolve(existing.value);
   }
-  if (!force && existing?.promise) {
-    return existing.promise;
+  if (!force && inFlightEntry?.promise) {
+    return inFlightEntry.promise;
   }
   if (
     !force
@@ -94,6 +111,7 @@ export function loadCachedAppData<T>(
     const refreshPromise = loadAndStoreCachedAppData(key, loader, existing, {
       ttlMs,
       persist,
+      inFlightKey,
       onRefresh: onRefresh || onBackgroundRefresh
         ? (value) => {
           onRefresh?.(value);
@@ -102,6 +120,7 @@ export function loadCachedAppData<T>(
         : undefined,
       shouldCache
     });
+    onBackgroundLoad?.({ promise: refreshPromise, value: existing.value as T, usableUntil: existing.expiresAt + maxStaleMs });
     refreshPromise.catch((error) => {
       logger.warn('Background refresh failed.', { error });
       onRefreshError?.(error);
@@ -109,7 +128,7 @@ export function loadCachedAppData<T>(
     return Promise.resolve(existing.value as T);
   }
 
-  return loadAndStoreCachedAppData(key, loader, existing, { ttlMs, persist, onRefresh, shouldCache });
+  return loadAndStoreCachedAppData(key, loader, existing, { ttlMs, persist, inFlightKey, onRefresh, shouldCache });
 }
 
 export function clearAppDataCache(prefix = '') {
@@ -125,7 +144,11 @@ export function clearAppDataCache(prefix = '') {
 
 export function invalidateCachedAppData(key: string) {
   cacheKeyInvalidationVersions.set(key, getCacheKeyInvalidationVersion(key) + 1);
-  cache.delete(key);
+  [...cache.keys()].forEach((cacheKey) => {
+    if (cacheKey === key || cacheKey.startsWith(`${key}:in-flight:`)) {
+      cache.delete(cacheKey);
+    }
+  });
   removeStoredCacheEntry(key);
 }
 
@@ -136,42 +159,37 @@ function loadAndStoreCachedAppData<T>(
   {
     ttlMs,
     persist,
+    inFlightKey,
     onRefresh,
     shouldCache
-  }: { ttlMs: number; persist: boolean; onRefresh?: (value: T) => void; shouldCache?: (value: T) => boolean }
+  }: {
+    ttlMs: number;
+    persist: boolean;
+    inFlightKey: string;
+    onRefresh?: (value: T) => void;
+    shouldCache?: (value: T) => boolean;
+  }
 ) {
   const loadInvalidationVersion = cacheInvalidationVersion;
   const loadKeyInvalidationVersion = getCacheKeyInvalidationVersion(key);
+  const loadGeneration = getNextCacheKeyLoadGeneration(key);
   const promise = loader().then((value) => {
     if (
       loadInvalidationVersion !== cacheInvalidationVersion
       || loadKeyInvalidationVersion !== getCacheKeyInvalidationVersion(key)
     ) {
-      const current = cache.get(key);
+      const current = cache.get(inFlightKey);
       if (current?.promise === promise) {
-        if (existing && hasCachedValue(existing)) {
-          cache.set(key, {
-            value: existing.value,
-            expiresAt: existing.expiresAt,
-            hydratedFromStorage: existing.hydratedFromStorage
-          });
-        } else {
-          cache.delete(key);
-        }
+        cache.delete(inFlightKey);
       }
       onRefresh?.(value);
       return value;
     }
 
     if (shouldCache && !shouldCache(value)) {
-      if (existing && hasCachedValue(existing)) {
-        cache.set(key, {
-          value: existing.value,
-          expiresAt: existing.expiresAt,
-          hydratedFromStorage: existing.hydratedFromStorage
-        });
-      } else {
-        cache.delete(key);
+      const current = cache.get(inFlightKey);
+      if (current?.promise === promise) {
+        cache.delete(inFlightKey);
       }
       onRefresh?.(value);
       return value;
@@ -182,33 +200,46 @@ function loadAndStoreCachedAppData<T>(
       expiresAt: Date.now() + ttlMs,
       hydratedFromStorage: false
     };
+    const current = cache.get(inFlightKey);
+    if (current?.promise === promise) {
+      cache.delete(inFlightKey);
+    }
+    // A successful newer request wins regardless of completion order. Partial
+    // and failed requests never advance the committed generation, so an older successful
+    // request may still supply the best available cached value.
+    if (loadGeneration < getCacheKeyCommittedGeneration(key)) {
+      onRefresh?.(value);
+      return value;
+    }
     cache.set(key, entry);
+    cacheKeyCommittedGenerations.set(key, loadGeneration);
     if (persist) writeStoredCacheEntry(key, entry);
     onRefresh?.(value);
     return value;
   }).catch((error) => {
-    const current = cache.get(key);
+    const current = cache.get(inFlightKey);
     if (current?.promise === promise) {
-      if (existing && hasCachedValue(existing)) {
-        cache.set(key, {
-          value: existing.value,
-          expiresAt: existing.expiresAt,
-          hydratedFromStorage: existing.hydratedFromStorage
-        });
-      } else {
-        cache.delete(key);
-      }
+      cache.delete(inFlightKey);
     }
     throw error;
   });
 
-  cache.set(key, {
-    ...(existing && hasCachedValue(existing) ? { value: existing.value } : {}),
+  cache.set(inFlightKey, {
     promise,
     expiresAt: existing?.expiresAt ?? Date.now() + ttlMs,
     hydratedFromStorage: existing?.hydratedFromStorage
   });
   return promise;
+}
+
+function getNextCacheKeyLoadGeneration(key: string) {
+  const generation = (cacheKeyLoadGenerations.get(key) ?? 0) + 1;
+  cacheKeyLoadGenerations.set(key, generation);
+  return generation;
+}
+
+function getCacheKeyCommittedGeneration(key: string) {
+  return cacheKeyCommittedGenerations.get(key) ?? 0;
 }
 
 function getCacheKeyInvalidationVersion(key: string) {

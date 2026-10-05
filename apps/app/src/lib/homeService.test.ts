@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearAppDataCache } from './appDataCache';
+import { clearAppDataCache, getCachedAppData, getParentScheduleSummaryCacheKey, invalidateCachedAppData } from './appDataCache';
 
 const chatServiceMocks = vi.hoisted(() => ({
     loadChatInbox: vi.fn()
@@ -109,6 +109,202 @@ describe('homeService Teams bootstrap reuse', () => {
         vi.useRealTimers();
     });
 
+    it('opts only Home bootstrap into parent previews and does not cache incomplete discovery as complete', async () => {
+        const incomplete = { children: [], events: [], staffTeams: [], isPartial: true };
+        const pending = deferred<typeof incomplete>();
+        const onPartial = vi.fn();
+        scheduleServiceMocks.loadParentSchedule.mockImplementationOnce((_user, options) => {
+            options.onPartial(incomplete);
+            return pending.promise;
+        }).mockResolvedValue(incomplete);
+        const bootstrap = loadParentHomeSummaryBootstrap(user, { onPartial });
+        expect(onPartial).toHaveBeenCalledWith(expect.objectContaining({ schedule: incomplete }));
+        expect(window.localStorage.length).toBe(0);
+        pending.resolve(incomplete);
+        expect((await bootstrap).schedule.isPartial).toBe(true);
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenLastCalledWith(user, expect.objectContaining({ previewParentChildren: true }));
+        await loadParentHomeSummaryBootstrap(user);
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+        expect(window.localStorage.length).toBe(0);
+        await loadParentScheduleSummary(user);
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenLastCalledWith(user, expect.objectContaining({ previewParentChildren: undefined }));
+    });
+
+    it('keeps Home previews when a non-preview schedule summary is already in flight', async () => {
+        const preview = {
+            children: [{ teamId: 'team-1', teamName: 'Fast Falcons', playerId: 'player-1', playerName: 'Avery Ace' }],
+            events: [],
+            staffTeams: [],
+            isPartial: true
+        };
+        const complete = { ...preview, isPartial: false };
+        const pendingNonPreview = deferred<typeof complete>();
+        const pendingHome = deferred<typeof complete>();
+        const onPartial = vi.fn();
+        scheduleServiceMocks.loadParentSchedule
+            .mockImplementationOnce((_user, options) => {
+                expect(options.previewParentChildren).toBeUndefined();
+                return pendingNonPreview.promise;
+            })
+            .mockImplementationOnce((_user, options) => {
+                expect(options.previewParentChildren).toBe(true);
+                options.onPartial(preview);
+                return pendingHome.promise;
+            });
+
+        const nonPreviewLoad = loadParentScheduleSummary(user);
+        const homeLoad = loadParentHomeSummaryBootstrap(user, { onPartial });
+
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+        expect(onPartial).toHaveBeenCalledWith(expect.objectContaining({ schedule: preview }));
+
+        pendingNonPreview.resolve(complete);
+        pendingHome.resolve(complete);
+        await expect(nonPreviewLoad).resolves.toEqual(complete);
+        await expect(homeLoad).resolves.toEqual(expect.objectContaining({ schedule: complete }));
+    });
+
+    it('replays an in-flight Home preview to a later Home caller', async () => {
+        const preview = {
+            children: [{ teamId: 'team-1', teamName: 'Fast Falcons', playerId: 'player-1', playerName: 'Avery Ace' }],
+            events: [],
+            staffTeams: [],
+            isPartial: true
+        };
+        const complete = { ...preview, isPartial: false };
+        const pendingHome = deferred<typeof complete>();
+        const firstOnPartial = vi.fn();
+        const secondOnPartial = vi.fn();
+        scheduleServiceMocks.loadParentSchedule.mockImplementationOnce((_user, options) => {
+            options.onPartial(preview);
+            return pendingHome.promise;
+        });
+
+        const firstHomeLoad = loadParentHomeSummaryBootstrap(user, { onPartial: firstOnPartial });
+        const secondHomeLoad = loadParentHomeSummaryBootstrap(user, { onPartial: secondOnPartial });
+
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(1);
+        expect(firstOnPartial).toHaveBeenCalledWith(expect.objectContaining({ schedule: preview }));
+        expect(secondOnPartial).toHaveBeenCalledWith(expect.objectContaining({ schedule: preview }));
+
+        pendingHome.resolve(complete);
+        await expect(firstHomeLoad).resolves.toEqual(expect.objectContaining({ schedule: complete }));
+        await expect(secondHomeLoad).resolves.toEqual(expect.objectContaining({ schedule: complete }));
+    });
+
+    it.each([
+        ['key', 'old-first'], ['key', 'new-first'],
+        ['clear-all', 'old-first'], ['clear-all', 'new-first'],
+        ['clear-prefix', 'old-first'], ['clear-prefix', 'new-first']
+    ])('does not join or replay invalidated Home previews (%s, %s)', async (invalidation, completionOrder) => {
+        const key = getParentScheduleSummaryCacheKey(user.uid);
+        const oldPreview = { children: [], events: [], staffTeams: [], isPartial: true, marker: 'old' };
+        const newPreview = { ...oldPreview, marker: 'new' };
+        const oldComplete = { ...oldPreview, isPartial: false };
+        const newComplete = { ...newPreview, isPartial: false };
+        const oldPending = deferred<typeof oldComplete>();
+        const newPending = deferred<typeof newComplete>();
+        const oldCallback = vi.fn();
+        const newCallback = vi.fn();
+        let oldOptions: any;
+        let newOptions: any;
+        scheduleServiceMocks.loadParentSchedule
+            .mockImplementationOnce((_user, options) => {
+                oldOptions = options;
+                options.onPartial(oldPreview);
+                return oldPending.promise;
+            })
+            .mockImplementationOnce((_user, options) => {
+                newOptions = options;
+                return newPending.promise;
+            });
+        const oldLoad = loadParentHomeSummaryBootstrap(user, { onPartial: oldCallback });
+        if (invalidation === 'key') invalidateCachedAppData(key);
+        else clearAppDataCache(invalidation === 'clear-prefix' ? 'app-schedule-summary:' : '');
+        const newLoad = loadParentHomeSummaryBootstrap(user, { onPartial: newCallback });
+        try {
+            expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+            expect(newCallback).not.toHaveBeenCalled();
+            oldOptions.onPartial(oldPreview);
+            expect(oldCallback).toHaveBeenCalledWith(expect.objectContaining({ schedule: oldPreview }));
+            expect(newCallback).not.toHaveBeenCalled();
+            newOptions.onPartial(newPreview);
+            expect(newCallback).toHaveBeenCalledWith(expect.objectContaining({ schedule: newPreview }));
+            if (completionOrder === 'old-first') {
+                oldPending.resolve(oldComplete);
+                await oldLoad;
+                expect(getCachedAppData(key)).toBeNull();
+                newPending.resolve(newComplete);
+            } else {
+                newPending.resolve(newComplete);
+                await newLoad;
+                oldPending.resolve(oldComplete);
+            }
+            await expect(oldLoad).resolves.toEqual(expect.objectContaining({ schedule: oldComplete }));
+            await expect(newLoad).resolves.toEqual(expect.objectContaining({ schedule: newComplete }));
+            expect(newCallback).not.toHaveBeenCalledWith(expect.objectContaining({ schedule: oldPreview }));
+            expect(newCallback).not.toHaveBeenCalledWith(expect.objectContaining({ schedule: oldComplete }));
+            expect(getCachedAppData(key)).toEqual(newComplete);
+            const stored = window.localStorage.getItem(`allplays:appDataCache:${encodeURIComponent(key)}`);
+            expect(JSON.parse(stored || '{}').value).toEqual(newComplete);
+        } finally {
+            oldPending.resolve(oldComplete);
+            newPending.resolve(newComplete);
+            await Promise.all([oldLoad, newLoad]);
+        }
+    });
+
+    it('isolates previews from overlapping forced Home generations and keeps the newer cache value', async () => {
+        const olderPreview = {
+            children: [{ teamId: 'team-old', teamName: 'Old Team', playerId: 'old-player', playerName: 'Old Player' }],
+            events: [],
+            staffTeams: [],
+            isPartial: true
+        };
+        const newerPreview = {
+            children: [{ teamId: 'team-new', teamName: 'New Team', playerId: 'new-player', playerName: 'New Player' }],
+            events: [],
+            staffTeams: [],
+            isPartial: true
+        };
+        const olderComplete = { ...olderPreview, isPartial: false };
+        const newerComplete = { ...newerPreview, isPartial: false };
+        const older = deferred<typeof olderComplete>();
+        const newer = deferred<typeof newerComplete>();
+        const olderOnPartial = vi.fn();
+        const newerOnPartial = vi.fn();
+        let olderOptions: any;
+        let newerOptions: any;
+        scheduleServiceMocks.loadParentSchedule
+            .mockImplementationOnce((_user, options) => {
+                olderOptions = options;
+                return older.promise;
+            })
+            .mockImplementationOnce((_user, options) => {
+                newerOptions = options;
+                return newer.promise;
+            });
+
+        const olderHome = loadParentHomeSummaryBootstrap(user, { force: true, onPartial: olderOnPartial });
+        const newerHome = loadParentHomeSummaryBootstrap(user, { force: true, onPartial: newerOnPartial });
+        newerOptions.onPartial(newerPreview);
+        olderOptions.onPartial(olderPreview);
+
+        expect(olderOnPartial).toHaveBeenCalledWith(expect.objectContaining({ schedule: olderPreview }));
+        expect(olderOnPartial).not.toHaveBeenCalledWith(expect.objectContaining({ schedule: newerPreview }));
+        expect(newerOnPartial).toHaveBeenCalledWith(expect.objectContaining({ schedule: newerPreview }));
+        expect(newerOnPartial).not.toHaveBeenCalledWith(expect.objectContaining({ schedule: olderPreview }));
+
+        newer.resolve(newerComplete);
+        await expect(newerHome).resolves.toEqual(expect.objectContaining({ schedule: newerComplete }));
+        older.resolve(olderComplete);
+        await expect(olderHome).resolves.toEqual(expect.objectContaining({ schedule: olderComplete }));
+
+        scheduleServiceMocks.loadParentSchedule.mockClear();
+        await expect(loadParentScheduleSummary(user)).resolves.toEqual(newerComplete);
+        expect(scheduleServiceMocks.loadParentSchedule).not.toHaveBeenCalled();
+    });
+
     it('shares one native profile and managed-team projection across Home schedule and chat', async () => {
         nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
         const profile = { parentOf: [], coachOf: ['team-owned'] };
@@ -164,6 +360,143 @@ describe('homeService Teams bootstrap reuse', () => {
             includeChatMetadata: true,
             timeoutMs: 15000
         });
+    });
+
+    it.each(['complete', 'partial', 'error'])('shares a stale Home refresh until %s settlement', async (outcome) => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        const stale = { children: [], events: [] } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(stale);
+        await loadParentScheduleSummary(user, { previewParentChildren: true });
+        vi.setSystemTime(46000);
+        const refresh = deferred<any>();
+        scheduleServiceMocks.loadParentSchedule.mockReturnValue(refresh.promise);
+        const first = { previewParentChildren: true, onPartial: vi.fn(), onRefresh: vi.fn(), onBackgroundError: vi.fn() };
+        const second = { previewParentChildren: true, onPartial: vi.fn(), onRefresh: vi.fn(), onBackgroundError: vi.fn() };
+        expect(await loadParentScheduleSummary(user, first)).toBe(stale);
+        expect(await loadParentScheduleSummary(user, second)).toBe(stale);
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+        scheduleServiceMocks.loadParentSchedule.mock.calls[1][1].onPartial({ ...stale, isPartial: true });
+        expect(first.onPartial).not.toHaveBeenCalled();
+        expect(second.onPartial).not.toHaveBeenCalled();
+        const result = { ...stale, isPartial: outcome === 'partial' };
+        const error = new Error('refresh unavailable');
+        if (outcome === 'error') refresh.reject(error);
+        else refresh.resolve(result);
+        await vi.waitFor(() => {
+            for (const subscriber of [first, second]) {
+                if (outcome === 'error') expect(subscriber.onBackgroundError).toHaveBeenCalledWith(error);
+                else expect(subscriber.onRefresh).toHaveBeenCalledWith(result);
+            }
+        });
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValue(stale);
+        await loadParentScheduleSummary(user, { previewParentChildren: true });
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(outcome === 'complete' ? 2 : 3);
+    });
+
+    it('waits for the shared refresh once the stale Home value expires', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        const stale = { children: [], events: [] } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(stale);
+        await loadParentScheduleSummary(user, { previewParentChildren: true });
+        vi.setSystemTime(46000);
+        const refresh = deferred<any>();
+        scheduleServiceMocks.loadParentSchedule.mockReturnValue(refresh.promise);
+        expect(await loadParentScheduleSummary(user, { previewParentChildren: true })).toBe(stale);
+        vi.setSystemTime(345000);
+        const returned = vi.fn();
+        const expired = loadParentScheduleSummary(user, { previewParentChildren: true }).then(returned);
+        await Promise.resolve();
+        expect(returned).not.toHaveBeenCalled();
+        const fresh = { ...stale, staffTeams: [] };
+        refresh.resolve(fresh);
+        await expired;
+        expect(returned).toHaveBeenCalledWith(fresh);
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(['invalidate', 'force', 'other-user'])('isolates a stale refresh from a newer %s request', async (boundary) => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        const stale = { children: [], events: [] } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(stale);
+        await loadParentScheduleSummary(user, { previewParentChildren: true });
+        vi.setSystemTime(46000);
+        const oldRefresh = deferred<any>();
+        const newRefresh = deferred<any>();
+        scheduleServiceMocks.loadParentSchedule.mockReturnValueOnce(oldRefresh.promise).mockReturnValueOnce(newRefresh.promise);
+        const oldCallback = vi.fn();
+        expect(await loadParentScheduleSummary(user, { previewParentChildren: true, onRefresh: oldCallback })).toBe(stale);
+        if (boundary === 'invalidate') invalidateCachedAppData(getParentScheduleSummaryCacheKey(user.uid));
+        const nextUser = boundary === 'other-user' ? { ...user, uid: 'parent-2' } : user;
+        const newCallback = vi.fn();
+        const next = loadParentScheduleSummary(nextUser, {
+            previewParentChildren: true, force: boundary === 'force', onPartial: newCallback
+        });
+        const oldResult = { ...stale, staffTeams: [{ teamId: 'old', teamName: 'Old' }] };
+        oldRefresh.resolve(oldResult);
+        await vi.waitFor(() => expect(oldCallback).toHaveBeenCalledWith(oldResult));
+        expect(newCallback).not.toHaveBeenCalled();
+        // Settling the previous request must not delete the new request's registry entry.
+        const joined = loadParentScheduleSummary(nextUser, { previewParentChildren: true });
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(3);
+        const newResult = { ...stale, staffTeams: [{ teamId: 'new', teamName: 'New' }] };
+        newRefresh.resolve(newResult);
+        expect(await next).toBe(newResult);
+        expect(await joined).toBe(newResult);
+        expect(getCachedAppData(getParentScheduleSummaryCacheKey(nextUser.uid))).toBe(newResult);
+    });
+
+    it('suppresses synchronous discovery partials when returning a cached Home', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        const stale = { children: [], events: [] } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(stale);
+        await loadParentScheduleSummary(user, { previewParentChildren: true });
+        vi.setSystemTime(46000);
+        const refresh = deferred<any>();
+        scheduleServiceMocks.loadParentSchedule.mockImplementationOnce((_user, options) => {
+            options.onPartial({ ...stale, isPartial: true });
+            return refresh.promise;
+        });
+        const onPartial = vi.fn();
+        expect(await loadParentScheduleSummary(user, { previewParentChildren: true, onPartial })).toBe(stale);
+        expect(onPartial).not.toHaveBeenCalled();
+        refresh.resolve(stale);
+        await vi.waitFor(() => expect(onPartial).toHaveBeenCalledTimes(1));
+    });
+
+    it('detaches failed background requests before synchronous retry callbacks', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        const stale = { children: [], events: [] } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(stale);
+        await loadParentScheduleSummary(user, { previewParentChildren: true });
+        vi.setSystemTime(46000);
+        const failed = deferred<any>();
+        const retry = deferred<any>();
+        scheduleServiceMocks.loadParentSchedule.mockReturnValueOnce(failed.promise).mockReturnValueOnce(retry.promise);
+        const retryErrors = vi.fn();
+        const retryRefreshes = [vi.fn(), vi.fn()];
+        const retryLoads: Promise<unknown>[] = [];
+        const errors = retryRefreshes.map((onRefresh) => vi.fn(() => {
+            retryLoads.push(loadParentScheduleSummary(user, {
+                previewParentChildren: true, onRefresh, onBackgroundError: retryErrors
+            }));
+        }));
+        for (const onBackgroundError of errors) {
+            expect(await loadParentScheduleSummary(user, { previewParentChildren: true, onBackgroundError })).toBe(stale);
+        }
+        const error = new Error('refresh unavailable');
+        failed.reject(error);
+        await vi.waitFor(() => errors.forEach((callback) => expect(callback).toHaveBeenCalledExactlyOnceWith(error)));
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(3);
+        expect(retryErrors).not.toHaveBeenCalled();
+        expect(await Promise.all(retryLoads)).toEqual([stale, stale]);
+        const fresh = { ...stale, staffTeams: [] };
+        retry.resolve(fresh);
+        await vi.waitFor(() => retryRefreshes.forEach((callback) => expect(callback).toHaveBeenCalledExactlyOnceWith(fresh)));
     });
 
     it('reports a complete stale-summary background refresh separately from initial partials', async () => {

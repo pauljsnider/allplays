@@ -5969,6 +5969,158 @@ describe('partial parent schedule team failures (#3021)', () => {
     });
   });
 
+  it('previews verified parent children while staff discovery remains pending', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+    let finishStaff!: (value: any) => void;
+    vi.mocked(getStaffTeams).mockReturnValueOnce(new Promise((resolve) => { finishStaff = resolve; }) as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    const onPartial = vi.fn();
+    let settled = false;
+    const pending = loadParentSchedule(parentUser, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      onPartial,
+      previewParentChildren: true
+    }).then((result) => { settled = true; return result; });
+
+    try {
+      await vi.waitFor(() => expect(getStaffTeams).toHaveBeenCalled());
+      expect(settled).toBe(false);
+      expect(onPartial).toHaveBeenCalledWith({
+        children: [
+          expect.objectContaining({ teamId: 'team-1', playerId: 'p1', isLinkedParentChild: true }),
+          expect.objectContaining({ teamId: 'team-2', playerId: 'p2', isLinkedParentChild: true })
+        ],
+        events: [],
+        staffTeams: [],
+        isPartial: true
+      });
+      expect(getGames).not.toHaveBeenCalled();
+    } finally {
+      finishStaff({ teams: [{ id: 'staff-team', name: 'Staff Team' }], isPartial: false });
+      const result = await pending;
+      expect(result.staffTeams).toEqual([{ teamId: 'staff-team', teamName: 'Staff Team' }]);
+      expect(result.isPartial).toBe(false);
+    }
+  });
+
+  it.each(['denied-team', 'inactive-player', 'denied-player'])('excludes %s links from the early parent preview', async (failure) => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+    if (failure === 'denied-team') {
+      vi.mocked(getTeam).mockImplementation(async (teamId: string) => {
+        if (teamId === 'team-1') throw new Error('permission-denied');
+        return { id: teamId, name: 'Team Two' } as any;
+      });
+    } else if (failure === 'denied-player') {
+      vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+        if (ref?.path?.includes('team-1/players/p1')) throw new Error('permission-denied');
+        return playerSnapshot('p2', { id: 'p2', name: 'Kid Two', active: true }) as any;
+      });
+    } else {
+      vi.mocked(getDoc).mockImplementation(async (ref: any) => (
+        ref?.path?.includes('team-1/players/p1')
+          ? playerSnapshot('p1', { id: 'p1', name: 'Kid One', active: false })
+          : playerSnapshot('p2', { id: 'p2', name: 'Kid Two', active: true })
+      ) as any);
+    }
+    let finishStaff!: (value: any) => void;
+    vi.mocked(getStaffTeams).mockReturnValueOnce(new Promise((resolve) => { finishStaff = resolve; }) as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    const onPartial = vi.fn();
+    const pending = loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false, onPartial, previewParentChildren: true });
+    try {
+      await vi.waitFor(() => expect(getStaffTeams).toHaveBeenCalled());
+      expect(onPartial).toHaveBeenCalledTimes(1);
+      expect(onPartial.mock.calls[0][0]).toMatchObject({
+        children: [expect.objectContaining({ teamId: 'team-2', playerId: 'p2' })],
+        staffTeams: [],
+        events: [],
+        isPartial: true
+      });
+    } finally {
+      finishStaff({ teams: [], isPartial: false });
+      const result = await pending;
+      expect(result.children).toHaveLength(1);
+      expect(result.isPartial).toBe(failure !== 'inactive-player');
+      for (const [preview] of onPartial.mock.calls) {
+        expect(preview.children.map((child: any) => child.playerId)).toEqual(['p2']);
+      }
+    }
+  });
+
+  it.each([false, true])('gates early previews on the explicit Home opt-in (%s)', async (previewParentChildren) => {
+    let finishStaff!: (value: any) => void;
+    vi.mocked(getStaffTeams).mockReturnValueOnce(new Promise((resolve) => { finishStaff = resolve; }) as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    const onPartial = vi.fn();
+    const pending = loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false, previewParentChildren, onPartial });
+    try {
+      await vi.waitFor(() => expect(getStaffTeams).toHaveBeenCalled());
+      expect(onPartial).toHaveBeenCalledTimes(previewParentChildren ? 1 : 0);
+    } finally {
+      finishStaff({ teams: [], isPartial: false });
+      await pending;
+    }
+  });
+
+  it('previews native parent children while the shared native staff loader is pending and reconciles staff', async () => {
+    (globalThis as any).window.location.protocol = 'capacitor:';
+    const nativeProfileLoader = vi.fn(async () => ({ parentOf: parentUser.parentOf }));
+    let finishStaff!: (value: any) => void;
+    const nativeStaffTeamsLoader = vi.fn(() => new Promise<any>((resolve) => { finishStaff = resolve; }));
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    const onPartial = vi.fn();
+    const pending = loadParentSchedule(parentUser, {
+      hydrateDetails: false, expandStaffPlayers: false, previewParentChildren: true,
+      nativeProfileLoader, nativeStaffTeamsLoader, onPartial
+    });
+    try {
+      await vi.waitFor(() => expect(nativeStaffTeamsLoader).toHaveBeenCalledTimes(1));
+      expect(nativeProfileLoader).toHaveBeenCalledTimes(1);
+      expect(loadProfileDocument).not.toHaveBeenCalled();
+      expect(onPartial.mock.calls[0][0]).toMatchObject({ children: [expect.objectContaining({ playerId: 'p1' }), expect.objectContaining({ playerId: 'p2' })], staffTeams: [], isPartial: true });
+    } finally {
+      finishStaff({ teams: [{ id: 'native-staff', name: 'Native Staff' }], isPartial: false });
+      const result = await pending;
+      expect(result.staffTeams).toEqual([{ teamId: 'native-staff', teamName: 'Native Staff' }]);
+      expect(result.isPartial).toBe(false);
+      expect(getStaffTeams).not.toHaveBeenCalled();
+    }
+  });
+
+  it('keeps every preview and the final result incomplete when both staff discovery transports fail', async () => {
+    vi.mocked(getStaffTeams).mockRejectedValueOnce(new Error('SDK unavailable'));
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockRejectedValueOnce(new Error('HTTP unavailable'));
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    const onPartial = vi.fn();
+    const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false, previewParentChildren: true, onPartial });
+    expect(onPartial).toHaveBeenCalled();
+    expect(onPartial.mock.calls.every(([preview]) => preview.isPartial === true)).toBe(true);
+    expect(result).toMatchObject({ isPartial: true, staffTeams: [] });
+    expect(result.children).toHaveLength(2);
+  });
+
+  it.each([false, true])('reuses only complete parent scopes and filters the early preview to the target (partial=%s)', async (isPartial) => {
+    vi.mocked(getStaffTeams).mockResolvedValueOnce({ teams: [], isPartial: false } as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    const onPartial = vi.fn();
+    const parentScope = {
+      profile: {}, isPartial, staffTeams: [],
+      children: [
+        { teamId: 'team-1', teamName: 'Trusted Team', playerId: 'trusted', playerName: 'Trusted Child', isLinkedParentChild: true },
+        { teamId: 'team-2', teamName: 'Other Team', playerId: 'other', playerName: 'Other Child', isLinkedParentChild: true }
+      ]
+    };
+    const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false, previewParentChildren: true, targetTeamId: 'team-1', parentScope, onPartial });
+    expect(loadProfileDocument).toHaveBeenCalledTimes(isPartial ? 1 : 0);
+    for (const [preview] of onPartial.mock.calls) {
+      expect(preview.children).toEqual([expect.objectContaining({ teamId: 'team-1', playerId: isPartial ? 'p1' : 'trusted' })]);
+    }
+    expect(result.children).toHaveLength(1);
+    expect(result.children[0].playerId).toBe(isPartial ? 'p1' : 'trusted');
+    expect(getDoc.mock.calls.some(([ref]: any[]) => ref.path.includes('players'))).toBe(isPartial);
+  });
+
   it('streams the player/team shell before every team schedule finishes', async () => {
     vi.mocked(getGames).mockImplementation(async (teamId: string) => ([{
       id: `game-${teamId}`,
