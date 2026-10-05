@@ -277,7 +277,7 @@ function buildModuleSource() {
             'const { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, hasActiveLiveLifecycle, hasCompletedReplayLifecycle, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
         )
         .replaceAll(
-            "import('./game-replay-playback.js?v=2')",
+            "import('./game-replay-playback.js?v=3')",
             'Promise.resolve(deps.replayPlayback)'
         )
         .replace(
@@ -583,6 +583,7 @@ async function bootReplayPage({
                 || current?.isRecordedReplay !== next?.isRecordedReplay
         },
         replayPlayback: {
+            createReplayPlaybackRevalidator: ({ refresh }) => ({ refresh, invalidateAndRefresh: refresh, stop: () => {} }),
             observeReplayPlaybackAuth: async () => () => {},
             unavailableReplayPlayback: () => ({ mode: 'none', hasVideo: false, sourceUrl: null }),
             resolveAuthorizedReplayPlayback: async () => videoOptions

@@ -44,7 +44,7 @@ export async function stubReplayPlayback(page, outcome) {
                     (window.__PLAYBACK_PENDING__ ||= []).push(resolve);
                 });
                 window.__PLAYBACK_COMPLETED__ = (window.__PLAYBACK_COMPLETED__ || 0) + 1;
-                if (outcome === 'private' || outcome === 'missing') throw new Error(outcome);
+                if (outcome === 'private' || outcome === 'missing' || outcome === 'error') throw new Error(outcome);
                 return { data: outcome === 'allowed' ? {
                     state: 'ready', available: true, replayVideo: {
                         provider: 'youtube', videoId: 'T3f9AjVhn9U', status: 'ready',
@@ -55,7 +55,7 @@ export async function stubReplayPlayback(page, outcome) {
             };
         }`
     }));
-    await page.route('https://www.youtube.com/embed/**', route => route.fulfill({ contentType: 'text/html', body: '<title>Recording fixture</title>' }));
+    await page.route('https://www.youtube.com/embed/**', route => route.fulfill({ contentType: 'text/html', body: '<title>Recording fixture</title><video id=fixture-video></video>' }));
 }
 
 export async function expectReplayPlayback(page, outcome, selector, errors) {
@@ -95,7 +95,7 @@ export async function verifyRawReplayAuthIsolation(page, { selector, inFlight, r
     if (rejectProfile) {
         await page.evaluate(() => window.__PROFILE_PENDING__.forEach(({ reject }) => reject(new Error('profile unavailable'))));
     }
-    await expectReplayPlayback(page, 'denied', selector, errors);
+    await expect(page.locator(selector)).not.toHaveAttribute('src', /youtube\.com\/embed/);
     if (inFlight) {
         await page.evaluate(async () => {
             window.__PLAYBACK_PENDING__.forEach(resolve => resolve());
@@ -103,6 +103,7 @@ export async function verifyRawReplayAuthIsolation(page, { selector, inFlight, r
         });
     }
     await expect(page.locator(selector)).not.toHaveAttribute('src', /youtube\.com\/embed/);
+    await expectReplayPlayback(page, 'denied', selector, errors);
     expect(await page.evaluate(() => window.__ENRICHED_AUTH_CALLS__ || 0)).toBe(transition.before);
     expect(errors).toEqual([]);
 }
@@ -115,7 +116,7 @@ export async function verifyReplayProjectionPolling(page, { scenario, selector, 
     await expect.poll(() => frame.title()).toBe('Recording fixture');
     // A real iframe navigation destroys this player-time sentinel even though
     // the outer iframe element and final src can look identical afterward.
-    await frame.evaluate(() => { window.fixturePlaybackTime = 37; });
+    await frame.evaluate(() => { document.querySelector('video').currentTime = 37; });
     if (scenario === 'unchanged') {
         for (let poll = 0; poll < 3; poll++) {
             const reads = await page.evaluate(() => window.__PLAYBACK_READS__.length);
@@ -125,7 +126,7 @@ export async function verifyReplayProjectionPolling(page, { scenario, selector, 
             await expect.poll(() => page.evaluate(() => window.__PLAYBACK_COMPLETED__)).toBeGreaterThan(completed);
             await expectReplayPlayback(page, 'allowed', selector, errors);
             expect(await player.evaluate((el, selector) => el === document.querySelector(selector), selector)).toBe(true);
-            expect(await frame.evaluate(() => window.fixturePlaybackTime)).toBe(37);
+            expect(await frame.evaluate(() => document.querySelector('video')?.currentTime)).toBe(37);
         }
     } else {
         await page.evaluate(() => { window.__PLAYBACK_HOLD__ = true; });
@@ -152,6 +153,99 @@ export async function verifyReplayProjectionPolling(page, { scenario, selector, 
             await new Promise(resolve => setTimeout(resolve, 0));
         });
         await expectReplayPlayback(page, 'denied', selector, errors);
+    }
+    expect(errors).toEqual([]);
+}
+
+export async function verifyExplicitReplayRevalidation(page, { scenario, selector, errors }) {
+    await expectReplayPlayback(page, 'allowed', selector, errors);
+    const player = await page.locator(selector).elementHandle();
+    const frame = await player.contentFrame();
+    await expect.poll(() => frame.title()).toBe('Recording fixture');
+    await frame.evaluate(() => { document.querySelector('video').currentTime = 37; });
+    if (scenario !== 'ordinary') await page.locator('#replay-progress').evaluate(input => {
+        input.value = '50';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const timeline = await page.locator('#replay-current').textContent();
+    const before = await page.evaluate(() => window.__PLAYBACK_READS__.length);
+    if (scenario === 'ordinary') {
+        await page.clock.fastForward(60000);
+        expect(await page.evaluate(() => window.__PLAYBACK_READS__.length)).toBe(before);
+        return;
+    }
+    if (['pagehide', 'bfcache', 'visibility', 'unload'].includes(scenario)) {
+        await page.evaluate(() => { window.__PLAYBACK_HOLD__ = true; });
+    } else if (['slow', 'slow-success', 'auth'].includes(scenario)) {
+        await page.evaluate(() => { window.__PLAYBACK_HOLD__ = true; });
+    } else await page.evaluate(outcome => { window.__PLAYBACK_OUTCOME__ = outcome; }, scenario);
+    await page.clock.fastForward(15001);
+    await expect.poll(() => page.evaluate(() => window.__PLAYBACK_READS__.length)).toBe(before + 1);
+    if (scenario === 'slow-success') {
+        await page.clock.fastForward(8000);
+        expect(await page.evaluate(() => window.__PLAYBACK_READS__.length)).toBe(before + 1);
+        expect(await frame.evaluate(() => document.querySelector('video')?.currentTime)).toBe(37);
+        await page.evaluate(() => {
+            window.__PLAYBACK_HOLD__ = false;
+            window.__PLAYBACK_PENDING__.forEach(resolve => resolve());
+        });
+        await expect.poll(() => page.evaluate(() => window.__PLAYBACK_COMPLETED__)).toBeGreaterThanOrEqual(before + 1);
+        await expectReplayPlayback(page, 'allowed', selector, errors);
+        expect(await frame.evaluate(() => document.querySelector('video')?.currentTime)).toBe(37);
+        expect(await page.locator('#replay-current').textContent()).toBe(timeline);
+    } else if (scenario === 'allowed') {
+        await expectReplayPlayback(page, 'allowed', selector, errors);
+        expect(await player.evaluate((el, selector) => el === document.querySelector(selector), selector)).toBe(true);
+        expect(await frame.evaluate(() => document.querySelector('video')?.currentTime)).toBe(37);
+        expect(await page.locator('#replay-current').textContent()).toBe(timeline);
+        await page.clock.fastForward(15001);
+        await expect.poll(() => page.evaluate(() => window.__PLAYBACK_READS__.length)).toBe(before + 2);
+    } else if (['denied', 'deleted', 'private', 'error'].includes(scenario)) {
+        await expectReplayPlayback(page, 'denied', selector, errors);
+    } else {
+        const immediate = await page.evaluate(({ scenario, selector }) => {
+            if (scenario === 'auth') window.__FIRE_RAW_AUTH__({ uid: 'new-principal' });
+            if (scenario === 'pagehide' || scenario === 'bfcache') {
+                window.dispatchEvent(new Event('beforeunload'));
+                window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+            }
+            if (scenario === 'unload') {
+                window.dispatchEvent(new Event('beforeunload'));
+                window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false }));
+            }
+            if (scenario === 'visibility') {
+                Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+                document.dispatchEvent(new Event('visibilitychange'));
+            }
+            return document.querySelector(selector).getAttribute('src');
+        }, { scenario, selector });
+        if (scenario !== 'slow') expect(immediate || '').toBe('');
+        await page.clock.fastForward(60000);
+        expect(await page.evaluate(() => window.__PLAYBACK_READS__.length)).toBe(before + 1);
+        await expect(page.locator(selector)).not.toHaveAttribute('src', /youtube.com\/embed/);
+        await page.evaluate(({ scenario }) => {
+            window.__PLAYBACK_OUTCOME__ = 'denied';
+            window.__PLAYBACK_HOLD__ = false;
+            if (scenario === 'bfcache') window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+            if (scenario === 'visibility') {
+                Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+                document.dispatchEvent(new Event('visibilitychange'));
+            }
+            window.__PLAYBACK_PENDING__.forEach(resolve => resolve());
+        }, { scenario });
+        await expect.poll(() => page.evaluate(() => window.__PLAYBACK_COMPLETED__)).toBeGreaterThanOrEqual(before + 1);
+        if (['auth', 'bfcache', 'visibility'].includes(scenario)) {
+            await expect.poll(() => page.evaluate(() => window.__PLAYBACK_READS__.length)).toBe(before + 2);
+        }
+        await expect(page.locator(selector)).not.toHaveAttribute('src', /youtube.com\/embed/);
+        if (['pagehide', 'unload'].includes(scenario)) {
+            await page.clock.fastForward(60000);
+            expect(await page.evaluate(() => window.__PLAYBACK_READS__.length)).toBe(before + 1);
+        }
+        if (scenario === 'slow') {
+            await page.clock.fastForward(15001);
+            await expect.poll(() => page.evaluate(() => window.__PLAYBACK_READS__.length)).toBe(before + 2);
+        }
     }
     expect(errors).toEqual([]);
 }

@@ -1,4 +1,4 @@
-import { stubReplayPlayback, expectReplayPlayback, RAW_REPLAY_AUTH_FIXTURE, stubDelayedProfileAuth, verifyRawReplayAuthIsolation, verifyReplayProjectionPolling } from './replay-playback-fixture.js';
+import { stubReplayPlayback, expectReplayPlayback, RAW_REPLAY_AUTH_FIXTURE, stubDelayedProfileAuth, verifyRawReplayAuthIsolation, verifyReplayProjectionPolling, verifyExplicitReplayRevalidation } from './replay-playback-fixture.js';
 import { expect, test } from '@playwright/test';
 
 function collectPageErrors(page) {
@@ -2296,15 +2296,19 @@ for (const change of ['account-switch', 'sign-out', 'in-flight-sign-out']) {
             window.__PLAYBACK_OUTCOME__ = change === 'account-switch' ? 'allowed' : 'denied';
             window.__FIRE_RAW_AUTH__(change === 'account-switch' ? { uid: 'second-user' } : null);
         }, change);
-        await expect.poll(() => page.evaluate(() => window.__PLAYBACK_READS__.length)).toBeGreaterThan(reads);
-        await expectReplayPlayback(page, change === 'account-switch' ? 'allowed' : 'denied', '#overlay-video', errors);
         if (change === 'in-flight-sign-out') {
+            // Single-flight revalidation waits for the invalidated old read,
+            // while media is already cleared synchronously on raw sign-out.
+            expect(await page.evaluate(() => window.__PLAYBACK_READS__.length)).toBe(reads);
+            await expect(page.locator('#overlay-video')).not.toHaveAttribute('src', /youtube\.com\/embed/);
             await page.evaluate(async () => {
                 window.__PLAYBACK_PENDING__.forEach(resolve => resolve());
                 await new Promise(resolve => setTimeout(resolve, 0));
             });
             await expect(page.locator('#overlay-video')).not.toHaveAttribute('src', /youtube\.com\/embed/);
         }
+        await expect.poll(() => page.evaluate(() => window.__PLAYBACK_READS__.length)).toBeGreaterThan(reads);
+        await expectReplayPlayback(page, change === 'account-switch' ? 'allowed' : 'denied', '#overlay-video', errors);
         await expect(page.locator('#live-status')).toHaveText('REPLAY');
         expect(errors).toEqual([]);
     });
@@ -2371,5 +2375,25 @@ for (const scenario of ['unchanged', 'denied', 'deleted', 'error', 'changed', 'a
         await stubReplayPlayback(page, 'allowed');
         await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`);
         await verifyReplayProjectionPolling(page, { scenario, selector: '#overlay-video', errors });
+    });
+}
+
+for (const scenario of ['allowed', 'denied', 'deleted', 'private', 'error', 'slow', 'slow-success', 'auth', 'pagehide', 'bfcache', 'visibility', 'unload', 'ordinary']) {
+    test(`overlay explicit replay scheduled revalidation ${scenario}`, async ({ page, baseURL }) => {
+        const errors = collectPageErrors(page);
+        await page.clock.install();
+        await page.addInitScript(() => {
+            window.__RAW_REPLAY_USER__ = { uid: 'same-principal' };
+            window.__OVERLAY_AUTH_USER__ = { uid: 'same-principal' };
+            window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
+            window.__OVERLAY_NO_PUBLIC_VIDEO__ = true;
+            window.__OVERLAY_COMPLETED_GAME__ = true;
+            window.__LIVE_GAME_TEAM__ = {};
+            window.__LIVE_GAME_GAME__ = { status: 'completed', liveStatus: 'completed', isPublicProjection: true, videoUrl: null };
+        });
+        await stubRealOverlayModules(page);
+        await stubReplayPlayback(page, 'allowed');
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1${scenario === 'ordinary' ? '' : '&replay=true'}`);
+        await verifyExplicitReplayRevalidation(page, { scenario, selector: '#overlay-video', errors: await errors });
     });
 }

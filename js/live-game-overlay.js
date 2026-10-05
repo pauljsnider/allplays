@@ -2168,7 +2168,8 @@ async function startRealMode(params) {
         renderChatComposer();
         let playbackAuthReady = Promise.resolve(true);
         let replayPlaybackProjection = null;
-        const renderVideoSafely = async () => {
+        let replayPlaybackRevalidator = null;
+        const renderVideoNow = async () => {
             const requestId = ++uiState.videoRequestId;
             uiState.replayPlaybackAvailable = false;
             configureGameActions();
@@ -2194,7 +2195,7 @@ async function startRealMode(params) {
                     if (projection !== replayPlaybackProjection) showVideoFallback('Checking replay access…');
                     replayPlaybackProjection = projection;
                     if (!await playbackAuthReady || requestId !== uiState.videoRequestId) return false;
-                    const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=2');
+                    const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=3');
                     if (requestId !== uiState.videoRequestId) return false;
                     options = await resolveAuthorizedReplayPlayback({ teamId, gameId });
                     if (requestId !== uiState.videoRequestId) return false;
@@ -2278,20 +2279,43 @@ async function startRealMode(params) {
                 return false;
             }
         };
+        const renderVideoSafely = async () => {
+            if (!await playbackAuthReady) return false;
+            return replayPlaybackRevalidator ? replayPlaybackRevalidator.refresh() : renderVideoNow();
+        };
         uiState.refreshReplayPlayback = renderVideoSafely;
         if (game.isPublicProjection === true) {
             // Do not delay score/chat subscriptions on a video-only module.
             // Authorized playback itself waits until this observer is installed.
             playbackAuthReady = (async () => {
-                const { observeReplayPlaybackAuth } = await import('./game-replay-playback.js?v=2');
+                const { observeReplayPlaybackAuth, createReplayPlaybackRevalidator } = await import('./game-replay-playback.js?v=3');
+                if (isReplay && hasCompletedReplayLifecycle(game)) {
+                    replayPlaybackRevalidator = createReplayPlaybackRevalidator({
+                        refresh: renderVideoNow,
+                        invalidate: (message) => {
+                            ++uiState.videoRequestId;
+                            showVideoFallback(message);
+                        }
+                    });
+                }
                 const unsubscribe = await observeReplayPlaybackAuth(() => {
+                    if (replayPlaybackRevalidator) {
+                        void replayPlaybackRevalidator.invalidateAndRefresh();
+                        return;
+                    }
                     const playbackGame = isReplay ? game : uiState.game.game;
                     if (!hasCompletedReplayLifecycle(playbackGame)) return;
                     ++uiState.videoRequestId;
                     showVideoFallback('Checking replay access…');
                     void renderVideoSafely();
                 });
-                uiState.unsubscribers.push(unsubscribe);
+                if (replayPlaybackRevalidator) {
+                    // beforeunload may precede BFCache; retain the raw observer
+                    // until an actual non-persisted pagehide ends this document.
+                    window.addEventListener('pagehide', (event) => {
+                        if (!event.persisted) unsubscribe();
+                    });
+                } else uiState.unsubscribers.push(unsubscribe);
                 return true;
             })().catch(() => {
                 ++uiState.videoRequestId;

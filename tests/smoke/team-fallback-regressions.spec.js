@@ -1,4 +1,4 @@
-import { stubReplayPlayback, expectReplayPlayback, RAW_REPLAY_AUTH_FIXTURE, stubDelayedProfileAuth, verifyRawReplayAuthIsolation, verifyReplayProjectionPolling } from './replay-playback-fixture.js';
+import { stubReplayPlayback, expectReplayPlayback, RAW_REPLAY_AUTH_FIXTURE, stubDelayedProfileAuth, verifyRawReplayAuthIsolation, verifyReplayProjectionPolling, verifyExplicitReplayRevalidation } from './replay-playback-fixture.js';
 import { test, expect } from '@playwright/test';
 import { shouldReloadVideoPlayback } from '../../js/live-game-video.js';
 
@@ -1779,5 +1779,25 @@ for (const scenario of ['unchanged', 'denied', 'deleted', 'error', 'changed', 'a
         await stubReplayPlayback(page, 'allowed');
         await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1`);
         await verifyReplayProjectionPolling(page, { scenario, selector: '#youtube-stream-iframe', errors });
+    });
+}
+
+for (const scenario of ['allowed', 'denied', 'deleted', 'private', 'error', 'slow', 'slow-success', 'auth', 'pagehide', 'bfcache', 'visibility', 'unload', 'ordinary']) {
+    test(`classic explicit replay scheduled revalidation ${scenario}`, async ({ page, baseURL }) => {
+        const errors = collectPageErrors(page);
+        await page.clock.install();
+        await page.addInitScript(() => {
+            window.__RAW_REPLAY_USER__ = { uid: 'same-principal' };
+            window.__OVERLAY_AUTH_USER__ = { uid: 'same-principal' };
+            window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
+            window.__OVERLAY_NO_PUBLIC_VIDEO__ = true;
+            window.__OVERLAY_COMPLETED_GAME__ = true;
+            window.__LIVE_GAME_TEAM__ = {};
+            window.__LIVE_GAME_GAME__ = { status: 'completed', liveStatus: 'completed', isPublicProjection: true, videoUrl: null };
+        });
+        await routeLiveGameStubs(page, { authStub: ANONYMOUS_AUTH_STUB });
+        await stubReplayPlayback(page, 'allowed');
+        await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1${scenario === 'ordinary' ? '' : '&replay=true'}`);
+        await verifyExplicitReplayRevalidation(page, { scenario, selector: '#youtube-stream-iframe', errors: await errors });
     });
 }
