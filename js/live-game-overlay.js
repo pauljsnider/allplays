@@ -2186,7 +2186,7 @@ async function startRealMode(params) {
                 });
                 needsAuthorizedReplay = playbackGame?.isPublicProjection === true
                     && (playbackGame?.hasRecordedReplay === true
-                        || (playbackGame?.hasRecordedReplay == null && !playbackGame?.videoUrl))
+                        || (typeof playbackGame?.hasRecordedReplay !== 'boolean' && !playbackGame?.videoUrl))
                     && hasCompletedReplayLifecycle(playbackGame);
                 if (needsAuthorizedReplay) {
                     // Revalidate on every poll without destroying an unchanged
@@ -2290,7 +2290,7 @@ async function startRealMode(params) {
             // Authorized playback itself waits until this observer is installed.
             playbackAuthReady = (async () => {
                 const { observeReplayPlaybackAuth, createReplayPlaybackRevalidator } = await import('./game-replay-playback.js?v=3');
-                if (isReplay && hasCompletedReplayLifecycle(game)) {
+                if (isReplay && game.hasRecordedReplay !== false && hasCompletedReplayLifecycle(game)) {
                     replayPlaybackRevalidator = createReplayPlaybackRevalidator({
                         refresh: renderVideoNow,
                         invalidate: (message) => {

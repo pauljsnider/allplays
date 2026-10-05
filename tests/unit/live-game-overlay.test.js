@@ -62,15 +62,6 @@ function processLiveEventSnapshots(snapshots) {
 }
 
 describe('live game overlay page', () => {
-    it('limits legacy replay probes to projections without an explicit replay marker', () => {
-        expect(currentLiveGameSource).toContain(
-            'state.game?.hasRecordedReplay == null && !state.game?.videoUrl'
-        );
-        expect(source).toContain(
-            'playbackGame?.hasRecordedReplay == null && !playbackGame?.videoUrl'
-        );
-    });
-
     it('keeps exactly the newest 20 events from overlapping live snapshots in chronological order', () => {
         const events = Array.from({ length: 25 }, (_, index) => ({
             id: `event-${index + 1}`,
@@ -141,7 +132,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
         expect(html).toMatch(/\.panel-tab\s*\{[^}]*min-width:\s*44px;/);
-        expect(html).toContain('js/live-game-overlay.js?v=55');
+        expect(html).toContain('js/live-game-overlay.js?v=56');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {

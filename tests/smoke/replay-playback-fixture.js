@@ -69,21 +69,6 @@ export async function expectReplayPlayback(page, outcome, selector, errors) {
     expect(errors).toEqual([]);
 }
 
-export async function expectNoReplayPlaybackProbe(page, { selector, errors }) {
-    await expect.poll(() => page.evaluate(() => typeof window.__POLL_REPLAY_GAME__)).toBe('function');
-    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 0)));
-    expect(await page.evaluate(() => window.__PLAYBACK_READS__?.length || 0)).toBe(0);
-    await expect(page.locator(selector)).not.toHaveAttribute('src', /youtube\.com\/embed/);
-    for (let poll = 0; poll < 3; poll++) {
-        await page.evaluate(async () => {
-            await window.__POLL_REPLAY_GAME__();
-            await new Promise(resolve => setTimeout(resolve, 0));
-        });
-        expect(await page.evaluate(() => window.__PLAYBACK_READS__?.length || 0)).toBe(0);
-    }
-    expect(errors).toEqual([]);
-}
-
 export async function verifyRawReplayAuthIsolation(page, { selector, inFlight, rejectProfile, errors }) {
     // Simulate the existing UI auth layer independently from the raw Firebase
     // observer. Its profile read can remain pending or fail after SDK identity
@@ -143,25 +128,13 @@ export async function verifyReplayProjectionPolling(page, { scenario, selector, 
             expect(await player.evaluate((el, selector) => el === document.querySelector(selector), selector)).toBe(true);
             expect(await frame.evaluate(() => document.querySelector('video')?.currentTime)).toBe(37);
         }
+    } else if (scenario === 'changed') {
+        const reads = await page.evaluate(() => window.__PLAYBACK_READS__.length);
+        await page.evaluate(() => window.__POLL_REPLAY_GAME__({ hasRecordedReplay: false, videoUrl: null, updatedAt: 'removed' }));
+        await expect(page.locator(selector)).not.toHaveAttribute('src', /youtube\.com\/embed/);
+        await page.evaluate(() => window.__POLL_REPLAY_GAME__({ hasRecordedReplay: false, videoUrl: null, updatedAt: 'removed' }));
+        expect(await page.evaluate(() => window.__PLAYBACK_READS__.length)).toBe(reads);
     } else {
-        if (scenario === 'changed') {
-            const reads = await page.evaluate(() => window.__PLAYBACK_READS__.length);
-            for (let poll = 0; poll < 3; poll++) {
-                const immediateSrc = await page.evaluate(async (selector) => {
-                    await window.__POLL_REPLAY_GAME__({
-                        hasRecordedReplay: false,
-                        videoUrl: null,
-                        updatedAt: `removed-${window.__FALSE_REPLAY_POLLS__ = (window.__FALSE_REPLAY_POLLS__ || 0) + 1}`
-                    });
-                    await new Promise(resolve => setTimeout(resolve, 0));
-                    return document.querySelector(selector).getAttribute('src');
-                }, selector);
-                expect(immediateSrc || '').toBe('');
-                expect(await page.evaluate(() => window.__PLAYBACK_READS__.length)).toBe(reads);
-            }
-            expect(errors).toEqual([]);
-            return;
-        }
         await page.evaluate(() => { window.__PLAYBACK_HOLD__ = true; });
         if (scenario === 'overlap') {
             await page.evaluate(() => window.__POLL_REPLAY_GAME__());

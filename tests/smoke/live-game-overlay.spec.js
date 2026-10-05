@@ -1,4 +1,4 @@
-import { stubReplayPlayback, expectNoReplayPlaybackProbe, expectReplayPlayback, RAW_REPLAY_AUTH_FIXTURE, stubDelayedProfileAuth, verifyRawReplayAuthIsolation, verifyReplayProjectionPolling, verifyExplicitReplayRevalidation } from './replay-playback-fixture.js';
+import { stubReplayPlayback, expectReplayPlayback, RAW_REPLAY_AUTH_FIXTURE, stubDelayedProfileAuth, verifyRawReplayAuthIsolation, verifyReplayProjectionPolling, verifyExplicitReplayRevalidation } from './replay-playback-fixture.js';
 import { expect, test } from '@playwright/test';
 
 function collectPageErrors(page) {
@@ -391,8 +391,7 @@ async function stubRealOverlayModules(page) {
                     : (window.__OVERLAY_PUBLIC_VIDEO_URL__ || 'https://www.youtube.com/watch?v=PK1HyC37doc'),
                 isPublicProjection: true,
                 ...(typeof window.__OVERLAY_REPLAY_MARKER__ === 'boolean'
-                    ? { hasRecordedReplay: window.__OVERLAY_REPLAY_MARKER__ }
-                    : {}),
+                    ? { hasRecordedReplay: window.__OVERLAY_REPLAY_MARKER__ } : {}),
                 liveResetAt: window.__OVERLAY_RESET_REPLAY__ ? 200000 : undefined,
                 liveLineup: { onCourt: ['p9'], bench: ['p4'] },
                 liveStats: { p9: { goals: 5 } },
@@ -2380,21 +2379,6 @@ for (const scenario of ['unchanged', 'denied', 'deleted', 'error', 'changed', 'a
     });
 }
 
-test('overlay explicit false replay marker skips playback callable reads', async ({ page, baseURL }) => {
-    const errors = collectPageErrors(page);
-    await page.addInitScript(() => {
-        window.__OVERLAY_AUTH_USER__ = null;
-        window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
-        window.__OVERLAY_NO_PUBLIC_VIDEO__ = true;
-        window.__OVERLAY_COMPLETED_GAME__ = true;
-        window.__OVERLAY_REPLAY_MARKER__ = false;
-    });
-    await stubRealOverlayModules(page);
-    await stubReplayPlayback(page, 'allowed');
-    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`);
-    await expectNoReplayPlaybackProbe(page, { selector: '#overlay-video', errors });
-});
-
 for (const scenario of ['allowed', 'denied', 'deleted', 'private', 'error', 'slow', 'slow-success', 'auth', 'pagehide', 'bfcache', 'visibility', 'unload', 'ordinary']) {
     test(`overlay explicit replay scheduled revalidation ${scenario}`, async ({ page, baseURL }) => {
         const errors = collectPageErrors(page);
@@ -2412,5 +2396,26 @@ for (const scenario of ['allowed', 'denied', 'deleted', 'private', 'error', 'slo
         await stubReplayPlayback(page, 'allowed');
         await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1${scenario === 'ordinary' ? '' : '&replay=true'}`);
         await verifyExplicitReplayRevalidation(page, { scenario, selector: '#overlay-video', errors: await errors });
+    });
+}
+
+for (const replay of [true, false]) {
+    test(`overlay explicit false replay marker skips archive probes in ${replay ? 'replay' : 'watch'}`, async ({ page, baseURL }) => {
+        const errors = await collectPageErrors(page);
+        await page.clock.install();
+        await page.addInitScript(() => { window.__OVERLAY_AUTH_USER__ = null; window.__OVERLAY_NO_RESOLVED_VIDEO__ = true; window.__OVERLAY_NO_PUBLIC_VIDEO__ = true; window.__OVERLAY_COMPLETED_GAME__ = true; window.__OVERLAY_REPLAY_MARKER__ = false; });
+        await stubRealOverlayModules(page);
+        await stubReplayPlayback(page, 'allowed');
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1${replay ? '&replay=true' : ''}`);
+        await expect(page.locator('#replay-controls')).toHaveCount(1);
+        if (replay) await expect(page.locator('#replay-current')).toBeVisible();
+        else {
+            await expect.poll(() => page.evaluate(() => typeof window.__POLL_REPLAY_GAME__)).toBe('function');
+            await page.evaluate(async () => { for (let i=0;i<3;i++) await window.__POLL_REPLAY_GAME__(); });
+        }
+        await page.clock.fastForward(60000);
+        expect(await page.evaluate(() => window.__PLAYBACK_READS__?.length || 0)).toBe(0);
+        await expect(page.locator('#overlay-video')).not.toHaveAttribute('src', /youtube.com\/embed/);
+        expect(errors).toEqual([]);
     });
 }

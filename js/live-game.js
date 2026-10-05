@@ -840,7 +840,7 @@ async function refreshVideoPanelNow({ force = false } = {}) {
   const requestId = ++replayPlaybackRequestId;
   let nextPlayback = resolveVideoPlayback();
   if (state.game?.isPublicProjection === true && (state.game?.hasRecordedReplay === true
-      || (state.game?.hasRecordedReplay == null && !state.game?.videoUrl))
+      || (typeof state.game?.hasRecordedReplay !== 'boolean' && !state.game?.videoUrl))
       && hasCompletedReplayLifecycle(state.game)) {
     const unavailable = {
       mode: 'none', hasVideo: false, sourceUrl: null, publicUrl: null,
@@ -3090,7 +3090,7 @@ async function init() {
 
   if (game.isPublicProjection === true) {
     const { observeReplayPlaybackAuth, unavailableReplayPlayback, createReplayPlaybackRevalidator } = await import('./game-replay-playback.js?v=3');
-    if (state.isReplay && hasCompletedReplayLifecycle(game)) {
+    if (state.isReplay && game.hasRecordedReplay !== false && hasCompletedReplayLifecycle(game)) {
       replayPlaybackRevalidator = createReplayPlaybackRevalidator({
         refresh: () => refreshVideoPanelNow(),
         invalidate: (message) => {
