@@ -1,3 +1,4 @@
+import { stubReplayPlayback, expectReplayPlayback } from './replay-playback-fixture.js';
 import { test, expect } from '@playwright/test';
 
 const PERMISSION_ERROR = `
@@ -1727,3 +1728,21 @@ test('selected streaming helper follows the broadcast setup deep link and recove
     });
     expect(pageErrors).toEqual([]);
 });
+
+for (const outcome of ['allowed', 'denied', 'private', 'missing', 'deleted']) {
+    test(`classic public archive recorded playback ${outcome}`, async ({ page, baseURL }) => {
+        const errors = await collectPageErrors(page);
+        await page.addInitScript((outcome) => {
+            window.__LIVE_GAME_TEAM__ = {};
+            window.__LIVE_GAME_GAME__ = {
+                status: 'completed', liveStatus: 'completed', isPublicProjection: true,
+                hasRecordedReplay: ['denied', 'deleted'].includes(outcome) ? true : undefined,
+                videoUrl: ['denied', 'deleted'].includes(outcome) ? 'https://www.youtube.com/watch?v=PK1HyC37doc' : null
+            };
+        }, outcome);
+        await routeLiveGameStubs(page, { authStub: ANONYMOUS_AUTH_STUB });
+        await stubReplayPlayback(page, outcome);
+        await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1&replay=true`);
+        await expectReplayPlayback(page, outcome, '#youtube-stream-iframe', errors);
+    });
+}

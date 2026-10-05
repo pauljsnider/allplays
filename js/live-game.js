@@ -828,8 +828,29 @@ function initNativeCameraControls() {
   }, { once: true });
 }
 
-function refreshVideoPanel({ force = false } = {}) {
-  const nextPlayback = resolveVideoPlayback();
+let replayPlaybackRequestId = 0;
+async function refreshVideoPanel({ force = false } = {}) {
+  const requestId = ++replayPlaybackRequestId;
+  let nextPlayback = resolveVideoPlayback();
+  if (state.game?.isPublicProjection === true && (state.game?.hasRecordedReplay === true || !state.game?.videoUrl)
+      && hasCompletedReplayLifecycle(state.game)) {
+    const unavailable = {
+      mode: 'none', hasVideo: false, sourceUrl: null, publicUrl: null,
+      replayState: { status: 'unavailable', message: 'Checking replay access…' }
+    };
+    setupVideoPanel(unavailable);
+    try {
+      const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=1');
+      if (requestId !== replayPlaybackRequestId) return false;
+      nextPlayback = await resolveAuthorizedReplayPlayback({
+        teamId: state.teamId, gameId: state.gameId,
+        clipStartMs: state.clipStartMs, clipEndMs: state.clipEndMs
+      });
+    } catch {
+      nextPlayback = { ...unavailable, replayState: { status: 'unavailable', message: 'Replay video is temporarily unavailable. Reload to try again.' } };
+    }
+    if (requestId !== replayPlaybackRequestId) return false;
+  }
   renderStreamScoreStatus();
   if (!force && !shouldReloadVideoPlayback(state.videoPlayback, nextPlayback)) {
     state.videoPlayback = nextPlayback;

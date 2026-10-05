@@ -277,6 +277,10 @@ function buildModuleSource() {
             'const { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, hasActiveLiveLifecycle, hasCompletedReplayLifecycle, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
         )
         .replace(
+            "import('./game-replay-playback.js?v=1')",
+            'Promise.resolve(deps.replayPlayback)'
+        )
+        .replace(
             /import \{ resolvePublicProjectionVideoOptions \} from '\.\/live-game-overlay-model\.js\?v=\d+';/,
             'const { resolvePublicProjectionVideoOptions } = deps.liveGameOverlayModel;'
         )
@@ -577,6 +581,9 @@ async function bootReplayPage({
             shouldReloadVideoPlayback: (current, next) => current?.mode !== next?.mode
                 || current?.sourceUrl !== next?.sourceUrl
                 || current?.isRecordedReplay !== next?.isRecordedReplay
+        },
+        replayPlayback: {
+            resolveAuthorizedReplayPlayback: async () => videoOptions
         },
         liveGameOverlayModel: {
             resolvePublicProjectionVideoOptions: () => publicProjectionVideoOptions

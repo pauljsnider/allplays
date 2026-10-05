@@ -1,3 +1,4 @@
+import { stubReplayPlayback, expectReplayPlayback } from './replay-playback-fixture.js';
 import { expect, test } from '@playwright/test';
 
 function collectPageErrors(page) {
@@ -386,6 +387,7 @@ async function stubRealOverlayModules(page) {
                     ? null
                     : (window.__OVERLAY_PUBLIC_VIDEO_URL__ || 'https://www.youtube.com/watch?v=PK1HyC37doc'),
                 isPublicProjection: true,
+                hasRecordedReplay: window.__OVERLAY_REPLAY_MARKER__ === true,
                 liveResetAt: window.__OVERLAY_RESET_REPLAY__ ? 200000 : undefined,
                 liveLineup: { onCourt: ['p9'], bench: ['p4'] },
                 liveStats: { p9: { goals: 5 } },
@@ -2240,3 +2242,21 @@ test('recorded replay does not advance when browser playback is rejected', async
     expect(await page.locator('#overlay-recorded-video').evaluate((video) => video.__overlayPlayCalls)).toBe(1);
     expect(pageErrors).toEqual([]);
 });
+
+for (const outcome of ['allowed', 'denied', 'private', 'missing', 'deleted']) {
+    test(`overlay public archive recorded playback ${outcome}`, async ({ page, baseURL }) => {
+        const errors = collectPageErrors(page);
+        await page.addInitScript((outcome) => {
+            window.__OVERLAY_AUTH_USER__ = null;
+            window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
+            window.__OVERLAY_NO_PUBLIC_VIDEO__ = !['denied', 'deleted'].includes(outcome);
+            window.__OVERLAY_COMPLETED_GAME__ = true;
+            window.__OVERLAY_REPLAY_MARKER__ = ['denied', 'deleted'].includes(outcome) ? true : undefined;
+            window.__OVERLAY_FAIL_TEAM_CONTEXT__ = true;
+        }, outcome);
+        await stubRealOverlayModules(page);
+        await stubReplayPlayback(page, outcome);
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`);
+        await expectReplayPlayback(page, outcome, '#overlay-video', errors);
+    });
+}

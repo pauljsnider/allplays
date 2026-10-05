@@ -1175,6 +1175,7 @@ async function initializeChatComposer(database, teamId, gameId) {
             if (previousUid !== nextUid) uiState.anonName = '';
             if (user) ensureChatDisplayName();
             refreshChatAvailability();
+            if (previousUid !== nextUid) void uiState.refreshReplayPlayback?.();
         }, { skipEmailVerificationCheck: true });
         if (typeof unsubscribeAuth === 'function') uiState.unsubscribers.push(unsubscribeAuth);
         refreshChatAvailability();
@@ -2176,8 +2177,18 @@ async function startRealMode(params) {
                     players: uiState.game.players,
                     isReplay
                 });
+                const needsAuthorizedReplay = uiState.game.game?.isPublicProjection === true
+                    && (uiState.game.game?.hasRecordedReplay === true || !uiState.game.game?.videoUrl)
+                    && hasCompletedReplayLifecycle(uiState.game.game);
+                if (needsAuthorizedReplay) {
+                    showVideoFallback('Checking replay access…');
+                    const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=1');
+                    if (requestId !== uiState.videoRequestId) return false;
+                    options = await resolveAuthorizedReplayPlayback({ teamId, gameId });
+                    if (requestId !== uiState.videoRequestId) return false;
+                }
                 let usesSanitizedPublicProjection = options.isPublicProjectionVideo === true;
-                if (options.mode === 'none') {
+                if (options.mode === 'none' && !needsAuthorizedReplay) {
                     const publicProjectionOptions = resolvePublicProjectionVideoOptions(uiState.game.game, {
                         parentHost: window.location.hostname
                     });
@@ -2254,6 +2265,7 @@ async function startRealMode(params) {
                 return false;
             }
         };
+        uiState.refreshReplayPlayback = renderVideoSafely;
         void renderVideoSafely().then((success) => {
             if (success) setConnectionIssue('video');
         });
