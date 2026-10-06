@@ -396,6 +396,24 @@ describe('React app TeamMedia upload flow', () => {
     await act(async () => root.unmount());
   });
 
+  it('marks every photo as failed when order reservation fails', async () => {
+    parentToolsServiceMocks.reserveParentTeamMediaOrderRange.mockRejectedValue(new Error('offline'));
+    const { container, root } = await renderTeamMedia(uploadableModel());
+    const files = [
+      new File(['first'], 'tipoff.jpg', { type: 'image/jpeg' }),
+      new File(['second'], 'bench.jpg', { type: 'image/jpeg' }),
+    ];
+
+    changeFiles(container.querySelector('input[accept="image/*"]'), files);
+    await waitForAssertion(() => expect(container.textContent).toContain('No photos uploaded. Check your connection and try again.'));
+
+    expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).not.toHaveBeenCalled();
+    expect((container.textContent.match(/Upload failed\./g) || []).length).toBe(2);
+    expect(container.textContent).not.toContain('Uploading 2 photos...');
+
+    await act(async () => root.unmount());
+  });
+
   it('uploads every selected file sequentially and keeps the file picker multi-select enabled', async () => {
     const pendingResolvers = [];
     parentToolsServiceMocks.uploadParentTeamMediaFile.mockImplementation(() => new Promise((resolve) => {
@@ -435,6 +453,24 @@ describe('React app TeamMedia upload flow', () => {
     await act(async () => {});
 
     expect((container.textContent.match(/Uploaded/g) || []).length).toBe(2);
+
+    await act(async () => root.unmount());
+  });
+
+  it('marks every file as failed when order reservation fails', async () => {
+    parentToolsServiceMocks.reserveParentTeamMediaOrderRange.mockRejectedValue(new Error('offline'));
+    const { container, root } = await renderTeamMedia(uploadableModel());
+    const files = [
+      new File(['alpha'], 'report.pdf', { type: 'application/pdf' }),
+      new File(['beta'], 'waiver.pdf', { type: 'application/pdf' }),
+    ];
+
+    changeFiles(container.querySelector('input[accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx"]'), files);
+    await waitForAssertion(() => expect(container.textContent).toContain('No files uploaded. Check your connection and try again.'));
+
+    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).not.toHaveBeenCalled();
+    expect((container.textContent.match(/Upload failed\./g) || []).length).toBe(2);
+    expect(container.textContent).not.toContain('Uploading 2 files...');
 
     await act(async () => root.unmount());
   });

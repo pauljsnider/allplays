@@ -449,7 +449,10 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       }
     } catch (error) {
       workflowError = error;
-      throw error;
+      failed = files.length;
+      queueItems.forEach((queueItem) => updateUploadQueueItem(queueItem.id, 'error', 'Upload failed.'));
+      setMessage('');
+      setError('No photos uploaded. Check your connection and try again.');
     } finally {
       timer.end({
         fileCount: files.length,
@@ -523,7 +526,10 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       }
     } catch (error) {
       workflowError = error;
-      throw error;
+      failed = files.length;
+      queueItems.forEach((queueItem) => updateUploadQueueItem(queueItem.id, 'error', 'Upload failed.'));
+      setMessage('');
+      setError('No files uploaded. Check your connection and try again.');
     } finally {
       timer.end({
         fileCount: files.length,

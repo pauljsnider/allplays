@@ -15,7 +15,7 @@ import {
     getTelemetryRouteDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
-} from './db.js?v=4433203';
+} from './db.js?v=4433204';
 import {
     db,
     collection,

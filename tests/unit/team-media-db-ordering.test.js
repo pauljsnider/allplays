@@ -271,6 +271,46 @@ describe('team media db ordering', () => {
         expect(firebaseMocks.getDownloadURL).not.toHaveBeenCalled();
     });
 
+    it.each([
+        ['photo', 'tipoff.jpg', 'image/jpeg', 'uploadTeamMediaPhoto', 14],
+        ['file', 'lineup.pdf', 'application/pdf', 'uploadTeamMediaFile', 15]
+    ])('persists a preassigned order for a %s without reserving another order', async (_kind, name, type, helperName, order) => {
+        const db = await import('../../js/db.js');
+        const uploadPromise = db[helperName](
+            'team-1',
+            'folder-1',
+            new File(['payload'], name, { type }),
+            { order }
+        );
+
+        uploadTaskQueue.shift().complete();
+
+        await expect(uploadPromise).resolves.toBe('media-1');
+        expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
+        expect(firebaseMocks.addDoc).toHaveBeenCalledWith(
+            { path: 'teams/team-1/mediaItems' },
+            expect.objectContaining({ order })
+        );
+    });
+
+    it.each([
+        ['uploadTeamMediaPhoto', 'tipoff.jpg', 'image/jpeg'],
+        ['uploadTeamMediaFile', 'lineup.pdf', 'application/pdf']
+    ])('rejects an invalid preassigned order before starting %s', async (helperName, name, type) => {
+        const db = await import('../../js/db.js');
+
+        await expect(db[helperName](
+            'team-1',
+            'folder-1',
+            new File(['payload'], name, { type }),
+            { order: -1 }
+        )).rejects.toThrow('Team media order must be a non-negative safe integer.');
+
+        expect(uploadTaskQueue).toHaveLength(0);
+        expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
+        expect(firebaseMocks.addDoc).not.toHaveBeenCalled();
+    });
+
     it('starts legacy folders at zero when the media order counter is missing without storing file download URLs', async () => {
         folderState.nextMediaOrder = Number.NaN;
         const { createTeamMediaLink, uploadTeamMediaFile } = await import('../../js/db.js');
