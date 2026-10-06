@@ -481,8 +481,12 @@ export async function createTeamMediaFolder() {}
 export async function updateTeamMediaFolder() {}
 export async function deleteTeamMediaFolder() {}
 export async function createTeamMediaLink() {}
-export async function reserveTeamMediaOrderRange(_teamId, _folderId, count) {
-    return Array.from({ length: count }, (_, index) => index + 10);
+const nextMediaOrderByFolder = new Map();
+export async function reserveTeamMediaOrderRange(teamId, folderId, count) {
+    const key = JSON.stringify([teamId, folderId]);
+    const start = nextMediaOrderByFolder.get(key) ?? 10;
+    nextMediaOrderByFolder.set(key, start + count);
+    return Array.from({ length: count }, (_, index) => start + index);
 }
 export async function uploadTeamMediaPhoto() {}
 export async function uploadTeamMediaFile() {}
@@ -514,8 +518,12 @@ export async function createTeamMediaFolder() {}
 export async function updateTeamMediaFolder() {}
 export async function deleteTeamMediaFolder() {}
 export async function createTeamMediaLink() {}
-export async function reserveTeamMediaOrderRange(_teamId, _folderId, count) {
-    return Array.from({ length: count }, (_, index) => index + 10);
+const nextMediaOrderByFolder = new Map();
+export async function reserveTeamMediaOrderRange(teamId, folderId, count) {
+    const key = JSON.stringify([teamId, folderId]);
+    const start = nextMediaOrderByFolder.get(key) ?? 10;
+    nextMediaOrderByFolder.set(key, start + count);
+    return Array.from({ length: count }, (_, index) => start + index);
 }
 export async function uploadTeamMediaPhoto() {}
 export async function uploadTeamMediaFile() {}
@@ -550,15 +558,19 @@ export async function deleteTeamMediaFolder() {}
 export async function createTeamMediaLink(teamId, folderId, payload) {
     window.__TEAM_MEDIA_CALLS__.push({ type: 'link', teamId, folderId, title: payload.title, url: payload.url });
 }
-export async function reserveTeamMediaOrderRange(_teamId, _folderId, count) {
-    return Array.from({ length: count }, (_, index) => index + 10);
+const nextMediaOrderByFolder = new Map();
+export async function reserveTeamMediaOrderRange(teamId, folderId, count) {
+    const key = JSON.stringify([teamId, folderId]);
+    const start = nextMediaOrderByFolder.get(key) ?? 10;
+    nextMediaOrderByFolder.set(key, start + count);
+    return Array.from({ length: count }, (_, index) => start + index);
 }
 export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {}) {
-    window.__TEAM_MEDIA_CALLS__.push({ type: 'photo', teamId, folderId, fileName: file.name });
+    window.__TEAM_MEDIA_CALLS__.push({ type: 'photo', teamId, folderId, fileName: file.name, order: options.order });
     options.onProgress?.({ percent: 100 });
 }
 export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) {
-    window.__TEAM_MEDIA_CALLS__.push({ type: 'file', teamId, folderId, fileName: file.name });
+    window.__TEAM_MEDIA_CALLS__.push({ type: 'file', teamId, folderId, fileName: file.name, order: options.order });
     options.onProgress?.({ percent: 100 });
 }
 export async function deleteTeamMediaItem() {}
@@ -1369,8 +1381,8 @@ test('team media staff uploads photos and files and saves video links to the sel
     await expect(page.locator('#link-title')).toHaveValue('Replay');
     await expect(page.locator('#link-url')).toHaveValue('https://example.com/not-a-video');
     await expect.poll(() => page.evaluate(() => window.__TEAM_MEDIA_CALLS__)).toEqual([
-        { type: 'photo', teamId: 'team-1', folderId: 'folder-1', fileName: 'photo.jpg' },
-        { type: 'file', teamId: 'team-1', folderId: 'folder-1', fileName: 'packet.pdf' }
+        { type: 'photo', teamId: 'team-1', folderId: 'folder-1', fileName: 'photo.jpg', order: 10 },
+        { type: 'file', teamId: 'team-1', folderId: 'folder-1', fileName: 'packet.pdf', order: 11 }
     ]);
 
     await page.locator('#link-url').fill('https://youtu.be/replay123');
@@ -1378,8 +1390,8 @@ test('team media staff uploads photos and files and saves video links to the sel
     await expect(page.locator('#team-media-alert')).toContainText('Video link saved.');
 
     await expect.poll(() => page.evaluate(() => window.__TEAM_MEDIA_CALLS__)).toEqual([
-        { type: 'photo', teamId: 'team-1', folderId: 'folder-1', fileName: 'photo.jpg' },
-        { type: 'file', teamId: 'team-1', folderId: 'folder-1', fileName: 'packet.pdf' },
+        { type: 'photo', teamId: 'team-1', folderId: 'folder-1', fileName: 'photo.jpg', order: 10 },
+        { type: 'file', teamId: 'team-1', folderId: 'folder-1', fileName: 'packet.pdf', order: 11 },
         { type: 'link', teamId: 'team-1', folderId: 'folder-1', title: 'Replay', url: 'https://youtu.be/replay123' }
     ]);
     expect(pageErrors).toEqual([]);
@@ -1413,7 +1425,7 @@ test('team media staff file upload reports unsupported files while uploading val
     await expect(page.locator('#file-upload-progress')).toContainText('Choose a supported document file that is 10 MB or smaller.');
     await expect(page.locator('#team-media-alert')).toContainText('1 file uploaded, 1 failed.');
     await expect.poll(() => page.evaluate(() => window.__TEAM_MEDIA_CALLS__)).toEqual([
-        { type: 'file', teamId: 'team-1', folderId: 'folder-1', fileName: 'packet.pdf' }
+        { type: 'file', teamId: 'team-1', folderId: 'folder-1', fileName: 'packet.pdf', order: 10 }
     ]);
     expect(pageErrors).toEqual([]);
 });
