@@ -91,7 +91,10 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: authenticated-route-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
-          path: test-results/**/app-route-diagnostic.json
+          path: |
+            test-results/**/app-route-diagnostic.json
+            test-results/**/app-route-diagnostic-session-0.json
+            test-results/**/app-route-diagnostic-session-1.json
           if-no-files-found: ignore
           retention-days: 7
 
