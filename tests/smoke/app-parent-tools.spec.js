@@ -5,6 +5,26 @@ test.skip(
     'Module-mocked app specs need the Vite dev server; production runs cover the deployed bundle via app-production-bootstrap.spec.js'
 );
 
+// Local validation overlay: keep dummy-project telemetry and external assets offline.
+test.beforeEach(async ({ page }) => {
+    await page.route('**/*', async (route) => {
+        const host = new URL(route.request().url()).hostname;
+        if (host === '127.0.0.1' || host === 'localhost') await route.continue();
+        else await route.abort();
+    });
+    await page.route(/\/src\/lib\/performanceInstrumentation\.ts(\?.*)?$/, async (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `
+            export const now = () => performance.now();
+            export const getPerformancePlatform = () => 'web';
+            export const buildPerformanceTraceName = (label) => label;
+            export function startPerformanceSpan() { return { startedAt: now(), end() {} }; }
+            export function recordCompletedPerformanceSpan() {}
+        `
+    }));
+});
+
 const appBaseUrl = process.env.SMOKE_APP_BASE_URL || '';
 
 test.skip(!appBaseUrl, 'SMOKE_APP_BASE_URL is required for React app smoke tests');
@@ -522,12 +542,23 @@ async function mockParentToolsModules(page, { paymentsEnabled = false } = {}) {
                 export async function createTeamMediaAlbumForApp() {
                     return 'folder-2';
                 }
-                export async function uploadParentTeamMediaPhoto(teamId, folderId, file) {
-                    window.__mediaUploads.push({ type: 'photo', teamId, folderId, name: file.name });
+                const nextMediaOrderByFolder = new Map();
+                export async function reserveParentTeamMediaOrderRange(teamId, folderId, count) {
+                    if (window.__rejectNextMediaReservation) {
+                        window.__rejectNextMediaReservation = false;
+                        throw new Error('firestore/unavailable');
+                    }
+                    const key = JSON.stringify([teamId, folderId]);
+                    const start = nextMediaOrderByFolder.get(key) ?? 10;
+                    nextMediaOrderByFolder.set(key, start + count);
+                    return Array.from({ length: count }, (_, index) => start + index);
+                }
+                export async function uploadParentTeamMediaPhoto(teamId, folderId, file, order) {
+                    window.__mediaUploads.push({ type: 'photo', teamId, folderId, name: file.name, order });
                     return 'photo-2';
                 }
-                export async function uploadParentTeamMediaFile(teamId, folderId, file) {
-                    window.__mediaUploads.push({ type: 'file', teamId, folderId, name: file.name });
+                export async function uploadParentTeamMediaFile(teamId, folderId, file, order) {
+                    window.__mediaUploads.push({ type: 'file', teamId, folderId, name: file.name, order });
                     return 'file-1';
                 }
                 export async function addParentTeamMediaLink(teamId, folderId, title, url) {
@@ -985,19 +1016,21 @@ test('team media route supports photo upload, file upload, link add, and media o
     await expect(page.getByRole('button', { name: 'Game photos' })).toBeVisible();
     await expect(page.getByText('Tipoff')).toBeVisible();
 
-    await page.locator('input[accept="image/*"]').setInputFiles({
-        name: 'photo.jpg',
-        mimeType: 'image/jpeg',
-        buffer: Buffer.from('photo')
-    });
-    await expect.poll(() => page.evaluate(() => window.__mediaUploads.at(-1))).toEqual({ type: 'photo', teamId: 'team-1', folderId: 'folder-1', name: 'photo.jpg' });
+    await page.locator('input[accept="image/*"]').setInputFiles([
+        { name: 'photo.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('photo') },
+        { name: 'photo-2.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('photo-2') }
+    ]);
+    await expect.poll(() => page.evaluate(() => window.__mediaUploads)).toEqual([
+        { type: 'photo', teamId: 'team-1', folderId: 'folder-1', name: 'photo.jpg', order: 10 },
+        { type: 'photo', teamId: 'team-1', folderId: 'folder-1', name: 'photo-2.jpg', order: 11 }
+    ]);
 
     await page.locator('input[accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx"]').setInputFiles({
         name: 'packet.pdf',
         mimeType: 'application/pdf',
         buffer: Buffer.from('packet')
     });
-    await expect.poll(() => page.evaluate(() => window.__mediaUploads.at(-1))).toEqual({ type: 'file', teamId: 'team-1', folderId: 'folder-1', name: 'packet.pdf' });
+    await expect.poll(() => page.evaluate(() => window.__mediaUploads.at(-1))).toEqual({ type: 'file', teamId: 'team-1', folderId: 'folder-1', name: 'packet.pdf', order: 12 });
 
     await page.getByPlaceholder('Video title').fill('Replay');
     await page.getByPlaceholder('https://...').fill('https://example.com/not-a-video');
@@ -1020,3 +1053,36 @@ test('team media route supports photo upload, file upload, link add, and media o
     await expect.poll(() => page.evaluate(() => window.__mediaDeletes.at(-1))).toEqual({ teamId: 'team-1', itemId: 'photo-1' });
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 });
+
+for (const kind of ['photo', 'file']) {
+    test(`team media reservation ${kind} failure clears progress and retries the same selection`, async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => pageErrors.push(error.message));
+        await mockParentToolsModules(page);
+        await page.goto(appUrl(baseURL, '/teams/team-1/media'), { waitUntil: 'domcontentloaded' });
+        await expect(page.getByRole('heading', { name: 'Bears media' })).toBeVisible();
+        await page.evaluate(() => { window.__rejectNextMediaReservation = true; });
+        const input = page.locator(kind === 'photo' ? 'input[accept="image/*"]' : 'input[accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx"]');
+        const files = [1, 2].map((index) => ({
+            name: `retry-${index}.${kind === 'photo' ? 'jpg' : 'pdf'}`,
+            mimeType: kind === 'photo' ? 'image/jpeg' : 'application/pdf',
+            buffer: Buffer.from(`data-${index}`)
+        }));
+        await input.setInputFiles(files);
+        await expect(page.getByText(`No ${kind}s uploaded. Check your connection and try again.`, { exact: true })).toBeVisible();
+        const progress = page.getByLabel('Upload progress list');
+        await expect(progress.getByText('Upload failed.', { exact: true })).toHaveCount(2);
+        await expect(progress.getByText('Uploading…', { exact: true })).toHaveCount(0);
+        expect(await page.evaluate(() => window.__mediaUploads)).toEqual([]);
+        await expect(input).toHaveValue('');
+        await expect(page.getByRole('button', { name: 'Photo', exact: true })).toBeEnabled();
+        await expect(page.getByRole('button', { name: 'File', exact: true })).toBeEnabled();
+        await input.setInputFiles(files);
+        await expect(page.getByText(`2 ${kind}s uploaded.`, { exact: true })).toBeVisible();
+        await expect(progress.getByText('Uploaded', { exact: true })).toHaveCount(2);
+        await expect(progress.getByText('Uploading…', { exact: true })).toHaveCount(0);
+        await expect.poll(() => page.evaluate(() => window.__mediaUploads.map((item) => item.order))).toEqual([10, 11]);
+        await expect(input).toHaveValue('');
+        expect(pageErrors).toEqual([]);
+    });
+}
