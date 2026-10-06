@@ -74,7 +74,7 @@ export async function verifyRawReplayAuthIsolation(page, { selector, inFlight, r
     // observer. Its profile read can remain pending or fail after SDK identity
     // already changed; media invalidation must never wait for this callback.
     await page.evaluate(async () => {
-        const { checkAuth } = await import('/js/auth.js?v=4433207');
+        const { checkAuth } = await import('/js/auth.js?v=4433208');
         checkAuth(() => { window.__ENRICHED_AUTH_CALLS__ = (window.__ENRICHED_AUTH_CALLS__ || 0) + 1; });
     });
     if (inFlight) {
