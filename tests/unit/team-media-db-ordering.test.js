@@ -3,6 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const folderState = vi.hoisted(() => ({ nextMediaOrder: 0 }));
 const addDocState = vi.hoisted(() => ({ nextId: 1 }));
 const batchState = vi.hoisted(() => ({ batches: [] }));
+const transactionState = vi.hoisted(() => ({
+    tail: Promise.resolve(),
+    gets: [],
+    updates: []
+}));
 const firebaseMocks = vi.hoisted(() => ({
     addDoc: vi.fn(async (_collectionRef, data) => ({ id: `media-${addDocState.nextId++}`, data })),
     collection: vi.fn((_db, path) => ({ path })),
@@ -16,15 +21,23 @@ const firebaseMocks = vi.hoisted(() => ({
     limit: vi.fn((value) => ({ type: 'limit', value })),
     orderBy: vi.fn((field, direction) => ({ type: 'orderBy', field, direction })),
     query: vi.fn((...parts) => parts),
-    runTransaction: vi.fn(async (_db, callback) => callback({
-        get: async () => ({
-            exists: () => true,
-            data: () => ({ nextMediaOrder: folderState.nextMediaOrder })
-        }),
-        update: (_ref, payload) => {
-            folderState.nextMediaOrder = payload.nextMediaOrder;
-        }
-    })),
+    runTransaction: vi.fn(async (_db, callback) => {
+        const transactionRun = transactionState.tail.then(() => callback({
+            get: async (ref) => {
+                transactionState.gets.push(ref);
+                return {
+                    exists: () => true,
+                    data: () => ({ nextMediaOrder: folderState.nextMediaOrder })
+                };
+            },
+            update: (ref, payload) => {
+                transactionState.updates.push({ ref, payload });
+                folderState.nextMediaOrder = payload.nextMediaOrder;
+            }
+        }));
+        transactionState.tail = transactionRun.catch(() => undefined);
+        return transactionRun;
+    }),
     serverTimestamp: vi.fn(() => 'server-ts'),
     startAfter: vi.fn((cursor) => ({ type: 'startAfter', cursor })),
     uploadBytes: vi.fn(async () => ({ ref: { fullPath: 'team-media/copied-upload' } })),
@@ -133,6 +146,9 @@ describe('team media db ordering', () => {
         folderState.nextMediaOrder = 0;
         addDocState.nextId = 1;
         batchState.batches = [];
+        transactionState.tail = Promise.resolve();
+        transactionState.gets = [];
+        transactionState.updates = [];
         firebaseMocks.writeBatch.mockImplementation(() => {
             const batch = {
                 deletes: [],
@@ -150,6 +166,77 @@ describe('team media db ordering', () => {
             status: 200,
             blob: async () => new Blob(['copied-media'], { type: 'image/jpeg' })
         }));
+    });
+
+    it('reserves a sequential order range with one folder transaction', async () => {
+        folderState.nextMediaOrder = 7;
+        const { reserveTeamMediaOrderRange } = await import('../../js/db.js');
+
+        await expect(reserveTeamMediaOrderRange('team-1', 'folder-1', 4)).resolves.toEqual([7, 8, 9, 10]);
+
+        expect(firebaseMocks.runTransaction).toHaveBeenCalledTimes(1);
+        expect(transactionState.gets).toEqual([{ path: 'teams/team-1/mediaFolders/folder-1' }]);
+        expect(transactionState.updates).toEqual([{
+            ref: { path: 'teams/team-1/mediaFolders/folder-1' },
+            payload: { nextMediaOrder: 11, updatedAt: 'server-ts' }
+        }]);
+        expect(folderState.nextMediaOrder).toBe(11);
+    });
+
+    it.each([0, -1, 1.5, 21, '2', Number.NaN, Number.POSITIVE_INFINITY])(
+        'rejects invalid reservation size %s before starting a transaction',
+        async (count) => {
+            const { reserveTeamMediaOrderRange } = await import('../../js/db.js');
+
+            await expect(reserveTeamMediaOrderRange('team-1', 'folder-1', count)).rejects.toThrow(
+                'Team media order reservation size must be an integer from 1 to 20.'
+            );
+            expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
+            expect(folderState.nextMediaOrder).toBe(0);
+        }
+    );
+
+    it('supports the one-item and twenty-item reservation boundaries', async () => {
+        const { reserveTeamMediaOrderRange } = await import('../../js/db.js');
+
+        await expect(reserveTeamMediaOrderRange('team-1', 'folder-1', 1)).resolves.toEqual([0]);
+        await expect(reserveTeamMediaOrderRange('team-1', 'folder-1', 20)).resolves.toEqual(
+            Array.from({ length: 20 }, (_, index) => index + 1)
+        );
+
+        expect(firebaseMocks.runTransaction).toHaveBeenCalledTimes(2);
+        expect(folderState.nextMediaOrder).toBe(21);
+    });
+
+    it('keeps concurrent reservations contiguous and non-overlapping', async () => {
+        const { reserveTeamMediaOrderRange } = await import('../../js/db.js');
+
+        const ranges = await Promise.all([
+            reserveTeamMediaOrderRange('team-1', 'folder-1', 3),
+            reserveTeamMediaOrderRange('team-1', 'folder-1', 2)
+        ]);
+        const orderedRanges = ranges.toSorted((left, right) => left[0] - right[0]);
+        const allOrders = orderedRanges.flat();
+
+        expect(orderedRanges).toEqual([[0, 1, 2], [3, 4]]);
+        expect(new Set(allOrders).size).toBe(allOrders.length);
+        expect(folderState.nextMediaOrder).toBe(5);
+        expect(firebaseMocks.runTransaction).toHaveBeenCalledTimes(2);
+    });
+
+    it('allows failed items to leave gaps without reusing successful order values', async () => {
+        folderState.nextMediaOrder = 10;
+        const { reserveTeamMediaOrderRange } = await import('../../js/db.js');
+
+        const firstRange = await reserveTeamMediaOrderRange('team-1', 'folder-1', 3);
+        const failedOrder = firstRange[1];
+        const nextRange = await reserveTeamMediaOrderRange('team-1', 'folder-1', 2);
+        const successfulOrders = [firstRange[0], firstRange[2], ...nextRange];
+
+        expect(failedOrder).toBe(11);
+        expect(successfulOrders).toEqual([10, 12, 13, 14]);
+        expect(successfulOrders).not.toContain(failedOrder);
+        expect(new Set(successfulOrders).size).toBe(successfulOrders.length);
     });
 
     it('assigns unique sequential orders to concurrent photo uploads without persisting download URLs', async () => {
