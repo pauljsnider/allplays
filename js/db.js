@@ -824,7 +824,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443378'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443379'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -1473,8 +1473,17 @@ export async function createTeamMediaFolder(teamId, draft = {}) {
     return docRef.id;
 }
 
-async function reserveNextTeamMediaOrder(teamId, folderId) {
-    const folderRef = doc(db, `teams/${teamId}/mediaFolders`, folderId);
+export async function reserveTeamMediaOrderRange(teamId, folderId, count = 1) {
+    const cleanTeamId = String(teamId || '').trim();
+    const cleanFolderId = String(folderId || '').trim();
+    if (!cleanTeamId || !cleanFolderId) {
+        throw new Error('Choose a folder for this media item.');
+    }
+    if (!Number.isInteger(count) || count < 1 || count > 20) {
+        throw new Error('Team media order reservation size must be an integer from 1 to 20.');
+    }
+
+    const folderRef = doc(db, `teams/${cleanTeamId}/mediaFolders`, cleanFolderId);
     return runTransaction(db, async (transaction) => {
         const folderSnapshot = await transaction.get(folderRef);
         if (!folderSnapshot.exists()) {
@@ -1482,15 +1491,22 @@ async function reserveNextTeamMediaOrder(teamId, folderId) {
         }
 
         const folderData = folderSnapshot.data() || {};
-        const nextMediaOrder = Number(folderData.nextMediaOrder || 0);
+        const nextMediaOrder = Number.isSafeInteger(folderData.nextMediaOrder) && folderData.nextMediaOrder >= 0
+            ? folderData.nextMediaOrder
+            : 0;
 
         transaction.update(folderRef, {
-            nextMediaOrder: nextMediaOrder + 1,
+            nextMediaOrder: nextMediaOrder + count,
             updatedAt: serverTimestamp()
         });
 
-        return nextMediaOrder;
+        return Array.from({ length: count }, (_, index) => nextMediaOrder + index);
     });
+}
+
+async function reserveNextTeamMediaOrder(teamId, folderId) {
+    const [order] = await reserveTeamMediaOrderRange(teamId, folderId, 1);
+    return order;
 }
 
 export async function updateTeamMediaFolder(teamId, folderId, draft = {}) {

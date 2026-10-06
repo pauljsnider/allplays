@@ -90,7 +90,9 @@ describe('team media page wiring', () => {
         expect(rules).toContain("get(folderPath).data.get('visibility', 'team') == 'team'");
         expect(rules).toContain("teamId in get(userPath).data.get('teamMediaUploadTeamIds', [])");
         expect(rules).toContain('function isTeamMediaUploadCounterUpdate(teamId) {');
-        expect(rules).toContain("request.resource.data.get('nextMediaOrder', 0) == resource.data.get('nextMediaOrder', 0) + 1");
+        expect(rules).toContain("request.resource.data.get('nextMediaOrder', 0) is int");
+        expect(rules).toContain('orderIncrease >= 1');
+        expect(rules).toContain('orderIncrease <= 20');
         expect(rules).toContain('canUploadTeamMediaFolder(teamId, data.folderId)');
     });
 
