@@ -77,7 +77,7 @@ describe('authenticated core smoke request attribution', () => {
             const diagnostic = JSON.parse(text);
             expect(diagnostic.route).toBe('/help');
             expect(diagnostic.events).toMatchObject([{ type: 'response', status: 403,
-                resourceType: type, service, route: '/teams/:id/media', asset: '[other-asset]' }]);
+                resourceType: type, service, responseTimeRoute: '/teams/:id/media', asset: '[other-asset]' }]);
             expect(text).not.toMatch(/private|https:|googleapis|cookie|authorization|bearer|token=/i);
             expect(log).toHaveBeenCalledWith(`SMOKE_FAILURE_DIAGNOSTIC ${text}`);
             expect(forbidden).not.toHaveBeenCalled();

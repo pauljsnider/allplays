@@ -118,14 +118,14 @@ async function collectResponseMetadata(responses) {
     }
 }
 
-export async function withAppFailureDiagnostic(session, testInfo, callback, { baseline = false, includeApiFailures = false } = {}) {
-    const { page } = session;
+export function createAppFailureRecorder(page, { baseline = false, includeApiFailures = false, sessionIndex } = {}) {
     const startedAt = Date.now();
     routeTimings.delete(page);
     const events = [];
     const responses = [];
+    let droppedEvents = 0;
     const record = (event) => {
-        if (events.length >= 40) return undefined;
+        if (events.length >= 40) { droppedEvents += 1; return undefined; }
         const entry = { elapsedMs: Date.now() - startedAt, ...event };
         events.push(entry);
         return entry;
@@ -136,7 +136,7 @@ export async function withAppFailureDiagnostic(session, testInfo, callback, { ba
         if (!includeApiFailures) return {};
         let route = '[other-route]';
         try { route = routeTemplate(page.url()); } catch { /* The page may have closed. */ }
-        return { resourceType: request.resourceType(), service: requestService(request.url()), route };
+        return { resourceType: request.resourceType(), service: requestService(request.url()), responseTimeRoute: route };
     };
     const listeners = {
         console: (message) => {
@@ -158,17 +158,20 @@ export async function withAppFailureDiagnostic(session, testInfo, callback, { ba
         }
     };
     for (const [event, listener] of Object.entries(listeners)) page.on(event, listener);
-    try {
-        return await callback(page);
-    } catch (failure) {
-        // Diagnostics are best effort and must never replace the original failure.
+    const dispose = () => {
         for (const [event, listener] of Object.entries(listeners)) page.off(event, listener);
+    };
+    async function attach(testInfo) {
+        // Snapshot this session only. Collection continues until session disposal.
+        const snapshotEvents = events.map((event) => ({ ...event }));
+        const snapshotResponses = responses.map(({ response, event }) => ({ response, event: snapshotEvents[events.indexOf(event)] }));
+        const snapshotDropped = droppedEvents;
         let timer;
         let collecting = true;
         try {
             await Promise.race([
                 (async () => {
-                    await collectResponseMetadata(responses);
+                    await collectResponseMetadata(snapshotResponses);
                     const visible = (locator) => locator.isVisible().catch(() => null);
                     const activeTabs = await Promise.all(tools.map(async (tool) => (
                         await visible(page.locator(`nav[aria-label="Family tools"] a[aria-current="page"][href="#/parent-tools/${tool}"]`)) ? tool : null
@@ -188,7 +191,8 @@ export async function withAppFailureDiagnostic(session, testInfo, callback, { ba
                     }
                     if (!collecting) return;
                     const timing = routeTimings.get(page);
-                    const file = testInfo.outputPath(baseline ? 'boot-path-diagnostic.json' : 'app-route-diagnostic.json');
+                    const name = baseline ? 'boot-path-diagnostic.json' : `app-route-diagnostic${Number.isInteger(sessionIndex) && sessionIndex >= 0 ? `-session-${sessionIndex}` : ''}.json`;
+                    const file = testInfo.outputPath(name);
                     await mkdir(path.dirname(file), { recursive: true });
                     if (!collecting) return;
                     const diagnostic = JSON.stringify({
@@ -196,18 +200,30 @@ export async function withAppFailureDiagnostic(session, testInfo, callback, { ba
                         route: routeTemplate(page.url(), baseline), activeTabs: activeTabs.filter(Boolean), state,
                         navigation: timing ? { route: routeTemplate(timing.url), elapsedMs: Date.now() - timing.startedAt,
                             shellMs: timing.shellMs ?? null, panelMs: timing.panelMs ?? null } : null,
-                        events
+                        events: snapshotEvents, droppedEvents: snapshotDropped,
+                        ...(Number.isInteger(sessionIndex) && sessionIndex >= 0 ? { sessionIndex } : {})
                     });
                     // Retain safe reporter evidence even if artifact upload is unavailable.
                     console.log(`SMOKE_FAILURE_DIAGNOSTIC ${diagnostic}`);
                     await writeFile(file, diagnostic);
+                    if (collecting && testInfo.attach) await testInfo.attach(name, { path: file, contentType: 'application/json' });
                 })(),
                 new Promise((resolve) => { timer = setTimeout(resolve, 1_000); })
             ]);
         } catch { /* Preserve callback/assertion identity even if artifact I/O fails. */ }
         finally { collecting = false; clearTimeout(timer); }
+    }
+    return { attach, dispose };
+}
+
+export async function withAppFailureDiagnostic(session, testInfo, callback, options = {}) {
+    const recorder = session.failureDiagnostic || createAppFailureRecorder(session.page, options);
+    try {
+        return await callback(session.page);
+    } catch (failure) {
+        await recorder.attach(testInfo);
         throw failure;
     } finally {
-        for (const [event, listener] of Object.entries(listeners)) page.off(event, listener);
+        if (!session.failureDiagnostic) recorder.dispose();
     }
 }

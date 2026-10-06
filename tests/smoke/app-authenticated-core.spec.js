@@ -58,7 +58,7 @@ test.beforeAll(async ({ browser }) => {
             password: config.parentPassword,
             roleLabel: 'parent'
         }
-    ]);
+    ], { diagnosticTestInfo: test.info() });
 });
 
 test.afterAll(async () => {
@@ -70,10 +70,19 @@ test.afterAll(async () => {
 
 async function withAuthenticatedPage(session, callback) {
     const { page, issues } = session;
-    await withAppFailureDiagnostic(session, test.info(), async () => {
-        await callback(page);
-        expect(issues.map((issue) => redactSmokeDiagnostic(issue, secretValues))).toEqual([]);
-    }, { includeApiFailures: true });
+    try {
+        await withAppFailureDiagnostic(session, test.info(), async () => {
+            await callback(page);
+            expect(issues.map((issue) => redactSmokeDiagnostic(issue, secretValues))).toEqual([]);
+        }, { includeApiFailures: true });
+    } catch (failure) {
+        // A serial test failure may skip the other session's test entirely.
+        // Preserve its idle-period evidence under its own numeric session ID.
+        await Promise.all([staffSession, parentWorkflowSession]
+            .filter((other) => other && other !== session)
+            .map((other) => other.failureDiagnostic?.attach(test.info())));
+        throw failure;
+    }
 }
 
 test('staff account reaches every critical app workflow with smoke fixtures', async () => {

@@ -59,7 +59,7 @@ describe('production smoke authenticated setup timeout', () => {
         expect(authenticatedSessionHelper.indexOf('collectAppRuntimeIssues(')).toBeLessThan(
             authenticatedSessionHelper.indexOf('signInToApp(')
         );
-        expect(authenticatedSessionHelper).toContain('return { context, page, issues, ...timing };');
+        expect(authenticatedSessionHelper).toContain('return { context, page, issues, ...timing, failureDiagnostic };');
         expect(authenticatedSessionHelper).toContain('Promise.allSettled(');
         expect(authenticatedSessionHelper).toContain('closeBrowserContextBounded(context)');
         expect(helper).toContain('smoke authentication failed while ${stage}');
