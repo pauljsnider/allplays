@@ -1,4 +1,4 @@
-import { checkAuth } from './auth.js?v=4433207';
+import { checkAuth } from './auth.js?v=4433208';
 import {
     getDelegatedTeamContext,
     getTeamMediaFolders,

@@ -30,8 +30,8 @@ import {
     updateDoc,
     serverTimestamp
 } from './firebase.js?v=33';
-import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443379';
-import { checkAuth } from './auth.js?v=4433207';
+import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443380';
+import { checkAuth } from './auth.js?v=4433208';
 import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=2';
 import {
     adminRegistrationDefaults,
