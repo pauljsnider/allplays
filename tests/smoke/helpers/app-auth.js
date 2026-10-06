@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test';
-import { routeTimings } from './app-route-diagnostic.js';
+import { createAppFailureRecorder, routeTimings } from './app-route-diagnostic.js';
 
 export const AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS = 240_000;
 const AUTHENTICATED_CONTEXT_CLOSE_TIMEOUT_MS = 5_000;
@@ -148,27 +148,31 @@ async function closeBrowserContextBounded(context) {
     clearTimeout(timeoutId);
 }
 
-export async function createAuthenticatedAppSession(browser, credentials) {
+export async function createAuthenticatedAppSession(browser, credentials, { diagnosticTestInfo, sessionIndex = 0 } = {}) {
     const context = await browser.newContext({
         serviceWorkers: 'block',
         recordVideo: undefined
     });
     const page = await context.newPage();
     const issues = collectAppRuntimeIssues(page, [credentials.email, credentials.password]);
+    const failureDiagnostic = diagnosticTestInfo
+        ? createAppFailureRecorder(page, { includeApiFailures: true, sessionIndex }) : undefined;
     try {
         const timing = await signInToApp(page, credentials);
         // Keep the authenticated context live. Exporting Firebase's IndexedDB-backed
         // persistence can remain pending after Auth and Home are already usable.
-        return { context, page, issues, ...timing };
+        return { context, page, issues, ...timing, failureDiagnostic };
     } catch (error) {
+        await failureDiagnostic?.attach(diagnosticTestInfo);
+        failureDiagnostic?.dispose();
         await closeBrowserContextBounded(context);
         throw error;
     }
 }
 
-export async function createAuthenticatedAppSessions(browser, credentialsList) {
+export async function createAuthenticatedAppSessions(browser, credentialsList, options = {}) {
     const results = await Promise.allSettled(
-        credentialsList.map((credentials) => createAuthenticatedAppSession(browser, credentials))
+        credentialsList.map((credentials, sessionIndex) => createAuthenticatedAppSession(browser, credentials, { ...options, sessionIndex }))
     );
     const sessions = results
         .filter((result) => result.status === 'fulfilled')
@@ -178,13 +182,17 @@ export async function createAuthenticatedAppSessions(browser, credentialsList) {
         .map((result) => String(result.reason?.message || result.reason));
 
     if (failures.length > 0) {
-        await Promise.all(sessions.map((session) => closeBrowserContextBounded(session.context)));
+        await Promise.all(sessions.map(async (session) => {
+            await session.failureDiagnostic?.attach(options.diagnosticTestInfo);
+            await closeAuthenticatedAppSession(session);
+        }));
         throw new Error(`Authenticated smoke session setup failed: ${failures.join('; ')}`);
     }
     return sessions;
 }
 
 export async function closeAuthenticatedAppSession(session) {
+    session?.failureDiagnostic?.dispose();
     if (session?.context) await closeBrowserContextBounded(session.context);
 }
 
