@@ -66,12 +66,16 @@ function browserFor(...callbacks) {
     } };
 }
 async function artifact(index) {
-    const text = await readFile(path.join(folder, `app-route-diagnostic-session-${index}.json`), 'utf8')
+    const text = await readFile(path.join(folder, `session-${index}`, 'app-route-diagnostic.json'), 'utf8')
         .catch(async (error) => {
             // Baseline control: inspect its original artifact, so failures prove
             // missing events rather than only the new per-session filename.
             if (error.code !== 'ENOENT') throw error;
-            return readFile(path.join(folder, 'app-route-diagnostic.json'), 'utf8');
+            return readFile(path.join(folder, `app-route-diagnostic-session-${index}.json`), 'utf8')
+                .catch((legacyError) => {
+                    if (legacyError.code !== 'ENOENT') throw legacyError;
+                    return readFile(path.join(folder, 'app-route-diagnostic.json'), 'utf8');
+                });
         });
     expect(text).not.toMatch(/private|https:|googleapis|cookie|authorization|bearer|token=/i);
     return JSON.parse(text);

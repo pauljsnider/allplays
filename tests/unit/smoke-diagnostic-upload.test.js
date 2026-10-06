@@ -17,11 +17,7 @@ describe('sanitized smoke artifact uploads', () => {
             const upload = steps.find((step) => step.name === 'Upload sanitized authenticated route diagnostics');
             expect(upload.if).toBe('always()');
             expect(upload['continue-on-error']).toBe(true);
-            expect(upload.with.path.trim().split(/\r?\n/)).toEqual([
-                'test-results/**/app-route-diagnostic.json',
-                'test-results/**/app-route-diagnostic-session-0.json',
-                'test-results/**/app-route-diagnostic-session-1.json'
-            ]);
+            expect(upload.with.path).toBe('test-results/**/app-route-diagnostic.json');
             expect(upload.with['retention-days']).toBe(7);
             expect(upload.uses).toBe('actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02');
             const baseline = steps.find((step) => step.name === 'Upload sanitized baseline boot diagnostics');
@@ -59,7 +55,7 @@ describe('sanitized smoke artifact uploads', () => {
                     page.emit('response', { status: () => 403, url: () => url,
                         request: () => ({ resourceType: () => 'fetch', url: () => url }) });
                     await recorder.attach({ retry: 0, outputPath: (file) => path.join(folder, 'test-results', phase, file) });
-                    expected.push(`test-results/${phase}/app-route-diagnostic-session-${sessionIndex}.json`);
+                    expected.push(`test-results/${phase}/session-${sessionIndex}/app-route-diagnostic.json`);
                 }
             }
             const excluded = [
@@ -71,7 +67,7 @@ describe('sanitized smoke artifact uploads', () => {
                 'test-results/setup-failure/trace.zip', 'test-results/setup-failure/video.webm',
                 'test-results/setup-failure/screenshot.png', 'test-results/setup-failure/storage-state.json',
                 'test-results/setup-failure/request-headers.json', 'test-results/setup-failure/boot-path-diagnostic.json',
-                'unrelated/app-route-diagnostic-session-0.json'
+                'unrelated/session-0/app-route-diagnostic.json'
             ];
             for (const file of excluded) {
                 await mkdir(path.dirname(path.join(folder, file)), { recursive: true });
@@ -87,7 +83,7 @@ describe('sanitized smoke artifact uploads', () => {
             for (const file of selected) {
                 const contents = await readFile(path.join(folder, file), 'utf8');
                 expect(contents).not.toMatch(/private|https:|googleapis|cookie|authorization|bearer|token=/i);
-                if (file.includes('-session-')) {
+                if (file.includes('/session-')) {
                     expect(JSON.parse(contents).events).toMatchObject([{ status: 403, service: 'firestore', responseTimeRoute: '/auth' }]);
                 }
             }

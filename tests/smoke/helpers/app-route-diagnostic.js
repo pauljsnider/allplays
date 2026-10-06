@@ -191,8 +191,12 @@ export function createAppFailureRecorder(page, { baseline = false, includeApiFai
                     }
                     if (!collecting) return;
                     const timing = routeTimings.get(page);
-                    const name = baseline ? 'boot-path-diagnostic.json' : `app-route-diagnostic${Number.isInteger(sessionIndex) && sessionIndex >= 0 ? `-session-${sessionIndex}` : ''}.json`;
-                    const file = testInfo.outputPath(name);
+                    const name = baseline ? 'boot-path-diagnostic.json' : 'app-route-diagnostic.json';
+                    // Preserve the existing workflow's exact basename allowlist.
+                    // Numeric session directories prevent setup/peer collisions.
+                    const relativePath = !baseline && Number.isInteger(sessionIndex) && sessionIndex >= 0
+                        ? path.join(`session-${sessionIndex}`, name) : name;
+                    const file = testInfo.outputPath(relativePath);
                     await mkdir(path.dirname(file), { recursive: true });
                     if (!collecting) return;
                     const diagnostic = JSON.stringify({
@@ -206,7 +210,7 @@ export function createAppFailureRecorder(page, { baseline = false, includeApiFai
                     // Retain safe reporter evidence even if artifact upload is unavailable.
                     console.log(`SMOKE_FAILURE_DIAGNOSTIC ${diagnostic}`);
                     await writeFile(file, diagnostic);
-                    if (collecting && testInfo.attach) await testInfo.attach(name, { path: file, contentType: 'application/json' });
+                    if (collecting && testInfo.attach) await testInfo.attach(relativePath, { path: file, contentType: 'application/json' });
                 })(),
                 new Promise((resolve) => { timer = setTimeout(resolve, 1_000); })
             ]);
