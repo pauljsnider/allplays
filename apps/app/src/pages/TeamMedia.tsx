@@ -30,6 +30,7 @@ import {
   addParentTeamMediaLink,
   createTeamMediaAlbumForApp,
   loadTeamMediaForApp,
+  reserveParentTeamMediaOrderRange,
   uploadParentTeamMediaFile,
   uploadParentTeamMediaPhoto,
   deleteTeamMediaItemForApp,
@@ -412,6 +413,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     });
     const uploadedItems: TeamMediaItem[] = [];
     try {
+      const reservedOrders = await reserveParentTeamMediaOrderRange(teamId, activeFolder.id, files.length);
       await runWithConcurrency(queueItems, PHOTO_UPLOAD_CONCURRENCY, async (queueItem, index) => {
         const file = files[index];
         if (!isSupportedPhotoUpload(file)) {
@@ -420,7 +422,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
           return;
         }
         try {
-          const uploadedItem = await uploadParentTeamMediaPhoto(teamId, activeFolder.id, file);
+          const uploadedItem = await uploadParentTeamMediaPhoto(teamId, activeFolder.id, file, reservedOrders[index]);
           if (uploadedItem) uploadedItems.push(uploadedItem);
           uploaded += 1;
           updateUploadQueueItem(queueItem.id, 'success');
@@ -485,6 +487,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     });
     const uploadedItems: TeamMediaItem[] = [];
     try {
+      const reservedOrders = await reserveParentTeamMediaOrderRange(teamId, activeFolder.id, files.length);
       for (const [index, queueItem] of queueItems.entries()) {
         const file = files[index];
         if (!isSupportedTeamMediaDocument(file)) {
@@ -493,7 +496,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
           continue;
         }
         try {
-          const uploadedItem = await uploadParentTeamMediaFile(teamId, activeFolder.id, file);
+          const uploadedItem = await uploadParentTeamMediaFile(teamId, activeFolder.id, file, reservedOrders[index]);
           if (uploadedItem) uploadedItems.push(uploadedItem);
           uploaded += 1;
           updateUploadQueueItem(queueItem.id, 'success');
