@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
     getDelegatedTeamContext: vi.fn(),
     getTeamMediaFolders: vi.fn(),
     getTeamMediaItemsPage: vi.fn(),
+    reserveTeamMediaOrderRange: vi.fn(),
     uploadTeamMediaPhoto: vi.fn(),
     uploadTeamMediaFile: vi.fn(),
     checkAuth: vi.fn()
@@ -21,6 +22,7 @@ vi.mock('../../js/db.js?v=4433204', () => ({
     getDelegatedTeamContext: mocks.getDelegatedTeamContext,
     getTeamMediaFolders: mocks.getTeamMediaFolders,
     getTeamMediaItemsPage: mocks.getTeamMediaItemsPage,
+    reserveTeamMediaOrderRange: mocks.reserveTeamMediaOrderRange,
     createTeamMediaFolder: vi.fn(),
     updateTeamMediaFolder: vi.fn(),
     deleteTeamMediaFolder: vi.fn(),
@@ -92,6 +94,9 @@ describe('legacy team media upload forms', () => {
             hasMore: false,
             nextCursor: null
         });
+        mocks.reserveTeamMediaOrderRange.mockImplementation(async (_teamId, _folderId, count) => (
+            Array.from({ length: count }, (_, index) => index + 10)
+        ));
         mocks.uploadTeamMediaPhoto.mockImplementation(async (_teamId, _folderId, _file, options = {}) => {
             options.onProgress?.({ percent: 45 });
             return { id: 'photo-upload' };
@@ -119,15 +124,18 @@ describe('legacy team media upload forms', () => {
             'team123',
             'folderA',
             firstPhoto,
-            expect.objectContaining({ onProgress: expect.any(Function) })
+            expect.objectContaining({ order: 10, onProgress: expect.any(Function) })
         );
         expect(mocks.uploadTeamMediaPhoto).toHaveBeenNthCalledWith(
             2,
             'team123',
             'folderA',
             secondPhoto,
-            expect.objectContaining({ onProgress: expect.any(Function) })
+            expect.objectContaining({ order: 11, onProgress: expect.any(Function) })
         );
+        expect(mocks.reserveTeamMediaOrderRange).toHaveBeenCalledWith('team123', 'folderA', 2);
+        expect(mocks.reserveTeamMediaOrderRange.mock.invocationCallOrder[0])
+            .toBeLessThan(mocks.uploadTeamMediaPhoto.mock.invocationCallOrder[0]);
         await vi.waitUntil(() => document.getElementById('team-media-alert').textContent.includes('2 photos uploaded.'));
 
         const progressRows = document.querySelectorAll('#upload-progress [data-upload-row]');

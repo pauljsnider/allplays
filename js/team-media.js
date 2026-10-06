@@ -3,6 +3,7 @@ import {
     getDelegatedTeamContext,
     getTeamMediaFolders,
     getTeamMediaItemsPage,
+    reserveTeamMediaOrderRange,
     createTeamMediaFolder,
     updateTeamMediaFolder,
     deleteTeamMediaFolder,
@@ -481,6 +482,7 @@ async function uploadSelectedFiles({ files, folderId, progressEl, validateFile, 
 
     let uploadedCount = 0;
     let failedCount = 0;
+    const reservedOrders = await reserveTeamMediaOrderRange(state.teamId, folderId, files.length);
     for (const [index, file] of files.entries()) {
         const status = progressEl.querySelector(`[data-upload-status="${index}"]`);
         const bar = progressEl.querySelector(`[data-upload-bar="${index}"]`);
@@ -488,6 +490,7 @@ async function uploadSelectedFiles({ files, folderId, progressEl, validateFile, 
             if (!validateFile(file)) throw new Error(unsupportedMessage);
             status.textContent = 'Uploading';
             await uploadFile(state.teamId, folderId, file, {
+                order: reservedOrders[index],
                 onProgress: ({ percent }) => {
                     bar.style.width = `${percent}%`;
                     status.textContent = `${percent}%`;
