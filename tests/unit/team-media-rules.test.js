@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing';
+import { doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 const privilegedTeamMediaGrantFields = ['teamMediaUploadTeamIds', 'mediaUploadTeamIds'];
+const projectId = process.env.FIRESTORE_EMULATOR_PROJECT_ID || `allplays-team-media-rules-${Date.now()}`;
 
 function teamMediaUploadCreateRule() {
     const start = rules.indexOf('function isTeamMediaUploadCreate(teamId, data) {');
@@ -143,7 +146,10 @@ describe('team media Firestore rules', () => {
         expect(rules).toContain("teamId in get(userPath).data.get('mediaUploadTeamIds', [])");
         expect(rules).toContain('function isTeamMediaUploadCounterUpdate(teamId) {');
         expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nextMediaOrder', 'updatedAt'])");
-        expect(rules).toContain("request.resource.data.get('nextMediaOrder', 0) == resource.data.get('nextMediaOrder', 0) + 1");
+        expect(rules).toContain("resource.data.get('nextMediaOrder', 0) is int");
+        expect(rules).toContain("request.resource.data.get('nextMediaOrder', 0) is int");
+        expect(rules).toContain('orderIncrease >= 1');
+        expect(rules).toContain('orderIncrease <= 20');
         expect(uploadCreateRule).toContain('return hasTeamMediaUploadGrant(teamId) &&');
         expect(uploadCreateRule).toContain('canUploadTeamMediaFolder(teamId, data.folderId)');
         expect(uploadCreateRule).toContain("data.type in ['photo', 'file']");
@@ -160,5 +166,88 @@ describe('team media Firestore rules', () => {
         expect(uploadCreateRule).not.toContain("'folderId', 'title', 'type', 'url', 'storagePath', 'uploadedBy'");
         expect(uploadCreateRule).not.toContain("'folderId', 'title', 'fileName', 'type', 'url', 'storagePath', 'uploadedBy'");
         expect(uploadCreateRule).not.toContain('data.url is string');
+    });
+
+    describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('delegated counter rules engine coverage', () => {
+        let testEnv;
+
+        beforeAll(async () => {
+            testEnv = await initializeTestEnvironment({ projectId, firestore: { rules } });
+        }, 30000);
+
+        beforeEach(async () => {
+            await testEnv.clearFirestore();
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                const firestore = context.firestore();
+                await setDoc(doc(firestore, 'teams', 'team-1'), {
+                    ownerId: 'owner-1',
+                    adminEmails: []
+                });
+                await setDoc(doc(firestore, 'users', 'uploader-1'), {
+                    teamMediaUploadTeamIds: ['team-1']
+                });
+                await setDoc(doc(firestore, 'users', 'unapproved-1'), {});
+                await setDoc(doc(firestore, 'teams', 'team-1', 'mediaFolders', 'visible-folder'), {
+                    name: 'Team album',
+                    visibility: 'team',
+                    nextMediaOrder: 10
+                });
+                await setDoc(doc(firestore, 'teams', 'team-1', 'mediaFolders', 'private-folder'), {
+                    name: 'Private album',
+                    visibility: 'private',
+                    nextMediaOrder: 10
+                });
+            });
+        }, 30000);
+
+        afterAll(async () => {
+            await testEnv?.cleanup();
+        }, 30000);
+
+        it.each(Array.from({ length: 20 }, (_, index) => index + 1))(
+            'allows a delegated integer counter increase of %i',
+            async (increase) => {
+                const firestore = testEnv.authenticatedContext('uploader-1').firestore();
+                await assertSucceeds(updateDoc(
+                    doc(firestore, 'teams', 'team-1', 'mediaFolders', 'visible-folder'),
+                    { nextMediaOrder: 10 + increase, updatedAt: serverTimestamp() }
+                ));
+            }
+        );
+
+        it.each([0, -1, 1.5, 20.5, 21])(
+            'rejects a delegated counter increase of %s',
+            async (increase) => {
+                const firestore = testEnv.authenticatedContext('uploader-1').firestore();
+                await assertFails(updateDoc(
+                    doc(firestore, 'teams', 'team-1', 'mediaFolders', 'visible-folder'),
+                    { nextMediaOrder: 10 + increase, updatedAt: serverTimestamp() }
+                ));
+            }
+        );
+
+        it('rejects delegated reservations for private folders', async () => {
+            const firestore = testEnv.authenticatedContext('uploader-1').firestore();
+            await assertFails(updateDoc(
+                doc(firestore, 'teams', 'team-1', 'mediaFolders', 'private-folder'),
+                { nextMediaOrder: 11, updatedAt: serverTimestamp() }
+            ));
+        });
+
+        it('rejects delegated reservations that update unrelated fields', async () => {
+            const firestore = testEnv.authenticatedContext('uploader-1').firestore();
+            await assertFails(updateDoc(
+                doc(firestore, 'teams', 'team-1', 'mediaFolders', 'visible-folder'),
+                { name: 'Changed', nextMediaOrder: 11, updatedAt: serverTimestamp() }
+            ));
+        });
+
+        it('rejects counter reservations from users without an upload grant', async () => {
+            const firestore = testEnv.authenticatedContext('unapproved-1').firestore();
+            await assertFails(updateDoc(
+                doc(firestore, 'teams', 'team-1', 'mediaFolders', 'visible-folder'),
+                { nextMediaOrder: 11, updatedAt: serverTimestamp() }
+            ));
+        });
     });
 });

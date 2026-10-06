@@ -2305,11 +2305,18 @@ service cloud.firestore {
     }
 
     function isTeamMediaUploadCounterUpdate(teamId) {
+      let currentOrder = resource.data.get('nextMediaOrder', 0);
+      let requestedOrder = request.resource.data.get('nextMediaOrder', 0);
+      let orderIncrease = requestedOrder - currentOrder;
       return hasTeamMediaUploadGrant(teamId) &&
              resource.data.get('visibility', 'team') == 'team' &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nextMediaOrder', 'updatedAt']) &&
-             request.resource.data.get('nextMediaOrder', 0) is number &&
-             request.resource.data.get('nextMediaOrder', 0) == resource.data.get('nextMediaOrder', 0) + 1 &&
+             resource.data.get('nextMediaOrder', 0) is int &&
+             request.resource.data.get('nextMediaOrder', 0) is int &&
+             currentOrder >= 0 &&
+             requestedOrder >= 0 &&
+             orderIncrease >= 1 &&
+             orderIncrease <= 20 &&
              request.resource.data.updatedAt == request.time;
     }
 
