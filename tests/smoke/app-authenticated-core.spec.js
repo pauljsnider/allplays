@@ -73,7 +73,7 @@ async function withAuthenticatedPage(session, callback) {
     await withAppFailureDiagnostic(session, test.info(), async () => {
         await callback(page);
         expect(issues.map((issue) => redactSmokeDiagnostic(issue, secretValues))).toEqual([]);
-    });
+    }, { includeApiFailures: true });
 }
 
 test('staff account reaches every critical app workflow with smoke fixtures', async () => {

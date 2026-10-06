@@ -132,8 +132,12 @@ export async function withAppFailureDiagnostic(session, testInfo, callback, { ba
     };
     const resourceTypes = baseline ? ['script', 'stylesheet', 'document', 'fetch', 'xhr'] : ['script', 'stylesheet', 'document'];
     if (includeApiFailures) resourceTypes.push('fetch', 'xhr', 'image', 'media', 'font');
-    const requestContext = (request) => includeApiFailures
-        ? { resourceType: request.resourceType(), service: requestService(request.url()) } : {};
+    const requestContext = (request) => {
+        if (!includeApiFailures) return {};
+        let route = '[other-route]';
+        try { route = routeTemplate(page.url()); } catch { /* The page may have closed. */ }
+        return { resourceType: request.resourceType(), service: requestService(request.url()), route };
+    };
     const listeners = {
         console: (message) => {
             if (baseline && message.type() === 'error') record({ type: 'console', error: errorKind(message.text()) });
