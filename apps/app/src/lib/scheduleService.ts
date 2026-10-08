@@ -6330,6 +6330,38 @@ export async function completeGameWrapupForApp(teamId: string, gameId: string, p
   return wrappedPayload;
 }
 
+export async function saveGameSummaryDraftForApp(
+  teamId: string,
+  gameId: string,
+  payload: { summary: string; postGameNotes?: string; practiceFeedItems?: unknown[] },
+  user: AuthUser
+) {
+  if (!teamId || !gameId) {
+    throw new Error('A scheduled game is required before saving a summary.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before saving a summary.');
+  }
+
+  const summaryPayload = {
+    summary: String(payload.summary || '').trim(),
+    ...(payload.postGameNotes !== undefined ? { postGameNotes: String(payload.postGameNotes || '').trim() } : {}),
+    ...(payload.practiceFeedItems !== undefined ? { practiceFeedItems: Array.isArray(payload.practiceFeedItems) ? payload.practiceFeedItems : [] } : {}),
+    summaryUpdatedAt: new Date(),
+    summaryUpdatedBy: user.uid
+  };
+
+  try {
+    await withTimeout(Promise.resolve(updateGame(teamId, gameId, summaryPayload)), 'Summary save');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST summary save.', 'game-summary-save', error, { fallback: 'rest', teamId, gameId });
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, summaryPayload);
+  }
+
+  return summaryPayload;
+}
+
 function buildLiveScoreUpdateDescription(score: GameScoreSnapshot) {
   return `Score update: Home ${normalizeGameScoreValue(score.homeScore)}, Away ${normalizeGameScoreValue(score.awayScore)}.`;
 }

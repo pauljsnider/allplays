@@ -79,6 +79,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
     children: [{ id: 'player-1', name: 'Avery Smith' }]
   })),
   completeGameWrapupForApp: vi.fn(),
+  saveGameSummaryDraftForApp: vi.fn(),
   loadGameDayLiveEventsForApp: vi.fn<(...args: any[]) => Promise<any[]>>(() => Promise.resolve([] as any[])),
   saveGameDaySubstitutionForApp: vi.fn((_teamId, _gameId, _user, payload) => Promise.resolve(payload)),
   updateGameScore: vi.fn(),
@@ -110,6 +111,7 @@ vi.mock('../lib/scheduleGameDayService', () => ({
   undoRecordedPlayerGameStat: scheduleServiceMocks.undoRecordedPlayerGameStat,
   saveScheduledGameLineupDraftForApp: scheduleServiceMocks.saveScheduledGameLineupDraftForApp,
   completeGameWrapupForApp: scheduleServiceMocks.completeGameWrapupForApp,
+  saveGameSummaryDraftForApp: scheduleServiceMocks.saveGameSummaryDraftForApp,
   loadGameDayLiveEventsForApp: scheduleServiceMocks.loadGameDayLiveEventsForApp,
   saveGameDaySubstitutionForApp: scheduleServiceMocks.saveGameDaySubstitutionForApp,
   updateLiveGameClockState: scheduleServiceMocks.updateLiveGameClockState,
@@ -5443,6 +5445,31 @@ describe('ScheduleEventDetail wrap-up', () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  it('reviews and saves a summary without completing the game or changing the score', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isTeamStaff: true, canUpdateScore: true, homeScore: 51, awayScore: 47, liveStatus: 'scheduled' })],
+      children: []
+    });
+    scheduleServiceMocks.saveGameSummaryDraftForApp.mockResolvedValue({ summary: 'Coach-edited summary.' });
+
+    renderScheduleEventDetail();
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Post-game wrap-up' }));
+    const summary = await screen.findByLabelText('Summary draft');
+    fireEvent.change(summary, { target: { value: 'Coach-edited summary.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Review and save summary' }));
+
+    await waitFor(() => expect(scheduleServiceMocks.saveGameSummaryDraftForApp).toHaveBeenCalledWith(
+      'team-1',
+      'game-1',
+      { summary: 'Coach-edited summary.', practiceFeedItems: [] },
+      auth.user
+    ));
+    expect(scheduleServiceMocks.completeGameWrapupForApp).not.toHaveBeenCalled();
+    expect(scheduleServiceMocks.updateGameScore).not.toHaveBeenCalled();
   });
 
   it('completes wrap-up with AI artifacts and broadcasts score corrections', async () => {
