@@ -22,7 +22,7 @@ import {
     archiveCertificate,
     canAccessCertificates,
     canViewSavedCertificate
-} from '../db.js?v=4433204';
+} from '../db.js?v=4433205';
 import { loadCompleteCertificateNarrativeStats } from '../diamond-legacy-game-context.js?v=1';
 import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443380';
 import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=443355';
