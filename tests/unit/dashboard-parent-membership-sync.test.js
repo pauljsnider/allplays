@@ -41,7 +41,7 @@ describe('dashboard parent membership sync', () => {
     it('uses the rich auth path before loading parent-linked teams', () => {
         expect(html).toContain("import { deleteTeam, getUnreadChatCounts } from './js/db.js?v=4433205';");
         expect(html).toContain("import { loadDashboardTeams } from './js/dashboard-team-load.js?v=6';");
-        expect(html).toContain("import { checkAuth } from './js/auth.js?v=4433208';");
+        expect(html).toContain("import { checkAuth } from './js/auth.js?v=4433209';");
         expect(html).toContain('function requireSyncedAuth()');
         expect(html).toContain('const user = await requireSyncedAuth();');
         // checkAuth() already merged isAdmin/profileEmail/parentOf onto `user`, so
