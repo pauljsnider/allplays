@@ -824,7 +824,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443379'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443380'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -1697,6 +1697,9 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
     if (!cleanTeamId || !cleanFolderId) throw new Error('Choose an album before uploading photos.');
     if (!currentUser?.uid) throw new Error('Sign in before uploading photos.');
     if (!isSupportedTeamMediaImage(file)) throw new Error('Choose an image file that is 10 MB or smaller.');
+    if (options?.order !== undefined && (!Number.isSafeInteger(options.order) || options.order < 0)) {
+        throw new Error('Team media order must be a non-negative safe integer.');
+    }
 
     const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${createSecureUploadToken()}-${sanitizeTeamMediaFileName(file.name)}`;
     const storageRef = ref(storage, storagePath);
@@ -1718,7 +1721,9 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
             }, reject, () => resolve(uploadTask.snapshot));
         });
         const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
-        const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
+        const order = options?.order === undefined
+            ? await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId)
+            : options.order;
         const mediaItem = {
             folderId: cleanFolderId,
             title: String(file.name || 'Uploaded photo').trim() || 'Uploaded photo',
@@ -1750,6 +1755,9 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
     if (!cleanTeamId || !cleanFolderId) throw new Error('Choose an album before uploading files.');
     if (!currentUser?.uid) throw new Error('Sign in before uploading files.');
     if (!isSupportedTeamMediaDocument(file)) throw new Error('Choose a supported document file that is 10 MB or smaller.');
+    if (options?.order !== undefined && (!Number.isSafeInteger(options.order) || options.order < 0)) {
+        throw new Error('Team media order must be a non-negative safe integer.');
+    }
 
     const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${createSecureUploadToken()}-${sanitizeTeamMediaFileName(file.name)}`;
     const storageRef = ref(storage, storagePath);
@@ -1771,7 +1779,9 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
             }, reject, () => resolve(uploadTask.snapshot));
         });
         const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
-        const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
+        const order = options?.order === undefined
+            ? await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId)
+            : options.order;
         const mediaItem = {
             folderId: cleanFolderId,
             title: String(file.name || 'Uploaded file').trim() || 'Uploaded file',

@@ -37,6 +37,7 @@ const serviceMocks = vi.hoisted(() => ({
     loadParentHouseholdInviteModel: vi.fn(),
     loadParentRegistrations: vi.fn(),
     loadTeamMediaForApp: vi.fn(),
+    reserveParentTeamMediaOrderRange: vi.fn(),
     revokeParentFamilyShare: vi.fn(),
     updateParentFamilyShareCalendars: vi.fn(),
     uploadParentTeamMediaFile: vi.fn(),
@@ -338,6 +339,13 @@ beforeEach(() => {
             itemCount: 1,
             items: [{ id: 'photo-1', title: 'Tipoff', type: 'photo', url: 'https://img.example.test/tipoff.jpg' }]
         }]
+    });
+    const nextMediaOrderByFolder = new Map();
+    serviceMocks.reserveParentTeamMediaOrderRange.mockImplementation(async (teamId, folderId, count) => {
+        const key = JSON.stringify([teamId, folderId]);
+        const start = nextMediaOrderByFolder.get(key) ?? 10;
+        nextMediaOrderByFolder.set(key, start + count);
+        return Array.from({ length: count }, (_, index) => start + index);
     });
     serviceMocks.uploadParentTeamMediaPhoto.mockResolvedValue('photo-2');
     serviceMocks.uploadParentTeamMediaFile.mockResolvedValue('file-1');
@@ -922,23 +930,25 @@ describe('React app parent tools integration', () => {
         });
 
         expect(photoButton.disabled).toBe(true);
+        expect(serviceMocks.reserveParentTeamMediaOrderRange).toHaveBeenCalledTimes(1);
+        expect(serviceMocks.reserveParentTeamMediaOrderRange).toHaveBeenCalledWith('team-1', 'folder-1', photos.length);
         expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenCalledTimes(3);
-        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1', photos[0]);
-        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(2, 'team-1', 'folder-1', photos[1]);
-        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(3, 'team-1', 'folder-1', photos[2]);
+        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1', photos[0], 10);
+        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(2, 'team-1', 'folder-1', photos[1], 11);
+        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(3, 'team-1', 'folder-1', photos[2], 12);
 
         await act(async () => {
             deferredUploads[0].resolve();
         });
         await vi.waitUntil(() => serviceMocks.uploadParentTeamMediaPhoto.mock.calls.length === 4);
-        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(4, 'team-1', 'folder-1', photos[3]);
+        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(4, 'team-1', 'folder-1', photos[3], 13);
 
         await act(async () => {
             deferredUploads[1].resolve();
             deferredUploads[2].resolve();
         });
         await vi.waitUntil(() => serviceMocks.uploadParentTeamMediaPhoto.mock.calls.length === 5);
-        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(5, 'team-1', 'folder-1', photos[4]);
+        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(5, 'team-1', 'folder-1', photos[4], 14);
 
         await act(async () => {
             deferredUploads[3].resolve();
@@ -1019,12 +1029,14 @@ describe('React app parent tools integration', () => {
             photoInput.dispatchEvent(new Event('change', { bubbles: true }));
         });
 
+        expect(serviceMocks.reserveParentTeamMediaOrderRange).toHaveBeenCalledTimes(1);
+        expect(serviceMocks.reserveParentTeamMediaOrderRange).toHaveBeenCalledWith('team-1', 'folder-1', photos.length + 1);
         expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenCalledTimes(3);
         await act(async () => {
             deferredUploads[0].reject(new Error('Upload failed.'));
         });
         await vi.waitUntil(() => serviceMocks.uploadParentTeamMediaPhoto.mock.calls.length === 4);
-        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(4, 'team-1', 'folder-1', photos[3]);
+        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(4, 'team-1', 'folder-1', photos[3], 14);
 
         await act(async () => {
             deferredUploads[1].resolve();
@@ -1059,7 +1071,7 @@ describe('React app parent tools integration', () => {
         expect(photoButton.disabled).toBe(true);
         expect(fileButton.disabled).toBe(true);
 
-        expect(serviceMocks.uploadParentTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', validFile);
+        expect(serviceMocks.uploadParentTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', validFile, 11);
         await act(async () => {
             resolveUpload();
         });
@@ -1075,12 +1087,15 @@ describe('React app parent tools integration', () => {
 
         const photoInput = container.querySelector('input[accept="image/*"]');
         const photoFile = new File(['photo'], 'photo.jpg', { type: 'image/jpeg' });
-        Object.defineProperty(photoInput, 'files', { value: [photoFile], configurable: true });
+        const secondPhotoFile = new File(['photo-2'], 'photo-2.jpg', { type: 'image/jpeg' });
+        Object.defineProperty(photoInput, 'files', { value: [photoFile, secondPhotoFile], configurable: true });
         await act(async () => {
             photoInput.dispatchEvent(new Event('change', { bubbles: true }));
         });
         await flush();
-        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenCalledWith('team-1', 'folder-1', photoFile);
+        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenCalledTimes(2);
+        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1', photoFile, 10);
+        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(2, 'team-1', 'folder-1', secondPhotoFile, 11);
 
         const fileInput = container.querySelector('input[accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx"]');
         const docFile = new File(['doc'], 'packet.pdf', { type: 'application/pdf' });
@@ -1089,7 +1104,10 @@ describe('React app parent tools integration', () => {
             fileInput.dispatchEvent(new Event('change', { bubbles: true }));
         });
         await flush();
-        expect(serviceMocks.uploadParentTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', docFile);
+        expect(serviceMocks.uploadParentTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', docFile, 12);
+        expect(serviceMocks.reserveParentTeamMediaOrderRange).toHaveBeenCalledTimes(2);
+        expect(serviceMocks.reserveParentTeamMediaOrderRange).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1', 2);
+        expect(serviceMocks.reserveParentTeamMediaOrderRange).toHaveBeenNthCalledWith(2, 'team-1', 'folder-1', 1);
 
         const inputs = Array.from(container.querySelectorAll('input.auth-input'));
         await changeValue(inputs.find((input) => input.placeholder.includes('title')), 'Replay');
