@@ -139,6 +139,16 @@ vi.mock('../../js/vendor/firebase-storage.js', () => ({
     })
 }));
 
+// Combined validation retains the real service wrappers and DB upload helpers.
+// Only unrelated service dependencies and Firebase IO are mocked.
+vi.mock('../../apps/app/src/lib/adapters/legacyParentTools', async () => ({
+    ...await import('../../js/db.js'),
+    getTeamMediaItemUrl: (await vi.importActual('../../js/team-media-utils.js')).getTeamMediaItemUrl,
+}));
+vi.mock('../../apps/app/src/lib/homeService', () => ({ loadParentScheduleSummary: vi.fn() }));
+vi.mock('../../apps/app/src/lib/parentFeeRecipientsService', () => ({ listParentTeamFeeRecipientsForApp: vi.fn() }));
+vi.mock('../../apps/app/src/lib/privateCalendarFeedResolver', () => ({ resolvePrivateTeamCalendarFeedUrl: vi.fn() }));
+
 describe('team media db ordering', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -166,6 +176,34 @@ describe('team media db ordering', () => {
             status: 200,
             blob: async () => new Blob(['copied-media'], { type: 'image/jpeg' })
         }));
+    });
+
+    it.each([
+        ['photo', 'jpg', 'image/jpeg', 'uploadParentTeamMediaPhoto'],
+        ['file', 'pdf', 'application/pdf', 'uploadParentTeamMediaFile'],
+    ])('combined %s service and DB reserve once per batch and persist input order despite reversed completion', async (_kind, extension, mime, uploadName) => {
+        const service = await import('../../apps/app/src/lib/parentToolsService.ts');
+        const first = await service.reserveParentTeamMediaOrderRange('team-1', 'folder-1', 3);
+        const files = [0, 1, 2].map((i) => new File(['data'], `input-${i}.${extension}`, {type: mime}));
+        const pending = files.map((file, i) => service[uploadName]('team-1', 'folder-1', file, first[i]));
+        const tasks = uploadTaskQueue.splice(0);
+        expect(tasks).toHaveLength(3);
+        for (const i of [2, 1, 0]) {
+            tasks[i].complete();
+            await pending[i];
+        }
+        expect(firebaseMocks.runTransaction).toHaveBeenCalledTimes(1);
+        expect(firebaseMocks.addDoc.mock.calls.map(([, item]) => [item.title, item.order])).toEqual([
+            [`input-2.${extension}`, 2], [`input-1.${extension}`, 1], [`input-0.${extension}`, 0],
+        ]);
+        const second = await service.reserveParentTeamMediaOrderRange('team-1', 'folder-1', 2);
+        expect(second).toEqual([3, 4]);
+        const next = files.slice(0, 2).map((file, i) => service[uploadName]('team-1', 'folder-1', file, second[i]));
+        uploadTaskQueue.splice(0).reverse().forEach(({complete}) => complete());
+        await Promise.all(next);
+        expect(firebaseMocks.runTransaction).toHaveBeenCalledTimes(2);
+        expect(folderState.nextMediaOrder).toBe(5);
+        expect(firebaseMocks.addDoc.mock.calls.map(([, item]) => item.order).sort()).toEqual([0, 1, 2, 3, 4]);
     });
 
     it('reserves a sequential order range with one folder transaction', async () => {
@@ -269,6 +307,46 @@ describe('team media db ordering', () => {
         }));
         expect(firebaseMocks.addDoc.mock.calls[1][1]).not.toHaveProperty('downloadUrl');
         expect(firebaseMocks.getDownloadURL).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['photo', 'tipoff.jpg', 'image/jpeg', 'uploadTeamMediaPhoto', 14],
+        ['file', 'lineup.pdf', 'application/pdf', 'uploadTeamMediaFile', 15]
+    ])('persists a preassigned order for a %s without reserving another order', async (_kind, name, type, helperName, order) => {
+        const db = await import('../../js/db.js');
+        const uploadPromise = db[helperName](
+            'team-1',
+            'folder-1',
+            new File(['payload'], name, { type }),
+            { order }
+        );
+
+        uploadTaskQueue.shift().complete();
+
+        await expect(uploadPromise).resolves.toBe('media-1');
+        expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
+        expect(firebaseMocks.addDoc).toHaveBeenCalledWith(
+            { path: 'teams/team-1/mediaItems' },
+            expect.objectContaining({ order })
+        );
+    });
+
+    it.each([
+        ['uploadTeamMediaPhoto', 'tipoff.jpg', 'image/jpeg'],
+        ['uploadTeamMediaFile', 'lineup.pdf', 'application/pdf']
+    ])('rejects an invalid preassigned order before starting %s', async (helperName, name, type) => {
+        const db = await import('../../js/db.js');
+
+        await expect(db[helperName](
+            'team-1',
+            'folder-1',
+            new File(['payload'], name, { type }),
+            { order: -1 }
+        )).rejects.toThrow('Team media order must be a non-negative safe integer.');
+
+        expect(uploadTaskQueue).toHaveLength(0);
+        expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
+        expect(firebaseMocks.addDoc).not.toHaveBeenCalled();
     });
 
     it('starts legacy folders at zero when the media order counter is missing without storing file download URLs', async () => {
