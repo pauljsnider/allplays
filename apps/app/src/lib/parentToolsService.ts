@@ -33,6 +33,7 @@ import {
   getTeamMediaFolders,
   getTeamMediaItemUrl,
   getTeamMediaItemsPage,
+  reserveTeamMediaOrderRange,
   getTeamRegistrationForm,
   hasOnlineRegistrationCheckout,
   functions,
@@ -885,13 +886,17 @@ export async function loadTeamMediaForApp(
   };
 }
 
-export async function uploadParentTeamMediaPhoto(teamId: string, folderId: string, file: File) {
-  const result = await uploadTeamMediaPhoto(teamId, folderId, file, { returnItem: true });
+export async function reserveParentTeamMediaOrderRange(teamId: string, folderId: string, count: number) {
+  return reserveTeamMediaOrderRange(teamId, folderId, count);
+}
+
+export async function uploadParentTeamMediaPhoto(teamId: string, folderId: string, file: File, order?: number) {
+  const result = await uploadTeamMediaPhoto(teamId, folderId, file, order === undefined ? { returnItem: true } : { returnItem: true, order });
   return result && typeof result === 'object' ? toTeamMediaItem(result) : null;
 }
 
-export async function uploadParentTeamMediaFile(teamId: string, folderId: string, file: File) {
-  const result = await uploadTeamMediaFile(teamId, folderId, file, { returnItem: true });
+export async function uploadParentTeamMediaFile(teamId: string, folderId: string, file: File, order?: number) {
+  const result = await uploadTeamMediaFile(teamId, folderId, file, order === undefined ? { returnItem: true } : { returnItem: true, order });
   return result && typeof result === 'object' ? toTeamMediaItem(result) : null;
 }
 
