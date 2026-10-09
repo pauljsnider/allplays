@@ -9,6 +9,7 @@ const parentToolsServiceMocks = vi.hoisted(() => ({
   bulkDeleteTeamMediaItemsForApp: vi.fn(),
   createTeamMediaAlbumForApp: vi.fn(),
   loadTeamMediaForApp: vi.fn(),
+  reserveParentTeamMediaOrderRange: vi.fn(),
   uploadParentTeamMediaFile: vi.fn(),
   uploadParentTeamMediaPhoto: vi.fn(),
   deleteTeamMediaItemForApp: vi.fn(),
@@ -24,6 +25,12 @@ const publicActionsMocks = vi.hoisted(() => ({
 
 const chatServiceMocks = vi.hoisted(() => ({
   sendTeamChatMessage: vi.fn(),
+}));
+
+const workflowTimingMocks = vi.hoisted(() => ({ end: vi.fn() }));
+vi.mock('../../apps/app/src/lib/workflowTiming', async (importOriginal) => ({
+  ...await importOriginal(),
+  startWorkflowTimer: () => ({ end: workflowTimingMocks.end }),
 }));
 
 vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => parentToolsServiceMocks);
@@ -155,6 +162,7 @@ beforeEach(() => {
   parentToolsServiceMocks.updateTeamMediaItemForApp.mockResolvedValue(undefined);
   parentToolsServiceMocks.moveTeamMediaItemForApp.mockResolvedValue(undefined);
   parentToolsServiceMocks.setTeamMediaAlbumCoverForApp.mockResolvedValue(undefined);
+  parentToolsServiceMocks.reserveParentTeamMediaOrderRange.mockReset().mockImplementation((_teamId, _folderId, count) => Promise.resolve(Array.from({ length: count }, (_, index) => index + 10)));
   chatServiceMocks.sendTeamChatMessage.mockResolvedValue({ conversationId: 'team', createdConversation: null, wantsAi: false });
 });
 
@@ -328,6 +336,61 @@ describe('React app TeamMedia upload flow', () => {
     canContribute: true,
   });
 
+  it.each([
+    { kind: 'photo', selector: 'input[accept="image/*"]', extension: 'jpg', mime: 'image/jpeg', upload: 'uploadParentTeamMediaPhoto' },
+    { kind: 'file', selector: 'input[accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx"]', extension: 'pdf', mime: 'application/pdf', upload: 'uploadParentTeamMediaFile' },
+  ])('shows failed $kind reservations and retries the same files without stale uploading rows', async ({ kind, selector, extension, mime, upload }) => {
+    const reservationError = new Error('firestore/unavailable');
+    const files = [1, 2].map((index) => new File([`data-${index}`], `retry-${index}.${extension}`, { type: mime }));
+    parentToolsServiceMocks.reserveParentTeamMediaOrderRange
+      .mockRejectedValueOnce(reservationError)
+      .mockResolvedValueOnce([30, 31]);
+    parentToolsServiceMocks[upload].mockImplementation(async (_teamId, _folderId, file, order) => ({
+      id: `uploaded-${file.name}`, title: file.name, type: kind, url: `https://example.test/${file.name}`, order,
+    }));
+    const { container, root } = await renderTeamMedia(uploadableModel());
+    try {
+      const input = container.querySelector(selector);
+      Object.defineProperty(input, 'value', { configurable: true, writable: true, value: 'selected-file' });
+      changeFiles(input, files);
+      await act(async () => {});
+
+      expect(container.textContent).toContain(`No ${kind}s uploaded. Check your connection and try again.`);
+      expect(container.textContent).not.toContain('Uploading');
+      const progress = container.querySelector('[aria-label="Upload progress list"]');
+      expect((progress.textContent.match(/Upload failed\./g) || []).length).toBe(2);
+      expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).not.toHaveBeenCalled();
+      expect(parentToolsServiceMocks.uploadParentTeamMediaFile).not.toHaveBeenCalled();
+      expect(parentToolsServiceMocks.loadTeamMediaForApp).toHaveBeenCalledTimes(1);
+      expect(input.value).toBe('');
+      for (const label of ['Photo', 'File']) {
+        const button = Array.from(container.querySelectorAll('button')).find((entry) => entry.textContent.trim() === label);
+        expect(button.disabled).toBe(false);
+      }
+      expect(workflowTimingMocks.end).toHaveBeenNthCalledWith(1, expect.objectContaining({
+        uploadedCount: 0, failedCount: 2, error: reservationError,
+      }));
+
+      input.value = 'same-selected-file';
+      changeFiles(input, files);
+      await act(async () => {});
+      expect(parentToolsServiceMocks.reserveParentTeamMediaOrderRange).toHaveBeenCalledTimes(2);
+      expect(parentToolsServiceMocks.reserveParentTeamMediaOrderRange).toHaveBeenNthCalledWith(2, 'team-1', 'folder-1', 2);
+      expect(parentToolsServiceMocks[upload]).toHaveBeenCalledTimes(2);
+      expect(parentToolsServiceMocks[upload]).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1', files[0], 30);
+      expect(parentToolsServiceMocks[upload]).toHaveBeenNthCalledWith(2, 'team-1', 'folder-1', files[1], 31);
+      expect(container.textContent).toContain(`2 ${kind}s uploaded.`);
+      expect(container.textContent).not.toContain('Check your connection');
+      expect(container.textContent).not.toContain('Uploading');
+      expect((progress.textContent.match(/Uploaded/g) || []).length).toBe(2);
+      expect((progress.textContent.match(/Upload failed\./g) || []).length).toBe(2);
+      expect(workflowTimingMocks.end).toHaveBeenNthCalledWith(2, expect.objectContaining({ uploadedCount: 2, failedCount: 0 }));
+      expect(input.value).toBe('');
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
   it('uploads every selected photo and renders per-file status rows', async () => {
     const pendingResolvers = [];
     parentToolsServiceMocks.uploadParentTeamMediaPhoto.mockImplementation(() => new Promise((resolve) => {
@@ -345,8 +408,9 @@ describe('React app TeamMedia upload flow', () => {
     await act(async () => {});
 
     expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenCalledTimes(2);
-    expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1', files[0]);
-    expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(2, 'team-1', 'folder-1', files[1]);
+    expect(parentToolsServiceMocks.reserveParentTeamMediaOrderRange).toHaveBeenCalledWith('team-1', 'folder-1', 2);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1', files[0], 10);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(2, 'team-1', 'folder-1', files[1], 11);
     expect(pendingResolvers).toHaveLength(2);
 
     await act(async () => {
@@ -365,6 +429,85 @@ describe('React app TeamMedia upload flow', () => {
     expect((container.textContent.match(/Uploaded/g) || []).length).toBe(2);
     expect(container.textContent).toContain('2 photos uploaded.');
     expect(parentToolsServiceMocks.loadTeamMediaForApp).toHaveBeenCalledTimes(1);
+
+    await act(async () => root.unmount());
+  });
+
+  it('combined photo batches retain selection order when each batch completes in reverse', async () => {
+    let nextOrder = 10;
+    const pending = new Map();
+    const completed = [];
+    parentToolsServiceMocks.reserveParentTeamMediaOrderRange.mockImplementation(async (_team, _folder, count) => {
+      const start = nextOrder;
+      nextOrder += count;
+      return Array.from({ length: count }, (_, i) => start + i);
+    });
+    parentToolsServiceMocks.uploadParentTeamMediaPhoto.mockImplementation((_team, _folder, file, order) => new Promise((resolve) => {
+      pending.set(file.name, () => {
+        completed.push(file.name);
+        resolve({ id: file.name, title: file.name, type: 'photo', url: `https://example.test/${file.name}`, order });
+      });
+    }));
+    const { container, root } = await renderTeamMedia(uploadableModel());
+    try {
+      const names = [];
+      for (const [batch, count] of [[1, 3], [2, 2]]) {
+        const files = Array.from({ length: count }, (_, i) => new File(['photo'], `batch-${batch}-${i}.jpg`, { type: 'image/jpeg' }));
+        names.push(...files.map((f) => f.name));
+        changeFiles(container.querySelector('input[accept="image/*"]'), files);
+        await act(async () => {});
+        for (const file of [...files].reverse()) await act(async () => pending.get(file.name)());
+        expect(container.textContent).toContain(`${count} photos uploaded.`);
+        expect(parentToolsServiceMocks.reserveParentTeamMediaOrderRange).toHaveBeenCalledTimes(batch);
+        const displayed = [...container.querySelectorAll('article .truncate')].map((node) => node.textContent).filter((name) => name.startsWith('batch-'));
+        expect(displayed).toEqual(names);
+      }
+      expect(completed).toEqual(['batch-1-2.jpg', 'batch-1-1.jpg', 'batch-1-0.jpg', 'batch-2-1.jpg', 'batch-2-0.jpg']);
+      expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto.mock.calls.map((call) => call[3])).toEqual([10, 11, 12, 13, 14]);
+      expect(nextOrder).toBe(15);
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
+  it('reserves one sequential order range while keeping photo uploads capped at three', async () => {
+    let activeUploads = 0;
+    let maxActiveUploads = 0;
+    parentToolsServiceMocks.uploadParentTeamMediaPhoto.mockImplementation(async (_teamId, _folderId, file, order) => {
+      activeUploads += 1;
+      maxActiveUploads = Math.max(maxActiveUploads, activeUploads);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      activeUploads -= 1;
+      return { id: `uploaded-${file.name}`, title: file.name, type: 'photo', url: `https://example.test/${file.name}`, order };
+    });
+
+    const { container, root } = await renderTeamMedia(uploadableModel());
+    const files = Array.from({ length: 5 }, (_, index) => new File([String(index)], `photo-${index}.jpg`, { type: 'image/jpeg' }));
+    changeFiles(container.querySelector('input[accept="image/*"]'), files);
+
+    await waitForAssertion(() => expect(container.textContent).toContain('5 photos uploaded.'));
+    expect(parentToolsServiceMocks.reserveParentTeamMediaOrderRange).toHaveBeenCalledTimes(1);
+    expect(parentToolsServiceMocks.reserveParentTeamMediaOrderRange).toHaveBeenCalledWith('team-1', 'folder-1', 5);
+    expect(maxActiveUploads).toBeLessThanOrEqual(3);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto.mock.calls.map((call) => call[3])).toEqual([10, 11, 12, 13, 14]);
+
+    await act(async () => root.unmount());
+  });
+
+  it('marks every photo as failed when order reservation fails', async () => {
+    parentToolsServiceMocks.reserveParentTeamMediaOrderRange.mockRejectedValue(new Error('offline'));
+    const { container, root } = await renderTeamMedia(uploadableModel());
+    const files = [
+      new File(['first'], 'tipoff.jpg', { type: 'image/jpeg' }),
+      new File(['second'], 'bench.jpg', { type: 'image/jpeg' }),
+    ];
+
+    changeFiles(container.querySelector('input[accept="image/*"]'), files);
+    await waitForAssertion(() => expect(container.textContent).toContain('No photos uploaded. Check your connection and try again.'));
+
+    expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).not.toHaveBeenCalled();
+    expect((container.textContent.match(/Upload failed\./g) || []).length).toBe(2);
+    expect(container.textContent).not.toContain('Uploading 2 photos...');
 
     await act(async () => root.unmount());
   });
@@ -388,7 +531,8 @@ describe('React app TeamMedia upload flow', () => {
     await act(async () => {});
 
     expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenCalledTimes(1);
-    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1', files[0]);
+    expect(parentToolsServiceMocks.reserveParentTeamMediaOrderRange).toHaveBeenCalledWith('team-1', 'folder-1', 2);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1', files[0], 10);
     expect(container.textContent).toContain('report.pdf');
     expect(container.textContent).toContain('waiver.docx');
     expect(container.textContent).toContain('Uploading');
@@ -399,7 +543,7 @@ describe('React app TeamMedia upload flow', () => {
     await act(async () => {});
 
     expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenCalledTimes(2);
-    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenNthCalledWith(2, 'team-1', 'folder-1', files[1]);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenNthCalledWith(2, 'team-1', 'folder-1', files[1], 11);
 
     await act(async () => {
       pendingResolvers[1](undefined);
@@ -407,6 +551,24 @@ describe('React app TeamMedia upload flow', () => {
     await act(async () => {});
 
     expect((container.textContent.match(/Uploaded/g) || []).length).toBe(2);
+
+    await act(async () => root.unmount());
+  });
+
+  it('marks every file as failed when order reservation fails', async () => {
+    parentToolsServiceMocks.reserveParentTeamMediaOrderRange.mockRejectedValue(new Error('offline'));
+    const { container, root } = await renderTeamMedia(uploadableModel());
+    const files = [
+      new File(['alpha'], 'report.pdf', { type: 'application/pdf' }),
+      new File(['beta'], 'waiver.pdf', { type: 'application/pdf' }),
+    ];
+
+    changeFiles(container.querySelector('input[accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx"]'), files);
+    await waitForAssertion(() => expect(container.textContent).toContain('No files uploaded. Check your connection and try again.'));
+
+    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).not.toHaveBeenCalled();
+    expect((container.textContent.match(/Upload failed\./g) || []).length).toBe(2);
+    expect(container.textContent).not.toContain('Uploading 2 files...');
 
     await act(async () => root.unmount());
   });
@@ -423,7 +585,7 @@ describe('React app TeamMedia upload flow', () => {
     await act(async () => {});
 
     expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenCalledTimes(1);
-    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', validFile);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', validFile, 11);
     expect(container.textContent).toContain('Unsupported file or file exceeds 10 MB.');
     expect(container.textContent).toContain('1 file uploaded; 1 failed.');
 
@@ -445,7 +607,7 @@ describe('React app TeamMedia upload flow', () => {
     changeFiles(fileInput, [file]);
     await act(async () => {});
 
-    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', file);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', file, 10);
     expect(fileInput.value).toBe('');
     expect(container.textContent).toContain('No files uploaded. Choose supported documents that are 10 MB or smaller.');
 
@@ -475,7 +637,7 @@ describe('React app TeamMedia upload flow', () => {
     await act(async () => {});
 
     expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenCalledTimes(1);
-    expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1', file);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1', file, 10);
     expect(photoInput.value).toBe('');
     expect(container.textContent).toContain('No photos uploaded. Choose image files that are 10 MB or smaller.');
 
@@ -484,7 +646,7 @@ describe('React app TeamMedia upload flow', () => {
     await act(async () => {});
 
     expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenCalledTimes(2);
-    expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(2, 'team-1', 'folder-1', file);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(2, 'team-1', 'folder-1', file, 10);
     expect(container.textContent).toContain('tipoff.jpg');
     expect((container.textContent.match(/Uploaded/g) || []).length).toBe(1);
     expect((container.textContent.match(/Upload failed\./g) || []).length).toBe(1);
