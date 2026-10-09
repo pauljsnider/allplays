@@ -15,6 +15,15 @@ function getRefreshHomeSource() {
     return homeSource.slice(start, end);
 }
 
+function getLegacyParentFeeLoaderSource() {
+    const start = legacyDbSource.indexOf('export async function listParentTeamFeeRecipients');
+    const end = legacyDbSource.indexOf('\n\nexport async function getTeamFeeBatch', start);
+    if (start === -1 || end === -1) {
+        throw new Error('Unable to extract legacy parent fee loader source.');
+    }
+    return legacyDbSource.slice(start, end);
+}
+
 describe('Home async operation contract', () => {
     it('runs primary and secondary Home loads through shared async operations', () => {
         const refreshHomeSource = getRefreshHomeSource();
@@ -89,11 +98,15 @@ describe('Home async operation contract', () => {
         expect(homeServiceSource).toContain('onPartial?.(buildParentHomeModel(partialState));');
     });
 
-    it('treats fully swallowed schedule and fee loader failures as real secondary failures', () => {
+    it('treats schedule and callable fee loader failures as real secondary failures', () => {
+        const parentFeeLoaderSource = getLegacyParentFeeLoaderSource();
+
         expect(scheduleServiceSource).toContain('const results = await Promise.allSettled([');
         expect(scheduleServiceSource).toContain("if (rsvpsResult.status === 'rejected' && (!includeOptionalDetails || results.every((result) => result.status === 'rejected'))) {");
         expect(scheduleServiceSource).toContain('throw (rsvpsResult as PromiseRejectedResult).reason;');
-        expect(legacyDbSource).toContain("if (results.length > 0 && results.every((result) => result.status === 'rejected')) {");
-        expect(legacyDbSource).toContain('throw results[0].reason;');
+        expect(parentFeeLoaderSource).toContain("httpsCallable(functions, 'listParentTeamFeeRecipients')");
+        expect(parentFeeLoaderSource).toContain('const result = await callable({});');
+        expect(parentFeeLoaderSource).toContain("throw new Error('Parent team fees response is invalid.');");
+        expect(parentFeeLoaderSource).not.toContain('Promise.allSettled');
     });
 });

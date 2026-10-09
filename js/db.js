@@ -824,7 +824,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443380'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443381'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -6277,66 +6277,16 @@ export async function rollbackParentInviteRedemption(userId, code) {
     return payload;
 }
 
-function getTeamIdFromDocPath(ref) {
-    const parts = String(ref?.path || '').split('/');
-    const teamIndex = parts.indexOf('teams');
-    return teamIndex >= 0 ? parts[teamIndex + 1] || '' : '';
-}
-
-function isAllowedParentFeeRecipient(data, userId, parentPlayerKeys) {
-    if (!data || !userId) return false;
-    if ([data.parentUserId, data.accountUserId, data.userId].includes(userId)) return true;
-    const teamId = data.teamId || '';
-    const playerId = data.playerId || data.childId || '';
-    const playerKey = data.playerKey || (teamId && playerId ? `${teamId}::${playerId}` : '');
-    return parentPlayerKeys.has(playerKey);
-}
-
-export async function listParentTeamFeeRecipients(userId, children = []) {
+export async function listParentTeamFeeRecipients(userId, _children = []) {
     if (!userId) return [];
 
-    const parentPlayerKeys = new Set((children || [])
-        .map((child) => (child?.teamId && child?.playerId ? `${child.teamId}::${child.playerId}` : ''))
-        .filter(Boolean));
-    const childLinks = [...parentPlayerKeys].map((key) => {
-        const [teamId, playerId] = key.split('::');
-        return { teamId, playerId };
-    });
-    const teamIds = [...new Set(childLinks.map((child) => child.teamId).filter(Boolean))];
-
-    const recipientsRef = collectionGroup(db, 'feeRecipients');
-    const queries = [
-        ...teamIds.flatMap((teamId) => [
-            query(recipientsRef, where('teamId', '==', teamId), where('parentUserId', '==', userId)),
-            query(recipientsRef, where('teamId', '==', teamId), where('accountUserId', '==', userId)),
-            query(recipientsRef, where('teamId', '==', teamId), where('userId', '==', userId))
-        ]),
-        ...childLinks.map((child) => query(
-            recipientsRef,
-            where('teamId', '==', child.teamId),
-            where('playerId', '==', child.playerId)
-        ))
-    ];
-
-    const results = await Promise.allSettled(queries.map((feeQuery) => getDocs(feeQuery)));
-    if (results.length > 0 && results.every((result) => result.status === 'rejected')) {
-        throw results[0].reason;
+    const callable = httpsCallable(functions, 'listParentTeamFeeRecipients');
+    const result = await callable({});
+    const items = result?.data?.items;
+    if (!Array.isArray(items)) {
+        throw new Error('Parent team fees response is invalid.');
     }
-    const feesByPath = new Map();
-
-    results.forEach((result) => {
-        if (result.status !== 'fulfilled') return;
-        result.value.docs.forEach((docSnap) => {
-            const data = { id: docSnap.id, ...docSnap.data() };
-            data.teamId = data.teamId || getTeamIdFromDocPath(docSnap.ref);
-            data.playerKey = data.playerKey || (data.teamId && data.playerId ? `${data.teamId}::${data.playerId}` : '');
-            if (isAllowedParentFeeRecipient(data, userId, parentPlayerKeys)) {
-                feesByPath.set(docSnap.ref.path, data);
-            }
-        });
-    });
-
-    return Array.from(feesByPath.values());
+    return items;
 }
 
 export async function getTeamFeeBatch(teamId, batchId) {

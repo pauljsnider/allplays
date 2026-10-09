@@ -30,7 +30,7 @@ import { listParentTeamFeeRecipientsForApp } from './parentFeeRecipientsService'
 
 const childLinks = [{ teamId: 'team-1', playerId: 'player-1' }];
 
-describe('parentFeeRecipientsService native access', () => {
+describe('parentFeeRecipientsService access', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     runtimeMocks.isNativeRuntime.mockReturnValue(true);
@@ -145,12 +145,24 @@ describe('parentFeeRecipientsService native access', () => {
     expect(authMocks.getNativeAuthIdToken).not.toHaveBeenCalled();
   });
 
-  it('keeps the existing web loader outside native runtimes', async () => {
+  it('uses the callable-backed legacy loader result in web runtimes', async () => {
     runtimeMocks.isNativeRuntime.mockReturnValue(false);
     legacyMocks.listParentTeamFeeRecipients.mockResolvedValue([{ id: 'web-fee' }]);
 
     await expect(listParentTeamFeeRecipientsForApp('parent-1', childLinks))
       .resolves.toEqual([{ id: 'web-fee' }]);
+    expect(legacyMocks.listParentTeamFeeRecipients).toHaveBeenCalledWith('parent-1', childLinks);
+    expect(httpMocks.post).not.toHaveBeenCalled();
+  });
+
+  it('propagates callable-backed legacy loader failures in web runtimes', async () => {
+    runtimeMocks.isNativeRuntime.mockReturnValue(false);
+    const failure = Object.assign(new Error('Missing or insufficient permissions.'), {
+      code: 'functions/permission-denied'
+    });
+    legacyMocks.listParentTeamFeeRecipients.mockRejectedValue(failure);
+
+    await expect(listParentTeamFeeRecipientsForApp('parent-1', childLinks)).rejects.toBe(failure);
     expect(legacyMocks.listParentTeamFeeRecipients).toHaveBeenCalledWith('parent-1', childLinks);
     expect(httpMocks.post).not.toHaveBeenCalled();
   });

@@ -18,9 +18,9 @@ const firebaseMocks = vi.hoisted(() => ({
     limit: vi.fn((count) => ({ type: 'limit', count }))
 }));
 
-vi.mock('../../js/db.js?v=4433204', () => dbMocks);
+vi.mock('../../js/db.js?v=4433205', () => dbMocks);
 vi.mock('../../js/firebase.js?v=33', () => firebaseMocks);
-vi.mock('../../js/utils.js?v=443380', () => ({
+vi.mock('../../js/utils.js?v=443381', () => ({
     escapeHtml: (value) => String(value || '')
 }));
 vi.mock('../../js/global-search-visibility.js?v=44335', () => ({
@@ -107,7 +107,7 @@ describe('legacy global search modal', () => {
     });
 
     it('opens without bootstrapping all public teams and waits for a 2-character query before public discovery', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443361');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443362');
 
         setupHeaderSearch({
             user: {
@@ -145,7 +145,7 @@ describe('legacy global search modal', () => {
     });
 
     it('uses parent team link visibility summaries without per-team fallback reads', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443361');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443362');
 
         setupHeaderSearch({
             user: {
@@ -191,7 +191,7 @@ describe('legacy global search modal', () => {
     });
 
     it('falls back to Firestore when parent links only mark app access without visibility', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443361');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443362');
 
         firebaseMocks.getDoc.mockResolvedValueOnce(firestoreDoc('team-app-access-only', {
             name: 'Stored Access Rockets',
@@ -226,7 +226,7 @@ describe('legacy global search modal', () => {
     });
 
     it('searches a query-matching private team beyond the first eight private teams', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443361');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443362');
         const privateTeams = [
             ...Array.from({ length: 8 }, (_, index) => ({
                 teamId: `team-private-${index}`,
@@ -291,7 +291,7 @@ describe('legacy global search modal', () => {
     });
 
     it('reuses completed normalized searches after clearing and reopening the modal', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443361');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443362');
 
         firebaseMocks.getDocs.mockResolvedValue({ docs: [] });
         setupHeaderSearch({
@@ -327,7 +327,7 @@ describe('legacy global search modal', () => {
     });
 
     it('coalesces identical team and player searches while their requests are in flight', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443361');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443362');
         let resolveTeamSearch;
         const playerResolvers = [];
 
@@ -363,7 +363,7 @@ describe('legacy global search modal', () => {
     });
 
     it('removes failed searches from the cache so the same query can retry', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443361');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443362');
         const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
         dbMocks.discoverPublicTeams
@@ -389,7 +389,7 @@ describe('legacy global search modal', () => {
     });
 
     it('bounds completed caches and isolates results when the user or accessible teams change', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443361');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=443362');
         const queries = Array.from({ length: 21 }, (_, index) => `q${String.fromCharCode(97 + index)}`);
 
         firebaseMocks.getDocs.mockResolvedValue({ docs: [] });
