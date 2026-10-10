@@ -7,6 +7,7 @@ import {
     updateTeamMediaFolder,
     deleteTeamMediaFolder,
     createTeamMediaLink,
+    reserveTeamMediaOrderRange,
     uploadTeamMediaFile,
     uploadTeamMediaPhoto,
     deleteTeamMediaItem,
@@ -472,7 +473,7 @@ function moveInArray(items, id, direction) {
     return next;
 }
 
-async function uploadSelectedFiles({ files, folderId, progressEl, validateFile, uploadFile, nounSingular, nounPlural, unsupportedMessage }) {
+async function uploadSelectedFiles({ files, folderId, progressEl, validateFile, uploadFile, nounSingular, nounPlural, unsupportedMessage, reserveOrders = false }) {
     progressEl.innerHTML = files.map((file, index) => `
         <div data-upload-row="${index}" class="rounded-lg border border-gray-200 p-3">
             <div class="flex justify-between gap-3"><span>${escapeHtml(file.name)}</span><span data-upload-status="${index}">Waiting</span></div>
@@ -481,6 +482,9 @@ async function uploadSelectedFiles({ files, folderId, progressEl, validateFile, 
 
     let uploadedCount = 0;
     let failedCount = 0;
+    const orders = reserveOrders
+        ? await reserveTeamMediaOrderRange(state.teamId, folderId, files.length)
+        : [];
     for (const [index, file] of files.entries()) {
         const status = progressEl.querySelector(`[data-upload-status="${index}"]`);
         const bar = progressEl.querySelector(`[data-upload-bar="${index}"]`);
@@ -488,6 +492,7 @@ async function uploadSelectedFiles({ files, folderId, progressEl, validateFile, 
             if (!validateFile(file)) throw new Error(unsupportedMessage);
             status.textContent = 'Uploading';
             await uploadFile(state.teamId, folderId, file, {
+                ...(reserveOrders ? { order: orders[index] } : {}),
                 onProgress: ({ percent }) => {
                     bar.style.width = `${percent}%`;
                     status.textContent = `${percent}%`;
@@ -744,7 +749,8 @@ els.uploadForm.addEventListener('submit', async (event) => {
         uploadFile: uploadTeamMediaPhoto,
         nounSingular: 'photo',
         nounPlural: 'photos',
-        unsupportedMessage: 'Choose an image file that is 10 MB or smaller.'
+        unsupportedMessage: 'Choose an image file that is 10 MB or smaller.',
+        reserveOrders: true
     });
     if (uploadedCount > 0) els.photoFiles.value = '';
 });
