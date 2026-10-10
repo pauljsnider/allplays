@@ -419,6 +419,10 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
         Game hub
       </Link>
 
+      <Link to={`${backTarget}&panel=wrapup`} className="secondary-button min-h-10 w-full justify-center px-4 text-sm" data-testid="standard-tracker-summary-launch">
+        Review game summary
+      </Link>
+
       <section className="app-card p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">

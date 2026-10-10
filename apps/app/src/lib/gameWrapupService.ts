@@ -252,7 +252,9 @@ export async function generateGameWrapupArtifactsForApp({
 
   const rawEvents = isDiamondGame(game)
     ? await loadCompleteDiamondWrapupEvents(teamId, gameId, game)
-    : await getGameEvents(teamId, gameId, { limit: 100 }).catch(() => []);
+    : await getGameEvents(teamId, gameId, { limit: 100 }).catch(() => {
+      throw new Error('Game play history is unavailable. Try generating the summary again when the tracker history is available.');
+    });
 
   const resolvedConfig = resolveLiveStatConfig({
     configs,

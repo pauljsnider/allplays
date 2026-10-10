@@ -1634,6 +1634,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
               open={Boolean(openPanels.wrapup)}
               onToggle={() => togglePanel('wrapup')}
             >
+              <GameSummaryReviewPanel auth={auth} event={event} onEventRefresh={onEventRefresh} />
               <GameWrapupPanel auth={auth} event={event} onScoreUpdated={onScoreUpdated} onWrapupCompleted={onWrapupCompleted} />
             </LazyGameHubPanel>
           ) : null}
@@ -2056,6 +2057,95 @@ function StatsheetImportPanel({ event, onImported }: { event: ParentScheduleEven
       {status ? <div className="mt-3"><Status tone={status.tone} message={status.message} /></div> : null}
     </div>
   )
+}
+
+function GameSummaryReviewPanel({ auth, event, onEventRefresh }: {
+  auth: AuthState;
+  event: ParentScheduleEvent;
+  onEventRefresh: () => Promise<void> | void;
+}) {
+  const [summary, setSummary] = useState(String(event.summary || ''));
+  const [practiceFeedItems, setPracticeFeedItems] = useState<PracticeFeedItem[]>(Array.isArray(event.practiceFeedItems) ? event.practiceFeedItems : []);
+  const [generating, setGenerating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ tone: 'success' | 'warning' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    setSummary(String(event.summary || ''));
+    setPracticeFeedItems(Array.isArray(event.practiceFeedItems) ? event.practiceFeedItems : []);
+  }, [event.eventKey, event.summary, event.practiceFeedItems]);
+
+  const generateDraft = async () => {
+    if (!auth.user) return;
+    if (String(event.summary || '').trim()) {
+      setStatus({ tone: 'warning', message: 'An existing saved summary was kept. Edit it manually or clear it before generating a new draft.' });
+      return;
+    }
+    setGenerating(true);
+    setStatus(null);
+    try {
+      const { generateGameWrapupArtifactsForApp } = await loadGameWrapupServiceModule();
+      const artifacts = await generateGameWrapupArtifactsForApp({
+        teamId: event.teamId,
+        gameId: event.id,
+        score: { home: Number(event.homeScore || 0), away: Number(event.awayScore || 0) },
+        notes: String(event.postGameNotes || '')
+      });
+      setSummary(artifacts.summary);
+      setPracticeFeedItems(artifacts.practiceFeedItems);
+      setStatus({ tone: 'success', message: 'Draft ready for review. Nothing has been saved yet.' });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to generate a summary draft. Try again.' });
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const saveSummary = async () => {
+    if (!auth.user) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      const { saveGameSummaryDraftForApp } = await loadScheduleGameDayService();
+      await saveGameSummaryDraftForApp(event.teamId, event.id, {
+        summary,
+        practiceFeedItems
+      }, auth.user);
+      await onEventRefresh();
+      setStatus({ tone: 'success', message: 'Summary saved. Scores, stats, events, and notes were unchanged.' });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to save the summary. Try again.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const busy = generating || saving;
+  return (
+    <div className="mt-3 rounded-2xl border border-sky-200 bg-sky-50/70 p-3" data-testid="game-summary-review">
+      <div className="text-xs font-black uppercase tracking-[0.04em] text-sky-700">Game summary review</div>
+      <div className="mt-1 text-sm font-semibold text-gray-950">Generate an editable draft, review it, and save it when it is ready. Saving does not complete the game.</div>
+      <label className="mt-3 block text-xs font-black uppercase tracking-[0.04em] text-gray-500" htmlFor="game-summary-draft">Summary draft</label>
+      <textarea
+        id="game-summary-draft"
+        className="mt-1 min-h-32 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+        value={summary}
+        onChange={(changeEvent) => setSummary(changeEvent.target.value)}
+        placeholder="Write a game summary, or generate a draft to review."
+        disabled={busy}
+      />
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button type="button" className="secondary-button min-h-11 px-4 text-sm" onClick={() => void generateDraft()} disabled={busy} data-testid="generate-summary-draft">
+          {generating ? 'Generating draft' : 'Generate summary draft'}
+        </button>
+        <button type="button" className="primary-button min-h-11 px-4 text-sm" onClick={() => void saveSummary()} disabled={busy}>
+          {saving ? 'Saving summary' : 'Review and save summary'}
+        </button>
+        <span className="text-xs font-semibold text-gray-500">AI is optional. Review the text before saving.</span>
+      </div>
+      {status ? <div className="mt-3"><Status tone={status.tone} message={status.message} /></div> : null}
+    </div>
+  );
 }
 
 function GameWrapupPanel({ auth, event, onScoreUpdated, onWrapupCompleted }: {
