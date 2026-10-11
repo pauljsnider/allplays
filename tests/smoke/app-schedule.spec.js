@@ -804,6 +804,10 @@ async function mockScheduleModules(page, options = {}) {
                     return readOptions.fullHistory ? events : events.slice(-20);
                 }
 
+                export async function saveGameSummaryDraftForApp(teamId, gameId, payload) {
+                    window.__APP_GAME_SUMMARY_DRAFTS__ = [...(window.__APP_GAME_SUMMARY_DRAFTS__ || []), { teamId, gameId, ...payload }];
+                    return { summary: payload?.summary || '' };
+                }
                 export async function saveGameDaySubstitutionForApp(teamId, gameId, user, payload) {
                     window.__scheduleCalls.liveEvents = (window.__scheduleCalls.liveEvents || []).concat({ action: 'substitution', teamId, gameId, userId: user?.uid || null, payload });
                     return {

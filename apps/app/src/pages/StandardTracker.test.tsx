@@ -212,6 +212,7 @@ describe('StandardTracker', () => {
     renderTracker();
 
     expect(await screen.findByTestId('standard-tracker-grid')).toBeTruthy();
+    expect(screen.getByTestId('standard-tracker-summary-launch').getAttribute('href')).toBe('/schedule/team-1/game-1?section=game&panel=wrapup');
     expect(scheduleServiceMocks.loadScorekeeperStatTrackerConfigsForApp).toHaveBeenCalledWith('team-1', auth.user, expect.objectContaining({
       id: 'game-1',
       canUpdateScore: true
