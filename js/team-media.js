@@ -482,13 +482,20 @@ async function uploadSelectedFiles({ files, folderId, progressEl, validateFile, 
 
     let uploadedCount = 0;
     let failedCount = 0;
-    const orders = reserveOrders
-        ? await reserveTeamMediaOrderRange(state.teamId, folderId, files.length)
-        : [];
+    let orders = [];
+    let reservationError = null;
+    if (reserveOrders) {
+        try {
+            orders = await reserveTeamMediaOrderRange(state.teamId, folderId, files.length);
+        } catch (error) {
+            reservationError = error;
+        }
+    }
     for (const [index, file] of files.entries()) {
         const status = progressEl.querySelector(`[data-upload-status="${index}"]`);
         const bar = progressEl.querySelector(`[data-upload-bar="${index}"]`);
         try {
+            if (reservationError) throw reservationError;
             if (!validateFile(file)) throw new Error(unsupportedMessage);
             status.textContent = 'Uploading';
             await uploadFile(state.teamId, folderId, file, {
