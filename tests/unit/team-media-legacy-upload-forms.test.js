@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
     getDelegatedTeamContext: vi.fn(),
     getTeamMediaFolders: vi.fn(),
     getTeamMediaItemsPage: vi.fn(),
+    reserveTeamMediaOrderRange: vi.fn(),
     uploadTeamMediaPhoto: vi.fn(),
     uploadTeamMediaFile: vi.fn(),
     checkAuth: vi.fn()
@@ -21,6 +22,7 @@ vi.mock('../../js/db.js?v=4433205', () => ({
     getDelegatedTeamContext: mocks.getDelegatedTeamContext,
     getTeamMediaFolders: mocks.getTeamMediaFolders,
     getTeamMediaItemsPage: mocks.getTeamMediaItemsPage,
+    reserveTeamMediaOrderRange: mocks.reserveTeamMediaOrderRange,
     createTeamMediaFolder: vi.fn(),
     updateTeamMediaFolder: vi.fn(),
     deleteTeamMediaFolder: vi.fn(),
@@ -92,6 +94,9 @@ describe('legacy team media upload forms', () => {
             hasMore: false,
             nextCursor: null
         });
+        mocks.reserveTeamMediaOrderRange.mockImplementation(async (_teamId, _folderId, count) => (
+            Array.from({ length: count }, (_, index) => 40 + index)
+        ));
         mocks.uploadTeamMediaPhoto.mockImplementation(async (_teamId, _folderId, _file, options = {}) => {
             options.onProgress?.({ percent: 45 });
             return { id: 'photo-upload' };
@@ -119,15 +124,19 @@ describe('legacy team media upload forms', () => {
             'team123',
             'folderA',
             firstPhoto,
-            expect.objectContaining({ onProgress: expect.any(Function) })
+            expect.objectContaining({ order: 40, onProgress: expect.any(Function) })
         );
         expect(mocks.uploadTeamMediaPhoto).toHaveBeenNthCalledWith(
             2,
             'team123',
             'folderA',
             secondPhoto,
-            expect.objectContaining({ onProgress: expect.any(Function) })
+            expect.objectContaining({ order: 41, onProgress: expect.any(Function) })
         );
+        expect(mocks.reserveTeamMediaOrderRange).toHaveBeenCalledOnce();
+        expect(mocks.reserveTeamMediaOrderRange).toHaveBeenCalledWith('team123', 'folderA', 2);
+        expect(mocks.reserveTeamMediaOrderRange.mock.invocationCallOrder[0])
+            .toBeLessThan(mocks.uploadTeamMediaPhoto.mock.invocationCallOrder[0]);
         await vi.waitUntil(() => document.getElementById('team-media-alert').textContent.includes('2 photos uploaded.'));
 
         const progressRows = document.querySelectorAll('#upload-progress [data-upload-row]');
@@ -137,6 +146,29 @@ describe('legacy team media upload forms', () => {
         expect(document.getElementById('team-media-alert').className).toContain('bg-green-50');
         expect(mocks.getTeamMediaFolders).toHaveBeenCalledTimes(2);
         expect(fileInput.value).toBe('');
+    });
+
+    it('reports every selected photo as failed when order reservation rejects', async () => {
+        mocks.reserveTeamMediaOrderRange.mockRejectedValueOnce(new Error('Unable to reserve photo order.'));
+        await loadTeamMediaModule();
+
+        const fileInput = document.getElementById('photo-files');
+        const photos = [
+            new File(['photo-one'], 'photo-one.jpg', { type: 'image/jpeg' }),
+            new File(['photo-two'], 'photo-two.png', { type: 'image/png' })
+        ];
+        document.getElementById('photo-folder').value = 'folderA';
+        setSelectedFiles(fileInput, photos);
+
+        submitForm(document.getElementById('photo-upload-form'));
+
+        await vi.waitUntil(() => document.getElementById('team-media-alert').textContent.includes('0 photos uploaded, 2 failed.'));
+        expect(mocks.uploadTeamMediaPhoto).not.toHaveBeenCalled();
+        expect(document.querySelector('[data-upload-status="0"]').textContent).toBe('Unable to reserve photo order.');
+        expect(document.querySelector('[data-upload-status="1"]').textContent).toBe('Unable to reserve photo order.');
+        expect(document.querySelector('[data-upload-status="0"]').className).toContain('text-red-700');
+        expect(document.querySelector('[data-upload-status="1"]').className).toContain('text-red-700');
+        expect(document.getElementById('team-media-alert').className).toContain('bg-red-50');
     });
 
     it('keeps unsupported legacy file uploads out of storage while preserving the selected folder', async () => {

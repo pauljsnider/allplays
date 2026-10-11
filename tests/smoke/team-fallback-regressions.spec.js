@@ -481,6 +481,9 @@ export async function createTeamMediaFolder() {}
 export async function updateTeamMediaFolder() {}
 export async function deleteTeamMediaFolder() {}
 export async function createTeamMediaLink() {}
+export async function reserveTeamMediaOrderRange(teamId, folderId, count = 1) {
+    return Array.from({ length: count }, (_, index) => index);
+}
 export async function uploadTeamMediaPhoto() {}
 export async function uploadTeamMediaFile() {}
 export async function deleteTeamMediaItem() {}
@@ -511,6 +514,9 @@ export async function createTeamMediaFolder() {}
 export async function updateTeamMediaFolder() {}
 export async function deleteTeamMediaFolder() {}
 export async function createTeamMediaLink() {}
+export async function reserveTeamMediaOrderRange(teamId, folderId, count = 1) {
+    return Array.from({ length: count }, (_, index) => index);
+}
 export async function uploadTeamMediaPhoto() {}
 export async function uploadTeamMediaFile() {}
 export async function deleteTeamMediaItem() {}
@@ -543,6 +549,9 @@ export async function updateTeamMediaFolder() {}
 export async function deleteTeamMediaFolder() {}
 export async function createTeamMediaLink(teamId, folderId, payload) {
     window.__TEAM_MEDIA_CALLS__.push({ type: 'link', teamId, folderId, title: payload.title, url: payload.url });
+}
+export async function reserveTeamMediaOrderRange(teamId, folderId, count = 1) {
+    return Array.from({ length: count }, (_, index) => index);
 }
 export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {}) {
     window.__TEAM_MEDIA_CALLS__.push({ type: 'photo', teamId, folderId, fileName: file.name });
