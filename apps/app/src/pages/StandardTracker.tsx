@@ -37,6 +37,7 @@ type TrackerStatus = {
 };
 
 type TrackerService = ReturnType<typeof createDefaultStatTrackingService>;
+type NoteDraftPhase = 'closed' | 'editing' | 'recording' | 'reviewing';
 
 function normalizeScoreValue(value: unknown) {
   const parsed = Number(value);
@@ -73,6 +74,93 @@ function getTeamScoreSide(event: ParentScheduleEvent | null): 'home' | 'away' {
 
 function getOpponentScoreSide(event: ParentScheduleEvent | null): 'home' | 'away' {
   return event?.isHome === false ? 'home' : 'away';
+}
+
+function VoiceNoteDraftPanel() {
+  const [phase, setPhase] = useState<NoteDraftPhase>('closed');
+  const [text, setText] = useState('');
+
+  if (phase === 'closed') {
+    return (
+      <section className="app-card p-3" aria-labelledby="voice-note-draft-title">
+        <div id="voice-note-draft-title" className="text-sm font-black text-gray-950">Voice-note draft</div>
+        <p className="mt-1 text-xs font-semibold text-gray-500">Capture a typed, unsaved thought without changing the game record.</p>
+        <button
+          type="button"
+          className="secondary-button mt-3 min-h-11 w-full justify-center px-4 text-sm"
+          onClick={() => setPhase('editing')}
+        >
+          Open note draft
+        </button>
+      </section>
+    );
+  }
+
+  const isReviewing = phase === 'reviewing';
+  const isRecording = phase === 'recording';
+
+  const discard = () => {
+    setText('');
+    setPhase('closed');
+  };
+
+  return (
+    <section className="app-card border-amber-200 p-3" aria-labelledby="voice-note-draft-title">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <div id="voice-note-draft-title" className="text-sm font-black text-gray-950">Voice-note draft</div>
+          <div className="mt-1 inline-flex rounded-full bg-amber-100 px-2 py-1 text-[11px] font-black uppercase tracking-[0.04em] text-amber-900">
+            Unsaved note draft
+          </div>
+        </div>
+      </div>
+      <p className="mt-2 text-xs font-semibold text-gray-600">This draft exists only on this screen and will be lost when you leave.</p>
+      <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900" role="status" aria-live="polite">
+        {isRecording
+          ? 'Voice draft active. Microphone capture is not connected yet; keep typing your note.'
+          : isReviewing
+            ? 'Voice draft stopped. Review the typed note or edit it again.'
+            : 'Type a fallback note, or start the voice-draft workflow when you are ready.'}
+      </div>
+      <label className="mt-3 block text-xs font-black uppercase tracking-[0.04em] text-gray-600" htmlFor="standard-tracker-note-draft">
+        Typed note draft
+      </label>
+      <textarea
+        id="standard-tracker-note-draft"
+        className="auth-input mt-1 min-h-28 resize-y"
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        readOnly={isReviewing}
+        placeholder="Add a coaching observation..."
+      />
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        {isRecording ? (
+          <>
+            <button type="button" className="primary-button min-h-11 justify-center px-3 text-sm" onClick={() => setPhase('reviewing')}>
+              Stop voice draft
+            </button>
+            <button type="button" className="secondary-button min-h-11 justify-center px-3 text-sm" onClick={() => setPhase('editing')}>
+              Cancel voice draft
+            </button>
+          </>
+        ) : (
+          <>
+            {isReviewing ? (
+              <button type="button" className="secondary-button min-h-11 justify-center px-3 text-sm" onClick={() => setPhase('editing')}>
+                Edit note draft
+              </button>
+            ) : null}
+            <button type="button" className="primary-button min-h-11 justify-center px-3 text-sm" onClick={() => setPhase('recording')}>
+              Start voice draft
+            </button>
+          </>
+        )}
+        <button type="button" className="secondary-button col-span-2 min-h-11 justify-center border-rose-200 px-3 text-sm text-rose-700" onClick={discard}>
+          Discard draft
+        </button>
+      </div>
+    </section>
+  );
 }
 
 function normalizeOpponentStatsValue(value: unknown) {
@@ -449,6 +537,7 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
 
       {!accessDenied && config ? (
         <>
+          <VoiceNoteDraftPanel key={`${auth.user?.uid || 'anonymous'}:${decodedTeamId}:${decodedEventId}`} />
           <section className="app-card p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0">
