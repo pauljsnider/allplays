@@ -5465,9 +5465,46 @@ describe('ScheduleEventDetail wrap-up', () => {
     await waitFor(() => expect(scheduleServiceMocks.saveGameSummaryDraftForApp).toHaveBeenCalledWith(
       'team-1',
       'game-1',
-      { summary: 'Coach-edited summary.', practiceFeedItems: [] },
+      { summary: 'Coach-edited summary.' },
       auth.user
     ));
+    expect(scheduleServiceMocks.completeGameWrapupForApp).not.toHaveBeenCalled();
+    expect(scheduleServiceMocks.updateGameScore).not.toHaveBeenCalled();
+  });
+
+  it('saves only the reviewed summary after generating AI artifacts', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isTeamStaff: true, canUpdateScore: true, liveStatus: 'scheduled' })],
+      children: []
+    });
+    gameWrapupServiceMocks.generateGameWrapupArtifactsForApp.mockResolvedValue({
+      summary: 'Bears finished strong.',
+      practiceFeedItems: [{
+        weakness: 'Closeouts',
+        evidence: 'Late rotations',
+        drillCategory: 'Defense',
+        urgency: 'high',
+        addedAt: '2026-06-10T18:00:00.000Z'
+      }]
+    });
+    scheduleServiceMocks.saveGameSummaryDraftForApp.mockResolvedValue({ summary: 'Bears finished strong.' });
+
+    renderScheduleEventDetail();
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Post-game wrap-up' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate summary draft' }));
+
+    await waitFor(() => expect(screen.getByLabelText('Summary draft')).toHaveValue('Bears finished strong.'));
+    fireEvent.click(screen.getByRole('button', { name: 'Review and save summary' }));
+
+    await waitFor(() => expect(scheduleServiceMocks.saveGameSummaryDraftForApp).toHaveBeenCalledWith(
+      'team-1',
+      'game-1',
+      { summary: 'Bears finished strong.' },
+      auth.user
+    ));
+    expect(scheduleServiceMocks.saveGameSummaryDraftForApp.mock.calls[0]?.[2]).not.toHaveProperty('practiceFeedItems');
     expect(scheduleServiceMocks.completeGameWrapupForApp).not.toHaveBeenCalled();
     expect(scheduleServiceMocks.updateGameScore).not.toHaveBeenCalled();
   });

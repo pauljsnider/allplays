@@ -2065,15 +2065,13 @@ function GameSummaryReviewPanel({ auth, event, onEventRefresh }: {
   onEventRefresh: () => Promise<void> | void;
 }) {
   const [summary, setSummary] = useState(String(event.summary || ''));
-  const [practiceFeedItems, setPracticeFeedItems] = useState<PracticeFeedItem[]>(Array.isArray(event.practiceFeedItems) ? event.practiceFeedItems : []);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'warning' | 'error'; message: string } | null>(null);
 
   useEffect(() => {
     setSummary(String(event.summary || ''));
-    setPracticeFeedItems(Array.isArray(event.practiceFeedItems) ? event.practiceFeedItems : []);
-  }, [event.eventKey, event.summary, event.practiceFeedItems]);
+  }, [event.eventKey, event.summary]);
 
   const generateDraft = async () => {
     if (!auth.user) return;
@@ -2092,7 +2090,6 @@ function GameSummaryReviewPanel({ auth, event, onEventRefresh }: {
         notes: String(event.postGameNotes || '')
       });
       setSummary(artifacts.summary);
-      setPracticeFeedItems(artifacts.practiceFeedItems);
       setStatus({ tone: 'success', message: 'Draft ready for review. Nothing has been saved yet.' });
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to generate a summary draft. Try again.' });
@@ -2108,8 +2105,7 @@ function GameSummaryReviewPanel({ auth, event, onEventRefresh }: {
     try {
       const { saveGameSummaryDraftForApp } = await loadScheduleGameDayService();
       await saveGameSummaryDraftForApp(event.teamId, event.id, {
-        summary,
-        practiceFeedItems
+        summary
       }, auth.user);
       await onEventRefresh();
       setStatus({ tone: 'success', message: 'Summary saved. Scores, stats, events, and notes were unchanged.' });

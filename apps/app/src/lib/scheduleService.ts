@@ -6333,7 +6333,7 @@ export async function completeGameWrapupForApp(teamId: string, gameId: string, p
 export async function saveGameSummaryDraftForApp(
   teamId: string,
   gameId: string,
-  payload: { summary: string; postGameNotes?: string; practiceFeedItems?: unknown[] },
+  payload: { summary: string },
   user: AuthUser
 ) {
   if (!teamId || !gameId) {
@@ -6345,8 +6345,6 @@ export async function saveGameSummaryDraftForApp(
 
   const summaryPayload = {
     summary: String(payload.summary || '').trim(),
-    ...(payload.postGameNotes !== undefined ? { postGameNotes: String(payload.postGameNotes || '').trim() } : {}),
-    ...(payload.practiceFeedItems !== undefined ? { practiceFeedItems: Array.isArray(payload.practiceFeedItems) ? payload.practiceFeedItems : [] } : {}),
     summaryUpdatedAt: new Date(),
     summaryUpdatedBy: user.uid
   };
