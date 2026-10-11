@@ -7,6 +7,7 @@ export {
   undoRecordedPlayerGameStat,
   saveScheduledGameLineupDraftForApp,
   completeGameWrapupForApp,
+  saveGameSummaryDraftForApp,
   loadGameDayLiveEventsForApp,
   saveGameDaySubstitutionForApp,
   updateLiveGameClockState,
