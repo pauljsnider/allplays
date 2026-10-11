@@ -256,6 +256,52 @@ describe('StandardTracker', () => {
     });
   });
 
+  it('supports a local-only editable voice-note draft lifecycle without changing game data', async () => {
+    renderTracker();
+
+    expect(await screen.findByTestId('standard-tracker-grid')).toBeTruthy();
+    const service = statTrackingMocks.getLastService();
+    vi.mocked(window.localStorage.setItem).mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open note draft' }));
+
+    expect(screen.getByText('Unsaved note draft')).toBeTruthy();
+    expect(screen.getByText('This draft exists only on this screen and will be lost when you leave.')).toBeTruthy();
+    const textarea = screen.getByRole('textbox', { name: 'Typed note draft' });
+    fireEvent.change(textarea, { target: { value: 'Watch the left wing' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice draft' }));
+    expect(screen.getByText('Voice draft active. Microphone capture is not connected yet; keep typing your note.')).toBeTruthy();
+    fireEvent.change(textarea, { target: { value: 'Watch the left wing after substitutions' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop voice draft' }));
+    expect(screen.getByRole('textbox', { name: 'Typed note draft' }).hasAttribute('readonly')).toBe(true);
+    expect(screen.getByDisplayValue('Watch the left wing after substitutions')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit note draft' }));
+    expect(screen.getByRole('textbox', { name: 'Typed note draft' }).hasAttribute('readonly')).toBe(false);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Typed note draft' }), {
+      target: { value: 'Watch the left wing after every substitution' }
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice draft' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel voice draft' }));
+    expect(screen.getByDisplayValue('Watch the left wing after every substitution')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Start voice draft' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Discard draft' }));
+    expect(screen.getByRole('button', { name: 'Open note draft' })).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: 'Typed note draft' })).toBeNull();
+
+    expect(service.recordEvent).not.toHaveBeenCalled();
+    expect(service.undoLastEvent).not.toHaveBeenCalled();
+    expect(scheduleServiceMocks.adjustGameScore).not.toHaveBeenCalled();
+    expect(window.localStorage.setItem).not.toHaveBeenCalled();
+    expect(screen.getByText('1-0')).toBeTruthy();
+    expect(screen.getByText('0 events')).toBeTruthy();
+    expect(within(screen.getByTestId('standard-tracker-row-p1')).getByText('+1 / 0')).toBeTruthy();
+  });
+
   it('hydrates persisted opponent tallies before recording linked roster stats', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
@@ -517,6 +563,7 @@ describe('StandardTracker', () => {
 
     expect(await screen.findByText('Tracker access is limited to staff scorekeepers for scheduled games.')).toBeTruthy();
     expect(screen.queryByTestId('standard-tracker-grid')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open note draft' })).toBeNull();
     expect(scheduleServiceMocks.loadScorekeeperStatTrackerConfigsForApp).not.toHaveBeenCalled();
     expect(scheduleServiceMocks.loadHomeScoringPlayers).not.toHaveBeenCalled();
     expect(statTrackingMocks.createDefaultStatTrackingService).not.toHaveBeenCalled();
@@ -532,6 +579,7 @@ describe('StandardTracker', () => {
 
     expect(await screen.findByText('Tracker access is limited to staff scorekeepers for scheduled games.')).toBeTruthy();
     expect(screen.queryByTestId('standard-tracker-grid')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open note draft' })).toBeNull();
     expect(scheduleServiceMocks.loadScorekeeperStatTrackerConfigsForApp).not.toHaveBeenCalled();
     expect(scheduleServiceMocks.loadHomeScoringPlayers).not.toHaveBeenCalled();
     expect(scheduleServiceMocks.loadOpponentScoringPlayers).not.toHaveBeenCalled();
