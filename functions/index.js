@@ -471,7 +471,6 @@ const {
   anonymizeAccountReplayArchiveAttribution,
   buildChatConversationAccountScrubPlan,
   buildDeletionAuditId,
-  buildRegistrationAccountScrubPlan,
   buildRosterParentScrubPlan,
   buildTeamAccountGrantScrubPlan,
   collectAccountRosterScopes,
@@ -489,6 +488,7 @@ const {
   getAccountTeamPermissionQueryFields,
   getLegacyUnscopedProfilePhotoPaths,
   loadOwnedTeams,
+  scrubAccountRegistrationPages,
   shouldProcessAccountDeletionRequest,
   summarizeOwnedTeams
 } = require('./account-deletion-core.cjs');
@@ -22633,41 +22633,24 @@ async function scrubAccountChatConversationMembership(uid, email) {
 }
 
 async function scrubAccountRegistrationLinks(uid, email) {
-  const documentsByPath = new Map();
-  const queryPromises = [
-    firestore.collectionGroup('registrations').where('submittedByUserId', '==', uid).get()
+  const queries = [
+    firestore.collectionGroup('registrations').where('submittedByUserId', '==', uid)
   ];
   const normalizedEmail = String(email || '').trim().toLowerCase();
   if (normalizedEmail) {
-    queryPromises.push(
-      firestore.collectionGroup('registrations').where('guardian.email', '==', normalizedEmail).get(),
-      firestore.collectionGroup('registrations').where('guardian.guardianEmail', '==', normalizedEmail).get(),
-      firestore.collectionGroup('registrations').where('guardianEmail', '==', normalizedEmail).get()
+    queries.push(
+      firestore.collectionGroup('registrations').where('guardian.email', '==', normalizedEmail),
+      firestore.collectionGroup('registrations').where('guardian.guardianEmail', '==', normalizedEmail),
+      firestore.collectionGroup('registrations').where('guardianEmail', '==', normalizedEmail)
     );
   }
-  const snapshots = await Promise.all(queryPromises);
-  snapshots.forEach((snapshot) => (snapshot.docs || []).forEach((document) => {
-    if (document?.ref?.path) documentsByPath.set(document.ref.path, document);
-  }));
-
-  const writes = [];
-  documentsByPath.forEach((document) => {
-    const plan = buildRegistrationAccountScrubPlan(document.data() || {}, { uid, email });
-    if (!plan.changed) return;
-    const update = {
-      ...plan.update,
-      updatedAt: admin.firestore.Timestamp.now()
-    };
-    plan.fieldsToDelete.forEach((field) => {
-      update[field] = admin.firestore.FieldValue.delete();
-    });
-    writes.push({ ref: document.ref, update });
+  return scrubAccountRegistrationPages({
+    firestore,
+    queries,
+    accountIdentity: { uid, email },
+    deleteFieldValue: () => admin.firestore.FieldValue.delete(),
+    updatedAt: admin.firestore.Timestamp.now()
   });
-  for (let index = 0; index < writes.length; index += 200) {
-    const batch = firestore.batch();
-    writes.slice(index, index + 200).forEach(({ ref, update }) => batch.update(ref, update));
-    await batch.commit();
-  }
 }
 
 exports.processAccountDeletionRequest = functions
