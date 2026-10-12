@@ -18,6 +18,14 @@ function listenerHandle(): VoiceListenerHandle {
   return { remove: vi.fn().mockResolvedValue(undefined) } as VoiceListenerHandle;
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
+}
+
 describe('voice service lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -79,16 +87,78 @@ describe('voice service lifecycle', () => {
   it('preserves a retryable failure and classifies network errors', async () => {
     const service = createVoiceService(adapter);
     const errorListener = vi.fn();
+    const snapshots: Array<{ state: string; text?: string }> = [];
     adapter.addErrorListener.mockImplementation(async (listener) => {
       errorListener.mockImplementation(listener);
       return listenerHandle();
     });
-    await service.start({});
-    const stop = service.stop();
+    service.subscribe(({ state, result }) => snapshots.push({ state, text: result?.text }));
+    await service.start({ language: 'es-MX' });
+    adapter.addPartialResultsListener.mock.calls[0][0]({ accumulatedText: 'borrador' });
     errorListener({ code: 'network', message: 'offline', sessionId: 1 });
-    await expect(stop).rejects.toMatchObject({ code: 'network_failed' } satisfies Partial<VoiceServiceError>);
+    await vi.waitFor(() => expect(service.state).toBe('failure'));
+    await expect(service.stop()).resolves.toEqual({ text: 'borrador' });
+    expect(snapshots).toContainEqual({ state: 'failure', text: 'borrador' });
     expect(service.state).toBe('failure');
     await expect(service.retry()).resolves.toBeUndefined();
+    expect(adapter.start).toHaveBeenLastCalledWith({ language: 'es-MX', partialResults: true });
     expect(adapter.start).toHaveBeenCalledTimes(2);
+  });
+
+  it('cancels a start while permission acquisition is pending', async () => {
+    const permission = deferred<{ speechRecognition: 'granted' }>();
+    adapter.checkPermissions.mockReturnValueOnce(permission.promise);
+    const service = createVoiceService(adapter);
+
+    const start = service.start({ language: 'en-US' });
+    await vi.waitFor(() => expect(adapter.checkPermissions).toHaveBeenCalled());
+    const stop = service.stop();
+    permission.resolve({ speechRecognition: 'granted' });
+
+    await expect(stop).resolves.toBeNull();
+    await expect(start).resolves.toBeUndefined();
+    expect(adapter.start).not.toHaveBeenCalled();
+    expect(service.state).toBe('idle');
+  });
+
+  it('converts force-stop and fallback-stop failures to a cleaned-up typed failure', async () => {
+    const partialHandle = listenerHandle();
+    const stateHandle = listenerHandle();
+    const errorHandle = listenerHandle();
+    adapter.addPartialResultsListener.mockResolvedValueOnce(partialHandle);
+    adapter.addListeningStateListener.mockResolvedValueOnce(stateHandle);
+    adapter.addErrorListener.mockResolvedValueOnce(errorHandle);
+    adapter.forceStop.mockRejectedValueOnce(new Error('force stop failed'));
+    adapter.stop.mockRejectedValueOnce(new Error('stop failed'));
+    const service = createVoiceService(adapter);
+
+    await service.start({});
+    await expect(service.stop()).rejects.toMatchObject({ code: 'recognition_failed' } satisfies Partial<VoiceServiceError>);
+
+    expect(service.state).toBe('failure');
+    expect(partialHandle.remove).toHaveBeenCalledOnce();
+    expect(stateHandle.remove).toHaveBeenCalledOnce();
+    expect(errorHandle.remove).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['listening-state', 'addListeningStateListener', 1],
+    ['error', 'addErrorListener', 2]
+  ] as const)('rolls back registered listeners when %s listener registration fails', async (_name, method, removedCount) => {
+    const partialHandle = listenerHandle();
+    const stateHandle = listenerHandle();
+    adapter.addPartialResultsListener.mockResolvedValueOnce(partialHandle);
+    if (method === 'addListeningStateListener') {
+      adapter.addListeningStateListener.mockRejectedValueOnce(new Error('registration failed'));
+    } else {
+      adapter.addListeningStateListener.mockResolvedValueOnce(stateHandle);
+      adapter.addErrorListener.mockRejectedValueOnce(new Error('registration failed'));
+    }
+    const service = createVoiceService(adapter);
+
+    await expect(service.start({})).rejects.toMatchObject({ code: 'recognition_failed' } satisfies Partial<VoiceServiceError>);
+
+    expect(partialHandle.remove).toHaveBeenCalledOnce();
+    expect(stateHandle.remove).toHaveBeenCalledTimes(removedCount === 2 ? 1 : 0);
   });
 });

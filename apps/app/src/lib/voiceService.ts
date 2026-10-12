@@ -147,7 +147,14 @@ export function createVoiceService(adapter: VoiceRecognitionAdapter = voiceRecog
   let completionPromise: Promise<VoiceTranscriptResult | null> | null = null;
   let transcript = '';
   let handles: VoiceListenerHandle[] = [];
+  let stopRequested = false;
+  let lastStartOptions: SpeechRecognitionStartOptions | null = null;
   const subscribers = new Set<(snapshot: VoiceServiceSnapshot) => void>();
+
+  const draftResult = (): VoiceTranscriptResult | undefined => {
+    const text = transcript.trim();
+    return text ? { text } : undefined;
+  };
 
   const snapshot = (): VoiceServiceSnapshot => ({
     state: currentState,
@@ -169,12 +176,14 @@ export function createVoiceService(adapter: VoiceRecognitionAdapter = voiceRecog
     await Promise.all(activeHandles.map((handle) => handle.remove().catch(() => undefined)));
   };
 
+  const isCaptureActive = () => currentState === 'recording' || currentState === 'transcribing';
+
   const settle = async (result: VoiceTranscriptResult | null, error?: VoiceServiceError) => {
     if (completionSettled) return;
     completionSettled = true;
     await removeListeners();
     if (error) {
-      emit('failure', undefined, error);
+      emit('failure', draftResult(), error);
       completionReject?.(error);
     } else if (result) {
       emit('success', result);
@@ -203,38 +212,73 @@ export function createVoiceService(adapter: VoiceRecognitionAdapter = voiceRecog
     }
   };
 
-  const begin = async (options: SpeechRecognitionStartOptions) => {
-    emit('permission');
+  const begin = async (options: SpeechRecognitionStartOptions, preserveTranscript = false) => {
+    if (!preserveTranscript) transcript = '';
+    completionSettled = false;
+    completionPromise = null;
+    completionResolve = null;
+    completionReject = null;
+    const preservedDraft = draftResult();
+    emit('permission', preservedDraft);
     try {
       const available = await adapter.available();
+      if (stopRequested) {
+        emit('idle', preservedDraft);
+        return;
+      }
       if (!available.available) {
         throw new VoiceServiceError('unavailable', 'Voice recognition is not available on this device.');
       }
       let permissions = await adapter.checkPermissions();
+      if (stopRequested) {
+        emit('idle', preservedDraft);
+        return;
+      }
       if (permissions.speechRecognition !== 'granted') {
         permissions = await adapter.requestPermissions();
+      }
+      if (stopRequested) {
+        emit('idle', preservedDraft);
+        return;
       }
       if (permissions.speechRecognition !== 'granted') {
         throw new VoiceServiceError('permission_denied', 'Microphone and speech recognition permission was denied.');
       }
-      emit('idle');
-      transcript = '';
+      emit('idle', preservedDraft);
       completionSettled = false;
       completionPromise = new Promise<VoiceTranscriptResult | null>((resolve, reject) => {
         completionResolve = resolve;
         completionReject = reject;
       });
+      // Native errors may arrive before a caller waits in stop(). Keep the
+      // promise observable by stop() without allowing a rejected promise to go
+      // permanently unhandled.
+      void completionPromise.catch(() => undefined);
       const partialHandle = await adapter.addPartialResultsListener((event) => {
         transcript = event.accumulatedText || event.accumulated || event.matches?.[0] || transcript;
       });
+      handles.push(partialHandle);
+      if (stopRequested) {
+        await settle(null);
+        return;
+      }
       const stateHandle = await adapter.addListeningStateListener((event) => {
         if (event.status === 'stopped' || event.state === 'stopped') void finishFromPlugin();
       });
+      handles.push(stateHandle);
+      if (stopRequested) {
+        await settle(null);
+        return;
+      }
       const errorHandle = await adapter.addErrorListener((event) => {
         void settle(null, voiceErrorFromNative(event));
       });
-      handles = [partialHandle, stateHandle, errorHandle];
-      emit('recording');
+      handles.push(errorHandle);
+      if (stopRequested) {
+        await settle(null);
+        return;
+      }
+      emit('recording', preservedDraft);
       await adapter.start({ ...options, partialResults: true });
     } catch (error) {
       const typedError = error instanceof VoiceServiceError ? error : voiceErrorFromNative(error);
@@ -252,19 +296,36 @@ export function createVoiceService(adapter: VoiceRecognitionAdapter = voiceRecog
         return startPromise || Promise.resolve();
       }
       if (currentState === 'failure' || currentState === 'success') emit('idle');
-      startPromise = begin(options);
+      stopRequested = false;
+      lastStartOptions = { ...options };
+      startPromise = begin(lastStartOptions);
       return startPromise;
     },
     async stop() {
-      if (currentState === 'idle' || currentState === 'permission' || currentState === 'success' || currentState === 'failure') {
+      if (currentState === 'idle' || currentState === 'success' || currentState === 'failure') {
         return currentResult || null;
       }
       if (stopPromise) return stopPromise;
       stopPromise = (async () => {
+        if (currentState === 'permission') {
+          stopRequested = true;
+          try {
+            await startPromise;
+          } catch {
+            return currentResult || null;
+          }
+          if (!isCaptureActive()) return currentResult || null;
+        }
         try {
           await adapter.forceStop({ timeout: 1200 });
         } catch {
-          await adapter.stop();
+          try {
+            await adapter.stop();
+          } catch (error) {
+            const typedError = voiceErrorFromNative(error);
+            await settle(null, typedError);
+            throw typedError;
+          }
         }
         return completionPromise ? await completionPromise : null;
       })();
@@ -276,8 +337,12 @@ export function createVoiceService(adapter: VoiceRecognitionAdapter = voiceRecog
     },
     async retry() {
       if (currentState !== 'failure') return;
-      emit('idle');
-      await this.start({ partialResults: true });
+      const preservedDraft = draftResult();
+      emit('idle', preservedDraft);
+      stopRequested = false;
+      const options = { ...(lastStartOptions || {}) };
+      startPromise = begin(options, true);
+      await startPromise;
     },
     subscribe(listener) {
       subscribers.add(listener);
