@@ -205,6 +205,10 @@ describe('Capacitor native config', () => {
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
 
+        expect(rootPackage.engines.node).toBe('>=22.19.0');
+        expect(rootPackageLock.packages[''].engines.node).toBe('>=22.19.0');
+        expect(appPackage.engines.node).toBe('>=22.19.0');
+        expect(appPackageLock.packages[''].engines.node).toBe('>=22.19.0');
         expect(rootPackage.dependencies.jsdom).toBe('^30.1.2');
         expect(rootPackageLock.packages[''].dependencies.jsdom).toBe('^30.1.2');
         expect(rootPackageLock.packages['node_modules/jsdom'].version).toBe('30.1.2');
