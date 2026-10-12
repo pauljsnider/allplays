@@ -11,14 +11,47 @@ import type {
 
 export type VoiceListenerHandle = PluginListenerHandle;
 
-type NativeSpeechRecognitionPlugin = typeof import('@capgo/capacitor-speech-recognition')['SpeechRecognition'];
+export type VoiceServiceState = 'permission' | 'idle' | 'recording' | 'transcribing' | 'success' | 'failure';
+
+export type VoiceServiceErrorCode = 'permission_denied' | 'unavailable' | 'recognition_failed' | 'network_failed' | 'transcription_failed';
+
+export class VoiceServiceError extends Error {
+  readonly code: VoiceServiceErrorCode;
+  readonly cause?: unknown;
+
+  constructor(code: VoiceServiceErrorCode, message: string, options?: { cause?: unknown }) {
+    super(message);
+    this.name = 'VoiceServiceError';
+    this.code = code;
+    if (options?.cause !== undefined) this.cause = options.cause;
+  }
+}
+
+export interface VoiceTranscriptResult {
+  text: string;
+}
+
+export interface VoiceServiceSnapshot {
+  state: VoiceServiceState;
+  result?: VoiceTranscriptResult;
+  error?: VoiceServiceError;
+}
+
+export interface VoiceService {
+  readonly state: VoiceServiceState;
+  start(options: SpeechRecognitionStartOptions): Promise<void>;
+  stop(): Promise<VoiceTranscriptResult | null>;
+  retry(): Promise<void>;
+  subscribe(listener: (snapshot: VoiceServiceSnapshot) => void): () => void;
+}
+
+type NativeSpeechRecognitionPlugin = (typeof import('@capgo/capacitor-speech-recognition'))['SpeechRecognition'];
 
 let nativeSpeechRecognitionPromise: Promise<NativeSpeechRecognitionPlugin> | null = null;
 
 function loadNativeSpeechRecognition(): Promise<NativeSpeechRecognitionPlugin> {
   if (!nativeSpeechRecognitionPromise) {
-    nativeSpeechRecognitionPromise = import('@capgo/capacitor-speech-recognition')
-      .then((module) => module.SpeechRecognition);
+    nativeSpeechRecognitionPromise = import('@capgo/capacitor-speech-recognition').then((module) => module.SpeechRecognition);
   }
   return nativeSpeechRecognitionPromise;
 }
@@ -72,3 +105,265 @@ export const voiceRecognition = {
     return (await loadNativeSpeechRecognition()).addListener('error', listener);
   }
 };
+
+type VoiceRecognitionAdapter = Pick<
+  typeof voiceRecognition,
+  | 'available'
+  | 'checkPermissions'
+  | 'requestPermissions'
+  | 'start'
+  | 'stop'
+  | 'forceStop'
+  | 'getLastPartialResult'
+  | 'addPartialResultsListener'
+  | 'addListeningStateListener'
+  | 'addErrorListener'
+>;
+
+function voiceErrorFromNative(error: unknown): VoiceServiceError {
+  const nativeError = error as (Partial<SpeechRecognitionErrorEvent> & { code?: string; error?: string }) | null;
+  const code = String(nativeError?.code || nativeError?.error || '').toLowerCase();
+  const errorCode: VoiceServiceErrorCode = code === 'network' ? 'network_failed' : 'recognition_failed';
+  return new VoiceServiceError(
+    errorCode,
+    nativeError?.message || (error instanceof Error ? error.message : 'Voice recognition failed. Try again.'),
+    { cause: error }
+  );
+}
+
+/**
+ * Bounded speech-capture lifecycle. The service exposes transcripts only; the
+ * native plugin owns microphone buffers and they are never retained or emitted.
+ */
+export function createVoiceService(adapter: VoiceRecognitionAdapter = voiceRecognition): VoiceService {
+  let currentState: VoiceServiceState = 'idle';
+  let currentError: VoiceServiceError | undefined;
+  let currentResult: VoiceTranscriptResult | undefined;
+  let startPromise: Promise<void> | null = null;
+  let startPending = false;
+  let stopPromise: Promise<VoiceTranscriptResult | null> | null = null;
+  let completionSettled = false;
+  let completionResolve: ((result: VoiceTranscriptResult | null) => void) | null = null;
+  let completionReject: ((error: VoiceServiceError) => void) | null = null;
+  let completionPromise: Promise<VoiceTranscriptResult | null> | null = null;
+  let transcript = '';
+  let handles: VoiceListenerHandle[] = [];
+  let stopRequested = false;
+  let lastStartOptions: SpeechRecognitionStartOptions | null = null;
+  const subscribers = new Set<(snapshot: VoiceServiceSnapshot) => void>();
+
+  const draftResult = (): VoiceTranscriptResult | undefined => {
+    const text = transcript.trim();
+    return text ? { text } : undefined;
+  };
+
+  const snapshot = (): VoiceServiceSnapshot => ({
+    state: currentState,
+    ...(currentResult ? { result: currentResult } : {}),
+    ...(currentError ? { error: currentError } : {})
+  });
+
+  const emit = (state: VoiceServiceState, result?: VoiceTranscriptResult, error?: VoiceServiceError) => {
+    currentState = state;
+    currentResult = result;
+    currentError = error;
+    const next = snapshot();
+    subscribers.forEach((listener) => listener(next));
+  };
+
+  const removeListeners = async () => {
+    const activeHandles = handles;
+    handles = [];
+    await Promise.all(activeHandles.map((handle) => handle.remove().catch(() => undefined)));
+  };
+
+  const isCaptureActive = () => currentState === 'recording' || currentState === 'transcribing';
+
+  const settle = async (result: VoiceTranscriptResult | null, error?: VoiceServiceError) => {
+    if (completionSettled) return;
+    completionSettled = true;
+    await removeListeners();
+    if (error) {
+      emit('failure', draftResult(), error);
+      completionReject?.(error);
+    } else if (result) {
+      emit('success', result);
+      completionResolve?.(result);
+    } else {
+      emit('idle');
+      completionResolve?.(null);
+    }
+    completionResolve = null;
+    completionReject = null;
+  };
+
+  const finishFromPlugin = async () => {
+    if (completionSettled) return;
+    emit('transcribing');
+    try {
+      const partial = await adapter.getLastPartialResult();
+      const text = (partial.text || partial.matches?.[0] || transcript).trim();
+      if (!text) {
+        await settle(null, new VoiceServiceError('transcription_failed', 'No transcription was returned.'));
+        return;
+      }
+      await settle({ text });
+    } catch (error) {
+      await settle(null, voiceErrorFromNative(error));
+    }
+  };
+
+  const begin = async (options: SpeechRecognitionStartOptions, preserveTranscript = false) => {
+    if (!preserveTranscript) transcript = '';
+    completionSettled = false;
+    completionPromise = null;
+    completionResolve = null;
+    completionReject = null;
+    const preservedDraft = draftResult();
+    emit('permission', preservedDraft);
+    try {
+      const available = await adapter.available();
+      if (stopRequested) {
+        emit('idle', preservedDraft);
+        return;
+      }
+      if (!available.available) {
+        throw new VoiceServiceError('unavailable', 'Voice recognition is not available on this device.');
+      }
+      let permissions = await adapter.checkPermissions();
+      if (stopRequested) {
+        emit('idle', preservedDraft);
+        return;
+      }
+      if (permissions.speechRecognition !== 'granted') {
+        permissions = await adapter.requestPermissions();
+      }
+      if (stopRequested) {
+        emit('idle', preservedDraft);
+        return;
+      }
+      if (permissions.speechRecognition !== 'granted') {
+        throw new VoiceServiceError('permission_denied', 'Microphone and speech recognition permission was denied.');
+      }
+      emit('idle', preservedDraft);
+      completionSettled = false;
+      completionPromise = new Promise<VoiceTranscriptResult | null>((resolve, reject) => {
+        completionResolve = resolve;
+        completionReject = reject;
+      });
+      // Native errors may arrive before a caller waits in stop(). Keep the
+      // promise observable by stop() without allowing a rejected promise to go
+      // permanently unhandled.
+      void completionPromise.catch(() => undefined);
+      const partialHandle = await adapter.addPartialResultsListener((event) => {
+        transcript = event.accumulatedText || event.accumulated || event.matches?.[0] || transcript;
+      });
+      handles.push(partialHandle);
+      if (stopRequested) {
+        await settle(null);
+        return;
+      }
+      const stateHandle = await adapter.addListeningStateListener((event) => {
+        if (event.status === 'stopped' || event.state === 'stopped') void finishFromPlugin();
+      });
+      handles.push(stateHandle);
+      if (stopRequested) {
+        await settle(null);
+        return;
+      }
+      const errorHandle = await adapter.addErrorListener((event) => {
+        void settle(null, voiceErrorFromNative(event));
+      });
+      handles.push(errorHandle);
+      if (stopRequested) {
+        await settle(null);
+        return;
+      }
+      emit('recording', preservedDraft);
+      await adapter.start({ ...options, partialResults: true });
+    } catch (error) {
+      const typedError = error instanceof VoiceServiceError ? error : voiceErrorFromNative(error);
+      await settle(null, typedError);
+      throw typedError;
+    }
+  };
+
+  const launchBegin = (options: SpeechRecognitionStartOptions, preserveTranscript = false) => {
+    startPending = true;
+    const pending = begin(options, preserveTranscript);
+    startPromise = pending;
+    void pending.then(
+      () => {
+        if (startPromise === pending) startPending = false;
+      },
+      () => {
+        if (startPromise === pending) startPending = false;
+      }
+    );
+    return pending;
+  };
+
+  return {
+    get state() {
+      return currentState;
+    },
+    async start(options) {
+      if (startPending || currentState === 'recording' || currentState === 'transcribing') {
+        return startPromise || Promise.resolve();
+      }
+      if (currentState === 'failure' || currentState === 'success') emit('idle');
+      stopRequested = false;
+      lastStartOptions = { ...options };
+      return launchBegin(lastStartOptions);
+    },
+    async stop() {
+      if (!startPending && (currentState === 'idle' || currentState === 'success' || currentState === 'failure')) {
+        return currentResult || null;
+      }
+      if (stopPromise) return stopPromise;
+      stopPromise = (async () => {
+        if (startPending) {
+          stopRequested = true;
+          try {
+            await startPromise;
+          } catch {
+            return currentResult || null;
+          }
+          if (!isCaptureActive()) return currentResult || null;
+        }
+        try {
+          await adapter.forceStop({ timeout: 1200 });
+        } catch {
+          try {
+            await adapter.stop();
+          } catch (error) {
+            const typedError = voiceErrorFromNative(error);
+            await settle(null, typedError);
+            throw typedError;
+          }
+        }
+        return completionPromise ? await completionPromise : null;
+      })();
+      try {
+        return await stopPromise;
+      } finally {
+        stopPromise = null;
+      }
+    },
+    async retry() {
+      if (currentState !== 'failure') return;
+      const preservedDraft = draftResult();
+      emit('idle', preservedDraft);
+      stopRequested = false;
+      const options = { ...(lastStartOptions || {}) };
+      await launchBegin(options, true);
+    },
+    subscribe(listener) {
+      subscribers.add(listener);
+      listener(snapshot());
+      return () => subscribers.delete(listener);
+    }
+  };
+}
+
+export const voiceService = createVoiceService();
