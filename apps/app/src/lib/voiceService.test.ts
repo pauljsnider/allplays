@@ -100,9 +100,27 @@ describe('voice service lifecycle', () => {
     await expect(service.stop()).resolves.toEqual({ text: 'borrador' });
     expect(snapshots).toContainEqual({ state: 'failure', text: 'borrador' });
     expect(service.state).toBe('failure');
-    await expect(service.retry()).resolves.toBeUndefined();
+    await expect(Promise.all([service.retry(), service.retry()])).resolves.toEqual([undefined, undefined]);
     expect(adapter.start).toHaveBeenLastCalledWith({ language: 'es-MX', partialResults: true });
     expect(adapter.start).toHaveBeenCalledTimes(2);
+  });
+
+  it('classifies transcription retrieval failures separately and preserves the draft', async () => {
+    const service = createVoiceService(adapter);
+    const failures: VoiceServiceError[] = [];
+    service.subscribe(({ error }) => {
+      if (error) failures.push(error);
+    });
+    adapter.getLastPartialResult.mockRejectedValueOnce(new Error('malformed transcription response'));
+
+    await service.start({});
+    adapter.addPartialResultsListener.mock.calls[0][0]({ accumulatedText: 'keep this draft' });
+    const stop = service.stop();
+    adapter.addListeningStateListener.mock.calls[0][0]({ state: 'stopped' });
+
+    await expect(stop).resolves.toEqual({ text: 'keep this draft' });
+    expect(service.state).toBe('failure');
+    expect(failures[failures.length - 1]).toMatchObject({ code: 'transcription_failed' });
   });
 
   it('cancels a start while permission acquisition is pending', async () => {

@@ -131,6 +131,17 @@ function voiceErrorFromNative(error: unknown): VoiceServiceError {
   );
 }
 
+function transcriptionErrorFromNative(error: unknown): VoiceServiceError {
+  const nativeError = error as (Partial<SpeechRecognitionErrorEvent> & { code?: string; error?: string }) | null;
+  const code = String(nativeError?.code || nativeError?.error || '').toLowerCase();
+  if (code === 'network') return voiceErrorFromNative(error);
+  return new VoiceServiceError(
+    'transcription_failed',
+    nativeError?.message || (error instanceof Error ? error.message : 'Voice transcription failed. Try again.'),
+    { cause: error }
+  );
+}
+
 /**
  * Bounded speech-capture lifecycle. The service exposes transcripts only; the
  * native plugin owns microphone buffers and they are never retained or emitted.
@@ -142,6 +153,7 @@ export function createVoiceService(adapter: VoiceRecognitionAdapter = voiceRecog
   let startPromise: Promise<void> | null = null;
   let startPending = false;
   let stopPromise: Promise<VoiceTranscriptResult | null> | null = null;
+  let retryPromise: Promise<void> | null = null;
   let completionSettled = false;
   let completionResolve: ((result: VoiceTranscriptResult | null) => void) | null = null;
   let completionReject: ((error: VoiceServiceError) => void) | null = null;
@@ -184,8 +196,9 @@ export function createVoiceService(adapter: VoiceRecognitionAdapter = voiceRecog
     completionSettled = true;
     await removeListeners();
     if (error) {
-      emit('failure', draftResult(), error);
-      completionReject?.(error);
+      const preservedDraft = draftResult();
+      emit('failure', preservedDraft, error);
+      completionResolve?.(preservedDraft || null);
     } else if (result) {
       emit('success', result);
       completionResolve?.(result);
@@ -209,7 +222,7 @@ export function createVoiceService(adapter: VoiceRecognitionAdapter = voiceRecog
       }
       await settle({ text });
     } catch (error) {
-      await settle(null, voiceErrorFromNative(error));
+      await settle(null, transcriptionErrorFromNative(error));
     }
   };
 
@@ -351,12 +364,21 @@ export function createVoiceService(adapter: VoiceRecognitionAdapter = voiceRecog
       }
     },
     async retry() {
+      if (retryPromise) return retryPromise;
       if (currentState !== 'failure') return;
-      const preservedDraft = draftResult();
-      emit('idle', preservedDraft);
-      stopRequested = false;
-      const options = { ...(lastStartOptions || {}) };
-      await launchBegin(options, true);
+      const pendingRetry = (async () => {
+        const preservedDraft = draftResult();
+        emit('idle', preservedDraft);
+        stopRequested = false;
+        const options = { ...(lastStartOptions || {}) };
+        await launchBegin(options, true);
+      })();
+      retryPromise = pendingRetry;
+      try {
+        await pendingRetry;
+      } finally {
+        if (retryPromise === pendingRetry) retryPromise = null;
+      }
     },
     subscribe(listener) {
       subscribers.add(listener);
