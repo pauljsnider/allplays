@@ -140,6 +140,7 @@ export function createVoiceService(adapter: VoiceRecognitionAdapter = voiceRecog
   let currentError: VoiceServiceError | undefined;
   let currentResult: VoiceTranscriptResult | undefined;
   let startPromise: Promise<void> | null = null;
+  let startPending = false;
   let stopPromise: Promise<VoiceTranscriptResult | null> | null = null;
   let completionSettled = false;
   let completionResolve: ((result: VoiceTranscriptResult | null) => void) | null = null;
@@ -287,27 +288,41 @@ export function createVoiceService(adapter: VoiceRecognitionAdapter = voiceRecog
     }
   };
 
+  const launchBegin = (options: SpeechRecognitionStartOptions, preserveTranscript = false) => {
+    startPending = true;
+    const pending = begin(options, preserveTranscript);
+    startPromise = pending;
+    void pending.then(
+      () => {
+        if (startPromise === pending) startPending = false;
+      },
+      () => {
+        if (startPromise === pending) startPending = false;
+      }
+    );
+    return pending;
+  };
+
   return {
     get state() {
       return currentState;
     },
     async start(options) {
-      if (startPromise && (currentState === 'permission' || currentState === 'recording' || currentState === 'transcribing')) {
+      if (startPending || currentState === 'recording' || currentState === 'transcribing') {
         return startPromise || Promise.resolve();
       }
       if (currentState === 'failure' || currentState === 'success') emit('idle');
       stopRequested = false;
       lastStartOptions = { ...options };
-      startPromise = begin(lastStartOptions);
-      return startPromise;
+      return launchBegin(lastStartOptions);
     },
     async stop() {
-      if (currentState === 'idle' || currentState === 'success' || currentState === 'failure') {
+      if (!startPending && (currentState === 'idle' || currentState === 'success' || currentState === 'failure')) {
         return currentResult || null;
       }
       if (stopPromise) return stopPromise;
       stopPromise = (async () => {
-        if (currentState === 'permission') {
+        if (startPending) {
           stopRequested = true;
           try {
             await startPromise;
@@ -341,8 +356,7 @@ export function createVoiceService(adapter: VoiceRecognitionAdapter = voiceRecog
       emit('idle', preservedDraft);
       stopRequested = false;
       const options = { ...(lastStartOptions || {}) };
-      startPromise = begin(options, true);
-      await startPromise;
+      await launchBegin(options, true);
     },
     subscribe(listener) {
       subscribers.add(listener);

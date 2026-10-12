@@ -121,6 +121,60 @@ describe('voice service lifecycle', () => {
     expect(service.state).toBe('idle');
   });
 
+  it('cancels a start while listener registration is pending', async () => {
+    const partialHandle = deferred<VoiceListenerHandle>();
+    adapter.addPartialResultsListener.mockReturnValueOnce(partialHandle.promise);
+    const service = createVoiceService(adapter);
+
+    const start = service.start({ language: 'en-US' });
+    await vi.waitFor(() => expect(adapter.addPartialResultsListener).toHaveBeenCalled());
+    expect(service.state).toBe('idle');
+    const stop = service.stop();
+    partialHandle.resolve(listenerHandle());
+
+    await expect(stop).resolves.toBeNull();
+    await expect(start).resolves.toBeUndefined();
+    expect(adapter.addListeningStateListener).not.toHaveBeenCalled();
+    expect(adapter.start).not.toHaveBeenCalled();
+    expect(service.state).toBe('idle');
+  });
+
+  it('reuses a pending start while listener registration is pending', async () => {
+    const partialHandle = deferred<VoiceListenerHandle>();
+    adapter.addPartialResultsListener.mockReturnValueOnce(partialHandle.promise);
+    const service = createVoiceService(adapter);
+
+    const firstStart = service.start({ language: 'en-US' });
+    await vi.waitFor(() => expect(adapter.addPartialResultsListener).toHaveBeenCalled());
+    expect(service.state).toBe('idle');
+    const secondStart = service.start({ language: 'en-US' });
+    partialHandle.resolve(listenerHandle());
+
+    await expect(Promise.all([firstStart, secondStart])).resolves.toEqual([undefined, undefined]);
+    expect(adapter.addPartialResultsListener).toHaveBeenCalledOnce();
+    expect(adapter.addListeningStateListener).toHaveBeenCalledOnce();
+    expect(adapter.addErrorListener).toHaveBeenCalledOnce();
+    expect(adapter.start).toHaveBeenCalledOnce();
+  });
+
+  it('waits for a pending native start before force-stopping capture', async () => {
+    const nativeStart = deferred<{ matches: string[] }>();
+    adapter.start.mockReturnValueOnce(nativeStart.promise);
+    const service = createVoiceService(adapter);
+
+    const start = service.start({ language: 'en-US' });
+    await vi.waitFor(() => expect(adapter.start).toHaveBeenCalled());
+    const stop = service.stop();
+    expect(adapter.forceStop).not.toHaveBeenCalled();
+
+    nativeStart.resolve({ matches: [] });
+    await expect(start).resolves.toBeUndefined();
+    await vi.waitFor(() => expect(adapter.forceStop).toHaveBeenCalledOnce());
+    adapter.addListeningStateListener.mock.calls[0][0]({ state: 'stopped' });
+
+    await expect(stop).resolves.toEqual({ text: 'hello draft' });
+  });
+
   it('converts force-stop and fallback-stop failures to a cleaned-up typed failure', async () => {
     const partialHandle = listenerHandle();
     const stateHandle = listenerHandle();
