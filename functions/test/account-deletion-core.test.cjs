@@ -5,6 +5,8 @@ const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const {
+  ACCOUNT_REGISTRATION_SCRUB_BATCH_SIZE,
+  ACCOUNT_REGISTRATION_SCRUB_PAGE_SIZE,
   buildChatConversationAccountScrubPlan,
   buildDeletionAuditId,
   buildRegistrationAccountScrubPlan,
@@ -25,7 +27,8 @@ const {
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   shouldProcessAccountDeletionRequest,
-  normalizeConfirmation
+  normalizeConfirmation,
+  scrubAccountRegistrationPages
 } = require('../account-deletion-core.cjs');
 
 const recentAuthTime = Math.floor(Date.now() / 1000);
@@ -292,6 +295,175 @@ test('anonymizes account-linked registrations without deleting team records', ()
       'submittedByName'
     ]
   });
+});
+
+function createRegistrationScrubHarness(seed, { failOnceAtCommit = 0 } = {}) {
+  const documents = new Map(Object.entries(seed).map(([path, data]) => [path, structuredClone(data)]));
+  const deleteField = Object.freeze({ deleteField: true });
+  const queryLimits = [];
+  const batchSizes = [];
+  let activeReads = 0;
+  let peakConcurrentReads = 0;
+  let commitCount = 0;
+  let pendingFailureCommit = failOnceAtCommit;
+
+  const getField = (data, field) => field.split('.').reduce((value, part) => value?.[part], data);
+  const applyUpdate = (data, update) => {
+    Object.entries(update).forEach(([field, value]) => {
+      if (value === deleteField) delete data[field];
+      else data[field] = structuredClone(value);
+    });
+  };
+  const createQuery = (field, value) => ({
+    limit(pageSize) {
+      queryLimits.push({ field, pageSize });
+      return {
+        async get() {
+          activeReads += 1;
+          peakConcurrentReads = Math.max(peakConcurrentReads, activeReads);
+          await new Promise((resolve) => setImmediate(resolve));
+          const docs = [...documents.entries()]
+            .filter(([, data]) => getField(data, field) === value)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .slice(0, pageSize)
+            .map(([path, data]) => ({
+              ref: { path },
+              data: () => structuredClone(data)
+            }));
+          activeReads -= 1;
+          return { docs, empty: docs.length === 0 };
+        }
+      };
+    }
+  });
+
+  return {
+    batchSizes,
+    deleteField,
+    documents,
+    firestore: {
+      batch() {
+        const writes = [];
+        return {
+          update(ref, update) {
+            writes.push({ ref, update });
+          },
+          async commit() {
+            commitCount += 1;
+            batchSizes.push(writes.length);
+            if (commitCount === pendingFailureCommit) {
+              pendingFailureCommit = 0;
+              throw new Error('injected registration batch failure');
+            }
+            writes.forEach(({ ref, update }) => applyUpdate(documents.get(ref.path), update));
+          }
+        };
+      }
+    },
+    get peakConcurrentReads() {
+      return peakConcurrentReads;
+    },
+    queries: [
+      createQuery('submittedByUserId', 'deleted-user'),
+      createQuery('guardian.email', 'deleted@example.com'),
+      createQuery('guardian.guardianEmail', 'deleted@example.com'),
+      createQuery('guardianEmail', 'deleted@example.com')
+    ],
+    queryLimits
+  };
+}
+
+test('scrubs registration identity queries sequentially in bounded pages and batches', async () => {
+  assert.equal(ACCOUNT_REGISTRATION_SCRUB_PAGE_SIZE, 200);
+  assert.equal(ACCOUNT_REGISTRATION_SCRUB_BATCH_SIZE, 200);
+  const submittedRegistrations = Object.fromEntries(Array.from({ length: 7 }, (_, index) => [
+    `teams/team-1/registrationForms/form-1/registrations/submitted-${index}`,
+    {
+      submittedByUserId: 'deleted-user',
+      submittedByEmail: 'deleted@example.com',
+      guardian: index === 0 ? { email: 'deleted@example.com', name: 'Deleted Parent' } : undefined,
+      status: 'enrolled',
+      paymentStatus: 'paid'
+    }
+  ]));
+  const harness = createRegistrationScrubHarness({
+    ...submittedRegistrations,
+    'teams/team-2/registrationForms/form-2/registrations/guardian-nested': {
+      guardian: { guardianEmail: 'deleted@example.com', name: 'Deleted Parent' },
+      status: 'waitlisted'
+    },
+    'teams/team-3/registrationForms/form-3/registrations/guardian-top-level': {
+      guardianEmail: 'deleted@example.com',
+      guardianName: 'Deleted Parent',
+      paymentStatus: 'paid'
+    },
+    'teams/team-4/registrationForms/form-4/registrations/unrelated': {
+      submittedByUserId: 'remaining-user',
+      guardian: { email: 'remaining@example.com' },
+      status: 'enrolled'
+    }
+  });
+
+  const result = await scrubAccountRegistrationPages({
+    firestore: harness.firestore,
+    queries: harness.queries,
+    accountIdentity: { uid: 'deleted-user', email: 'deleted@example.com' },
+    deleteFieldValue: () => harness.deleteField,
+    updatedAt: 'scrubbed-at',
+    pageSize: 2,
+    batchSize: 2
+  });
+
+  assert.deepEqual(result, { documentsUpdated: 9, pagesRead: 6 });
+  assert.equal(harness.peakConcurrentReads, 1);
+  assert.ok(harness.queryLimits.length >= 7);
+  assert.ok(harness.queryLimits.every(({ pageSize }) => pageSize === 2));
+  assert.ok(harness.batchSizes.every((size) => size <= 2));
+  assert.equal(harness.documents.get(
+    'teams/team-1/registrationForms/form-1/registrations/submitted-0'
+  ).guardian.redacted, true);
+  assert.equal(harness.documents.get(
+    'teams/team-3/registrationForms/form-3/registrations/guardian-top-level'
+  ).guardianEmail, undefined);
+  assert.deepEqual(harness.documents.get(
+    'teams/team-4/registrationForms/form-4/registrations/unrelated'
+  ), {
+    submittedByUserId: 'remaining-user',
+    guardian: { email: 'remaining@example.com' },
+    status: 'enrolled'
+  });
+
+  const retry = await scrubAccountRegistrationPages({
+    firestore: harness.firestore,
+    queries: harness.queries,
+    accountIdentity: { uid: 'deleted-user', email: 'deleted@example.com' },
+    deleteFieldValue: () => harness.deleteField,
+    updatedAt: 'retry-at',
+    pageSize: 2,
+    batchSize: 2
+  });
+  assert.deepEqual(retry, { documentsUpdated: 0, pagesRead: 0 });
+});
+
+test('registration scrubbing resumes safely after a partially completed page sequence', async () => {
+  const harness = createRegistrationScrubHarness(Object.fromEntries(Array.from({ length: 5 }, (_, index) => [
+    `teams/team-1/registrationForms/form-1/registrations/registration-${index}`,
+    { submittedByUserId: 'deleted-user', status: 'enrolled' }
+  ])), { failOnceAtCommit: 2 });
+  const scrub = () => scrubAccountRegistrationPages({
+    firestore: harness.firestore,
+    queries: harness.queries,
+    accountIdentity: { uid: 'deleted-user', email: 'deleted@example.com' },
+    deleteFieldValue: () => harness.deleteField,
+    updatedAt: 'scrubbed-at',
+    pageSize: 2,
+    batchSize: 2
+  });
+
+  await assert.rejects(scrub(), /injected registration batch failure/);
+  assert.equal([...harness.documents.values()].filter((data) => data.submittedByUserId).length, 3);
+  assert.deepEqual(await scrub(), { documentsUpdated: 3, pagesRead: 2 });
+  assert.equal([...harness.documents.values()].some((data) => data.submittedByUserId), false);
 });
 
 test('routes account media cleanup to the primary and legacy image buckets', () => {
@@ -1043,6 +1215,13 @@ test('gives the deletion worker extended runtime and automatic event retries', (
   assert.doesNotMatch(mediaCleanupSource, /\.get\(\)/);
   assert.match(functionsSource, /deleteAccountMediaStoragePages\([\s\S]*FieldPath\.documentId\(\)/);
   assert.match(functionsSource, /async function deleteAccountQuery\(query\) \{\s*return deleteAccountQueryPages\(\{ firestore, query \}\);\s*\}/);
+  const registrationScrubSource = functionsSource.slice(
+    functionsSource.indexOf('async function scrubAccountRegistrationLinks'),
+    functionsSource.indexOf('exports.processAccountDeletionRequest')
+  );
+  assert.match(registrationScrubSource, /return scrubAccountRegistrationPages\(\{/);
+  assert.doesNotMatch(registrationScrubSource, /\.get\(\)/);
+  assert.doesNotMatch(registrationScrubSource, /Promise\.all/);
   assert.ok(workerSource.indexOf('await scrubAccountTeamGrants(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
   assert.ok(workerSource.indexOf('await scrubAccountChatConversationMembership(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
   assert.ok(workerSource.indexOf('await scrubAccountRegistrationLinks(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));

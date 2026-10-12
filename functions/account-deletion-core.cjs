@@ -7,6 +7,8 @@ const diamondPrivateNoteCore = require('./diamond-private-note-core.cjs');
 const ACCOUNT_DELETION_CONFIRMATION = 'DELETE';
 const ACCOUNT_DELETION_MAX_DAYS = 30;
 const ACCOUNT_DELETION_MAX_AUTH_AGE_SECONDS = 5 * 60;
+const ACCOUNT_REGISTRATION_SCRUB_PAGE_SIZE = 200;
+const ACCOUNT_REGISTRATION_SCRUB_BATCH_SIZE = 200;
 const ACCOUNT_MEDIA_CLEANUP_PAGE_SIZE = 250;
 const ACCOUNT_STORAGE_DELETE_CONCURRENCY = 10;
 const ACCOUNT_CALENDAR_CREDENTIAL_PAGE_SIZE = 250;
@@ -4647,6 +4649,81 @@ function buildRegistrationAccountScrubPlan(registration = {}, accountIdentity) {
   };
 }
 
+async function scrubAccountRegistrationPages({
+  firestore,
+  queries = [],
+  accountIdentity,
+  deleteFieldValue,
+  updatedAt,
+  pageSize = ACCOUNT_REGISTRATION_SCRUB_PAGE_SIZE,
+  batchSize = ACCOUNT_REGISTRATION_SCRUB_BATCH_SIZE
+}) {
+  if (
+    !firestore
+    || typeof firestore.batch !== 'function'
+    || !Array.isArray(queries)
+    || queries.some((query) => !query || typeof query.limit !== 'function')
+    || typeof deleteFieldValue !== 'function'
+    || updatedAt === undefined
+    || !Number.isInteger(pageSize)
+    || pageSize < 1
+    || pageSize > ACCOUNT_REGISTRATION_SCRUB_PAGE_SIZE
+    || !Number.isInteger(batchSize)
+    || batchSize < 1
+    || batchSize > ACCOUNT_REGISTRATION_SCRUB_BATCH_SIZE
+  ) {
+    throw new TypeError('Account registration scrub dependencies are invalid.');
+  }
+
+  let documentsUpdated = 0;
+  let pagesRead = 0;
+  for (const query of queries) {
+    while (true) {
+      const snapshot = await query.limit(pageSize).get();
+      if (!snapshot || typeof snapshot.empty !== 'boolean' || !Array.isArray(snapshot.docs)) {
+        throw new TypeError('Account registration scrub received an invalid Firestore snapshot.');
+      }
+      if (snapshot.empty) {
+        if (snapshot.docs.length) {
+          throw new TypeError('Account registration scrub received an inconsistent Firestore snapshot.');
+        }
+        break;
+      }
+      if (!snapshot.docs.length) {
+        throw new TypeError('Account registration scrub received an inconsistent Firestore snapshot.');
+      }
+
+      const writes = snapshot.docs.map((document) => {
+        const plan = buildRegistrationAccountScrubPlan(document.data() || {}, accountIdentity);
+        if (!plan.changed) {
+          throw new Error('Account registration scrub query returned a document without matching identity fields.');
+        }
+        const update = {
+          ...plan.update,
+          updatedAt
+        };
+        plan.fieldsToDelete.forEach((field) => {
+          update[field] = deleteFieldValue();
+        });
+        return { ref: document.ref, update };
+      });
+
+      pagesRead += 1;
+      for (let index = 0; index < writes.length; index += batchSize) {
+        const batch = firestore.batch();
+        const batchWrites = writes.slice(index, index + batchSize);
+        batchWrites.forEach(({ ref, update }) => batch.update(ref, update));
+        await batch.commit();
+        documentsUpdated += batchWrites.length;
+      }
+
+      if (snapshot.docs.length < pageSize) break;
+    }
+  }
+
+  return { documentsUpdated, pagesRead };
+}
+
 function classifyAccountStoragePaths(uid, mediaStoragePaths = [], profilePhotoUrls = []) {
   const normalizedUid = String(uid || '').trim();
   const athletePrefix = `athlete-profile-media/${normalizedUid}/`;
@@ -5462,6 +5539,8 @@ module.exports = {
   ACCOUNT_DELETION_CONFIRMATION,
   ACCOUNT_DELETION_MAX_AUTH_AGE_SECONDS,
   ACCOUNT_DELETION_MAX_DAYS,
+  ACCOUNT_REGISTRATION_SCRUB_BATCH_SIZE,
+  ACCOUNT_REGISTRATION_SCRUB_PAGE_SIZE,
   ACCOUNT_MEDIA_CLEANUP_PAGE_SIZE,
   ACCOUNT_REPLAY_ARCHIVE_ATTRIBUTION_FIELDS,
   ACCOUNT_REPLAY_ARCHIVE_PAGE_SIZE,
@@ -5499,6 +5578,7 @@ module.exports = {
   loadOwnedTeams,
   hasRecentAuthentication,
   normalizeConfirmation,
+  scrubAccountRegistrationPages,
   shouldProcessAccountDeletionRequest,
   summarizeOwnedTeams
 };
