@@ -150,9 +150,9 @@ describe('Capacitor native config', () => {
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
 
         expect(existsSync('apps/app/pnpm-lock.yaml')).toBe(false);
-        expect(appPackage.devDependencies.vite).toBe('^8.2.1');
-        expect(appPackageLock.packages[''].devDependencies.vite).toBe('^8.2.1');
-        expect(appPackageLock.packages['node_modules/vite'].version).toBe('8.2.1');
+        expect(appPackage.devDependencies.vite).toBe('^8.3.4');
+        expect(appPackageLock.packages[''].devDependencies.vite).toBe('^8.3.4');
+        expect(appPackageLock.packages['node_modules/vite'].version).toBe('8.3.4');
         const pluginReactVersion = appPackage.devDependencies['@vitejs/plugin-react'].replace(/^\^/, '');
         expect(appPackageLock.packages['node_modules/@vitejs/plugin-react'].version).toBe(pluginReactVersion);
     });
@@ -161,11 +161,32 @@ describe('Capacitor native config', () => {
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
         const expectedDependencies = {
-            'lucide-react': { group: 'dependencies', specifier: '^1.32.0', version: '1.32.0' },
+            '@capawesome/capacitor-badge': {
+                group: 'dependencies',
+                specifier: '^8.0.4',
+                version: '8.0.4'
+            },
+            dompurify: { group: 'dependencies', specifier: '^3.4.16', version: '3.4.16' },
+            'lucide-react': { group: 'dependencies', specifier: '^1.55.0', version: '1.55.0' },
             'react-router-dom': { group: 'dependencies', specifier: '7.18.2', version: '7.18.2' },
             'web-vitals': { group: 'dependencies', specifier: '^6.2.2', version: '6.2.2' },
-            globals: { group: 'devDependencies', specifier: '^17.11.0', version: '17.11.0' },
-            postcss: { group: 'devDependencies', specifier: '^8.5.26', version: '8.5.26' }
+            '@vitejs/plugin-react': {
+                group: 'devDependencies',
+                specifier: '^6.1.2',
+                version: '6.1.2'
+            },
+            autoprefixer: { group: 'devDependencies', specifier: '^10.6.1', version: '10.6.1' },
+            eslint: { group: 'devDependencies', specifier: '^9.39.5', version: '9.39.5' },
+            globals: { group: 'devDependencies', specifier: '^17.13.0', version: '17.13.0' },
+            postcss: { group: 'devDependencies', specifier: '^8.5.29', version: '8.5.29' },
+            prettier: { group: 'devDependencies', specifier: '^3.9.10', version: '3.9.10' },
+            tailwindcss: { group: 'devDependencies', specifier: '^4.3.3', version: '4.3.3' },
+            'typescript-eslint': {
+                group: 'devDependencies',
+                specifier: '^8.71.1',
+                version: '8.71.1'
+            },
+            vite: { group: 'devDependencies', specifier: '^8.3.4', version: '8.3.4' }
         };
 
         Object.entries(expectedDependencies).forEach(([dependency, expected]) => {
