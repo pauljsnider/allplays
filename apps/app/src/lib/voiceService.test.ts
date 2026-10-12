@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createVoiceService, VoiceServiceError, type VoiceListenerHandle } from './voiceService';
+import { createVoiceService, VoiceServiceError, type VoiceListenerHandle, type VoiceServiceSnapshot } from './voiceService';
 
 const adapter = {
   available: vi.fn(),
@@ -54,6 +54,45 @@ describe('voice service lifecycle', () => {
     listeningListener({ state: 'stopped', status: 'stopped' });
     await expect(stop).resolves.toEqual({ text: 'hello draft' });
     expect(states).toEqual(['idle', 'permission', 'idle', 'recording', 'transcribing', 'success']);
+    expect(adapter.forceStop).toHaveBeenCalledOnce();
+    expect(adapter.stop).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['recognition', { code: 'recognition', message: 'recognizer failed' }],
+    ['network', { code: 'network', message: 'offline' }]
+  ])('releases native capture exactly once on %s failure and emits no audio', async (_name, nativeError) => {
+    const service = createVoiceService(adapter);
+    const snapshots: VoiceServiceSnapshot[] = [];
+    const errorListener = vi.fn();
+    adapter.addErrorListener.mockImplementation(async (listener) => {
+      errorListener.mockImplementation(listener);
+      return listenerHandle();
+    });
+    service.subscribe((snapshot) => snapshots.push(snapshot));
+
+    await service.start({});
+    errorListener(nativeError);
+    await vi.waitFor(() => expect(service.state).toBe('failure'));
+
+    expect(adapter.forceStop).toHaveBeenCalledOnce();
+    expect(adapter.stop).not.toHaveBeenCalled();
+    expect(snapshots.every((snapshot) => !('audio' in snapshot) && !('rawAudio' in snapshot))).toBe(true);
+  });
+
+  it('releases native capture after transcription failure without emitting raw audio', async () => {
+    const service = createVoiceService(adapter);
+    const snapshots: VoiceServiceSnapshot[] = [];
+    service.subscribe((snapshot) => snapshots.push(snapshot));
+    adapter.getLastPartialResult.mockRejectedValueOnce(new Error('transcription unavailable'));
+
+    await service.start({});
+    const stop = service.stop();
+    adapter.addListeningStateListener.mock.calls[0][0]({ state: 'stopped' });
+
+    await expect(stop).resolves.toBeNull();
+    expect(adapter.forceStop).toHaveBeenCalledOnce();
+    expect(snapshots.every((snapshot) => !('audio' in snapshot) && !('rawAudio' in snapshot))).toBe(true);
   });
 
   it('maps denied permission and unavailable recognition to typed failures', async () => {
@@ -62,6 +101,7 @@ describe('voice service lifecycle', () => {
     adapter.requestPermissions.mockResolvedValue({ speechRecognition: 'denied' });
     await expect(denied.start({})).rejects.toMatchObject({ code: 'permission_denied' } satisfies Partial<VoiceServiceError>);
     expect(denied.state).toBe('failure');
+    expect(adapter.forceStop).toHaveBeenCalledOnce();
 
     adapter.available.mockResolvedValue({ available: false });
     const unavailable = createVoiceService(adapter);

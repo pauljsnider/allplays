@@ -160,6 +160,7 @@ export function createVoiceService(adapter: VoiceRecognitionAdapter = voiceRecog
   let completionPromise: Promise<VoiceTranscriptResult | null> | null = null;
   let transcript = '';
   let handles: VoiceListenerHandle[] = [];
+  let captureReleased = false;
   let stopRequested = false;
   let lastStartOptions: SpeechRecognitionStartOptions | null = null;
   const subscribers = new Set<(snapshot: VoiceServiceSnapshot) => void>();
@@ -191,10 +192,25 @@ export function createVoiceService(adapter: VoiceRecognitionAdapter = voiceRecog
 
   const isCaptureActive = () => currentState === 'recording' || currentState === 'transcribing';
 
+  const releaseCapture = async () => {
+    if (captureReleased) return;
+    captureReleased = true;
+    try {
+      await adapter.forceStop({ timeout: 1200 });
+    } catch {
+      await adapter.stop();
+    }
+  };
+
   const settle = async (result: VoiceTranscriptResult | null, error?: VoiceServiceError) => {
     if (completionSettled) return;
     completionSettled = true;
     await removeListeners();
+    try {
+      await releaseCapture();
+    } catch (releaseError) {
+      if (!error) error = voiceErrorFromNative(releaseError);
+    }
     if (error) {
       const preservedDraft = draftResult();
       emit('failure', preservedDraft, error);
@@ -229,6 +245,7 @@ export function createVoiceService(adapter: VoiceRecognitionAdapter = voiceRecog
   const begin = async (options: SpeechRecognitionStartOptions, preserveTranscript = false) => {
     if (!preserveTranscript) transcript = '';
     completionSettled = false;
+    captureReleased = false;
     completionPromise = null;
     completionResolve = null;
     completionReject = null;
@@ -342,18 +359,17 @@ export function createVoiceService(adapter: VoiceRecognitionAdapter = voiceRecog
           } catch {
             return currentResult || null;
           }
-          if (!isCaptureActive()) return currentResult || null;
+          if (!isCaptureActive()) {
+            await releaseCapture();
+            return currentResult || null;
+          }
         }
         try {
-          await adapter.forceStop({ timeout: 1200 });
-        } catch {
-          try {
-            await adapter.stop();
-          } catch (error) {
-            const typedError = voiceErrorFromNative(error);
-            await settle(null, typedError);
-            throw typedError;
-          }
+          await releaseCapture();
+        } catch (error) {
+          const typedError = voiceErrorFromNative(error);
+          await settle(null, typedError);
+          throw typedError;
         }
         return completionPromise ? await completionPromise : null;
       })();
