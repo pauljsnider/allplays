@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createVoiceService, VoiceServiceError, type VoiceListenerHandle } from './voiceService';
+import { createVoiceService, VoiceServiceError, type VoiceListenerHandle, type VoiceServiceSnapshot } from './voiceService';
 
 const adapter = {
   available: vi.fn(),
@@ -63,7 +63,7 @@ describe('voice service lifecycle', () => {
     ['network', { code: 'network', message: 'offline' }]
   ])('releases native capture exactly once on %s failure and emits no audio', async (_name, nativeError) => {
     const service = createVoiceService(adapter);
-    const snapshots: Array<Record<string, unknown>> = [];
+    const snapshots: VoiceServiceSnapshot[] = [];
     const errorListener = vi.fn();
     adapter.addErrorListener.mockImplementation(async (listener) => {
       errorListener.mockImplementation(listener);
@@ -82,7 +82,7 @@ describe('voice service lifecycle', () => {
 
   it('releases native capture after transcription failure without emitting raw audio', async () => {
     const service = createVoiceService(adapter);
-    const snapshots: Array<Record<string, unknown>> = [];
+    const snapshots: VoiceServiceSnapshot[] = [];
     service.subscribe((snapshot) => snapshots.push(snapshot));
     adapter.getLastPartialResult.mockRejectedValueOnce(new Error('transcription unavailable'));
 
