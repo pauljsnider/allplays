@@ -39,7 +39,7 @@ describe('app production CSS pipeline', () => {
 
         expect(appPackageJson.devDependencies).toMatchObject({
             '@tailwindcss/postcss': '^4.3.3',
-            tailwindcss: '^4.3.2'
+            tailwindcss: '^4.3.3'
         });
         expect(postcssConfig.default.plugins).toHaveProperty('@tailwindcss/postcss');
         expect(postcssConfig.default.plugins).not.toHaveProperty('tailwindcss');
