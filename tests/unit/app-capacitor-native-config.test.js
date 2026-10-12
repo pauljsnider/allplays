@@ -17,23 +17,26 @@ describe('Capacitor native config', () => {
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
 
-        const rootRuntimePackages = ['@capacitor/cli', '@capacitor/android', '@capacitor/core', '@capacitor/ios'];
+        const rootRuntimePackages = ['@capacitor/android', '@capacitor/core', '@capacitor/ios'];
         rootRuntimePackages.forEach((dependency) => {
-            const dependencyGroup = dependency === '@capacitor/cli' ? 'devDependencies' : 'dependencies';
-            expect(rootPackage[dependencyGroup][dependency]).toBe('^8.5.2');
-            expect(rootPackageLock.packages[''][dependencyGroup][dependency]).toBe('^8.5.2');
-            expect(rootPackageLock.packages[`node_modules/${dependency}`].version).toBe('8.5.2');
+            expect(rootPackage.dependencies[dependency]).toBe('^8.5.3');
+            expect(rootPackageLock.packages[''].dependencies[dependency]).toBe('^8.5.3');
+            expect(rootPackageLock.packages[`node_modules/${dependency}`].version).toBe('8.5.3');
         });
+
+        expect(rootPackage.devDependencies['@capacitor/cli']).toBe('^8.5.2');
+        expect(rootPackageLock.packages[''].devDependencies['@capacitor/cli']).toBe('^8.5.2');
+        expect(rootPackageLock.packages['node_modules/@capacitor/cli'].version).toBe('8.5.2');
 
         expect(rootPackage.dependencies['@capacitor/camera']).toBe('^8.2.5');
         expect(rootPackageLock.packages[''].dependencies['@capacitor/camera']).toBe('^8.2.5');
         expect(rootPackageLock.packages['node_modules/@capacitor/camera'].version).toBe('8.2.5');
 
-        expect(appPackage.dependencies['@capacitor/core']).toBe('^8.5.2');
+        expect(appPackage.dependencies['@capacitor/core']).toBe('^8.5.3');
         expect(appPackage.dependencies['@capacitor/camera']).toBe('^8.2.5');
-        expect(appPackageLock.packages[''].dependencies['@capacitor/core']).toBe('^8.5.2');
+        expect(appPackageLock.packages[''].dependencies['@capacitor/core']).toBe('^8.5.3');
         expect(appPackageLock.packages[''].dependencies['@capacitor/camera']).toBe('^8.2.5');
-        expect(appPackageLock.packages['node_modules/@capacitor/core'].version).toBe('8.5.2');
+        expect(appPackageLock.packages['node_modules/@capacitor/core'].version).toBe('8.5.3');
         expect(appPackageLock.packages['node_modules/@capacitor/camera'].version).toBe('8.2.5');
     });
 
@@ -65,9 +68,9 @@ describe('Capacitor native config', () => {
             location: 'https://github.com/ionic-team/ion-ios-camera.git',
             state: { version: '1.0.5' }
         });
-        expect(iosPackage).not.toContain('exact: "8.4.2"');
+        expect(iosPackage).not.toContain('exact: "8.5.2"');
         expect(iosPackageResolvedSource).not.toMatch(
-            /"identity"\s*:\s*"capacitor-swift-pm"[\s\S]*?"version"\s*:\s*"8\.4\.2"/
+            /"identity"\s*:\s*"capacitor-swift-pm"[\s\S]*?"version"\s*:\s*"8\.5\.2"/
         );
     });
 
@@ -84,13 +87,13 @@ describe('Capacitor native config', () => {
             androidBuild
         ].join('\n');
 
-        expect(rootPackageLock.packages['node_modules/@capacitor/android'].version).toBe('8.5.2');
-        expect(rootPackageLock.packages['node_modules/@capacitor/core'].version).toBe('8.5.2');
+        expect(rootPackageLock.packages['node_modules/@capacitor/android'].version).toBe('8.5.3');
+        expect(rootPackageLock.packages['node_modules/@capacitor/core'].version).toBe('8.5.3');
         expect(androidSettings).toContain("project(':capacitor-android').projectDir = new File('../node_modules/@capacitor/android/capacitor')");
         expect(androidSettings).toContain("project(':capacitor-camera').projectDir = new File('../node_modules/@capacitor/camera/android')");
         expect(androidAppBuild).toContain("implementation project(':capacitor-android')");
         expect(androidBuild).toContain("implementation project(':capacitor-camera')");
-        expect(androidProject).not.toContain('8.4.2');
+        expect(androidProject).not.toContain('8.5.2');
     });
 
     it('declares splash screen and status bar plugins in app and native manifests', () => {
@@ -169,7 +172,7 @@ describe('Capacitor native config', () => {
             dompurify: { group: 'dependencies', specifier: '^3.4.16', version: '3.4.16' },
             'lucide-react': { group: 'dependencies', specifier: '^1.55.0', version: '1.55.0' },
             'react-router-dom': { group: 'dependencies', specifier: '7.18.2', version: '7.18.2' },
-            'web-vitals': { group: 'dependencies', specifier: '^6.2.2', version: '6.2.2' },
+            'web-vitals': { group: 'dependencies', specifier: '^6.2.3', version: '6.2.3' },
             '@vitejs/plugin-react': {
                 group: 'devDependencies',
                 specifier: '^6.1.2',
@@ -202,10 +205,16 @@ describe('Capacitor native config', () => {
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
 
-        expect(rootPackage.dependencies.jsdom).toBe('^30.1.1');
-        expect(rootPackageLock.packages['node_modules/jsdom'].version).toBe('30.1.1');
-        expect(appPackage.devDependencies.jsdom).toBe('^30.1.1');
-        expect(appPackageLock.packages['node_modules/jsdom'].version).toBe('30.1.1');
+        expect(rootPackage.engines.node).toBe('>=22.19.0');
+        expect(rootPackageLock.packages[''].engines.node).toBe('>=22.19.0');
+        expect(appPackage.engines.node).toBe('>=22.19.0');
+        expect(appPackageLock.packages[''].engines.node).toBe('>=22.19.0');
+        expect(rootPackage.dependencies.jsdom).toBe('^30.1.2');
+        expect(rootPackageLock.packages[''].dependencies.jsdom).toBe('^30.1.2');
+        expect(rootPackageLock.packages['node_modules/jsdom'].version).toBe('30.1.2');
+        expect(appPackage.devDependencies.jsdom).toBe('^30.1.2');
+        expect(appPackageLock.packages[''].devDependencies.jsdom).toBe('^30.1.2');
+        expect(appPackageLock.packages['node_modules/jsdom'].version).toBe('30.1.2');
         expect(appPackageLock.packages['node_modules/undici'].version).toBe('8.11.2');
         expect(appPackageLock.packages['node_modules/undici'].engines.node).toBe('>=22.19.0');
     });
@@ -328,14 +337,14 @@ describe('Capacitor native config', () => {
             '@capacitor/app': { specifier: '^8.1.2', version: '8.1.2' },
             '@capacitor/browser': { specifier: '^8.0.5', version: '8.0.5' },
             '@capacitor/camera': { specifier: '^8.2.5', version: '8.2.5' },
-            '@capacitor/core': { specifier: '^8.5.2', version: '8.5.2' },
+            '@capacitor/core': { specifier: '^8.5.3', version: '8.5.3' },
             '@capacitor/filesystem': { specifier: '^8.1.4', version: '8.1.4' },
             '@capacitor/keyboard': { specifier: '^8.0.6', version: '8.0.6' },
             '@capacitor/share': { specifier: '^8.0.3', version: '8.0.3' },
             '@capacitor/status-bar': { specifier: '^8.0.4', version: '8.0.4' },
-            '@capgo/capacitor-speech-recognition': { specifier: '^8.3.2', version: '8.3.2' },
+            '@capgo/capacitor-speech-recognition': { specifier: '^8.4.1', version: '8.4.1' },
             firebase: { specifier: '12.19.0', version: '12.19.0' },
-            'web-vitals': { specifier: '^6.2.2', version: '6.2.2' }
+            'web-vitals': { specifier: '^6.2.3', version: '6.2.3' }
         };
 
         Object.entries(expectedDependencies).forEach(([dependency, expected]) => {
