@@ -166,7 +166,8 @@ const gameWrapupServiceMocks = vi.hoisted(() => ({
     liveStatus: 'completed'
   })),
   buildGameWrapupEmailDraft: vi.fn(() => null),
-  generateGameWrapupArtifactsForApp: vi.fn()
+  generateGameWrapupArtifactsForApp: vi.fn(),
+  loadApprovedMobileVoiceNotes: vi.fn(() => [])
 }));
 vi.mock('../lib/gameWrapupService', () => gameWrapupServiceMocks);
 const chatServiceMocks = vi.hoisted(() => ({
