@@ -67,8 +67,10 @@ describe('firestore rules — live game read visibility helpers', () => {
         expect(liveEventsBlock.match(/canReadGameSubcollectionDocument\(teamId, gameId\)/g)).toHaveLength(2);
 
         for (const block of [liveChatBlock, liveReactionsBlock]) {
-            expect(block).toContain('allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&');
-            expect(block).toContain('canReadGameSubcollectionDocument(teamId, gameId);');
+            expect(block).toContain('allow get: if !gameUsesDiamondScorebook(teamId, gameId) &&');
+            expect(block).toContain('allow list: if !gameUsesDiamondScorebook(teamId, gameId) &&');
+            expect(block).not.toContain('allow read:');
+            expect(block.match(/canReadGameSubcollectionDocument\(teamId, gameId\)/g)).toHaveLength(2);
         }
         expect(diamondLiveGenerationBlock).toContain('gameUsesDiamondGeneration(teamId, gameId, instanceId)');
         expect(diamondLiveGenerationBlock).not.toMatch(
@@ -85,6 +87,14 @@ describe('firestore rules — live game read visibility helpers', () => {
         expect(liveEventsBlock).toContain('request.query.limit != null');
         expect(liveEventsBlock).toContain('request.query.limit > 0');
         expect(liveEventsBlock).toContain('request.query.limit <= 20');
+    });
+
+    it('requires positive classic engagement list limits at or below 100', () => {
+        for (const block of [liveChatBlock, liveReactionsBlock]) {
+            expect(block).toContain('request.query.limit != null');
+            expect(block).toContain('request.query.limit > 0');
+            expect(block).toContain('request.query.limit <= 100');
+        }
     });
 
     it('preserves the shared helper coverage for private and shareable game reads', () => {
@@ -598,5 +608,53 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('live interaction lifecycl
             firestore,
             'teams/shareable-team/games/status-completed/liveReactions/historical-reaction'
         )));
+    });
+
+    it('allows only bounded completed-game engagement lists and retains the newest 100 records', async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            const firestore = context.firestore();
+            await Promise.all(Array.from({ length: 125 }, async (_, index) => {
+                const suffix = String(index).padStart(3, '0');
+                const createdAt = new Date(index);
+                await Promise.all([
+                    setDoc(doc(firestore, `teams/shareable-team/games/status-completed/liveChat/chat-${suffix}`), {
+                        text: `Message ${index}`,
+                        senderId: 'fan-1',
+                        createdAt
+                    }),
+                    setDoc(doc(firestore, `teams/shareable-team/games/status-completed/liveReactions/reaction-${suffix}`), {
+                        type: 'clap',
+                        senderId: 'fan-1',
+                        createdAt
+                    })
+                ]);
+            }));
+        });
+
+        const firestore = fanDb();
+        for (const [collectionName, idPrefix] of [
+            ['liveChat', 'chat'],
+            ['liveReactions', 'reaction']
+        ]) {
+            const engagement = collection(
+                firestore,
+                `teams/shareable-team/games/status-completed/${collectionName}`
+            );
+            await assertFails(getDocs(engagement));
+            await assertFails(getDocs(query(engagement, orderBy('createdAt', 'desc'), limit(101))));
+            await assertSucceeds(getDocs(query(engagement, orderBy('createdAt', 'desc'), limit(1))));
+            const snapshot = await assertSucceeds(getDocs(query(
+                engagement,
+                orderBy('createdAt', 'desc'),
+                limit(100)
+            )));
+            expect(snapshot.docs).toHaveLength(100);
+            expect(snapshot.docs[0].id).toBe(`${idPrefix}-124`);
+            expect(snapshot.docs.at(-1).id).toBe(`${idPrefix}-025`);
+            await assertSucceeds(getDoc(doc(
+                firestore,
+                `teams/shareable-team/games/status-completed/${collectionName}/${idPrefix}-000`
+            )));
+        }
     });
 });

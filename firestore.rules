@@ -4187,8 +4187,13 @@ service cloud.firestore {
         }
 
         match /liveChat/{messageId} {
-          allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&
-                         canReadGameSubcollectionDocument(teamId, gameId);
+          allow get: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                        canReadGameSubcollectionDocument(teamId, gameId);
+          allow list: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                         canReadGameSubcollectionDocument(teamId, gameId) &&
+                         request.query.limit != null &&
+                         request.query.limit > 0 &&
+                         request.query.limit <= 100;
           allow create: if !gameUsesDiamondScorebook(teamId, gameId)
             && isVerifiedForSensitiveWrite()
             && canCreateLiveGameInteraction(teamId, gameId)
@@ -4204,8 +4209,13 @@ service cloud.firestore {
 
         // Live Reactions subcollection - ephemeral reactions during live games
         match /liveReactions/{reactionId} {
-          allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&
-                         canReadGameSubcollectionDocument(teamId, gameId);
+          allow get: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                        canReadGameSubcollectionDocument(teamId, gameId);
+          allow list: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                         canReadGameSubcollectionDocument(teamId, gameId) &&
+                         request.query.limit != null &&
+                         request.query.limit > 0 &&
+                         request.query.limit <= 100;
           allow create: if !gameUsesDiamondScorebook(teamId, gameId)
             && isVerifiedForSensitiveWrite()
             && canCreateLiveGameInteraction(teamId, gameId)

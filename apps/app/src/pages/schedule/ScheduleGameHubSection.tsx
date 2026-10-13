@@ -60,7 +60,7 @@ import {
 import { DEFAULT_TEAM_CONVERSATION_ID } from '../../lib/chatLogic';
 import type { LiveGameChatMessage } from '../../lib/liveGameChatService';
 import type { LiveGameReaction, LiveGameReactionType } from '../../lib/liveGameReactionsService';
-import type { PracticeFeedItem } from '../../lib/gameWrapupService';
+import { loadApprovedMobileVoiceNotes, type PracticeFeedItem } from '../../lib/gameWrapupService';
 import type { PracticeTimelineBlock, PracticeTimelineDrillOption } from '../../lib/practiceTimelineService';
 import type { TrackStatsheetReviewRow } from '../../lib/statsheetImportService';
 import type { AuthState } from '../../lib/types';
@@ -2068,6 +2068,14 @@ function GameSummaryReviewPanel({ auth, event, onEventRefresh }: {
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'warning' | 'error'; message: string } | null>(null);
+  const [voiceNotes, setVoiceNotes] = useState<ReturnType<typeof loadApprovedMobileVoiceNotes>>([]);
+  const [selectedVoiceNoteIds, setSelectedVoiceNoteIds] = useState<string[]>([]);
+  useEffect(() => {
+    setVoiceNotes(
+      auth.user ? loadApprovedMobileVoiceNotes(event.teamId, event.id, auth.user.uid).filter((note) => note.audience === 'shared') : []
+    );
+    setSelectedVoiceNoteIds([]);
+  }, [auth.user, event.eventKey, event.id, event.teamId]);
 
   useEffect(() => {
     setSummary(String(event.summary || ''));
@@ -2087,7 +2095,12 @@ function GameSummaryReviewPanel({ auth, event, onEventRefresh }: {
         teamId: event.teamId,
         gameId: event.id,
         score: { home: Number(event.homeScore || 0), away: Number(event.awayScore || 0) },
-        notes: String(event.postGameNotes || '')
+        notes: [
+          String(event.postGameNotes || ''),
+          ...voiceNotes.filter((note) => selectedVoiceNoteIds.includes(note.id)).map((note) => `[Shared voice note] ${note.text}`)
+        ]
+          .filter(Boolean)
+          .join('\n\n')
       });
       setSummary(artifacts.summary);
       setStatus({ tone: 'success', message: 'Draft ready for review. Nothing has been saved yet.' });
@@ -2130,6 +2143,29 @@ function GameSummaryReviewPanel({ auth, event, onEventRefresh }: {
         placeholder="Write a game summary, or generate a draft to review."
         disabled={busy}
       />
+      {voiceNotes.length ? (
+        <fieldset className="mt-3 rounded-2xl border border-gray-200 bg-white p-3">
+          <legend className="px-1 text-xs font-black uppercase tracking-[0.04em] text-gray-500">
+            Approved mobile notes for this summary
+          </legend>
+          {voiceNotes.map((note) => (
+            <label key={note.id} className="mt-2 flex items-start gap-2 text-sm font-semibold text-gray-800">
+              <input
+                type="checkbox"
+                checked={selectedVoiceNoteIds.includes(note.id)}
+                onChange={(changeEvent) =>
+                  setSelectedVoiceNoteIds((current) =>
+                    changeEvent.target.checked ? [...current, note.id] : current.filter((id) => id !== note.id)
+                  )
+                }
+              />
+              <span>
+                <span className="font-black">Shared</span> · {note.text}
+              </span>
+            </label>
+          ))}
+        </fieldset>
+      ) : null}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button type="button" className="secondary-button min-h-11 px-4 text-sm" onClick={() => void generateDraft()} disabled={busy} data-testid="generate-summary-draft">
           {generating ? 'Generating draft' : 'Generate summary draft'}
