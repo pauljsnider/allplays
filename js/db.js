@@ -824,7 +824,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443381'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443382'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -9167,13 +9167,13 @@ export async function postLiveChatMessage(teamId, gameId, messageData) {
 }
 
 /**
- * Get all chat messages (for replay)
+ * Get the newest chat messages for replay in chronological order.
  */
 export async function getLiveChatHistory(teamId, gameId) {
     const chatRef = getGameSubcollectionRef(teamId, gameId, 'liveChat');
-    const q = query(chatRef, orderBy('createdAt', 'asc'));
+    const q = query(chatRef, orderBy('createdAt', 'desc'), limitQuery(100));
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).reverse();
 }
 
 // ============ LIVE REACTIONS ============
@@ -9206,13 +9206,13 @@ export function subscribeReactions(teamId, gameId, callback, onError) {
 }
 
 /**
- * Get all reactions (for replay)
+ * Get the newest reactions for replay in chronological order.
  */
 export async function getLiveReactions(teamId, gameId) {
     const reactionsRef = getGameSubcollectionRef(teamId, gameId, 'liveReactions');
-    const q = query(reactionsRef, orderBy('createdAt', 'asc'));
+    const q = query(reactionsRef, orderBy('createdAt', 'desc'), limitQuery(100));
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).reverse();
 }
 
 // ============ VIEWER PRESENCE ============

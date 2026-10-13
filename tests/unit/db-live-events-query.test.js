@@ -55,7 +55,12 @@ vi.mock('../../js/firebase-images.js?v=18', () => ({
     requireImageAuth: vi.fn()
 }));
 
-const { subscribeLiveEvents, getLiveEvents } = await import('../../js/db.js?v=4433203-live-events');
+const {
+    subscribeLiveEvents,
+    getLiveEvents,
+    getLiveChatHistory,
+    getLiveReactions
+} = await import('../../js/db.js?v=4433203-live-events');
 
 function createEventDocs(count) {
     return Array.from({ length: count }, (_, index) => ({
@@ -142,5 +147,38 @@ describe('live event query bounds', () => {
         expect(source).toContain('const liveEvents = await getLiveEvents(teamId, gameId);');
         expect(source).toMatch(/buildTrackLiveResumeState\(\{\s*liveEvents,/);
         expect(source).not.toContain('const liveEventsSnapshot = await getDocs(query(');
+    });
+});
+
+describe('classic replay engagement query bounds', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it.each([
+        ['chat messages', 'liveChat', getLiveChatHistory],
+        ['reactions', 'liveReactions', getLiveReactions]
+    ])('loads only the newest 100 %s and normalizes them chronologically', async (_label, collectionName, loadHistory) => {
+        const allRecords = Array.from({ length: 125 }, (_, index) => ({
+            id: `${collectionName}-${String(index).padStart(3, '0')}`,
+            data: () => ({ createdAt: new Date(index), sequence: index })
+        }));
+        firebaseMocks.getDocs.mockImplementationOnce(async ({ constraints }) => {
+            expect(constraints).toEqual([
+                { type: 'orderBy', field: 'createdAt', direction: 'desc' },
+                { type: 'limit', value: 100 }
+            ]);
+            return { docs: allRecords.slice(-100).reverse() };
+        });
+
+        await expect(loadHistory('team-1', 'game-1')).resolves.toEqual(
+            allRecords.slice(-100).map((record) => ({ id: record.id, ...record.data() }))
+        );
+        expect(firebaseMocks.collection).toHaveBeenCalledWith(
+            {},
+            `teams/team-1/games/game-1/${collectionName}`
+        );
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(1);
+        expect(firebaseMocks.startAfter).not.toHaveBeenCalled();
     });
 });
