@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { handleLazyPageLoadError, isLazyChunkLoadError, shouldAttemptLazyChunkReload } from './lazyPage';
+import { getLazyChunkRetryUrl, retryLazyPageModule, handleLazyPageLoadError, isLazyChunkLoadError, shouldAttemptLazyChunkReload } from './lazyPage';
 
 describe('lazy page chunk recovery', () => {
   beforeEach(() => {
@@ -34,5 +34,50 @@ describe('lazy page chunk recovery', () => {
     const error = new Error('Home page render failed');
 
     await expect(handleLazyPageLoadError(error)).rejects.toBe(error);
+  });
+});
+
+describe('bounded in-page route retry', () => {
+  beforeEach(() => {
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { href: 'https://allplays.ai/app/#/players/team/player', origin: 'https://allplays.ai', protocol: 'https:' }
+    });
+  });
+
+  it.each([
+    'https://attacker.example/app/assets/PlayerDetail-Abcd1234.js',
+    'https://allplays.ai/other/assets/PlayerDetail-Abcd1234.js',
+    'https://allplays.ai/app/assets/nested/PlayerDetail-Abcd1234.js',
+    'https://allplays.ai/app/assets/PlayerDetail.js',
+    'https://allplays.ai/app/assets/PlayerDetail-Abcd1234.js?token=secret',
+    'https://allplays.ai/app/assets/PlayerDetail-Abcd1234.js#fragment',
+    'https://user:secret@allplays.ai/app/assets/PlayerDetail-Abcd1234.js'
+  ])('never retries an untrusted or unversioned module URL: %s', async (url) => {
+    const error = new TypeError(`Failed to fetch dynamically imported module: ${url}`);
+    const importer = vi.fn();
+    await expect(retryLazyPageModule(error, importer)).rejects.toBe(error);
+    expect(importer).not.toHaveBeenCalled();
+  });
+
+  it('does not introduce remote retries into native shells', () => {
+    Object.defineProperty(window, 'location', { configurable: true, value: { href: 'capacitor://localhost/app/', origin: 'capacitor://localhost', protocol: 'capacitor:' } });
+    expect(getLazyChunkRetryUrl(new Error('Failed to fetch dynamically imported module: https://allplays.ai/app/assets/PlayerDetail-Abcd1234.js'))).toBeNull();
+  });
+
+  it('uses one stable retry URL and preserves the original failure on timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const error = new Error('Failed to fetch dynamically imported module: https://allplays.ai/app/assets/PlayerDetail-Abcd1234.js');
+      const importer = vi.fn(() => new Promise<Record<string, unknown>>(() => {}));
+      const result = retryLazyPageModule(error, importer);
+      const assertion = expect(result).rejects.toBe(error);
+      await vi.advanceTimersByTimeAsync(249);
+      expect(importer).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(5001);
+      await assertion;
+      expect(importer).toHaveBeenCalledExactlyOnceWith('https://allplays.ai/app/assets/PlayerDetail-Abcd1234.js?allplays-chunk-retry=1');
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
   });
 });
