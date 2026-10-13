@@ -32,4 +32,3 @@ therefore cannot pass through the helper.
 - Sparse assignments must omit `order` for the missing indices.
 - Recurrence risk is medium because allocation and propagation are coupled by
   one boolean and uploads can succeed while silently receiving fallback order.
-

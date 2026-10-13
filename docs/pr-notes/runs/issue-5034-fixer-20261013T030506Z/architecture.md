@@ -29,4 +29,3 @@ need to change.
   library refresh, and user-visible failure reporting.
 - Preserve photo range reservation and no-order document behavior unchanged.
 - Preserve Storage cleanup after metadata-write failure.
-

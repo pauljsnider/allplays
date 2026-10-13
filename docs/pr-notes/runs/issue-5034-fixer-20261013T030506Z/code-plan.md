@@ -23,4 +23,3 @@ failure cleanup with the optional field supplied.
 The requested role skills and RCA playbook were unavailable in this runtime.
 Four analysis-only role agents performed the equivalent requirements,
 architecture, QA, and code-plan reviews before implementation.
-
