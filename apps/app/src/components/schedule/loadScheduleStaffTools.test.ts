@@ -53,7 +53,7 @@ describe('loadScheduleStaffTools', () => {
     expect(importer).toHaveBeenCalledTimes(2);
   });
 
-  it('releases the stale-chunk reload guard after a successful import', async () => {
+  it('preserves the tab reload budget after an unrelated successful import', async () => {
     const chunkError = new TypeError('Failed to fetch dynamically imported module: /ScheduleStaffTools-old.js');
     window.sessionStorage.setItem('allplays:lazy-chunk-reload-attempted', '1');
     const module = { default: vi.fn() } as unknown as ScheduleStaffToolsModule;
@@ -61,6 +61,6 @@ describe('loadScheduleStaffTools', () => {
 
     await expect(load()).resolves.toBe(module);
 
-    expect(shouldAttemptLazyChunkReload(chunkError)).toBe(true);
+    expect(shouldAttemptLazyChunkReload(chunkError)).toBe(false);
   });
 });
