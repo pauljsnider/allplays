@@ -252,6 +252,61 @@ describe('legacy team media upload forms', () => {
         expect(fileInput.value).toBe('');
     });
 
+    it('reserves exactly one order before a single document upload and passes it through', async () => {
+        mocks.reserveTeamMediaOrderRange.mockResolvedValueOnce([73]);
+        await loadTeamMediaModule();
+        const file = new File(['single'], 'single.pdf', { type: 'application/pdf' });
+        const fileInput = document.getElementById('media-files');
+        document.getElementById('file-folder').value = 'folderA';
+        setSelectedFiles(fileInput, [file]);
+
+        submitForm(document.getElementById('file-upload-form'));
+
+        await vi.waitUntil(() => mocks.uploadTeamMediaFile.mock.calls.length === 1);
+        expect(mocks.reserveTeamMediaOrderRange).toHaveBeenCalledOnce();
+        expect(mocks.reserveTeamMediaOrderRange).toHaveBeenCalledWith('team123', 'folderA', 1);
+        expect(mocks.reserveTeamMediaOrderRange.mock.invocationCallOrder[0])
+            .toBeLessThan(mocks.uploadTeamMediaFile.mock.invocationCallOrder[0]);
+        expect(mocks.uploadTeamMediaFile).toHaveBeenCalledWith(
+            'team123',
+            'folderA',
+            file,
+            expect.objectContaining({ order: 73, onProgress: expect.any(Function) })
+        );
+        await vi.waitUntil(() => document.getElementById('team-media-alert').textContent.includes('1 file uploaded.'));
+        expect(fileInput.value).toBe('');
+    });
+
+    it('keeps single document failure reporting after consuming its reserved order', async () => {
+        mocks.reserveTeamMediaOrderRange.mockResolvedValueOnce([91]);
+        mocks.uploadTeamMediaFile.mockRejectedValueOnce(new Error('storage upload failed'));
+        await loadTeamMediaModule();
+        const file = new File(['single'], 'failed.pdf', { type: 'application/pdf' });
+        const fileInput = document.getElementById('media-files');
+        document.getElementById('file-folder').value = 'folderA';
+        setSelectedFiles(fileInput, [file]);
+
+        submitForm(document.getElementById('file-upload-form'));
+
+        await vi.waitUntil(() => document.getElementById('team-media-alert').textContent.includes('0 files uploaded, 1 failed.'));
+        expect(mocks.reserveTeamMediaOrderRange).toHaveBeenCalledOnce();
+        expect(mocks.reserveTeamMediaOrderRange).toHaveBeenCalledWith('team123', 'folderA', 1);
+        expect(mocks.uploadTeamMediaFile).toHaveBeenCalledWith(
+            'team123',
+            'folderA',
+            file,
+            expect.objectContaining({ order: 91, onProgress: expect.any(Function) })
+        );
+        expect(document.querySelector('#file-upload-progress [data-upload-status="0"]').textContent)
+            .toBe('storage upload failed');
+        expect(document.querySelector('#file-upload-progress [data-upload-status="0"]').className)
+            .toContain('text-red-700');
+        expect(document.getElementById('team-media-alert').className).toContain('bg-red-50');
+        expect(document.getElementById('file-folder').value).toBe('folderA');
+        expect(mocks.getTeamMediaFolders).toHaveBeenCalledTimes(2);
+        expect(fileInput.files).toEqual([file]);
+    });
+
     it('omits an order when the shared upload helper has no assigned value', async () => {
         const { uploadSelectedFiles } = await loadTeamMediaModule();
         const file = new File(['document'], 'unassigned.pdf', { type: 'application/pdf' });
