@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getLazyChunkRetryUrl, retryLazyPageModule, handleLazyPageLoadError, isLazyChunkLoadError, shouldAttemptLazyChunkReload } from './lazyPage';
 
 describe('lazy page chunk recovery', () => {
+  afterEach(() => vi.restoreAllMocks());
   beforeEach(() => {
     window.sessionStorage.clear();
   });
@@ -28,6 +29,17 @@ describe('lazy page chunk recovery', () => {
     expect(window.sessionStorage.getItem('allplays:lazy-chunk-reload-attempted')).toBe('1');
     expect(shouldAttemptLazyChunkReload(error)).toBe(false);
     expect(pending).toBeInstanceOf(Promise);
+  });
+
+  it.each(['throw', 'ignore'])('does not reload if the reload marker write is %s', async (mode) => {
+    const reload = vi.fn();
+    Object.defineProperty(window, 'location', { configurable: true, value: { ...window.location, reload } });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      if (mode === 'throw') throw new Error('Storage denied');
+    });
+    const error = new TypeError('Failed to fetch dynamically imported module: https://allplays.ai/app/assets/PlayerDetail-Abcd1234.js');
+    await expect(handleLazyPageLoadError(error)).rejects.toBe(error);
+    expect(reload).not.toHaveBeenCalled();
   });
 
   it('rejects non-chunk lazy route errors without reloading', async () => {
@@ -60,9 +72,9 @@ describe('bounded in-page route retry', () => {
     expect(importer).not.toHaveBeenCalled();
   });
 
-  it('does not introduce remote retries into native shells', () => {
-    Object.defineProperty(window, 'location', { configurable: true, value: { href: 'capacitor://localhost/app/', origin: 'capacitor://localhost', protocol: 'capacitor:' } });
-    expect(getLazyChunkRetryUrl(new Error('Failed to fetch dynamically imported module: https://allplays.ai/app/assets/PlayerDetail-Abcd1234.js'))).toBeNull();
+  it.each(['capacitor:', 'https:'])('does not introduce retries into native %s shells', (protocol) => {
+    Object.defineProperty(window, 'location', { configurable: true, value: { href: `${protocol}//localhost/app/`, origin: `${protocol}//localhost`, protocol, hostname: 'localhost' } });
+    expect(getLazyChunkRetryUrl(new Error(`Failed to fetch dynamically imported module: ${protocol}//localhost/app/assets/PlayerDetail-Abcd1234.js`))).toBeNull();
   });
 
   it('uses one stable retry URL and preserves the original failure on timeout', async () => {

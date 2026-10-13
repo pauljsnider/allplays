@@ -1,5 +1,6 @@
 import { lazy, type ComponentType } from 'react';
 import { createLogger } from './logger';
+import { isNativeRuntime } from './nativeRuntime';
 
 const logger = createLogger('lazy-page');
 
@@ -13,7 +14,7 @@ export function isLazyChunkLoadError(error: unknown) {
 // A rejected module fetch can remain in the browser's module map. Retry only
 // versioned bundles from this web app, with one stable alternate module URL.
 export function getLazyChunkRetryUrl(error: unknown): string | null {
-  if (!isLazyChunkLoadError(error) || typeof window === 'undefined') return null;
+  if (!isLazyChunkLoadError(error) || typeof window === 'undefined' || isNativeRuntime()) return null;
   const message = error instanceof Error ? error.message : String(error || '');
   const match = message.match(/(?:Failed to fetch dynamically imported module|error loading dynamically imported module):\s*(https?:\/\/\S+)$/i);
   if (!match) return null;
@@ -60,9 +61,9 @@ export function shouldAttemptLazyChunkReload(error: unknown) {
   if (!isLazyChunkLoadError(error)) return false;
   if (typeof window === 'undefined') return false;
   try {
-    return window.sessionStorage?.getItem(lazyChunkReloadKey) !== '1';
+    return Boolean(window.sessionStorage) && window.sessionStorage.getItem(lazyChunkReloadKey) !== '1';
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -72,20 +73,14 @@ export function handleLazyPageLoadError(error: unknown): Promise<{ default: Comp
   }
 
   try {
-    window.sessionStorage?.setItem(lazyChunkReloadKey, '1');
+    window.sessionStorage.setItem(lazyChunkReloadKey, '1');
+    if (window.sessionStorage.getItem(lazyChunkReloadKey) !== '1') return Promise.reject(error);
   } catch {
-    // Continue with the reload even when storage is unavailable.
+    // Without durable tab state a new document could reload forever.
+    return Promise.reject(error);
   }
   window.location.reload();
   return new Promise(() => {});
-}
-
-export function clearLazyChunkReloadAttempt() {
-  try {
-    window.sessionStorage?.removeItem(lazyChunkReloadKey);
-  } catch {
-    // Session storage is best-effort only.
-  }
 }
 
 export function lazyNamedPage<TModule extends Record<string, unknown>, TExport extends keyof TModule>(
@@ -101,7 +96,7 @@ export function lazyNamedPage<TModule extends Record<string, unknown>, TExport e
       return module as TModule;
     })
     .then((module) => {
-      clearLazyChunkReloadAttempt();
+      // Keep the tab reload budget: another successful chunk must not rearm it.
       return { default: module[exportName] as ComponentType<any> };
     })
     .catch(handleLazyPageLoadError));

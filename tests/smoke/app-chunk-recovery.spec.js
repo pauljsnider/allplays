@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createRequire } from 'node:module';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -19,8 +19,12 @@ test.beforeAll(async () => {
             react: path.dirname(appRequire.resolve('react/package.json')),
             'react-dom': path.dirname(appRequire.resolve('react-dom/package.json'))
         } },
-        build: { outDir: output, emptyOutDir: true }
+        build: { outDir: output, emptyOutDir: true, rollupOptions: {
+            input: path.resolve('tests/smoke/fixtures/chunk-recovery/main.tsx'),
+            output: { entryFileNames: 'assets/entry.js' }
+        } }
     });
+    await writeFile(path.join(output, 'index.html'), '<!doctype html><html><body><div id="root"></div><script type="module" src="/app/assets/entry.js"></script></body></html>');
 });
 test.afterAll(async () => { if (output) await rm(output, { recursive: true, force: true }); });
 
@@ -82,4 +86,26 @@ test('a retry that returns a dependency cannot substitute for the route', async 
     await expect(page.getByRole('alert')).toHaveText('Load failed');
     expect(observed.chunks).toHaveLength(2);
     expect(observed.documents).toBe(1);
+});
+
+test('fresh-session persistent failure exhausts one reload then shows the error', async ({ page }) => {
+    const observed = await serveFixture(page, 10);
+    await page.getByRole('button', { name: 'Open player' }).click();
+    await expect(page.getByRole('alert')).toHaveText('Load failed');
+    expect(observed.documents).toBe(2);
+    expect(observed.chunks).toEqual(['', '?allplays-chunk-retry=1', '', '?allplays-chunk-retry=1']);
+    expect(observed.failures).toEqual([503, 503, 503, 503]);
+});
+
+test('unavailable session storage cannot create a persistent reload loop', async ({ page }) => {
+    await page.addInitScript(() => {
+        Object.defineProperty(window, 'sessionStorage', { get() { throw new Error('Storage blocked'); } });
+    });
+    const observed = await serveFixture(page, 10);
+    await page.getByLabel('Unsaved note').fill('still here');
+    await page.getByRole('button', { name: 'Open player' }).click();
+    await expect(page.getByRole('alert')).toHaveText('Load failed');
+    expect(observed.documents).toBe(1);
+    expect(observed.chunks).toHaveLength(2);
+    await expect(page.getByLabel('Unsaved note')).toHaveValue('still here');
 });
