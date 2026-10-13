@@ -440,7 +440,8 @@ describe('team media db ordering', () => {
         const uploadPromise = uploadTeamMediaFile(
             'team-1',
             'folder-1',
-            new File(['document'], 'lineup.pdf', { type: 'application/pdf' })
+            new File(['document'], 'lineup.pdf', { type: 'application/pdf' }),
+            { order: 23 }
         );
 
         uploadTaskQueue.splice(0).forEach(({ complete }) => complete());
@@ -449,6 +450,7 @@ describe('team media db ordering', () => {
         expect(firebaseMocks.deleteObject).toHaveBeenCalledWith(expect.objectContaining({
             fullPath: expect.stringMatching(/^team-media\/team-1\/folder-1\/user-1\/.+-lineup\.pdf$/)
         }));
+        expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
     });
 
     it.each([
