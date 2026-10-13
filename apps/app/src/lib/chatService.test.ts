@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { mapChatConversationDocument, mapChatMessageDocument, mapChatMessageRecord, mapChatMessageRecords } from './firestore/mappers';
-import type { FirestoreDocument, NativeChatPageCursor } from './firestore/types';
+import type { ChatAttachmentFirestoreRecord, FirestoreDocument, NativeChatPageCursor } from './firestore/types';
 
 const legacyChatServiceMocks = vi.hoisted(() => ({
   GoogleAIBackend: class GoogleAIBackend {},
@@ -125,7 +125,7 @@ function createDeferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-function createUploadedAttachment(file: File, urlName = file.name) {
+function createUploadedAttachment(file: File, urlName = file.name): ChatAttachmentFirestoreRecord {
   return {
     type: file.type.startsWith('video/') ? 'video' : 'image',
     url: `https://firebasestorage.googleapis.com/v0/b/allplays-images/o/${encodeURIComponent(urlName)}?alt=media`,
