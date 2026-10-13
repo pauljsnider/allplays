@@ -5510,6 +5510,52 @@ describe('ScheduleEventDetail wrap-up', () => {
     expect(scheduleServiceMocks.updateGameScore).not.toHaveBeenCalled();
   });
 
+  it('excludes private mobile notes from summary generation', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isTeamStaff: true, canUpdateScore: true, liveStatus: 'scheduled' })],
+      children: []
+    });
+    gameWrapupServiceMocks.loadApprovedMobileVoiceNotes.mockReturnValue([
+      {
+        id: 'shared-note',
+        text: 'Strong second-half press',
+        audience: 'shared',
+        status: 'approved',
+        createdAt: '2026-10-13T00:00:00.000Z',
+        updatedAt: '2026-10-13T00:00:00.000Z'
+      },
+      {
+        id: 'private-note',
+        text: 'Private player concern',
+        audience: 'private',
+        status: 'approved',
+        createdAt: '2026-10-13T00:00:00.000Z',
+        updatedAt: '2026-10-13T00:00:00.000Z'
+      }
+    ]);
+    gameWrapupServiceMocks.generateGameWrapupArtifactsForApp.mockResolvedValue({
+      summary: 'Bears finished strong.',
+      practiceFeedItems: []
+    });
+
+    renderScheduleEventDetail();
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Post-game wrap-up' }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Shared · Strong second-half press' }));
+    expect(screen.queryByRole('checkbox', { name: 'Private · Private player concern' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Generate summary draft' }));
+
+    await waitFor(() =>
+      expect(gameWrapupServiceMocks.generateGameWrapupArtifactsForApp).toHaveBeenCalledWith({
+        teamId: 'team-1',
+        gameId: 'game-1',
+        score: { home: 0, away: 0 },
+        notes: '[Shared voice note] Strong second-half press'
+      })
+    );
+  });
+
   it('completes wrap-up with AI artifacts and broadcasts score corrections', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
