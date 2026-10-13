@@ -1,4 +1,15 @@
 export const MAX_CHAT_MEDIA_SIZE = 5 * 1024 * 1024;
+export const MAX_CHAT_ATTACHMENTS = 10;
+export const CHAT_ATTACHMENT_LIMIT_ERROR = 'You can attach up to 10 photos or videos per message.';
+
+export function validateChatAttachmentCount(existingCount = 0, newCount = 0) {
+    const total = existingCount + newCount;
+    if (total > MAX_CHAT_ATTACHMENTS) {
+        throw new Error(CHAT_ATTACHMENT_LIMIT_ERROR);
+    }
+    return total;
+}
+
 const CHAT_MEDIA_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
     month: 'short',
     day: 'numeric',

@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
     MAX_CHAT_MEDIA_SIZE,
+    MAX_CHAT_ATTACHMENTS,
+    validateChatAttachmentCount,
     normalizeChatAttachments,
     getMessageAttachments,
     collectThreadMedia,
@@ -12,6 +14,19 @@ import {
 } from '../../js/team-chat-media.js';
 
 describe('team chat media normalization', () => {
+    it.each([
+        [0, 0, 0],
+        [0, MAX_CHAT_ATTACHMENTS, MAX_CHAT_ATTACHMENTS],
+        [MAX_CHAT_ATTACHMENTS - 1, 1, MAX_CHAT_ATTACHMENTS]
+    ])('allows attachment counts at or below the limit (%i existing, %i new)', (existingCount, newCount, total) => {
+        expect(validateChatAttachmentCount(existingCount, newCount)).toBe(total);
+    });
+
+    it('rejects attachment counts above the shared limit', () => {
+        expect(() => validateChatAttachmentCount(MAX_CHAT_ATTACHMENTS, 1))
+            .toThrow('You can attach up to 10 photos or videos per message.');
+    });
+
     it('normalizes mixed image and video attachments and preserves the first image as legacy media', () => {
         const result = normalizeChatAttachments([
             {
