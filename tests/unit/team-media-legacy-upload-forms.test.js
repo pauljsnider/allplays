@@ -192,8 +192,10 @@ describe('legacy team media upload forms', () => {
         );
         expect(mocks.uploadTeamMediaFile.mock.calls.map((call) => call[2])).toEqual([pdfFile]);
         expect(mocks.uploadTeamMediaFile.mock.calls.map((call) => call[2])).not.toContain(unsupportedFile);
-        expect(mocks.uploadTeamMediaFile.mock.calls[0][3]).not.toHaveProperty('order');
-        expect(mocks.reserveTeamMediaOrderRange).not.toHaveBeenCalled();
+        expect(mocks.uploadTeamMediaFile.mock.calls[0][3]).toEqual(
+            expect.objectContaining({ order: 41, onProgress: expect.any(Function) })
+        );
+        expect(mocks.reserveTeamMediaOrderRange).toHaveBeenCalledWith('team123', 'folderA', 2);
         await vi.waitUntil(() => document.getElementById('team-media-alert').textContent.includes('1 file uploaded, 1 failed.'));
 
         expect(document.querySelector('#file-upload-progress [data-upload-status="0"]').textContent)
@@ -204,26 +206,25 @@ describe('legacy team media upload forms', () => {
         expect(fileInput.value).toBe('');
     });
 
-    it('passes assigned document orders through while preserving partial-failure reporting', async () => {
-        const { uploadSelectedFiles } = await loadTeamMediaModule();
+    it('passes reserved orders through the document form while preserving partial-failure reporting', async () => {
+        mocks.reserveTeamMediaOrderRange.mockResolvedValueOnce([0, 17]);
+        await loadTeamMediaModule();
         const files = [
             new File(['first'], 'first.pdf', { type: 'application/pdf' }),
             new File(['second'], 'second.pdf', { type: 'application/pdf' })
         ];
         mocks.uploadTeamMediaFile.mockRejectedValueOnce(new Error('media create denied'));
+        const fileInput = document.getElementById('media-files');
+        document.getElementById('file-folder').value = 'folderA';
+        setSelectedFiles(fileInput, files);
 
-        const result = await uploadSelectedFiles({
-            files,
-            folderId: 'folderA',
-            progressEl: document.getElementById('file-upload-progress'),
-            validateFile: () => true,
-            uploadFile: mocks.uploadTeamMediaFile,
-            nounSingular: 'file',
-            nounPlural: 'files',
-            unsupportedMessage: 'Choose a supported document file that is 10 MB or smaller.',
-            assignedOrders: [0, 17]
-        });
+        submitForm(document.getElementById('file-upload-form'));
 
+        await vi.waitUntil(() => mocks.uploadTeamMediaFile.mock.calls.length === 2);
+        expect(mocks.reserveTeamMediaOrderRange).toHaveBeenCalledOnce();
+        expect(mocks.reserveTeamMediaOrderRange).toHaveBeenCalledWith('team123', 'folderA', 2);
+        expect(mocks.reserveTeamMediaOrderRange.mock.invocationCallOrder[0])
+            .toBeLessThan(mocks.uploadTeamMediaFile.mock.invocationCallOrder[0]);
         expect(mocks.uploadTeamMediaFile).toHaveBeenNthCalledWith(
             1,
             'team123',
@@ -238,8 +239,7 @@ describe('legacy team media upload forms', () => {
             files[1],
             expect.objectContaining({ order: 17, onProgress: expect.any(Function) })
         );
-        expect(mocks.reserveTeamMediaOrderRange).not.toHaveBeenCalled();
-        expect(result).toEqual({ uploadedCount: 1, failedCount: 1 });
+        await vi.waitUntil(() => document.getElementById('team-media-alert').textContent.includes('1 file uploaded, 1 failed.'));
         expect(document.querySelector('#file-upload-progress [data-upload-status="0"]').textContent)
             .toBe('media create denied');
         expect(document.querySelector('#file-upload-progress [data-upload-status="0"]').className)
@@ -249,6 +249,7 @@ describe('legacy team media upload forms', () => {
         expect(document.getElementById('team-media-alert').textContent).toContain('1 file uploaded, 1 failed.');
         expect(document.getElementById('team-media-alert').className).toContain('bg-red-50');
         expect(mocks.getTeamMediaFolders).toHaveBeenCalledTimes(2);
+        expect(fileInput.value).toBe('');
     });
 
     it('rejects over-limit legacy Team Media batches before progress or upload work starts', async () => {
