@@ -473,7 +473,7 @@ function moveInArray(items, id, direction) {
     return next;
 }
 
-export async function uploadSelectedFiles({ files, folderId, progressEl, validateFile, uploadFile, nounSingular, nounPlural, unsupportedMessage, assignedOrders = [], reserveOrders = false }) {
+export async function uploadSelectedFiles({ files, folderId, progressEl, validateFile, uploadFile, nounSingular, nounPlural, unsupportedMessage, assignedOrders = [], reserveOrders = false, requireSequentialOrders = false }) {
     progressEl.innerHTML = files.map((file, index) => `
         <div data-upload-row="${index}" class="rounded-lg border border-gray-200 p-3">
             <div class="flex justify-between gap-3"><span>${escapeHtml(file.name)}</span><span data-upload-status="${index}">Waiting</span></div>
@@ -490,7 +490,14 @@ export async function uploadSelectedFiles({ files, folderId, progressEl, validat
                 const [order] = await reserveTeamMediaOrderRange(state.teamId, folderId, 1);
                 orders = [order];
             } else {
-                orders = await reserveTeamMediaOrderRange(state.teamId, folderId, files.length);
+                const reservedOrders = await reserveTeamMediaOrderRange(state.teamId, folderId, files.length);
+                const firstOrder = reservedOrders[0];
+                const hasSequentialOrders = reservedOrders.length === files.length
+                    && reservedOrders.every((order, index) => Number.isInteger(order) && order === firstOrder + index);
+                if (requireSequentialOrders && !hasSequentialOrders) {
+                    throw new Error('Unable to reserve sequential media orders.');
+                }
+                orders = reservedOrders;
             }
         } catch (error) {
             reservationError = error;
@@ -795,7 +802,8 @@ els.fileUploadForm.addEventListener('submit', async (event) => {
         nounSingular: 'file',
         nounPlural: 'files',
         unsupportedMessage: 'Choose a supported document file that is 10 MB or smaller.',
-        reserveOrders: true
+        reserveOrders: true,
+        requireSequentialOrders: true
     });
     if (uploadedCount > 0) els.mediaFiles.value = '';
 });

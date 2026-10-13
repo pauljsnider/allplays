@@ -206,50 +206,69 @@ describe('legacy team media upload forms', () => {
         expect(fileInput.value).toBe('');
     });
 
-    it('passes reserved orders through the document form while preserving partial-failure reporting', async () => {
-        mocks.reserveTeamMediaOrderRange.mockResolvedValueOnce([0, 17]);
+    it('reserves one sequential range for 20 documents before uploads and permits failure gaps', async () => {
+        const reservedOrders = Array.from({ length: 20 }, (_, index) => 100 + index);
+        mocks.reserveTeamMediaOrderRange.mockResolvedValueOnce(reservedOrders);
         await loadTeamMediaModule();
-        const files = [
-            new File(['first'], 'first.pdf', { type: 'application/pdf' }),
-            new File(['second'], 'second.pdf', { type: 'application/pdf' })
-        ];
-        mocks.uploadTeamMediaFile.mockRejectedValueOnce(new Error('media create denied'));
+        const files = Array.from({ length: 20 }, (_, index) => (
+            new File([`document-${index + 1}`], `packet-${index + 1}.pdf`, { type: 'application/pdf' })
+        ));
+        mocks.uploadTeamMediaFile.mockImplementation(async (_teamId, _folderId, file, options = {}) => {
+            options.onProgress?.({ percent: 60 });
+            if (file === files[7]) throw new Error('media create denied');
+            return { id: `file-${file.name}` };
+        });
         const fileInput = document.getElementById('media-files');
         document.getElementById('file-folder').value = 'folderA';
         setSelectedFiles(fileInput, files);
 
         submitForm(document.getElementById('file-upload-form'));
 
-        await vi.waitUntil(() => mocks.uploadTeamMediaFile.mock.calls.length === 2);
+        await vi.waitUntil(() => mocks.uploadTeamMediaFile.mock.calls.length === 20);
         expect(mocks.reserveTeamMediaOrderRange).toHaveBeenCalledOnce();
-        expect(mocks.reserveTeamMediaOrderRange).toHaveBeenCalledWith('team123', 'folderA', 2);
-        expect(mocks.reserveTeamMediaOrderRange.mock.invocationCallOrder[0])
-            .toBeLessThan(mocks.uploadTeamMediaFile.mock.invocationCallOrder[0]);
-        expect(mocks.uploadTeamMediaFile).toHaveBeenNthCalledWith(
-            1,
-            'team123',
-            'folderA',
-            files[0],
-            expect.objectContaining({ order: 0, onProgress: expect.any(Function) })
-        );
-        expect(mocks.uploadTeamMediaFile).toHaveBeenNthCalledWith(
-            2,
-            'team123',
-            'folderA',
-            files[1],
-            expect.objectContaining({ order: 17, onProgress: expect.any(Function) })
-        );
-        await vi.waitUntil(() => document.getElementById('team-media-alert').textContent.includes('1 file uploaded, 1 failed.'));
-        expect(document.querySelector('#file-upload-progress [data-upload-status="0"]').textContent)
+        expect(mocks.reserveTeamMediaOrderRange).toHaveBeenCalledWith('team123', 'folderA', 20);
+        const reservationCallOrder = mocks.reserveTeamMediaOrderRange.mock.invocationCallOrder[0];
+        expect(mocks.uploadTeamMediaFile.mock.invocationCallOrder.every(
+            (uploadCallOrder) => reservationCallOrder < uploadCallOrder
+        )).toBe(true);
+        expect(mocks.uploadTeamMediaFile.mock.calls.map((call) => call[2])).toEqual(files);
+        const assignedOrders = mocks.uploadTeamMediaFile.mock.calls.map((call) => call[3].order);
+        expect(assignedOrders).toEqual(reservedOrders);
+        expect(new Set(assignedOrders).size).toBe(20);
+        await vi.waitUntil(() => document.getElementById('team-media-alert').textContent.includes('19 files uploaded, 1 failed.'));
+        expect(document.querySelector('#file-upload-progress [data-upload-status="7"]').textContent)
             .toBe('media create denied');
-        expect(document.querySelector('#file-upload-progress [data-upload-status="0"]').className)
+        expect(document.querySelector('#file-upload-progress [data-upload-status="7"]').className)
             .toContain('text-red-700');
-        expect(document.querySelector('#file-upload-progress [data-upload-status="1"]').textContent)
+        expect(document.querySelector('#file-upload-progress [data-upload-status="8"]').textContent)
             .toBe('Uploaded');
-        expect(document.getElementById('team-media-alert').textContent).toContain('1 file uploaded, 1 failed.');
+        expect(assignedOrders[7]).toBe(107);
+        expect(assignedOrders[8]).toBe(108);
+        expect(document.getElementById('team-media-alert').textContent).toContain('19 files uploaded, 1 failed.');
         expect(document.getElementById('team-media-alert').className).toContain('bg-red-50');
         expect(mocks.getTeamMediaFolders).toHaveBeenCalledTimes(2);
         expect(fileInput.value).toBe('');
+    });
+
+    it('does not invoke document helpers when a multi-file reservation is not sequential', async () => {
+        mocks.reserveTeamMediaOrderRange.mockResolvedValueOnce([30, 32]);
+        await loadTeamMediaModule();
+        const files = [
+            new File(['first'], 'first.pdf', { type: 'application/pdf' }),
+            new File(['second'], 'second.pdf', { type: 'application/pdf' })
+        ];
+        document.getElementById('file-folder').value = 'folderA';
+        setSelectedFiles(document.getElementById('media-files'), files);
+
+        submitForm(document.getElementById('file-upload-form'));
+
+        await vi.waitUntil(() => document.getElementById('team-media-alert').textContent.includes('0 files uploaded, 2 failed.'));
+        expect(mocks.reserveTeamMediaOrderRange).toHaveBeenCalledOnce();
+        expect(mocks.uploadTeamMediaFile).not.toHaveBeenCalled();
+        expect(document.querySelector('#file-upload-progress [data-upload-status="0"]').textContent)
+            .toBe('Unable to reserve sequential media orders.');
+        expect(document.querySelector('#file-upload-progress [data-upload-status="1"]').textContent)
+            .toBe('Unable to reserve sequential media orders.');
     });
 
     it('reserves exactly one order before a single document upload and passes it through', async () => {
