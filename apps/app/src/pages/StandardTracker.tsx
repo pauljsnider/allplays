@@ -30,6 +30,7 @@ import { EventDetailPageSkeleton } from '../components/PageSkeletons';
 import { WORKFLOW_TIMING, startWorkflowTimer } from '../lib/workflowTiming';
 import type { AuthState } from '../lib/types';
 import { isLegacyTrackingEngine } from '../lib/trackingEngine';
+import { saveApprovedMobileVoiceNote, type MobileVoiceNoteAudience } from '../lib/gameWrapupService';
 
 type TrackerStatus = {
   tone: 'success' | 'error' | 'info';
@@ -76,9 +77,12 @@ function getOpponentScoreSide(event: ParentScheduleEvent | null): 'home' | 'away
   return event?.isHome === false ? 'home' : 'away';
 }
 
-function VoiceNoteDraftPanel() {
+function VoiceNoteDraftPanel({ teamId, gameId, userId }: { teamId: string; gameId: string; userId: string }) {
   const [phase, setPhase] = useState<NoteDraftPhase>('closed');
   const [text, setText] = useState('');
+  const [audience, setAudience] = useState<MobileVoiceNoteAudience>('private');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   if (phase === 'closed') {
     return (
@@ -102,6 +106,15 @@ function VoiceNoteDraftPanel() {
   const discard = () => {
     setText('');
     setPhase('closed');
+    setSaveError(null);
+  };
+
+  const save = () => {
+    if (saving || !text.trim()) return;
+    setSaving(true); setSaveError(null);
+    try { saveApprovedMobileVoiceNote({ teamId, gameId, userId, text, audience }); setText(''); setPhase('closed'); }
+    catch (error: any) { setSaveError(error?.message || 'Unable to save the note. Your draft is still here; try again.'); }
+    finally { setSaving(false); }
   };
 
   return (
@@ -133,6 +146,8 @@ function VoiceNoteDraftPanel() {
         readOnly={isReviewing}
         placeholder="Add a coaching observation..."
       />
+      {isReviewing ? <fieldset className="mt-3 rounded-xl border border-gray-200 bg-white px-3 py-2" disabled={saving}><legend className="px-1 text-xs font-black uppercase tracking-[0.04em] text-gray-600">Note audience</legend><label className="mr-4 inline-flex items-center gap-2 text-sm font-semibold text-gray-800"><input type="radio" name="voice-note-audience" checked={audience === 'private'} onChange={() => setAudience('private')} />Private · coach only</label><label className="inline-flex items-center gap-2 text-sm font-semibold text-gray-800"><input type="radio" name="voice-note-audience" checked={audience === 'shared'} onChange={() => setAudience('shared')} />Shared · team summary</label></fieldset> : null}
+      {saveError ? <div className="mt-2 text-xs font-bold text-rose-700" role="alert">{saveError}</div> : null}
       <div className="mt-3 grid grid-cols-2 gap-2">
         {isRecording ? (
           <>
@@ -146,9 +161,7 @@ function VoiceNoteDraftPanel() {
         ) : (
           <>
             {isReviewing ? (
-              <button type="button" className="secondary-button min-h-11 justify-center px-3 text-sm" onClick={() => setPhase('editing')}>
-                Edit note draft
-              </button>
+              <><button type="button" className="secondary-button min-h-11 justify-center px-3 text-sm" onClick={() => setPhase('editing')} disabled={saving}>Edit note draft</button><button type="button" className="primary-button min-h-11 justify-center px-3 text-sm" onClick={save} disabled={saving || !text.trim()}>{saving ? 'Saving note' : 'Save note'}</button></>
             ) : null}
             <button type="button" className="primary-button min-h-11 justify-center px-3 text-sm" onClick={() => setPhase('recording')}>
               Start voice draft
@@ -537,7 +550,7 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
 
       {!accessDenied && config ? (
         <>
-          <VoiceNoteDraftPanel key={`${auth.user?.uid || 'anonymous'}:${decodedTeamId}:${decodedEventId}`} />
+          <VoiceNoteDraftPanel key={`${auth.user?.uid || 'anonymous'}:${decodedTeamId}:${decodedEventId}`} teamId={decodedTeamId} gameId={decodedEventId} userId={auth.user?.uid || ''} />
           <section className="app-card p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0">

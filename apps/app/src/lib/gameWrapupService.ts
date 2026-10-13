@@ -40,6 +40,40 @@ export type GameWrapupEmailDraft = {
   mailto: string;
 };
 
+export type MobileVoiceNoteAudience = 'private' | 'shared';
+export type SavedMobileVoiceNote = { id: string; text: string; audience: MobileVoiceNoteAudience; status: 'approved'; createdAt: string; updatedAt: string };
+
+function mobileVoiceNoteStorageKey(teamId: string, gameId: string, userId: string) {
+  return `allplays:mobile-voice-notes:${encodeURIComponent(teamId)}:${encodeURIComponent(gameId)}:${encodeURIComponent(userId)}`;
+}
+
+function mobileVoiceNoteId(text: string, audience: MobileVoiceNoteAudience) {
+  let hash = 2166136261;
+  for (const character of `${audience}\u0000${text}`) { hash ^= character.charCodeAt(0); hash = Math.imul(hash, 16777619); }
+  return `mobile-note-${(hash >>> 0).toString(36)}`;
+}
+
+export function loadApprovedMobileVoiceNotes(teamId: string, gameId: string, userId: string): SavedMobileVoiceNote[] {
+  if (typeof window === 'undefined' || !teamId || !gameId || !userId) return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(mobileVoiceNoteStorageKey(teamId, gameId, userId)) || '[]');
+    return (Array.isArray(parsed) ? parsed : []).filter((note): note is SavedMobileVoiceNote => note?.status === 'approved' && typeof note?.id === 'string' && Boolean(String(note.text || '').trim()) && (note.audience === 'private' || note.audience === 'shared'));
+  } catch { return []; }
+}
+
+export function saveApprovedMobileVoiceNote({ teamId, gameId, userId, text, audience }: { teamId: string; gameId: string; userId: string; text: string; audience: MobileVoiceNoteAudience }): SavedMobileVoiceNote {
+  const normalizedText = String(text || '').trim();
+  if (!normalizedText) throw new Error('Add text to the note before saving.');
+  if (typeof window === 'undefined') throw new Error('Notes can only be saved in the mobile app.');
+  const existing = loadApprovedMobileVoiceNotes(teamId, gameId, userId);
+  const now = new Date().toISOString();
+  const id = mobileVoiceNoteId(normalizedText, audience);
+  const note = existing.find((item) => item.id === id) || { id, text: normalizedText, audience, status: 'approved' as const, createdAt: now, updatedAt: now };
+  const next = [...existing.filter((item) => item.id !== id), { ...note, text: normalizedText, audience, updatedAt: now }];
+  window.localStorage.setItem(mobileVoiceNoteStorageKey(teamId, gameId, userId), JSON.stringify(next));
+  return next[next.length - 1];
+}
+
 let aiModelCache: any = null;
 
 export function resetGameWrapupAiModel() {
