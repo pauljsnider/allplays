@@ -155,3 +155,26 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('private calendar credenti
         }));
     });
 });
+
+describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('pilot capability and budget privacy', () => {
+    let env;
+    beforeAll(async () => {
+        env = await initializeTestEnvironment({ projectId: 'demo-allplays', firestore: {
+            rules: readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8')
+        } });
+        await env.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), 'users', 'admin'), { isAdmin: true });
+            await setDoc(doc(context.firestore(), 'authEmailPilotLinks', 'opaque-hash'), { uid: 'pilot', expiresAt: 1 });
+        });
+    }, 60000);
+    afterAll(async () => { await env?.cleanup(); });
+    for (const uid of [null, 'pilot', 'other', 'admin']) {
+        it(`denies capability/budget reads and writes to ${uid || 'anonymous'}`, async () => {
+            const db = (uid ? env.authenticatedContext(uid, { email_verified: true }) : env.unauthenticatedContext()).firestore();
+            for (const [collection, id] of [['authEmailPilotLinks', 'opaque-hash'], ['authEmailRateLimits', 'web-sign-in-pilot']]) {
+                await assertFails(getDoc(doc(db, collection, id)));
+                await assertFails(setDoc(doc(db, collection, id), { uid: 'pilot', expiresAt: 9999999999999 }));
+            }
+        });
+    }
+});

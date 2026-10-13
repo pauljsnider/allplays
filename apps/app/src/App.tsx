@@ -24,6 +24,7 @@ import type { AuthState } from './lib/types';
 import { DiamondScorebookRoute } from './pages/DiamondScorebookRoute';
 
 const AuthPage = lazyNamedPage(() => import('./pages/AuthPage'), 'AuthPage');
+const EmailSignIn = lazyNamedPage(() => import('./pages/EmailSignIn'), 'EmailSignIn');
 const AcceptInvite = lazyNamedPage(() => import('./pages/AcceptInvite'), 'AcceptInvite');
 const CapabilityPage = lazyNamedPage(() => import('./pages/CapabilityPage'), 'CapabilityPage');
 const CreateTeam = lazyNamedPage(() => import('./pages/CreateTeam'), 'CreateTeam');
@@ -204,7 +205,7 @@ export default function App() {
   }, [signedInUserId, navigate]);
 
   useEffect(() => {
-    if (auth.loading || !auth.user) {
+    if (auth.loading || !auth.user || location.pathname === '/email-sign-in') {
       return;
     }
 
@@ -225,6 +226,7 @@ export default function App() {
       <ScrollRestoration />
       <Routes>
         <Route path="/auth" element={<AuthPage auth={auth} />} />
+        <Route path="/email-sign-in" element={<EmailSignIn auth={auth} />} />
         <Route path="/accept-invite" element={<AcceptInvite auth={auth} />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/verify-pending" element={<VerifyPending auth={auth} />} />

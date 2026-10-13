@@ -8,7 +8,8 @@ const AUTH_ROUTE_ORIGIN = 'https://allplays.local';
 const AUTH_EMAIL_TYPES = Object.freeze({
   VERIFICATION: 'verification',
   PASSWORD_RESET: 'password_reset',
-  SIGN_IN: 'sign_in'
+  SIGN_IN: 'sign_in',
+  WEB_SIGN_IN: 'web_sign_in'
 });
 
 function normalizeAuthEmail(value) {
@@ -210,6 +211,12 @@ function buildAuthEmailMessage({ type, actionUrl, displayName = '', contextLabel
     intro = 'We received a request to reset the password for your ALL PLAYS account.';
     buttonLabel = 'Reset password';
     expirationCopy = 'If you did not request a password reset, you can ignore this email.';
+  } else if (type === AUTH_EMAIL_TYPES.WEB_SIGN_IN) {
+    subject = 'Sign in to ALL PLAYS';
+    heading = 'Sign in to your account';
+    intro = 'Open this link in your browser, confirm your email, and choose Continue to sign in.';
+    buttonLabel = 'Continue to sign in';
+    expirationCopy = 'This link expires in 15 minutes and can be used once. If you did not request it, ignore this email. Your password stays unchanged.';
   } else {
     subject = normalizedContextLabel ? `You're invited to ${normalizedContextLabel} on ALL PLAYS` : "You're invited to ALL PLAYS";
     heading = "You're invited to ALL PLAYS";
