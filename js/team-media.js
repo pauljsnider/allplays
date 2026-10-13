@@ -789,8 +789,7 @@ els.fileUploadForm.addEventListener('submit', async (event) => {
         uploadFile: uploadTeamMediaFile,
         nounSingular: 'file',
         nounPlural: 'files',
-        unsupportedMessage: 'Choose a supported document file that is 10 MB or smaller.',
-        reserveOrders: true
+        unsupportedMessage: 'Choose a supported document file that is 10 MB or smaller.'
     });
     if (uploadedCount > 0) els.mediaFiles.value = '';
 });
