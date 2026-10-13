@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { readFileSync } from 'node:fs';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SavedMobileVoiceNote } from '../lib/gameWrapupService';
 
 const scheduleServiceMocks = vi.hoisted(() => ({
   cancelParentScheduleRideRequest: vi.fn(),
@@ -167,7 +168,7 @@ const gameWrapupServiceMocks = vi.hoisted(() => ({
   })),
   buildGameWrapupEmailDraft: vi.fn(() => null),
   generateGameWrapupArtifactsForApp: vi.fn(),
-  loadApprovedMobileVoiceNotes: vi.fn(() => [])
+  loadApprovedMobileVoiceNotes: vi.fn<() => SavedMobileVoiceNote[]>(() => [])
 }));
 vi.mock('../lib/gameWrapupService', () => gameWrapupServiceMocks);
 const chatServiceMocks = vi.hoisted(() => ({
