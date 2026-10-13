@@ -4104,12 +4104,12 @@ const authEmailCallableHandlers = createAuthEmailCallableHandlers({
   isInviteInactive: isAccessCodeInactive
 });
 
-const { createWebSignInPilot, PILOT_RELEASE_APPROVED } = require('./web-sign-in-pilot.cjs');
+const { createWebSignInPilot, PILOT_RELEASE_APPROVED, PILOT_UID } = require('./web-sign-in-pilot.cjs');
 const webSignInPilot = createWebSignInPilot({
   auth: admin.auth(), firestore, queueDelivery: queueAuthEmailDelivery,
   HttpsError: functions.https.HttpsError, logger: functions.logger,
   enabled: PILOT_RELEASE_APPROVED,
-  pilotUid: '' // Release blocker: verify and pin the existing account; never derive from caller input.
+  pilotUid: PILOT_UID
 });
 exports.requestWebSignInEmail = functions.runWith({ secrets: ['RESEND_API_KEY'], maxInstances: 2 })
   .https.onCall(webSignInPilot.request);

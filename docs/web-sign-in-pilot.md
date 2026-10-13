@@ -1,34 +1,29 @@
-# Browser email sign-in pilot — release blocked
+# Browser email sign-in pilot
 
-Draft implementation for the existing paul@allplays.ai account only. The
-production release gate in `functions/web-sign-in-pilot.cjs` is deliberately
-false and its UID binding is empty. There is no login-screen entry point yet;
-the prepared request/completion screen is `/app/#/email-sign-in`.
-Do not enable the gate merely because these local tests pass.
+Paul approved this browser-only pilot on 2026-10-13 after accepting the disclosed
+outstanding-link deletion/email-reassignment boundary. The server gate is enabled
+in code and binds only the independently verified original UID. No caller input
+can change or rebind it. The pilot entry is `/app/#/email-sign-in`; password and
+Google login remain unchanged.
 
-## Release blockers
+## Release conditions and accepted boundary
 
-1. Firebase email-link redemption is a sign-in-or-create operation. A generated
-   OOB link can be redeemed directly, bypassing our preflight. Deleting or
-   reassigning the account between issuance/preflight and redemption can create
-   another account. A custom-token substitution also allows account recreation.
-   The approved pilot excludes signup and preserves the existing account. Its
-   residual deletion/reassignment risk needs an explicit release decision or a
-   revised redemption design; an absolute invariant against privileged account
-   recreation is not an additional product requirement. Current rules grant
-   verified-email access through adminEmails and legacy owner aliases, so a
-   replacement UID cannot be assumed to be an inaccessible orphan. Changing
-   live Auth/security configuration requires separate action-time approval.
-2. Pin the existing UID only after that design is settled. An authorized
-   read-only lookup on 2026-10-13 confirmed the account exists, emailVerified is
-   true, and the password provider is present. The initial 403 was resolved by
-   supplying the explicit project quota header. No credentials were changed.
-3. Draft PR checks skip heavy jobs by repository policy. Do not mark ready or
-   remove external-claim while blockers remain: that hands ownership to PaulBot.
+Firebase email links can be redeemed directly, bypassing application preflight.
+If the account is deleted or its email changes while a link remains valid,
+redemption may create or reach a replacement account. Existing rules include
+verified-email grants, so that account cannot be assumed to lack prior access.
+Paul accepted the bounded pilot while retaining the original account and email.
+Reject detected UID/email/provider drift; never automatically rebind or repair
+the live account. No Identity Platform upgrade or Auth setting change is needed.
 
-Production deployment and bounded inbox validation are now authorized, but that
-approval does not authorize new Auth/security configuration or credential
-changes. No live sign-in email has been requested or consumed during this work.
+A fresh narrow read confirmed the original UID/email, verified email, password
+provider, enabled user, and no enrolled MFA. Project email-link login is already
+enabled. No live credentials or provider settings were changed.
+
+Merge/deployment and bounded inbox validation are approved only after final
+review/CI and release sequencing clearance from the PR #5048 owner. Keep the
+draft/external-claim until the final head is frozen and sequencing is clear.
+Coordinate with the parent before requesting a live link.
 
 ## Prepared behavior
 
@@ -43,7 +38,7 @@ four exact return routes; profile/team/role data is never written by the pilot.
 Resend uses the existing durable delivery record and stable idempotency key.
 The new email type has no invitation text or Firebase password-reset fallback.
 The 15-minute app preflight expiry is not an Auth-enforced expiry for direct
-Firebase redemption, another reason the gate must stay closed.
+Firebase redemption; the email accurately describes the app completion deadline.
 
 The browser screen requires explicit Continue; email is recalled from local
 storage or re-entered on another device. URL email values are ignored. It offers
@@ -51,7 +46,7 @@ resend, password/Google recovery, and explicit sign-out for a different account.
 It does not consume invitation state. Native completion is rejected. Password
 and Google login screens are unchanged.
 
-## Live procedure after blockers are resolved and the approved release succeeds
+## Live procedure after the approved release succeeds
 
 1. Verify the exact deployed release SHA and required smoke checks. Read the
    account's UID/providers/emailVerified/disabled/MFA state again. Compare UID,
@@ -95,8 +90,8 @@ Backend tests enable only an injected in-memory fixture, never production.
   (51.5 KB entry; 399.4 KB gzip initial assets).
 - Local Chromium browser smoke: one passed; all non-local traffic blocked.
 - Independent code/security review: fixed stale push-to-invitation navigation and
-  interrupted-completion redirects. No remaining code findings; activation
-  blocker above remains.
+  interrupted-completion redirects. Renewed independent review of the enabled pilot found no must-fix findings;
+  corrected one stale gate comment.
 - Full Functions security suite: 1,615 passed, seven skipped, one failed.
   Unchanged migration-firestore-credential test expected its credential probe but
   got DNS UNAVAILABLE for firestore.googleapis.com in the restricted executor.

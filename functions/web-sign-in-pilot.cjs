@@ -7,10 +7,10 @@ const PILOT_EMAIL = 'paul@allplays.ai';
 const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');
 const safeNext = (value) => ['/home', '/teams', '/schedule', '/profile'].includes(value) ? value : '/home';
 
-// Deliberately not an environment toggle. Firebase OOB redemption can create a
-// replacement account after deletion. An Auth-level guard must be reviewed and
-// approved before changing this boundary or configuring the existing UID.
-const PILOT_RELEASE_APPROVED = false;
+// Paul approved the bounded pilot on 2026-10-13, including outstanding-link
+// deletion/email-reassignment risk. Never derive or rebind this UID from input.
+const PILOT_RELEASE_APPROVED = true;
+const PILOT_UID = 'YauonODWT7dUDgkC6WDCQ72F3lX2';
 
 function createWebSignInPilot({ auth, firestore, queueDelivery, HttpsError, logger,
   enabled = false, pilotUid = '', now = Date.now }) {
@@ -77,4 +77,4 @@ function createWebSignInPilot({ auth, firestore, queueDelivery, HttpsError, logg
   return { request, preflight };
 }
 
-module.exports = { createWebSignInPilot, PILOT_RELEASE_APPROVED, safeNext };
+module.exports = { createWebSignInPilot, PILOT_RELEASE_APPROVED, PILOT_UID, safeNext };

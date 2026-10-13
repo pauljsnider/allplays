@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { createWebSignInPilot, PILOT_RELEASE_APPROVED, safeNext } = require('../web-sign-in-pilot.cjs');
+const { createWebSignInPilot, safeNext } = require('../web-sign-in-pilot.cjs');
 const { buildAuthEmailMessage, AUTH_EMAIL_TYPES } = require('../auth-email-core.cjs');
 function fixture(options = {}) {
   let time = 1700000000000;
@@ -23,8 +23,7 @@ function fixture(options = {}) {
   HttpsError: Error, logger: { warn() {} }, enabled: true, pilotUid: user.uid, now: () => time, ...options });
   return { ...pilot, documents, deliveries, user, advance: (ms) => { time += ms; } };
 }
-test('production release gate is closed; disabled handler does no auth or delivery work', async () => {
-  assert.equal(PILOT_RELEASE_APPROVED, false);
+test('disabled handler does no auth or delivery work', async () => {
   const f = fixture({ enabled: false, auth: null, firestore: null });
   assert.deepEqual(await f.request({ email: 'paul@allplays.ai' }), { queued: true });
   await assert.rejects(f.preflight({ email: 'paul@allplays.ai', code: 'code1' }));

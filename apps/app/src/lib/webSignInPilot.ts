@@ -45,7 +45,7 @@ export async function completePilotEmail(email: string, params: URLSearchParams)
   link.search = new URLSearchParams({ mode: 'signIn', oobCode: code, apiKey: params.get('apiKey') || '' }).toString();
   const result = await signInWithEmailLink(auth, normalized, link.toString());
   // Defense in depth only; this cannot undo Firebase account creation. The
-  // production issuance gate stays closed until Auth-level enforcement exists.
+  // bounded pilot accepts the outstanding-link deletion/reassignment risk.
   if (result.user.uid !== data.uid) {
     await signOut(auth);
     throw new Error('Account identity changed. Use password sign-in and contact support.');
