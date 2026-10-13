@@ -216,7 +216,7 @@ function buildAuthEmailMessage({ type, actionUrl, displayName = '', contextLabel
     heading = 'Sign in to your account';
     intro = 'Open this link in your browser, confirm your email, and choose Continue to sign in.';
     buttonLabel = 'Continue to sign in';
-    expirationCopy = 'This link expires in 15 minutes and can be used once. If you did not request it, ignore this email. Your password stays unchanged.';
+    expirationCopy = 'Complete sign-in in the app within 15 minutes. This link can be used once. If you did not request it, ignore this email. Your password stays unchanged.';
   } else {
     subject = normalizedContextLabel ? `You're invited to ${normalizedContextLabel} on ALL PLAYS` : "You're invited to ALL PLAYS";
     heading = "You're invited to ALL PLAYS";

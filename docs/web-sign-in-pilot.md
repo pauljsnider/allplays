@@ -12,8 +12,12 @@ Do not enable the gate merely because these local tests pass.
    OOB link can be redeemed directly, bypassing our preflight. Deleting or
    reassigning the account between issuance/preflight and redemption can create
    another account. A custom-token substitution also allows account recreation.
-   The requested absolute no-new-accounts guarantee needs an approved Auth-level
-   enforcement design, with direct-redemption and deletion-race tests. Changing
+   The approved pilot excludes signup and preserves the existing account. Its
+   residual deletion/reassignment risk needs an explicit release decision or a
+   revised redemption design; an absolute invariant against privileged account
+   recreation is not an additional product requirement. Current rules grant
+   verified-email access through adminEmails and legacy owner aliases, so a
+   replacement UID cannot be assumed to be an inaccessible orphan. Changing
    live Auth/security configuration requires separate action-time approval.
 2. Pin the existing UID only after that design is settled. An authorized
    read-only lookup on 2026-10-13 confirmed the account exists, emailVerified is

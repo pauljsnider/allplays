@@ -92,6 +92,6 @@ test('return destinations are exact non-action route allowlist', () => {
 });
 test('new sign-in copy has no invitation language; invitation copy is preserved', () => {
   const message = buildAuthEmailMessage({ type: AUTH_EMAIL_TYPES.WEB_SIGN_IN, actionUrl: 'https://allplays.ai/app/#/email-sign-in' });
-  assert.match(message.text, /15 minutes/); assert.doesNotMatch(message.text, /invitation/i);
+  assert.match(message.text, /Complete sign-in in the app within 15 minutes/); assert.doesNotMatch(message.text, /link expires in 15 minutes/i); assert.doesNotMatch(message.text, /invitation/i);
   assert.match(buildAuthEmailMessage({ type: AUTH_EMAIL_TYPES.SIGN_IN, actionUrl: 'https://allplays.ai/app/#/accept-invite' }).text, /invitation/i);
 });
