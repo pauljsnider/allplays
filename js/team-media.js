@@ -486,7 +486,12 @@ export async function uploadSelectedFiles({ files, folderId, progressEl, validat
     let reservationError = null;
     if (reserveOrders) {
         try {
-            orders = await reserveTeamMediaOrderRange(state.teamId, folderId, files.length);
+            if (files.length === 1) {
+                const [order] = await reserveTeamMediaOrderRange(state.teamId, folderId, 1);
+                orders = [order];
+            } else {
+                orders = await reserveTeamMediaOrderRange(state.teamId, folderId, files.length);
+            }
         } catch (error) {
             reservationError = error;
         }
