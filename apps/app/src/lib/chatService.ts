@@ -54,6 +54,7 @@ import {
   type ChatTargetType
 } from './chatLogic';
 import { startInteractionTimer, UX_TIMING } from './uxTiming';
+import { validateChatAttachmentCount } from '@legacy/team-chat-media.js';
 import { canMessageAcceptedFriend, sendAuthorizedDirectMessage } from './friendMessageService';
 import { callNativeFirebaseFunction } from './nativeCallable';
 import {
@@ -1939,6 +1940,7 @@ export async function sendTeamChatMessage({
     && (selectedRecipientIds || []).map((id) => String(id || '').trim()).filter(Boolean).length === 0) {
     throw new Error('Choose at least one selected member before sending.');
   }
+  validateChatAttachmentCount(sharedAttachments.length, files.length);
 
   let interactionHandle: ReturnType<typeof startInteractionTimer> | null = null;
   if (!skipInteractionTiming) {
