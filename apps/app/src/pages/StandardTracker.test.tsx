@@ -302,6 +302,24 @@ describe('StandardTracker', () => {
     expect(within(screen.getByTestId('standard-tracker-row-p1')).getByText('+1 / 0')).toBeTruthy();
   });
 
+  it('saves an approved audience-labeled note idempotently without tracker writes', async () => {
+    renderTracker();
+    expect(await screen.findByTestId('standard-tracker-grid')).toBeTruthy();
+    const service = statTrackingMocks.getLastService();
+    fireEvent.click(screen.getByRole('button', { name: 'Open note draft' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Typed note draft' }), { target: { value: 'Protect the left channel' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice draft' })); fireEvent.click(screen.getByRole('button', { name: 'Stop voice draft' }));
+    fireEvent.click(screen.getByLabelText('Shared · team summary')); fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open note draft' })).toBeTruthy());
+    const saved = JSON.parse(window.localStorage.getItem('allplays:mobile-voice-notes:team-1:game-1:coach-1') || '[]');
+    expect(saved).toHaveLength(1); expect(saved[0]).toMatchObject({ text: 'Protect the left channel', audience: 'shared', status: 'approved' });
+    expect(screen.getByText('1-0')).toBeTruthy(); expect(service.recordEvent).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Open note draft' })); fireEvent.change(screen.getByRole('textbox', { name: 'Typed note draft' }), { target: { value: 'Protect the left channel' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice draft' })); fireEvent.click(screen.getByRole('button', { name: 'Stop voice draft' })); fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open note draft' })).toBeTruthy());
+    expect(JSON.parse(window.localStorage.getItem('allplays:mobile-voice-notes:team-1:game-1:coach-1') || '[]')).toHaveLength(1);
+  });
+
   it('hydrates persisted opponent tallies before recording linked roster stats', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
