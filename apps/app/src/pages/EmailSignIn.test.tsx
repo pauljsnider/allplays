@@ -2,7 +2,14 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import type { AuthState } from '../lib/types';
-const m = vi.hoisted(() => ({ complete: vi.fn(), request: vi.fn(), read: vi.fn(), native: vi.fn(), signOut: vi.fn() }));
+const m = vi.hoisted(() => ({
+  complete: vi.fn(),
+  request: vi.fn(),
+  read: vi.fn(),
+  native: vi.fn(),
+  pilotSignOut: vi.fn((signOutAndClear: () => Promise<void>) => signOutAndClear()),
+  authSignOut: vi.fn(() => Promise.resolve())
+}));
 vi.mock('../lib/webSignInPilot', () => ({
   completePilotEmail: m.complete,
   requestPilotEmail: m.request,
@@ -10,7 +17,7 @@ vi.mock('../lib/webSignInPilot', () => ({
   normalizePilotEmail: (v: string) => v.trim().toLowerCase(),
   safePilotNext: () => '/home',
   pilotConfirmation: 'If eligible, check your inbox.',
-  signOutPilotAccount: m.signOut
+  signOutPilotAccount: m.pilotSignOut
 }));
 vi.mock('../lib/nativeRuntime', () => ({ isNativeRuntime: m.native }));
 vi.mock('../components/AuthFrame', () => ({ AuthFrame: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
@@ -19,7 +26,10 @@ const setup = (route = '/email-sign-in?mode=signIn&oobCode=opaque', user: unknow
   render(
     <MemoryRouter initialEntries={[route]}>
       <Routes>
-        <Route path="/email-sign-in" element={<EmailSignIn auth={{ loading: false, user, refresh: vi.fn() } as unknown as AuthState} />} />
+        <Route
+          path="/email-sign-in"
+          element={<EmailSignIn auth={{ loading: false, user, refresh: vi.fn(), signOut: m.authSignOut } as unknown as AuthState} />}
+        />
         <Route path="/auth" element={<p>Password page</p>} />
         <Route path="/profile" element={<p>Profile destination</p>} />
       </Routes>
@@ -29,6 +39,8 @@ beforeEach(() => {
   vi.resetAllMocks();
   localStorage.clear();
   m.read.mockReturnValue('');
+  m.pilotSignOut.mockImplementation((signOutAndClear: () => Promise<void>) => signOutAndClear());
+  m.authSignOut.mockResolvedValue(undefined);
 });
 it('requires explicit Continue and email entry; expired/used failure offers resend', async () => {
   m.complete.mockRejectedValue(Error('used'));
@@ -38,6 +50,7 @@ it('requires explicit Continue and email entry; expired/used failure offers rese
   fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
   await screen.findByRole('alert');
   expect(m.complete).toHaveBeenCalledOnce();
+  expect(m.complete).toHaveBeenCalledWith('paul@allplays.ai', expect.any(URLSearchParams), m.authSignOut);
   fireEvent.click(screen.getByRole('button', { name: 'Request a new link' }));
   await screen.findByRole('status');
   expect(m.request).toHaveBeenCalledOnce();
@@ -66,9 +79,10 @@ it('wrong account needs an explicit sign-out', async () => {
   m.read.mockReturnValue('paul@allplays.ai');
   setup(undefined, { uid: 'other', email: 'other@example.test' });
   expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
-  expect(m.signOut).not.toHaveBeenCalled();
+  expect(m.pilotSignOut).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Sign out of current account' }));
-  await waitFor(() => expect(m.signOut).toHaveBeenCalledOnce());
+  await waitFor(() => expect(m.authSignOut).toHaveBeenCalledOnce());
+  expect(m.pilotSignOut).toHaveBeenCalledWith(m.authSignOut);
 });
 it('native view has no completion control', () => {
   m.native.mockReturnValue(true);

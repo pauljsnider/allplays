@@ -1,5 +1,5 @@
 import { functions, httpsCallable } from './adapters/legacyAccountDb';
-import { auth, signInWithEmailLink, signOut } from './firebaseAuthRuntime';
+import { auth, signInWithEmailLink } from './firebaseAuthRuntime';
 import { isNativeRuntime } from './nativeRuntime';
 
 const emailKey = 'allplays-web-sign-in-email';
@@ -30,7 +30,7 @@ export async function requestPilotEmail(email: string, next: string) {
   await httpsCallable(functions, 'requestWebSignInEmail')({ email: normalized, next: safePilotNext(next) });
   rememberEmail(normalized);
 }
-export async function completePilotEmail(email: string, params: URLSearchParams) {
+export async function completePilotEmail(email: string, params: URLSearchParams, signOutAndClear: () => Promise<void>) {
   requireBrowser();
   const normalized = normalizePilotEmail(email);
   if (auth.currentUser && normalizePilotEmail(auth.currentUser.email || '') !== normalized) {
@@ -47,13 +47,13 @@ export async function completePilotEmail(email: string, params: URLSearchParams)
   // Defense in depth only; this cannot undo Firebase account creation. The
   // bounded pilot accepts the outstanding-link deletion/reassignment risk.
   if (result.user.uid !== data.uid) {
-    await signOut(auth);
+    await signOutAndClear();
     throw new Error('Account identity changed. Use password sign-in and contact support.');
   }
   rememberEmail('');
   return safePilotNext(data.next);
 }
-export async function signOutPilotAccount() {
+export async function signOutPilotAccount(signOutAndClear: () => Promise<void>) {
   requireBrowser();
-  await signOut(auth);
+  await signOutAndClear();
 }

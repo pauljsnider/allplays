@@ -73,7 +73,7 @@ export function EmailSignIn({ auth }: { auth: AuthState }) {
                 if (hasLink) {
                   const startedAt = locationKey.current;
                   clearPendingPushRoute();
-                  const next = await completePilotEmail(email, params);
+                  const next = await completePilotEmail(email, params, auth.signOut);
                   await auth.refresh();
                   if (!active.current || locationKey.current !== startedAt) return;
                   clearPendingPushRoute();
@@ -127,7 +127,7 @@ export function EmailSignIn({ auth }: { auth: AuthState }) {
               disabled={busy}
               onClick={() =>
                 void run(async () => {
-                  await signOutPilotAccount();
+                  await signOutPilotAccount(auth.signOut);
                   await auth.refresh();
                 })
               }
