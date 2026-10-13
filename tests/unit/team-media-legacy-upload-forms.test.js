@@ -49,8 +49,9 @@ function loadTeamMediaHtml() {
 }
 
 async function loadTeamMediaModule() {
-    await import(path.resolve(repoRoot, 'js/team-media.js'));
+    const teamMediaModule = await import(path.resolve(repoRoot, 'js/team-media.js'));
     await vi.waitUntil(() => document.getElementById('photo-folder').options.length === 3);
+    return teamMediaModule;
 }
 
 function setSelectedFiles(input, files) {
@@ -191,6 +192,8 @@ describe('legacy team media upload forms', () => {
         );
         expect(mocks.uploadTeamMediaFile.mock.calls.map((call) => call[2])).toEqual([pdfFile]);
         expect(mocks.uploadTeamMediaFile.mock.calls.map((call) => call[2])).not.toContain(unsupportedFile);
+        expect(mocks.uploadTeamMediaFile.mock.calls[0][3]).not.toHaveProperty('order');
+        expect(mocks.reserveTeamMediaOrderRange).not.toHaveBeenCalled();
         await vi.waitUntil(() => document.getElementById('team-media-alert').textContent.includes('1 file uploaded, 1 failed.'));
 
         expect(document.querySelector('#file-upload-progress [data-upload-status="0"]').textContent)
@@ -199,6 +202,53 @@ describe('legacy team media upload forms', () => {
         expect(document.getElementById('team-media-alert').className).toContain('bg-red-50');
         expect(document.getElementById('file-folder').value).toBe('folderA');
         expect(fileInput.value).toBe('');
+    });
+
+    it('passes assigned document orders through while preserving partial-failure reporting', async () => {
+        const { uploadSelectedFiles } = await loadTeamMediaModule();
+        const files = [
+            new File(['first'], 'first.pdf', { type: 'application/pdf' }),
+            new File(['second'], 'second.pdf', { type: 'application/pdf' })
+        ];
+        mocks.uploadTeamMediaFile.mockRejectedValueOnce(new Error('media create denied'));
+
+        const result = await uploadSelectedFiles({
+            files,
+            folderId: 'folderA',
+            progressEl: document.getElementById('file-upload-progress'),
+            validateFile: () => true,
+            uploadFile: mocks.uploadTeamMediaFile,
+            nounSingular: 'file',
+            nounPlural: 'files',
+            unsupportedMessage: 'Choose a supported document file that is 10 MB or smaller.',
+            assignedOrders: [0, 17]
+        });
+
+        expect(mocks.uploadTeamMediaFile).toHaveBeenNthCalledWith(
+            1,
+            'team123',
+            'folderA',
+            files[0],
+            expect.objectContaining({ order: 0, onProgress: expect.any(Function) })
+        );
+        expect(mocks.uploadTeamMediaFile).toHaveBeenNthCalledWith(
+            2,
+            'team123',
+            'folderA',
+            files[1],
+            expect.objectContaining({ order: 17, onProgress: expect.any(Function) })
+        );
+        expect(mocks.reserveTeamMediaOrderRange).not.toHaveBeenCalled();
+        expect(result).toEqual({ uploadedCount: 1, failedCount: 1 });
+        expect(document.querySelector('#file-upload-progress [data-upload-status="0"]').textContent)
+            .toBe('media create denied');
+        expect(document.querySelector('#file-upload-progress [data-upload-status="0"]').className)
+            .toContain('text-red-700');
+        expect(document.querySelector('#file-upload-progress [data-upload-status="1"]').textContent)
+            .toBe('Uploaded');
+        expect(document.getElementById('team-media-alert').textContent).toContain('1 file uploaded, 1 failed.');
+        expect(document.getElementById('team-media-alert').className).toContain('bg-red-50');
+        expect(mocks.getTeamMediaFolders).toHaveBeenCalledTimes(2);
     });
 
     it('rejects over-limit legacy Team Media batches before progress or upload work starts', async () => {
