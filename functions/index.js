@@ -4104,12 +4104,11 @@ const authEmailCallableHandlers = createAuthEmailCallableHandlers({
   isInviteInactive: isAccessCodeInactive
 });
 
-const { createWebSignInPilot, PILOT_RELEASE_APPROVED, PILOT_UID } = require('./web-sign-in-pilot.cjs');
+const { createWebSignInPilot, WEB_SIGN_IN_ENABLED } = require('./web-sign-in-pilot.cjs');
 const webSignInPilot = createWebSignInPilot({
   auth: admin.auth(), firestore, queueDelivery: queueAuthEmailDelivery,
   HttpsError: functions.https.HttpsError, logger: functions.logger,
-  enabled: PILOT_RELEASE_APPROVED,
-  pilotUid: PILOT_UID
+  enabled: WEB_SIGN_IN_ENABLED
 });
 exports.requestWebSignInEmail = functions.runWith({ secrets: ['RESEND_API_KEY'], maxInstances: 2 })
   .https.onCall(webSignInPilot.request);
