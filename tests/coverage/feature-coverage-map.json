@@ -137,7 +137,8 @@
                 "apps/app/src/pages/AuthPage.tsx",
                 "apps/app/src/pages/Profile.tsx",
                 "apps/app/src/pages/ResetPassword.tsx",
-                "apps/app/src/pages/VerifyPending.tsx"
+                "apps/app/src/pages/VerifyPending.tsx",
+                "apps/app/src/pages/EmailSignIn.tsx"
             ],
             "cloudFunctions": [
                 "autoAcceptParentInviteForExistingUser",
@@ -160,7 +161,9 @@
                 "redeemFriendInvite",
                 "redeemHouseholdInvite",
                 "redeemParentInvite",
-                "validateAccessCodeForAcceptance"
+                "validateAccessCodeForAcceptance",
+                "requestWebSignInEmail",
+                "preflightWebSignIn"
             ],
             "unitTests": [
                 "functions/test/account-deletion-core.test.cjs",
@@ -188,7 +191,10 @@
                 "tests/unit/auth-email-client.test.js",
                 "tests/unit/auth-email-resend-routing.test.js",
                 "tests/unit/native-web-auth-iam.test.js",
-                "tests/unit/native-webview-firestore-auth-contract.test.js"
+                "tests/unit/native-webview-firestore-auth-contract.test.js",
+                "functions/test/auth-email-web-pilot.test.cjs",
+                "apps/app/src/lib/webSignInPilot.test.ts",
+                "apps/app/src/pages/EmailSignIn.test.tsx"
             ],
             "integrationTests": [
                 "apps/app/src/pages/AcceptInvite.test.tsx",
@@ -196,14 +202,16 @@
                 "tests/unit/admin-invite-redemption.test.js",
                 "tests/unit/app-auth-account-action-pages.test.jsx",
                 "tests/unit/auth-google-admin-invite-cleanup.test.js",
-                "tests/unit/auth-google-parent-invite-cleanup.test.js"
+                "tests/unit/auth-google-parent-invite-cleanup.test.js",
+                "tests/unit/calendar-token-rules.test.js"
             ],
             "workflowTests": [
                 "tests/smoke/admin-invite-redemption.spec.js",
                 "tests/smoke/app-auth-profile.spec.js",
                 "tests/smoke/app-authenticated-core.spec.js",
                 "tests/smoke/firebase-auth-bootstrap.spec.js",
-                "tests/smoke/legacy-auth-redirects.spec.js"
+                "tests/smoke/legacy-auth-redirects.spec.js",
+                "tests/smoke/app-web-sign-in-pilot.spec.js"
             ],
             "knownGaps": []
         },
