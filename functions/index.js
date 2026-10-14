@@ -12444,64 +12444,99 @@ async function dispatchDueTeamMediaNotificationBatches(now = new Date(), options
   return summary;
 }
 
-async function getUserIdsByEmails(emails) {
+const NOTIFICATION_AUTH_GET_USERS_BATCH_SIZE = 100;
+
+function normalizeNotificationAuthEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+function normalizeNotificationAuthUid(uid) {
+  const normalizedUid = String(uid || '').trim();
+  return normalizedUid
+    && normalizedUid.length <= 128
+    && !/[\u0000-\u001f\u007f]/.test(normalizedUid)
+    ? normalizedUid
+    : '';
+}
+
+async function getNotificationAuthUsersBatch(identifiers) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await admin.auth().getUsers(identifiers);
+    } catch (error) {
+      const code = String(error?.code || error?.errorInfo?.code || '').toLowerCase();
+      const retryable = [
+        'auth/internal-error',
+        'auth/network-request-failed',
+        'auth/too-many-requests',
+        'auth/service-unavailable',
+        'unavailable',
+        'deadline-exceeded'
+      ].some((candidate) => code === candidate || code.endsWith(`/${candidate}`));
+      if (!retryable || attempt === 2) {
+        const taggedError = error instanceof Error
+          ? error
+          : new Error(String(error || 'Firebase Auth user resolution failed.'));
+        taggedError.notificationAuthResolutionFailed = true;
+        throw taggedError;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50 * (2 ** attempt)));
+    }
+  }
+  return { users: [], notFound: [] };
+}
+
+async function resolveEnabledNotificationAuthIdentities({ emails = [], userIds = [] } = {}) {
   const uniqueEmails = Array.from(new Set(
     (Array.isArray(emails) ? emails : [])
-      .map((email) => String(email || '').trim().toLowerCase())
+      .map(normalizeNotificationAuthEmail)
       .filter(Boolean)
   ));
-  if (!uniqueEmails.length) return [];
+  const uniqueUserIds = Array.from(new Set(
+    (Array.isArray(userIds) ? userIds : [])
+      .map(normalizeNotificationAuthUid)
+      .filter(Boolean)
+  ));
+  const identifiers = [
+    ...uniqueEmails.map((email) => ({ email })),
+    ...uniqueUserIds.map((uid) => ({ uid }))
+  ];
+  const usersByEmail = new Map();
+  const enabledUserIds = new Set();
 
-  const ids = new Set();
-  const lookupResults = await Promise.allSettled(
-    uniqueEmails.map((email) => admin.auth().getUserByEmail(email))
-  );
-  lookupResults.forEach((result) => {
-    if (
-      result.status === 'fulfilled'
-      && result.value?.uid
-      && result.value?.disabled !== true
-    ) {
-      ids.add(result.value.uid);
-    }
-  });
-  return Array.from(ids);
+  for (let offset = 0; offset < identifiers.length; offset += NOTIFICATION_AUTH_GET_USERS_BATCH_SIZE) {
+    const result = await getNotificationAuthUsersBatch(
+      identifiers.slice(offset, offset + NOTIFICATION_AUTH_GET_USERS_BATCH_SIZE)
+    );
+    (result.users || []).forEach((authUser) => {
+      const uid = normalizeNotificationAuthUid(authUser?.uid);
+      if (!uid || authUser?.disabled === true) return;
+      enabledUserIds.add(uid);
+      const email = normalizeNotificationAuthEmail(authUser?.email);
+      if (email) usersByEmail.set(email, authUser);
+    });
+  }
+
+  return { usersByEmail, enabledUserIds };
+}
+
+async function getUserIdsByEmails(emails) {
+  const { usersByEmail } = await resolveEnabledNotificationAuthIdentities({ emails });
+  return Array.from(new Set(Array.from(usersByEmail.values()).map((authUser) => authUser.uid)));
 }
 
 async function getEnabledNotificationAuthUsers(userIds) {
   const uniqueUserIds = Array.from(new Set(
     (Array.isArray(userIds) ? userIds : [])
-      .map((uid) => String(uid || '').trim())
-      .filter((uid) => uid && uid.length <= 128 && !/[\u0000-\u001f\u007f]/.test(uid))
+      .map(normalizeNotificationAuthUid)
+      .filter(Boolean)
   ));
   const enabledUsers = new Map();
-  for (let offset = 0; offset < uniqueUserIds.length; offset += 100) {
-    const identifiers = uniqueUserIds.slice(offset, offset + 100).map((uid) => ({ uid }));
-    let result;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        result = await admin.auth().getUsers(identifiers);
-        break;
-      } catch (error) {
-        const code = String(error?.code || error?.errorInfo?.code || '').toLowerCase();
-        const retryable = [
-          'auth/internal-error',
-          'auth/network-request-failed',
-          'auth/too-many-requests',
-          'auth/service-unavailable',
-          'unavailable',
-          'deadline-exceeded'
-        ].some((candidate) => code === candidate || code.endsWith(`/${candidate}`));
-        if (!retryable || attempt === 2) {
-          const taggedError = error instanceof Error
-            ? error
-            : new Error(String(error || 'Firebase Auth user resolution failed.'));
-          taggedError.notificationAuthResolutionFailed = true;
-          throw taggedError;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 50 * (2 ** attempt)));
-      }
-    }
+  for (let offset = 0; offset < uniqueUserIds.length; offset += NOTIFICATION_AUTH_GET_USERS_BATCH_SIZE) {
+    const identifiers = uniqueUserIds
+      .slice(offset, offset + NOTIFICATION_AUTH_GET_USERS_BATCH_SIZE)
+      .map((uid) => ({ uid }));
+    const result = await getNotificationAuthUsersBatch(identifiers);
     (result.users || []).forEach((authUser) => {
       const uid = String(authUser?.uid || '').trim();
       if (uid && authUser?.disabled !== true) enabledUsers.set(uid, authUser);
@@ -12792,13 +12827,23 @@ async function revalidateNotificationEffectTargets({
   teamId,
   category,
   audienceContext = {},
-  requireCanonicalTeamAccess = false
+  requireCanonicalTeamAccess = false,
+  prevalidatedAuthUserIds = null
 }) {
   const logicalTargets = dedupeNotificationTargets(targets);
   const userIds = Array.from(new Set(
     logicalTargets.map((target) => String(target?.uid || '').trim()).filter(Boolean)
   ));
   if (!userIds.length) return [];
+
+  if (!requireCanonicalTeamAccess) {
+    const enabledUserIds = prevalidatedAuthUserIds instanceof Set
+      ? prevalidatedAuthUserIds
+      : (Array.isArray(prevalidatedAuthUserIds) ? new Set(prevalidatedAuthUserIds) : null);
+    if (enabledUserIds) {
+      return logicalTargets.filter((target) => enabledUserIds.has(String(target?.uid || '').trim()));
+    }
+  }
 
   const enabledAuthUsers = await getEnabledNotificationAuthUsers(userIds);
   if (!requireCanonicalTeamAccess) {
@@ -12835,10 +12880,12 @@ async function revalidateNotificationEffectTargets({
   return logicalTargets.filter((target) => eligibleUserIds.has(String(target?.uid || '').trim()));
 }
 
-async function getLegacyTargetsForCategory(teamId, category, users, actorUid = null, audienceContext = {}) {
-  const enabledUserIds = await getEnabledNotificationAuthUserIds(
-    (Array.isArray(users) ? users : []).map((user) => user?.uid)
-  );
+async function getLegacyTargetsForCategory(teamId, category, users, actorUid = null, audienceContext = {}, options = {}) {
+  const enabledUserIds = options.enabledUserIds instanceof Set
+    ? options.enabledUserIds
+    : await getEnabledNotificationAuthUserIds(
+      (Array.isArray(users) ? users : []).map((user) => user?.uid)
+    );
   const queryTasks = users
     .filter((user) => enabledUserIds.has(String(user?.uid || '').trim()))
     .filter((user) => user?.uid && user.uid !== actorUid && canReceiveCategoryNotification(category, user, audienceContext))
@@ -14373,6 +14420,7 @@ async function sendDirectTargetsNotification({
   appRouteOverride = null,
   timeSensitive = false,
   requireCanonicalTeamAccess = false,
+  prevalidatedAuthUserIds = null,
   audienceContext = {},
   beforeEffects = null,
   onEffectsStarting = null
@@ -14386,7 +14434,8 @@ async function sendDirectTargetsNotification({
     teamId,
     category,
     audienceContext,
-    requireCanonicalTeamAccess
+    requireCanonicalTeamAccess,
+    prevalidatedAuthUserIds
   });
   const authorizedUserIds = new Set(
     authorizedTargets.map((target) => String(target?.uid || '').trim()).filter(Boolean)
@@ -16816,17 +16865,13 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
 
   addRole(team.ownerId, 'staff');
 
-  const [parentSnap, indexedTargetSnap, adminUserIds, participantEmailUserIds, playersSnap] = await Promise.all([
+  const [parentSnap, indexedTargetSnap, playersSnap] = await Promise.all([
     firestore.collection('users').where('parentTeamIds', 'array-contains', teamId).get(),
     firestore.collection(`teams/${teamId}/notificationTargets`).get(),
-    getUserIdsByEmails(team.adminEmails || []),
-    scopedParticipantEmails.length > 0 ? getUserIdsByEmails(scopedParticipantEmails) : Promise.resolve([]),
     firestore.collection(`teams/${teamId}/players`).get()
   ]);
 
   parentSnap.forEach((docSnap) => addRole(docSnap.id, 'parent'));
-  adminUserIds.forEach((uid) => addRole(uid, 'staff'));
-  participantEmailUserIds.forEach((uid) => scopedParticipantUids.add(uid));
 
   const rosterContactAliasesByEmail = new Map();
   const scopedRosterContactEmails = new Set();
@@ -16860,18 +16905,34 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
     });
   });
 
-  const rosterEmailUserIdEntries = await Promise.all(
-    Array.from(rosterContactAliasesByEmail.entries()).map(async ([email, aliasSet]) => ({
-      email,
-      aliases: Array.from(aliasSet),
-      uids: await getUserIdsByEmails([email])
-    }))
-  );
-  rosterEmailUserIdEntries.forEach(({ email, aliases, uids }) => {
-    (Array.isArray(uids) ? uids : []).forEach((uid) => {
-      addRole(uid, 'parent', aliases);
+  const adminEmails = Array.from(new Set(
+    (Array.isArray(team.adminEmails) ? team.adminEmails : [])
+      .map(normalizeNotificationAuthEmail)
+      .filter(Boolean)
+  ));
+  const { usersByEmail, enabledUserIds } = await resolveEnabledNotificationAuthIdentities({
+    emails: [
+      ...adminEmails,
+      ...scopedParticipantEmails,
+      ...rosterContactAliasesByEmail.keys()
+    ],
+    userIds: Array.from(users.keys())
+  });
+
+  adminEmails.forEach((email) => {
+    const uid = usersByEmail.get(email)?.uid;
+    if (uid) addRole(uid, 'staff');
+  });
+  scopedParticipantEmails.forEach((email) => {
+    const uid = usersByEmail.get(email)?.uid;
+    if (uid) scopedParticipantUids.add(uid);
+  });
+  rosterContactAliasesByEmail.forEach((aliasSet, email) => {
+    const uid = usersByEmail.get(email)?.uid;
+    if (uid) {
+      addRole(uid, 'parent', Array.from(aliasSet));
       if (scopedRosterContactEmails.has(email)) scopedParticipantUids.add(uid);
-    });
+    }
   });
 
   let members = Array.from(users.values()).map((entry) => ({
@@ -16886,10 +16947,7 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
     members = members.filter((member) => scopedParticipantUids.has(member.uid));
   }
 
-  const enabledMemberUserIds = await getEnabledNotificationAuthUserIds(
-    members.map((member) => member.uid)
-  );
-  members = members.filter((member) => enabledMemberUserIds.has(member.uid));
+  members = members.filter((member) => enabledUserIds.has(member.uid));
 
   const [userRecords, memberPreferenceEntries] = await Promise.all([
     getUserRecordsByIds(members.map((member) => member.uid)),
@@ -16969,7 +17027,14 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
       && !indexedUserIdsByCategory[category].has(member.uid)
     ));
     if (!missingUsers.length) continue;
-    fallbackTargetsByCategory[category] = await getLegacyTargetsForCategory(teamId, category, missingUsers, null);
+    fallbackTargetsByCategory[category] = await getLegacyTargetsForCategory(
+      teamId,
+      category,
+      missingUsers,
+      null,
+      {},
+      { enabledUserIds }
+    );
   }
 
   const hydratedMembers = members.map((member) => {
@@ -17002,6 +17067,7 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
     members: hydratedMembers,
     mutedUids: hydratedMembers.filter((member) => member.muted).map((member) => member.uid),
     enabledUidsByCategory,
+    enabledAuthUserIds: Array.from(enabledUserIds),
     targetsByCategory: {
       mentions: [...indexedTargetsByCategory.mentions, ...fallbackTargetsByCategory.mentions],
       liveChat: [...indexedTargetsByCategory.liveChat, ...fallbackTargetsByCategory.liveChat]
@@ -17112,24 +17178,6 @@ async function handleTeamChatMessageCreated(snapshot, context) {
     recipientContext
   });
 
-  const enabledDeliveryUids = await getEnabledNotificationAuthUserIds([
-    ...notificationPlan.mentionedUids,
-    ...notificationPlan.mentionInboxUids,
-    ...notificationPlan.mentionTargets.map((target) => target.uid),
-    ...notificationPlan.liveChatInboxUids,
-    ...notificationPlan.liveChatTargets.map((target) => target.uid)
-  ]);
-  notificationPlan.mentionedUids = notificationPlan.mentionedUids
-    .filter((uid) => enabledDeliveryUids.has(uid));
-  notificationPlan.mentionInboxUids = notificationPlan.mentionInboxUids
-    .filter((uid) => enabledDeliveryUids.has(uid));
-  notificationPlan.mentionTargets = notificationPlan.mentionTargets
-    .filter((target) => enabledDeliveryUids.has(target.uid));
-  notificationPlan.liveChatInboxUids = notificationPlan.liveChatInboxUids
-    .filter((uid) => enabledDeliveryUids.has(uid));
-  notificationPlan.liveChatTargets = notificationPlan.liveChatTargets
-    .filter((target) => enabledDeliveryUids.has(target.uid));
-
   const mentionedUids = notificationPlan.mentionedUids;
   const results = [];
 
@@ -17145,7 +17193,8 @@ async function handleTeamChatMessageCreated(snapshot, context) {
       title: `${senderName} mentioned you`,
       body,
       teamId,
-      conversationId
+      conversationId,
+      prevalidatedAuthUserIds: recipientContext.enabledAuthUserIds
     }));
   }
 
@@ -17160,7 +17209,8 @@ async function handleTeamChatMessageCreated(snapshot, context) {
     title: `${senderName}: Team Chat`,
     body,
     teamId,
-    conversationId
+    conversationId,
+    prevalidatedAuthUserIds: recipientContext.enabledAuthUserIds
   }));
 
   return results;

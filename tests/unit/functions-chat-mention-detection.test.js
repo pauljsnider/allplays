@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
@@ -27,8 +27,8 @@ function getBuildTeamChatNotificationContext() {
     const slice = functionsSource.slice(start, end);
     return new Function(
         'firestore',
-        'getUserIdsByEmails',
-        'getEnabledNotificationAuthUserIds',
+        'normalizeNotificationAuthEmail',
+        'resolveEnabledNotificationAuthIdentities',
         'getUserRecordsByIds',
         'notificationAudienceAllowsRoles',
         'getLegacyTargetsForCategory',
@@ -36,6 +36,13 @@ function getBuildTeamChatNotificationContext() {
         'normalizeNotificationPreferences',
         `${slice}; return buildTeamChatNotificationContext;`
     );
+}
+
+function getResolveEnabledNotificationAuthIdentities(admin) {
+    const start = functionsSource.indexOf('const NOTIFICATION_AUTH_GET_USERS_BATCH_SIZE =');
+    const end = functionsSource.indexOf('\nasync function getUserIdsByEmails', start);
+    const slice = functionsSource.slice(start, end);
+    return new Function('admin', `${slice}; return resolveEnabledNotificationAuthIdentities;`)(admin);
 }
 
 function getBuildTeamChatNotificationPlan() {
@@ -60,7 +67,6 @@ function getTeamChatMessageCreatedHandler({ senderProfile, sendNotification }) {
         'isPreEventReminderChatMessage',
         'buildTeamChatNotificationContext',
         'buildTeamChatNotificationPlan',
-        'getEnabledNotificationAuthUserIds',
         'sendDirectTargetsNotification',
         `${slice}; return handleTeamChatMessageCreated;`
     )(
@@ -75,7 +81,6 @@ function getTeamChatMessageCreatedHandler({ senderProfile, sendNotification }) {
             liveChatInboxUids: [],
             liveChatTargets: [{ uid: 'recipient-1', token: 'token-1' }]
         }),
-        async (uids) => new Set(uids),
         sendNotification
     );
 }
@@ -90,6 +95,73 @@ function getNotificationDestinationBuilders() {
 const detectMentionedUids = getDetectMentionedUids();
 const buildTeamChatNotificationPlan = getBuildTeamChatNotificationPlan();
 const { buildNotificationLink, buildNotificationAppRoute } = getNotificationDestinationBuilders();
+
+describe('resolveEnabledNotificationAuthIdentities', () => {
+    it('deduplicates normalized emails and chunks identifiers at the Admin Auth limit', async () => {
+        const calls = [];
+        const admin = {
+            auth: () => ({
+                getUsers: async (identifiers) => {
+                    calls.push(identifiers);
+                    return {
+                        users: identifiers.map(({ email }, index) => ({
+                            uid: `uid-${calls.length}-${index}`,
+                            email,
+                            disabled: false
+                        })),
+                        notFound: []
+                    };
+                }
+            })
+        };
+        const resolveIdentities = getResolveEnabledNotificationAuthIdentities(admin);
+        const emails = Array.from({ length: 205 }, (_, index) => `Person-${index}@Example.com`);
+        emails.push('person-0@example.com', ' PERSON-1@example.com ');
+
+        const result = await resolveIdentities({ emails });
+
+        expect(calls.map((identifiers) => identifiers.length)).toEqual([100, 100, 5]);
+        expect(calls.flat().every((identifier) => Object.keys(identifier).join() === 'email')).toBe(true);
+        expect(result.usersByEmail.size).toBe(205);
+        expect(result.enabledUserIds.size).toBe(205);
+    });
+
+    it('omits missing and disabled users while retaining successful identities', async () => {
+        const admin = {
+            auth: () => ({
+                getUsers: async () => ({
+                    users: [
+                        { uid: 'enabled-1', email: 'enabled@example.com', disabled: false },
+                        { uid: 'disabled-1', email: 'disabled@example.com', disabled: true }
+                    ],
+                    notFound: [{ email: 'missing@example.com' }]
+                })
+            })
+        };
+        const resolveIdentities = getResolveEnabledNotificationAuthIdentities(admin);
+
+        const result = await resolveIdentities({
+            emails: ['enabled@example.com', 'disabled@example.com', 'missing@example.com']
+        });
+
+        expect(Array.from(result.usersByEmail.keys())).toEqual(['enabled@example.com']);
+        expect(Array.from(result.enabledUserIds)).toEqual(['enabled-1']);
+    });
+
+    it('retries bounded batch failures and surfaces the final error for trigger retry', async () => {
+        const error = Object.assign(new Error('Auth throttled'), { code: 'auth/too-many-requests' });
+        const getUsers = vi.fn(async () => { throw error; });
+        const resolveIdentities = getResolveEnabledNotificationAuthIdentities({
+            auth: () => ({ getUsers })
+        });
+
+        await expect(resolveIdentities({ emails: ['person@example.com'] })).rejects.toMatchObject({
+            message: 'Auth throttled',
+            notificationAuthResolutionFailed: true
+        });
+        expect(getUsers).toHaveBeenCalledTimes(3);
+    });
+});
 
 describe('detectMentionedUids', () => {
     it('returns empty array when text is empty or null', () => {
@@ -200,7 +272,7 @@ describe('detectMentionedUids', () => {
 });
 
 describe('buildTeamChatNotificationContext', () => {
-    function createTeamChatNotificationContextHarness({ conversationDocs = {}, emailUserIds = ['assistant-1'], playerDocs = [] } = {}) {
+    function createTeamChatNotificationContextHarness({ conversationDocs = {}, playerDocs = [], resolveCalls = [] } = {}) {
         const teamData = { ownerId: 'coach-1', adminEmails: ['assistant@example.com'] };
         const parentDocs = [{ id: 'parent-1' }];
         const targetDocs = [
@@ -261,13 +333,24 @@ describe('buildTeamChatNotificationContext', () => {
         const factory = getBuildTeamChatNotificationContext();
         return factory(
             firestore,
-            async (emails = []) => {
-                const normalized = Array.isArray(emails) ? emails.map((email) => String(email || '').trim().toLowerCase()).sort() : [];
-                if (normalized.length === 1 && normalized[0] === 'assistant@example.com') return ['assistant-1'];
-                if (normalized.length === 1 && normalized[0] === 'parent@example.com') return ['parent-1'];
-                return emailUserIds;
+            (email) => String(email || '').trim().toLowerCase(),
+            async ({ emails = [], userIds = [] } = {}) => {
+                const emailToUid = new Map([
+                    ['assistant@example.com', 'assistant-1'],
+                    ['parent@example.com', 'parent-1']
+                ]);
+                const normalizedEmails = Array.from(new Set(emails.map((email) => String(email || '').trim().toLowerCase())));
+                resolveCalls.push({ emails: normalizedEmails, userIds: [...userIds] });
+                const usersByEmail = new Map(
+                    normalizedEmails
+                        .filter((email) => emailToUid.has(email))
+                        .map((email) => [email, { uid: emailToUid.get(email), email, disabled: false }])
+                );
+                return {
+                    usersByEmail,
+                    enabledUserIds: new Set([...userIds, ...Array.from(usersByEmail.values()).map((user) => user.uid)])
+                };
             },
-            async (uids = []) => new Set(uids),
             async () => new Map([
                 ['coach-1', { displayName: 'Coach Kim', teamChatState: { 'team-1': { mutedConversations: { staff: { seconds: 1 } } } } }],
                 ['assistant-1', { displayName: 'Assistant Lee', chatMuted: { 'team-1': { seconds: 2 } } }],
@@ -372,6 +455,37 @@ describe('buildTeamChatNotificationContext', () => {
 
         expect(context.members.map((member) => member.uid).sort()).toEqual(['coach-1', 'parent-1']);
         expect(context.targetsByCategory.mentions.map((target) => target.uid).sort()).toEqual(['coach-1', 'parent-1']);
+    });
+
+    it('resolves admin, participant, and roster emails once and reuses the shared identity map', async () => {
+        const resolveCalls = [];
+        const buildTeamChatNotificationContext = createTeamChatNotificationContextHarness({
+            resolveCalls,
+            conversationDocs: {
+                'teams/team-1/chatConversations/player_thread': {
+                    participantIds: ['coach-1', 'email:parent@example.com', 'player:player-1']
+                }
+            },
+            playerDocs: [
+                {
+                    id: 'player-1',
+                    name: 'Avery Smith',
+                    parents: [{ email: 'PARENT@example.com', name: 'Pat Parent' }]
+                }
+            ]
+        });
+
+        const context = await buildTeamChatNotificationContext('team-1', {
+            includeMentions: true,
+            conversationId: 'player_thread',
+            targetType: 'individuals'
+        });
+
+        expect(resolveCalls).toHaveLength(1);
+        expect(resolveCalls[0].emails.sort()).toEqual(['assistant@example.com', 'parent@example.com']);
+        expect(context.members.map((member) => member.uid).sort()).toEqual(['coach-1', 'parent-1']);
+        expect(context.members.find((member) => member.uid === 'parent-1')?.mentionNames)
+            .toEqual(expect.arrayContaining(['Avery Smith', 'Pat Parent']));
     });
 });
 

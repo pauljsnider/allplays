@@ -1293,6 +1293,79 @@ test('notifyTeamChatMessageCreated detects roster name mentions and does not dou
     }
 });
 
+test('notifyTeamChatMessageCreated batches a large shared roster and staff email set', async () => {
+    const rosterEntries = Array.from({ length: 249 }, (_, index) => ({
+        email: `roster-${index}@example.com`,
+        uid: `roster-${index}`,
+        playerId: `player-${index}`,
+        playerName: index === 0 ? 'Avery Unique' : `Roster Player ${index}`
+    }));
+    const authUsersByEmail = Object.fromEntries([
+        ['staff@example.com', 'staff-1'],
+        ...rosterEntries.map((entry) => [entry.email, entry.uid])
+    ]);
+    const userDocs = Object.fromEntries([
+        ['coach-1', { displayName: 'Coach Prime' }],
+        ['staff-1', { displayName: 'Coach Helper' }],
+        ...rosterEntries.map((entry) => [entry.uid, { displayName: `Parent ${entry.uid}` }])
+    ]);
+    const playerDocs = Object.fromEntries(rosterEntries.map((entry) => [entry.playerId, {
+        name: entry.playerName,
+        parents: [{ email: entry.email, name: `Parent ${entry.uid}` }]
+    }]));
+    const authBatchSizes = [];
+    const authEmailIdentifiers = [];
+    let activeAuthRequests = 0;
+    let peakAuthRequests = 0;
+
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: ['staff@example.com'] },
+        authUsersByEmail,
+        userDocs,
+        playerDocs,
+        indexedTargets: [
+            { uid: 'staff-1', deviceId: 'staff-device', token: 'staff-token', categories: { liveChat: true, mentions: true } },
+            { uid: 'roster-0', deviceId: 'parent-device', token: 'parent-token', categories: { liveChat: true, mentions: true } }
+        ],
+        onAuthGetUsersCall: async ({ identifiers }) => {
+            activeAuthRequests += 1;
+            peakAuthRequests = Math.max(peakAuthRequests, activeAuthRequests);
+            authBatchSizes.push(identifiers.length);
+            authEmailIdentifiers.push(...identifiers.map((identifier) => identifier.email).filter(Boolean));
+            await Promise.resolve();
+            activeAuthRequests -= 1;
+        }
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/chatMessages/message-large-roster');
+        const result = await moduleExports.notifyTeamChatMessageCreated(makeSnapshot(ref, {
+            text: 'Can @Avery Unique bring both jerseys?',
+            senderId: 'coach-1',
+            senderName: 'Coach Prime',
+            conversationId: 'team'
+        }), { params: { teamId: 'team-1', messageId: 'message-large-roster' } });
+
+        assert.equal(result.length, 2);
+        assert.equal(env.counts.authGetUsersCalls, 3);
+        assert.deepEqual(authBatchSizes, [100, 100, 51]);
+        assert.equal(Math.max(...authBatchSizes), 100);
+        assert.equal(peakAuthRequests, 1);
+        assert.equal(env.counts.authGetUserByEmailCalls, 0);
+        assert.equal(new Set(authEmailIdentifiers).size, 250);
+        assert.deepEqual(env.updatedDocs, [{
+            path: 'teams/team-1/chatMessages/message-large-roster',
+            value: { mentionedUids: ['roster-0'] }
+        }]);
+        assert.deepEqual(env.messagingCalls.map((call) => `${call.data.category}:${call.tokens[0]}`).sort(), [
+            'liveChat:staff-token',
+            'mentions:parent-token'
+        ]);
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyOfficiatingNotificationCreated mirrors assignment records to the linked official', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
