@@ -1169,8 +1169,14 @@ async function nativeListCollection(path: string, options: {
     .filter(Boolean) as FirestoreDocument[];
 }
 
-async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUAL' | 'ARRAY_CONTAINS', value: string) {
-  const payload = await nativeFirestoreRequest(':runQuery', {
+async function nativeRunQuery(
+  collectionId: string,
+  fieldPath: string,
+  op: 'EQUAL' | 'ARRAY_CONTAINS',
+  value: string,
+  options: { parentPath?: string; limit?: number } = {}
+) {
+  const payload = await nativeFirestoreRequest(`${options.parentPath || ''}:runQuery`, {
     method: 'POST',
     body: JSON.stringify({
       structuredQuery: {
@@ -1181,7 +1187,8 @@ async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUA
             op,
             value: encodeFirestoreValue(value)
           }
-        }
+        },
+        ...(options.limit ? { limit: options.limit } : {})
       }
     })
   });
@@ -3864,8 +3871,14 @@ async function loadPracticeSessionByEventId(teamId: string, eventId: string) {
     `practice session ${teamId}/${eventId}`,
     () => Promise.resolve(getPracticeSessionByEvent(teamId, eventId)),
     async () => {
-      const sessions = await nativeListCollection(`teams/${encodeURIComponent(teamId)}/practiceSessions`);
-      return sessions.find((session) => compactString(session?.eventId) === eventId) || null;
+      const sessions = await nativeRunQuery(
+        'practiceSessions',
+        'eventId',
+        'EQUAL',
+        eventId,
+        { parentPath: `/teams/${encodeURIComponent(teamId)}`, limit: 1 }
+      );
+      return sessions[0] || null;
     }
   );
 }
