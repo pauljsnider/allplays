@@ -79,6 +79,7 @@ import {
   type ChatAudienceMetadata,
   type ChatTargetType
 } from '../../../lib/chatLogic';
+import { validateChatAttachmentCount } from '@legacy/team-chat-media.js';
 import { APP_BACK_DISMISS_EVENT } from '../../../lib/nativeBackButton';
 import { sharePublicUrl } from '../../../lib/publicActions';
 import { useShellLayout } from '../../../lib/useShellLayout';
@@ -1421,6 +1422,12 @@ export function ChatWindow({
 
   const addMediaFiles = (selectedFiles: File[]) => {
     if (!selectedFiles.length) return;
+    try {
+      validateChatAttachmentCount(filePreviews.length, selectedFiles.length);
+    } catch (error) {
+      setStatus({ tone: 'error', message: error instanceof Error ? error.message : 'You can attach up to 10 photos or videos per message.' });
+      return;
+    }
     const invalidType = selectedFiles.find((file) => !file.type.startsWith('image/') && !file.type.startsWith('video/'));
     if (invalidType) {
       setStatus({ tone: 'error', message: 'Choose image or video files only.' });

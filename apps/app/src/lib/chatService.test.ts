@@ -429,6 +429,29 @@ describe('chat Firestore mappers', () => {
   });
 });
 
+describe('chat attachment batch limits', () => {
+  it('rejects 11 new attachments before uploading or posting', async () => {
+    const files = Array.from({ length: 11 }, (_, index) => new File(['photo'], `photo-${index}.jpg`, { type: 'image/jpeg' }));
+    const { sendTeamChatMessage } = await import('./chatService');
+
+    await expect(sendTeamChatMessage(buildSendInput(files))).rejects.toThrow('up to 10');
+    expect(legacyChatServiceMocks.uploadChatImage).not.toHaveBeenCalled();
+    expect(legacyChatServiceMocks.postChatMessage).not.toHaveBeenCalled();
+  });
+
+  it('rejects combined shared and new attachments above 10 before uploading or posting', async () => {
+    const files = [new File(['photo'], 'new.jpg', { type: 'image/jpeg' })];
+    const sharedAttachments = Array.from({ length: 10 }, (_, index) => createUploadedAttachment(
+      new File(['shared'], `shared-${index}.jpg`, { type: 'image/jpeg' })
+    ));
+    const { sendTeamChatMessage } = await import('./chatService');
+
+    await expect(sendTeamChatMessage({ ...buildSendInput(files), attachments: sharedAttachments })).rejects.toThrow('up to 10');
+    expect(legacyChatServiceMocks.uploadChatImage).not.toHaveBeenCalled();
+    expect(legacyChatServiceMocks.postChatMessage).not.toHaveBeenCalled();
+  });
+});
+
 describe('native chat team discovery fallback', () => {
   function jsonResponse(payload: unknown, status = 200) {
     return {
