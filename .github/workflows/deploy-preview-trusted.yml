@@ -114,7 +114,7 @@ jobs:
       # workflow_run executes this workflow from the default branch. Only that
       # trusted branch is checked out; the triggering PR is never checked out.
       - name: Checkout trusted default-branch verifier
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v5
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
@@ -441,7 +441,7 @@ jobs:
 
     steps:
       - name: Checkout trusted default-branch verifier
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v5
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
