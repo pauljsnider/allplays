@@ -6,6 +6,22 @@ function readRepoFile(relativePath) {
 }
 
 describe('team chat multi-file send cleanup', () => {
+    it('rejects an 11-file batch before any legacy upload helper call while preserving the 10-file boundary', () => {
+        const html = readRepoFile('team-chat.html');
+        const send = html.slice(html.indexOf('async function sendMessage()'));
+        const guard = 'validateChatAttachmentCount(0, imageFiles.length)';
+        const rejection = "showError(error.message);\n                return;";
+        const guardIndex = send.indexOf(guard);
+        const rejectionIndex = send.indexOf(rejection, guardIndex);
+        const firstUploadIndex = send.indexOf('await uploadChatImage(');
+
+        expect(guardIndex).toBeGreaterThan(-1);
+        expect(rejectionIndex).toBeGreaterThan(guardIndex);
+        expect(rejectionIndex).toBeLessThan(firstUploadIndex);
+        expect(html).toContain('validateChatAttachmentCount(0, files.length)');
+        expect(html).toContain('setSelectedImage(files);');
+    });
+
     it('imports attachment cleanup helper for failed sends', () => {
         const html = readRepoFile('team-chat.html');
 
