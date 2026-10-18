@@ -148,6 +148,9 @@ vi.mock('../../apps/app/src/lib/voiceService.ts', () => ({
     voiceRecognition: voiceMocks
 }));
 vi.mock('../../apps/app/src/lib/chatService.ts', () => chatMocks);
+vi.mock('../../apps/app/src/lib/adapters/legacyChatService.ts', async () => ({
+    validateChatAttachmentCount: (await import('../../js/team-chat-media.js')).validateChatAttachmentCount
+}));
 vi.mock('../../apps/app/src/lib/opportunityService.ts', () => opportunityMocks);
 vi.mock('../../apps/app/src/lib/friendMessageService.ts', () => friendMessageMocks);
 vi.mock('../../apps/app/src/lib/chatAiService', () => ({
