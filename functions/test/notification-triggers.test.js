@@ -1033,6 +1033,44 @@ test('notifyTeamChatMessageCreated excludes disabled indexed recipients from pus
     }
 });
 
+for (const disabledAtCall of [3, 4]) {
+    test(`notifyTeamChatMessageCreated rechecks Auth before delivery (call ${disabledAtCall})`, async () => {
+        const authUsersByUid = {
+            'coach-1': { disabled: false },
+            'parent-1': { disabled: false }
+        };
+        const { moduleExports, env, cleanup } = loadNotificationInternals({
+            teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+            parentUserIds: ['parent-1'],
+            userDocs: {
+                'coach-1': { displayName: 'Coach Prime' },
+                'parent-1': { displayName: 'Jamie Parent' }
+            },
+            authUsersByUid,
+            indexedTargets: [
+                { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { liveChat: true, mentions: true } }
+            ],
+            onAuthGetUsersCall: ({ callCount }) => {
+                if (callCount === disabledAtCall) authUsersByUid['parent-1'].disabled = true;
+            }
+        });
+        try {
+            const ref = env.firestoreState.doc('teams/team-1/chatMessages/disabled-before-delivery');
+            await moduleExports.notifyTeamChatMessageCreated(makeSnapshot(ref, {
+                text: 'Nice work @Jamie', senderId: 'coach-1', conversationId: 'team'
+            }), { params: { teamId: 'team-1', messageId: 'disabled-before-delivery' } });
+            assert.ok(env.counts.authGetUsersCalls >= disabledAtCall);
+            assert.equal(env.messagingCalls.length, 0);
+            assert.equal(env.inboxWrites.length, 0);
+            if (disabledAtCall === 3) {
+                assert.deepEqual(env.updatedDocs[0].value.mentionedUids, []);
+            }
+        } finally {
+            cleanup();
+        }
+    });
+}
+
 test('notifyTeamChatMessageCreated writes inbox items for members without push devices', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
@@ -1288,6 +1326,81 @@ test('notifyTeamChatMessageCreated detects roster name mentions and does not dou
         assert.equal(mentionCall.data.conversationId, 'thread-9');
         assert.equal(mentionCall.webLink, 'https://allplays.ai/app/#/messages/team-1?conversationId=thread-9');
         assert.deepEqual(env.updatedDocs, [{ path: 'teams/team-1/chatMessages/message-2594', value: { mentionedUids: ['parent-1'] } }]);
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyTeamChatMessageCreated batches a large shared roster and staff email set', async () => {
+    const rosterEntries = Array.from({ length: 249 }, (_, index) => ({
+        email: `roster-${index}@example.com`,
+        uid: `roster-${index}`,
+        playerId: `player-${index}`,
+        playerName: index === 0 ? 'Avery Unique' : `Roster Player ${index}`
+    }));
+    const authUsersByEmail = Object.fromEntries([
+        ['staff@example.com', 'staff-1'],
+        ...rosterEntries.map((entry) => [entry.email, entry.uid])
+    ]);
+    const userDocs = Object.fromEntries([
+        ['coach-1', { displayName: 'Coach Prime' }],
+        ['staff-1', { displayName: 'Coach Helper' }],
+        ...rosterEntries.map((entry) => [entry.uid, { displayName: `Parent ${entry.uid}` }])
+    ]);
+    const playerDocs = Object.fromEntries(rosterEntries.map((entry) => [entry.playerId, {
+        name: entry.playerName,
+        parents: [{ email: entry.email, name: `Parent ${entry.uid}` }]
+    }]));
+    const authBatchSizes = [];
+    const authEmailIdentifiers = [];
+    let activeAuthRequests = 0;
+    let peakAuthRequests = 0;
+
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: ['staff@example.com'] },
+        authUsersByEmail,
+        userDocs,
+        playerDocs,
+        indexedTargets: [
+            { uid: 'staff-1', deviceId: 'staff-device', token: 'staff-token', categories: { liveChat: true, mentions: true } },
+            { uid: 'roster-0', deviceId: 'parent-device', token: 'parent-token', categories: { liveChat: true, mentions: true } }
+        ],
+        onAuthGetUsersCall: async ({ identifiers }) => {
+            activeAuthRequests += 1;
+            peakAuthRequests = Math.max(peakAuthRequests, activeAuthRequests);
+            authBatchSizes.push(identifiers.length);
+            authEmailIdentifiers.push(...identifiers.map((identifier) => identifier.email).filter(Boolean));
+            await Promise.resolve();
+            activeAuthRequests -= 1;
+        }
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/chatMessages/message-large-roster');
+        const result = await moduleExports.notifyTeamChatMessageCreated(makeSnapshot(ref, {
+            text: 'Can @Avery Unique bring both jerseys?',
+            senderId: 'coach-1',
+            senderName: 'Coach Prime',
+            conversationId: 'team'
+        }), { params: { teamId: 'team-1', messageId: 'message-large-roster' } });
+
+        assert.equal(result.length, 2);
+        // Three batched identity lookups plus fresh member, delivery, and effect checks.
+        assert.equal(env.counts.authGetUsersCalls, 13);
+        assert.deepEqual(authBatchSizes.slice(0, 3), [100, 100, 51]);
+        assert.ok(authBatchSizes.every((size) => size > 0 && size <= 100));
+        assert.equal(Math.max(...authBatchSizes), 100);
+        assert.equal(peakAuthRequests, 1);
+        assert.equal(env.counts.authGetUserByEmailCalls, 0);
+        assert.equal(new Set(authEmailIdentifiers).size, 250);
+        assert.deepEqual(env.updatedDocs, [{
+            path: 'teams/team-1/chatMessages/message-large-roster',
+            value: { mentionedUids: ['roster-0'] }
+        }]);
+        assert.deepEqual(env.messagingCalls.map((call) => `${call.data.category}:${call.tokens[0]}`).sort(), [
+            'liveChat:staff-token',
+            'mentions:parent-token'
+        ]);
     } finally {
         cleanup();
     }
