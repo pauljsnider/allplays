@@ -353,6 +353,7 @@
         import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from './js/team-chat-last-read.js?v=3';
         import {
             MAX_CHAT_MEDIA_SIZE,
+            validateChatAttachmentCount,
             getMessageAttachments,
             collectThreadMedia,
             buildChatMediaShareDetails,
@@ -2032,6 +2033,13 @@
                 clearSelectedImage();
                 return;
             }
+            try {
+                validateChatAttachmentCount(0, files.length);
+            } catch (error) {
+                showError(error.message);
+                clearSelectedImage();
+                return;
+            }
             const invalidType = files.find((file) => !file.type.startsWith('image/') && !file.type.startsWith('video/'));
             if (invalidType) {
                 showError('Please select image or video files only.');
@@ -3043,6 +3051,12 @@
             const originalConversationId = selectedConversationId;
 
             if (!text && imageFiles.length === 0) return;
+            try {
+                validateChatAttachmentCount(0, imageFiles.length);
+            } catch (error) {
+                showError(error.message);
+                return;
+            }
             if (!validateChatAudienceSelection()) return;
 
             sendBtn.disabled = true;
