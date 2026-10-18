@@ -248,7 +248,7 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getDelegatedTeamContext, getGame, getGames, getLiveEvents, getMyRsvps, getOfficialLinkedTeamIds, getPlayers, getPracticeSession, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
+import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getDelegatedTeamContext, getGame, getGames, getLiveEvents, getMyRsvps, getOfficialLinkedTeamIds, getPlayers, getPracticeSession, getPracticeSessionByEvent, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, getCalendarEventTrackingId, isTeamActive, isTrackedCalendarEvent, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
@@ -5246,6 +5246,111 @@ describe('native parent schedule Firestore mapping', () => {
       isPublicProjection: false
     });
     expect(result.events[0].date).toEqual(new Date('2026-06-20T18:00:00.000Z'));
+  });
+
+  it('bounds native targeted practice detail fallback to one matching session', async () => {
+    vi.mocked(getGame).mockResolvedValue({
+      id: 'practice-1',
+      type: 'practice',
+      date: new Date('2026-06-20T18:00:00.000Z'),
+      title: 'Practice'
+    } as any);
+    vi.mocked(getPracticeSessionByEvent).mockRejectedValueOnce(new Error('SDK unavailable'));
+    vi.mocked(globalThis.fetch).mockImplementation(async (input: any, init?: RequestInit) => {
+      const requestUrl = String(input);
+      expect(requestUrl).toContain('/documents/teams/team-1:runQuery');
+      expect(requestUrl).not.toContain('/documents/teams/team-1/practiceSessions');
+      const body = JSON.parse(String(init?.body));
+      expect(body).toEqual({
+        structuredQuery: {
+          from: [{ collectionId: 'practiceSessions' }],
+          where: {
+            fieldFilter: {
+              field: { fieldPath: 'eventId' },
+              op: 'EQUAL',
+              value: { stringValue: 'practice-1' }
+            }
+          },
+          limit: 1
+        }
+      });
+      return {
+        ok: true,
+        json: async () => [{
+          document: {
+            name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/practiceSessions/session-1',
+            fields: {
+              eventId: { stringValue: 'practice-1' },
+              attendance: {
+                mapValue: {
+                  fields: {
+                    rosterSize: { integerValue: '12' },
+                    players: {
+                      arrayValue: {
+                        values: [{ mapValue: { fields: { playerId: { stringValue: 'child-1' }, status: { stringValue: 'present' } } } }]
+                      }
+                    }
+                  }
+                }
+              },
+              homePacketContent: {
+                mapValue: {
+                  fields: {
+                    blocks: { arrayValue: { values: [{ mapValue: { fields: { type: { stringValue: 'text' } } } }] } }
+                  }
+                }
+              }
+            }
+          }
+        }]
+      } as any;
+    });
+
+    const result = await loadParentScheduleEventDetail({ uid: 'parent-1', email: 'parent@example.com', roles: [] } as any, {
+      teamId: 'team-1',
+      eventId: 'practice-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toMatchObject({
+      practiceSessionId: 'session-1',
+      practiceAttendanceSummary: '1/12 present',
+      practiceHomePacketSummary: '1 drill · 0 min',
+      practiceHomePacket: expect.objectContaining({ blocks: expect.any(Array) })
+    });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps targeted practice details unlinked when the bounded query is empty', async () => {
+    vi.mocked(getGame).mockResolvedValue({
+      id: 'practice-1',
+      type: 'practice',
+      date: new Date('2026-06-20T18:00:00Z')
+    } as any);
+    vi.mocked(getPracticeSessionByEvent).mockRejectedValueOnce(new Error('SDK unavailable'));
+    vi.mocked(globalThis.fetch).mockResolvedValue({
+      ok: true,
+      json: async () => []
+    } as any);
+
+    const result = await loadParentScheduleEventDetail({ uid: 'parent-1', email: 'parent@example.com', roles: [] } as any, {
+      teamId: 'team-1',
+      eventId: 'practice-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toMatchObject({
+      type: 'practice',
+      practiceSessionId: null,
+      practiceAttendanceSummary: null,
+      practiceHomePacketSummary: null
+    });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(globalThis.fetch).mock.calls[0][0])).toContain('/documents/teams/team-1:runQuery');
   });
 
   it('rejects an exact shared-game path that is unrelated to the authorized requested team', async () => {
