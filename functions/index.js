@@ -17991,6 +17991,12 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('resource-exhausted', 'Team email is limited to 400 eligible recipients.');
   }
 
+  // Resolve fallible inbox enrichment before queuing delivery, so an Auth
+  // outage cannot report failure after mail jobs have already been committed.
+  const emailRecipientUids = postToTeamChat
+    ? []
+    : await getUserIdsByEmails(recipients.map((recipient) => recipient.email));
+
   const now = admin.firestore.FieldValue.serverTimestamp();
   const messageRef = firestore.collection(`teams/${teamId}/teamEmails`).doc();
   const chatMessageRef = postToTeamChat
@@ -18112,7 +18118,6 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
     const directRecipientUids = recipients.flatMap((recipient) => (
       Array.isArray(recipient.userIds) ? recipient.userIds : []
     ));
-    const emailRecipientUids = await getUserIdsByEmails(recipients.map((recipient) => recipient.email));
     const inboxRecipientUids = Array.from(new Set([...directRecipientUids, ...emailRecipientUids]
       .map((uid) => String(uid || '').trim())
       .filter((uid) => uid && uid !== context.auth.uid)));

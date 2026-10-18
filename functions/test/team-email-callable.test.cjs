@@ -416,6 +416,30 @@ test('sendTeamEmail rejects a cross-team recipient before creating mail jobs', a
   assert.equal(firestore.mailJobRefsCreated, 0);
 });
 
+test('sendTeamEmail resolves Auth identities before committing email delivery jobs', async () => {
+  const { callables, firestore } = loadCallables(makeRateLimitSeed());
+  const originalAuth = adminStub.auth;
+  let attempts = 0;
+  adminStub.auth = () => ({
+    ...originalAuth(),
+    getUsers: async () => {
+      attempts += 1;
+      throw Object.assign(new Error('Auth temporarily unavailable'), { code: 'auth/internal-error' });
+    }
+  });
+
+  await assert.rejects(sendRateLimitedEmail(callables), /Auth temporarily unavailable/);
+  assert.equal(attempts, 3);
+  assert.equal(firestore.mailJobRefsCreated, 0);
+  assert.equal(firestore.committedWrites.some((write) => (
+    write.path.startsWith('mail/') || write.path.startsWith('teams/team-1/teamEmails/')
+  )), false);
+
+  adminStub.auth = originalAuth;
+  await sendRateLimitedEmail(callables);
+  assert.equal(firestore.committedWrites.filter((write) => write.path.startsWith('mail/')).length, 1);
+});
+
 test('sendTeamEmail queues an authorized selected-member send with verified attachment metadata', async () => {
   const attachmentPath = 'team-email-attachments/team-1/draft-1/owner-1/plan.pdf';
   const { callables, firestore } = loadCallables({
