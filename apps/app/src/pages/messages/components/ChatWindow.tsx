@@ -79,7 +79,7 @@ import {
   type ChatAudienceMetadata,
   type ChatTargetType
 } from '../../../lib/chatLogic';
-import { validateChatAttachmentCount } from '@legacy/team-chat-media.js';
+import { validateChatAttachmentCount } from '../../../lib/adapters/legacyChatService';
 import { APP_BACK_DISMISS_EVENT } from '../../../lib/nativeBackButton';
 import { sharePublicUrl } from '../../../lib/publicActions';
 import { useShellLayout } from '../../../lib/useShellLayout';

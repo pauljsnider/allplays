@@ -54,7 +54,7 @@ import {
   type ChatTargetType
 } from './chatLogic';
 import { startInteractionTimer, UX_TIMING } from './uxTiming';
-import { validateChatAttachmentCount } from '@legacy/team-chat-media.js';
+import { validateChatAttachmentCount } from './adapters/legacyChatService';
 import { canMessageAcceptedFriend, sendAuthorizedDirectMessage } from './friendMessageService';
 import { callNativeFirebaseFunction } from './nativeCallable';
 import {
