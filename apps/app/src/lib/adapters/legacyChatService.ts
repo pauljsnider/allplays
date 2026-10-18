@@ -5,6 +5,10 @@ import { functions as legacyFunctions, httpsCallable as legacyHttpsCallable } fr
 import { getApp as legacy_getApp } from '@legacy/vendor/firebase-app.js';
 import { isTeamActive as legacy_isTeamActive } from '@legacy/team-visibility.js';
 
+import { validateChatAttachmentCount as legacyValidateChatAttachmentCount } from '@legacy/team-chat-media.js';
+
+export const validateChatAttachmentCount: (existingCount: number, addedCount: number) => void = legacyValidateChatAttachmentCount;
+
 function callLegacyDb(name: string, args: any[]) {
   const fn = (legacyDb as Record<string, any>)[name];
   if (typeof fn !== 'function') {
