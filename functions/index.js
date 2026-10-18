@@ -12827,23 +12827,13 @@ async function revalidateNotificationEffectTargets({
   teamId,
   category,
   audienceContext = {},
-  requireCanonicalTeamAccess = false,
-  prevalidatedAuthUserIds = null
+  requireCanonicalTeamAccess = false
 }) {
   const logicalTargets = dedupeNotificationTargets(targets);
   const userIds = Array.from(new Set(
     logicalTargets.map((target) => String(target?.uid || '').trim()).filter(Boolean)
   ));
   if (!userIds.length) return [];
-
-  if (!requireCanonicalTeamAccess) {
-    const enabledUserIds = prevalidatedAuthUserIds instanceof Set
-      ? prevalidatedAuthUserIds
-      : (Array.isArray(prevalidatedAuthUserIds) ? new Set(prevalidatedAuthUserIds) : null);
-    if (enabledUserIds) {
-      return logicalTargets.filter((target) => enabledUserIds.has(String(target?.uid || '').trim()));
-    }
-  }
 
   const enabledAuthUsers = await getEnabledNotificationAuthUsers(userIds);
   if (!requireCanonicalTeamAccess) {
@@ -14420,7 +14410,6 @@ async function sendDirectTargetsNotification({
   appRouteOverride = null,
   timeSensitive = false,
   requireCanonicalTeamAccess = false,
-  prevalidatedAuthUserIds = null,
   audienceContext = {},
   beforeEffects = null,
   onEffectsStarting = null
@@ -14434,8 +14423,7 @@ async function sendDirectTargetsNotification({
     teamId,
     category,
     audienceContext,
-    requireCanonicalTeamAccess,
-    prevalidatedAuthUserIds
+    requireCanonicalTeamAccess
   });
   const authorizedUserIds = new Set(
     authorizedTargets.map((target) => String(target?.uid || '').trim()).filter(Boolean)
@@ -16947,7 +16935,10 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
     members = members.filter((member) => scopedParticipantUids.has(member.uid));
   }
 
-  members = members.filter((member) => enabledUserIds.has(member.uid));
+  const enabledMemberUserIds = await getEnabledNotificationAuthUserIds(
+    members.map((member) => member.uid)
+  );
+  members = members.filter((member) => enabledMemberUserIds.has(member.uid));
 
   const [userRecords, memberPreferenceEntries] = await Promise.all([
     getUserRecordsByIds(members.map((member) => member.uid)),
@@ -17067,7 +17058,6 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
     members: hydratedMembers,
     mutedUids: hydratedMembers.filter((member) => member.muted).map((member) => member.uid),
     enabledUidsByCategory,
-    enabledAuthUserIds: Array.from(enabledUserIds),
     targetsByCategory: {
       mentions: [...indexedTargetsByCategory.mentions, ...fallbackTargetsByCategory.mentions],
       liveChat: [...indexedTargetsByCategory.liveChat, ...fallbackTargetsByCategory.liveChat]
@@ -17178,6 +17168,24 @@ async function handleTeamChatMessageCreated(snapshot, context) {
     recipientContext
   });
 
+  const enabledDeliveryUids = await getEnabledNotificationAuthUserIds([
+    ...notificationPlan.mentionedUids,
+    ...notificationPlan.mentionInboxUids,
+    ...notificationPlan.mentionTargets.map((target) => target.uid),
+    ...notificationPlan.liveChatInboxUids,
+    ...notificationPlan.liveChatTargets.map((target) => target.uid)
+  ]);
+  notificationPlan.mentionedUids = notificationPlan.mentionedUids
+    .filter((uid) => enabledDeliveryUids.has(uid));
+  notificationPlan.mentionInboxUids = notificationPlan.mentionInboxUids
+    .filter((uid) => enabledDeliveryUids.has(uid));
+  notificationPlan.mentionTargets = notificationPlan.mentionTargets
+    .filter((target) => enabledDeliveryUids.has(target.uid));
+  notificationPlan.liveChatInboxUids = notificationPlan.liveChatInboxUids
+    .filter((uid) => enabledDeliveryUids.has(uid));
+  notificationPlan.liveChatTargets = notificationPlan.liveChatTargets
+    .filter((target) => enabledDeliveryUids.has(target.uid));
+
   const mentionedUids = notificationPlan.mentionedUids;
   const results = [];
 
@@ -17193,8 +17201,7 @@ async function handleTeamChatMessageCreated(snapshot, context) {
       title: `${senderName} mentioned you`,
       body,
       teamId,
-      conversationId,
-      prevalidatedAuthUserIds: recipientContext.enabledAuthUserIds
+      conversationId
     }));
   }
 
@@ -17209,8 +17216,7 @@ async function handleTeamChatMessageCreated(snapshot, context) {
     title: `${senderName}: Team Chat`,
     body,
     teamId,
-    conversationId,
-    prevalidatedAuthUserIds: recipientContext.enabledAuthUserIds
+    conversationId
   }));
 
   return results;

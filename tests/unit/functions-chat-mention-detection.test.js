@@ -29,6 +29,7 @@ function getBuildTeamChatNotificationContext() {
         'firestore',
         'normalizeNotificationAuthEmail',
         'resolveEnabledNotificationAuthIdentities',
+        'getEnabledNotificationAuthUserIds',
         'getUserRecordsByIds',
         'notificationAudienceAllowsRoles',
         'getLegacyTargetsForCategory',
@@ -67,6 +68,7 @@ function getTeamChatMessageCreatedHandler({ senderProfile, sendNotification }) {
         'isPreEventReminderChatMessage',
         'buildTeamChatNotificationContext',
         'buildTeamChatNotificationPlan',
+        'getEnabledNotificationAuthUserIds',
         'sendDirectTargetsNotification',
         `${slice}; return handleTeamChatMessageCreated;`
     )(
@@ -81,6 +83,7 @@ function getTeamChatMessageCreatedHandler({ senderProfile, sendNotification }) {
             liveChatInboxUids: [],
             liveChatTargets: [{ uid: 'recipient-1', token: 'token-1' }]
         }),
+        async (uids) => new Set(uids),
         sendNotification
     );
 }
@@ -351,6 +354,7 @@ describe('buildTeamChatNotificationContext', () => {
                     enabledUserIds: new Set([...userIds, ...Array.from(usersByEmail.values()).map((user) => user.uid)])
                 };
             },
+            async (uids) => new Set(uids),
             async () => new Map([
                 ['coach-1', { displayName: 'Coach Kim', teamChatState: { 'team-1': { mutedConversations: { staff: { seconds: 1 } } } } }],
                 ['assistant-1', { displayName: 'Assistant Lee', chatMuted: { 'team-1': { seconds: 2 } } }],

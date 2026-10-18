@@ -1033,6 +1033,44 @@ test('notifyTeamChatMessageCreated excludes disabled indexed recipients from pus
     }
 });
 
+for (const disabledAtCall of [3, 4]) {
+    test(`notifyTeamChatMessageCreated rechecks Auth before delivery (call ${disabledAtCall})`, async () => {
+        const authUsersByUid = {
+            'coach-1': { disabled: false },
+            'parent-1': { disabled: false }
+        };
+        const { moduleExports, env, cleanup } = loadNotificationInternals({
+            teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+            parentUserIds: ['parent-1'],
+            userDocs: {
+                'coach-1': { displayName: 'Coach Prime' },
+                'parent-1': { displayName: 'Jamie Parent' }
+            },
+            authUsersByUid,
+            indexedTargets: [
+                { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { liveChat: true, mentions: true } }
+            ],
+            onAuthGetUsersCall: ({ callCount }) => {
+                if (callCount === disabledAtCall) authUsersByUid['parent-1'].disabled = true;
+            }
+        });
+        try {
+            const ref = env.firestoreState.doc('teams/team-1/chatMessages/disabled-before-delivery');
+            await moduleExports.notifyTeamChatMessageCreated(makeSnapshot(ref, {
+                text: 'Nice work @Jamie', senderId: 'coach-1', conversationId: 'team'
+            }), { params: { teamId: 'team-1', messageId: 'disabled-before-delivery' } });
+            assert.ok(env.counts.authGetUsersCalls >= disabledAtCall);
+            assert.equal(env.messagingCalls.length, 0);
+            assert.equal(env.inboxWrites.length, 0);
+            if (disabledAtCall === 3) {
+                assert.deepEqual(env.updatedDocs[0].value.mentionedUids, []);
+            }
+        } finally {
+            cleanup();
+        }
+    });
+}
+
 test('notifyTeamChatMessageCreated writes inbox items for members without push devices', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
@@ -1347,8 +1385,10 @@ test('notifyTeamChatMessageCreated batches a large shared roster and staff email
         }), { params: { teamId: 'team-1', messageId: 'message-large-roster' } });
 
         assert.equal(result.length, 2);
-        assert.equal(env.counts.authGetUsersCalls, 3);
-        assert.deepEqual(authBatchSizes, [100, 100, 51]);
+        // Three batched identity lookups plus fresh member, delivery, and effect checks.
+        assert.equal(env.counts.authGetUsersCalls, 13);
+        assert.deepEqual(authBatchSizes.slice(0, 3), [100, 100, 51]);
+        assert.ok(authBatchSizes.every((size) => size > 0 && size <= 100));
         assert.equal(Math.max(...authBatchSizes), 100);
         assert.equal(peakAuthRequests, 1);
         assert.equal(env.counts.authGetUserByEmailCalls, 0);
