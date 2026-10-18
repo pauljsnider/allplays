@@ -81,6 +81,7 @@ import {
 } from '../../../lib/chatLogic';
 import { APP_BACK_DISMISS_EVENT } from '../../../lib/nativeBackButton';
 import { sharePublicUrl } from '../../../lib/publicActions';
+import { useAppForegroundState } from '../../../lib/useAppForegroundState';
 import { useShellLayout } from '../../../lib/useShellLayout';
 import { useViewLoadTimer } from '../../../lib/viewLoadTiming';
 import type { AuthState } from '../../../lib/types';
@@ -376,6 +377,7 @@ export function ChatWindow({
 }) {
   const navigate = useNavigate();
   const { isDesktopWeb } = useShellLayout();
+  const isAppForeground = useAppForegroundState();
   const [recipientOptions, setRecipientOptions] = useState<ChatRecipientOption[]>([]);
   const [recipientOptionsLoading, setRecipientOptionsLoading] = useState(false);
   const [recipientOptionsLoaded, setRecipientOptionsLoaded] = useState(false);
@@ -632,7 +634,7 @@ export function ChatWindow({
     team,
     user: auth.user,
     selectedConversationId: effectiveConversationId,
-    enabled: !loadingContext && staffConversationReady,
+    enabled: isAppForeground && !loadingContext && staffConversationReady,
     onBeforeLiveUpdate: handleBeforeLiveUpdate,
     onLiveUpdateState: handleLiveUpdateState,
     onMessagesReset: handleMessagesReset,

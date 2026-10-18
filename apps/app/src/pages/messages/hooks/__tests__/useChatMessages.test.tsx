@@ -146,6 +146,29 @@ describe('useChatMessages', () => {
         );
     });
 
+    it('unsubscribes while disabled, preserves cached messages, and resubscribes once when enabled again', async () => {
+        const { rerender } = render(<MessagesProbe conversationId="team" />);
+        act(() => {
+            liveCallback?.([message('cached-message', 20)], { cursor: 'team' });
+        });
+        await waitFor(() => expect(screen.getByTestId('message-ids').textContent).toBe('cached-message'));
+
+        rerender(<MessagesProbe conversationId="team" enabled={false} />);
+
+        expect(unsubscribe).toHaveBeenCalledTimes(1);
+        expect(screen.getByTestId('message-ids').textContent).toBe('cached-message');
+        expect(subscribeToTeamChatMessages).toHaveBeenCalledTimes(1);
+
+        rerender(<MessagesProbe conversationId="team" enabled />);
+
+        await waitFor(() => expect(subscribeToTeamChatMessages).toHaveBeenCalledTimes(2));
+        expect(subscribeToTeamChatMessages).toHaveBeenLastCalledWith('team-1', 'team', expect.any(Function), expect.any(Function));
+        expect(screen.getByTestId('message-ids').textContent).toBe('cached-message');
+
+        rerender(<MessagesProbe conversationId="team" enabled />);
+        expect(subscribeToTeamChatMessages).toHaveBeenCalledTimes(2);
+    });
+
     it('resubscribes and clears messages when the selected conversation changes', async () => {
         const onMessagesReset = vi.fn();
         const { rerender } = render(<MessagesProbe conversationId="team" onMessagesReset={onMessagesReset} />);
