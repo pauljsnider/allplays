@@ -162,6 +162,7 @@ function buildNotificationTestEnv({
         inboxCleanupQueries: 0,
         inboxCleanupLimitQueries: 0,
         inboxCleanupOffsetQueries: 0,
+        authGetUserByEmailCalls: 0,
         authGetUsersCalls: 0,
         dedupTransactions: 0,
         deleteCalls: 0
@@ -1088,6 +1089,7 @@ function buildNotificationTestEnv({
                 throw error;
             },
             getUserByEmail: async (email) => {
+                counts.authGetUserByEmailCalls += 1;
                 const uid = authUsersByEmail[String(email || '').trim().toLowerCase()];
                 const configured = uid ? authUsersByUid[uid] : null;
                 return uid
