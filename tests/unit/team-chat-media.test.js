@@ -1,8 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
     MAX_CHAT_MEDIA_SIZE,
+    MAX_CHAT_ATTACHMENTS,
+    validateChatAttachmentCount,
     normalizeChatAttachments,
     getMessageAttachments,
     collectThreadMedia,
@@ -12,6 +14,19 @@ import {
 } from '../../js/team-chat-media.js';
 
 describe('team chat media normalization', () => {
+    it.each([
+        [0, 0, 0],
+        [0, MAX_CHAT_ATTACHMENTS, MAX_CHAT_ATTACHMENTS],
+        [MAX_CHAT_ATTACHMENTS - 1, 1, MAX_CHAT_ATTACHMENTS]
+    ])('allows attachment counts at or below the limit (%i existing, %i new)', (existingCount, newCount, total) => {
+        expect(validateChatAttachmentCount(existingCount, newCount)).toBe(total);
+    });
+
+    it('rejects attachment counts above the shared limit', () => {
+        expect(() => validateChatAttachmentCount(MAX_CHAT_ATTACHMENTS, 1))
+            .toThrow('You can attach up to 10 photos or videos per message.');
+    });
+
     it('normalizes mixed image and video attachments and preserves the first image as legacy media', () => {
         const result = normalizeChatAttachments([
             {
@@ -199,5 +214,34 @@ describe('team chat help copy', () => {
 
         expect(workflowHtml).toContain('attach photos or short videos (up to 5 MB each)');
         expect(manifest).toContain('attach photos or short videos (up to 5 MB each)');
+    });
+});
+
+
+describe('legacy chat attachment limit integration', () => {
+    const html = fs.readFileSync(new URL('../../team-chat.html', import.meta.url), 'utf8');
+
+    it('rejects an oversized selection before accepting or previewing files', () => {
+        const source = html.slice(html.indexOf('function handleImageSelection(event)'), html.indexOf('function renderMessageAttachment('));
+        const showError = vi.fn();
+        const clearSelectedImage = vi.fn();
+        const setSelectedImage = vi.fn();
+        const handler = new Function('validateChatAttachmentCount', 'showError', 'clearSelectedImage', 'setSelectedImage', 'MAX_CHAT_MEDIA_SIZE', `${source}; return handleImageSelection;`)(
+            validateChatAttachmentCount, showError, clearSelectedImage, setSelectedImage, MAX_CHAT_MEDIA_SIZE
+        );
+        handler({ target: { files: Array.from({ length: 11 }, () => ({ type: 'image/jpeg', size: 1 })) } });
+        expect(showError).toHaveBeenCalledWith('You can attach up to 10 photos or videos per message.');
+        expect(clearSelectedImage).toHaveBeenCalledOnce();
+        expect(setSelectedImage).not.toHaveBeenCalled();
+        handler({ target: { files: Array.from({ length: 10 }, () => ({ type: 'image/jpeg', size: 1 })) } });
+        expect(setSelectedImage).toHaveBeenCalledOnce();
+    });
+
+    it('validates again before conversation creation or any upload', () => {
+        const send = html.slice(html.indexOf('async function sendMessage()'));
+        const validation = send.indexOf('validateChatAttachmentCount(0, imageFiles.length)');
+        expect(validation).toBeGreaterThan(0);
+        expect(validation).toBeLessThan(send.indexOf('await upsertChatConversation('));
+        expect(validation).toBeLessThan(send.indexOf('await uploadChatImage('));
     });
 });
