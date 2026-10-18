@@ -201,6 +201,18 @@ function loadCallables(seed, storageMetadata = {}, sharedFirestore = null) {
     }),
     auth: () => ({
       verifyIdToken: async () => null,
+      getUsers: async (identifiers) => {
+        assert.ok(identifiers.length <= 100);
+        const users = [];
+        const notFound = [];
+        for (const identifier of identifiers) {
+          assert.equal(typeof identifier.email, 'string');
+          const uid = firestore.findUserIdByEmail(identifier.email);
+          if (uid) users.push({ uid, email: identifier.email });
+          else notFound.push(identifier);
+        }
+        return { users, notFound };
+      },
       getUserByEmail: async (email) => {
         const uid = firestore.findUserIdByEmail(email);
         if (!uid) throw new Error('User not found');
