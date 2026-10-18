@@ -43,7 +43,7 @@ function getResolveEnabledNotificationAuthIdentities(admin) {
     const start = functionsSource.indexOf('const NOTIFICATION_AUTH_GET_USERS_BATCH_SIZE =');
     const end = functionsSource.indexOf('\nasync function getUserIdsByEmails', start);
     const slice = functionsSource.slice(start, end);
-    return new Function('admin', `${slice}; return resolveEnabledNotificationAuthIdentities;`)(admin);
+    return new Function('admin', 'isValidAuthEmail', `${slice}; return resolveEnabledNotificationAuthIdentities;`)(admin, require('../../functions/auth-email-core.cjs').isValidAuthEmail);
 }
 
 function getBuildTeamChatNotificationPlan() {
@@ -127,6 +127,23 @@ describe('resolveEnabledNotificationAuthIdentities', () => {
         expect(calls.flat().every((identifier) => Object.keys(identifier).join() === 'email')).toBe(true);
         expect(result.usersByEmail.size).toBe(205);
         expect(result.enabledUserIds.size).toBe(205);
+    });
+
+    it('isolates malformed stored emails before the batched Auth request', async () => {
+        const getUsers = vi.fn(async (identifiers) => {
+            if (identifiers.some(({ email }) => email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
+                throw Object.assign(new Error('Invalid identifier'), { code: 'auth/invalid-email' });
+            }
+            return { users: [{ uid: 'valid-user', email: 'valid@example.com', disabled: false }], notFound: [] };
+        });
+        const resolveIdentities = getResolveEnabledNotificationAuthIdentities({ auth: () => ({ getUsers }) });
+        const result = await resolveIdentities({
+            emails: [' VALID@example.com ', 'missing-at', '@example.com', 'name@', 'two@@example.com', 'has space@example.com', ''],
+            userIds: ['valid-user']
+        });
+        expect(getUsers).toHaveBeenCalledOnce();
+        expect(getUsers).toHaveBeenCalledWith([{ email: 'valid@example.com' }, { uid: 'valid-user' }]);
+        expect([...result.enabledUserIds]).toEqual(['valid-user']);
     });
 
     it('omits missing and disabled users while retaining successful identities', async () => {

@@ -12490,7 +12490,7 @@ async function resolveEnabledNotificationAuthIdentities({ emails = [], userIds =
   const uniqueEmails = Array.from(new Set(
     (Array.isArray(emails) ? emails : [])
       .map(normalizeNotificationAuthEmail)
-      .filter(Boolean)
+      .filter(isValidAuthEmail)
   ));
   const uniqueUserIds = Array.from(new Set(
     (Array.isArray(userIds) ? userIds : [])
