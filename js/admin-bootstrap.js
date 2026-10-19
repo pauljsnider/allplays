@@ -29,7 +29,6 @@ export async function loadAdminCollectionPage({ fetchPage, cursor = null, pageSi
 export async function loadInitialAdminBootstrap({
     getTeamsPage,
     getUsersPage,
-    loadTelemetryData,
     pageSize = DEFAULT_ADMIN_PAGE_SIZE
 } = {}) {
     const normalizedPageSize = normalizeAdminPageSize(pageSize);
@@ -40,9 +39,6 @@ export async function loadInitialAdminBootstrap({
 
     return {
         teamsPage,
-        usersPage,
-        telemetryPromise: typeof loadTelemetryData === 'function'
-            ? Promise.resolve(loadTelemetryData({ silent: true }))
-            : Promise.resolve()
+        usersPage
     };
 }
