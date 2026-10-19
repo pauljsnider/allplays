@@ -39,10 +39,10 @@ describe('admin bootstrap paging helpers', () => {
         expect(secondPage.items).toEqual(['second']);
     });
 
-    it('keeps initial bootstrap bounded to top-level pages and telemetry', async () => {
+    it('keeps initial bootstrap bounded to top-level pages without loading telemetry', async () => {
         const getTeamsPage = vi.fn().mockResolvedValue({ teams: [{ id: 'team-1' }], nextCursor: { id: 'team-cursor' } });
         const getUsersPage = vi.fn().mockResolvedValue({ users: [{ id: 'user-1' }], nextCursor: { id: 'user-cursor' } });
-        const loadTelemetryData = vi.fn().mockResolvedValue(undefined);
+        const loadTelemetryData = vi.fn().mockResolvedValue(Array.from({ length: 26444 }, (_, index) => ({ id: `event-${index}` })));
         const getGames = vi.fn();
         const getOfficials = vi.fn();
 
@@ -53,12 +53,15 @@ describe('admin bootstrap paging helpers', () => {
             getGames,
             getOfficials
         });
-        await result.telemetryPromise;
 
         expect(getTeamsPage).toHaveBeenCalledWith({ cursor: null, pageSize: DEFAULT_ADMIN_PAGE_SIZE });
         expect(getUsersPage).toHaveBeenCalledWith({ cursor: null, pageSize: DEFAULT_ADMIN_PAGE_SIZE });
-        expect(loadTelemetryData).toHaveBeenCalledWith({ silent: true });
+        expect(loadTelemetryData).not.toHaveBeenCalled();
         expect(getGames).not.toHaveBeenCalled();
         expect(getOfficials).not.toHaveBeenCalled();
+        expect(result).toEqual({
+            teamsPage: { teams: [{ id: 'team-1' }], nextCursor: { id: 'team-cursor' } },
+            usersPage: { users: [{ id: 'user-1' }], nextCursor: { id: 'user-cursor' } }
+        });
     });
 });
