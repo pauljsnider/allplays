@@ -399,7 +399,7 @@ describe('admin registration form setup', () => {
 
         expect(adminPage).toContain('registration-forms-modal');
         expect(adminPage).toContain('registration-forms-load-more');
-        expect(adminPage).toContain('src="js/admin.js?v=443366"');
+        expect(adminPage).toContain('src="js/admin.js?v=443367"');
         expect(adminPage).toContain('registration-advanced-settings');
         expect(adminPage).toContain('Advanced registration settings');
         expect(adminPage).toContain('registration-participant-fields');
