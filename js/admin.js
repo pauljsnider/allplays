@@ -32,7 +32,8 @@ import {
 } from './firebase.js?v=33';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443382';
 import { checkAuth } from './auth.js?v=4433210';
-import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=2';
+import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=3';
+import { loadTelemetryOnTabActivation, reloadTelemetryDashboard } from './admin-telemetry-lazy-load.js?v=1';
 import {
     adminRegistrationDefaults,
     buildAdminRegistrationFormPayload,
@@ -343,10 +344,9 @@ async function loadData() {
         officialUserLookup = new Map();
         officialsByTeamId = new Map();
 
-        const { teamsPage, usersPage, telemetryPromise } = await loadInitialAdminBootstrap({
+        const { teamsPage, usersPage } = await loadInitialAdminBootstrap({
             getTeamsPage: getAdminTeamsPage,
-            getUsersPage: getAdminUsersPage,
-            loadTelemetryData
+            getUsersPage: getAdminUsersPage
         });
 
         setTeamsPage(teamsPage.teams, teamsPage.nextCursor);
@@ -356,12 +356,6 @@ async function loadData() {
             teams: teamsPage.teams,
             users: usersPage.users
         });
-        telemetryPromise.then(() => {
-            if (activeTab === 'telemetry') {
-                updateTelemetryDashboard();
-            }
-        });
-
         updateDashboard();
         renderTeams(getVisibleTeams());
         renderUsers(allUsers);
@@ -1941,10 +1935,12 @@ async function handleTabChange(tab) {
         renderCurrentUsersView();
         return;
     }
-    if (tab === 'telemetry' && !telemetryState.loaded && !telemetryState.loading) {
-        await loadTelemetryData();
-        updateTelemetryDashboard();
-    }
+    await loadTelemetryOnTabActivation({
+        tab,
+        telemetryState,
+        loadTelemetryData,
+        updateTelemetryDashboard
+    });
 }
 
 function setupTabs() {
@@ -1999,13 +1995,11 @@ function setupSearch() {
     const telemetryPageFilter = document.getElementById('telemetry-page-filter');
 
     telemetryRange?.addEventListener('change', async () => {
-        await loadTelemetryData();
-        updateTelemetryDashboard();
+        await reloadTelemetryDashboard({ loadTelemetryData, updateTelemetryDashboard });
     });
 
     telemetryRefresh?.addEventListener('click', async () => {
-        await loadTelemetryData();
-        updateTelemetryDashboard();
+        await reloadTelemetryDashboard({ loadTelemetryData, updateTelemetryDashboard });
     });
 
     telemetryEventFilter?.addEventListener('change', renderTelemetryEventsTable);
