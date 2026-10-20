@@ -58,17 +58,19 @@ function deferred<T>() {
 }
 
 function MessagesProbe({
+    teamId = 'team-1',
     conversationId = 'team',
     enabled = true,
     onMessagesReset
 }: {
+    teamId?: string;
     conversationId?: string;
     enabled?: boolean;
     onMessagesReset?: () => void;
 }) {
     const handleBeforeLiveUpdate = useCallback(() => true, []);
     const state = useChatMessages({
-        teamId: 'team-1',
+        teamId,
         team: probeTeam,
         user,
         selectedConversationId: conversationId,
@@ -94,6 +96,10 @@ describe('useChatMessages', () => {
     let liveCallback: ((messages: ChatMessage[], oldestDoc: unknown | null) => void) | undefined;
     let errorCallback: ((error: Error) => void) | undefined;
     let unsubscribe: () => void;
+    let subscriptions: Array<{
+        onMessages: (messages: ChatMessage[], oldestDoc: unknown | null) => void;
+        onError: (error: Error) => void;
+    }>;
 
     afterEach(() => {
         cleanup();
@@ -104,9 +110,11 @@ describe('useChatMessages', () => {
         liveCallback = undefined;
         errorCallback = undefined;
         unsubscribe = vi.fn() as () => void;
+        subscriptions = [];
         vi.mocked(subscribeToTeamChatMessages).mockImplementation((_teamId, _conversationId, onMessages, onError) => {
             liveCallback = onMessages;
             errorCallback = onError;
+            subscriptions.push({ onMessages, onError: onError || vi.fn() });
             return { unsubscribe };
         });
     });
@@ -146,6 +154,31 @@ describe('useChatMessages', () => {
         );
     });
 
+    it('unsubscribes when disabled, preserves cached messages, and resubscribes once when enabled', async () => {
+        const { rerender } = render(<MessagesProbe conversationId="staff" />);
+        act(() => {
+            liveCallback?.([message('cached', 20)], { cursor: 'cached' });
+        });
+        await waitFor(() => expect(screen.getByTestId('message-ids').textContent).toBe('cached'));
+
+        rerender(<MessagesProbe conversationId="staff" enabled={false} />);
+
+        expect(unsubscribe).toHaveBeenCalledTimes(1);
+        expect(screen.getByTestId('message-ids').textContent).toBe('cached');
+        expect(subscribeToTeamChatMessages).toHaveBeenCalledTimes(1);
+
+        rerender(<MessagesProbe conversationId="staff" />);
+
+        await waitFor(() => expect(subscribeToTeamChatMessages).toHaveBeenCalledTimes(2));
+        expect(subscribeToTeamChatMessages).toHaveBeenLastCalledWith('team-1', 'staff', expect.any(Function), expect.any(Function));
+        expect(screen.getByTestId('message-ids').textContent).toBe('cached');
+
+        act(() => {
+            subscriptions[1]?.onMessages([message('updated', 30)], { cursor: 'updated' });
+        });
+        await waitFor(() => expect(screen.getByTestId('message-ids').textContent).toBe('updated'));
+    });
+
     it('resubscribes and clears messages when the selected conversation changes', async () => {
         const onMessagesReset = vi.fn();
         const { rerender } = render(<MessagesProbe conversationId="team" onMessagesReset={onMessagesReset} />);
@@ -161,6 +194,21 @@ describe('useChatMessages', () => {
         expect(screen.getByTestId('loading').textContent).toBe('true');
         expect(screen.getByTestId('message-ids').textContent).toBe('');
         expect(subscribeToTeamChatMessages).toHaveBeenLastCalledWith('team-1', 'staff', expect.any(Function), expect.any(Function));
+    });
+
+    it('clears messages when distinct chat contexts have the same delimiter-joined value', async () => {
+        const onMessagesReset = vi.fn();
+        const { rerender } = render(<MessagesProbe teamId="a:b" conversationId="c" onMessagesReset={onMessagesReset} />);
+        act(() => {
+            liveCallback?.([message('first-context', 20)], { cursor: 'first' });
+        });
+        await waitFor(() => expect(screen.getByTestId('message-ids').textContent).toBe('first-context'));
+
+        rerender(<MessagesProbe teamId="a" conversationId="b:c" onMessagesReset={onMessagesReset} />);
+
+        expect(onMessagesReset).toHaveBeenCalledTimes(2);
+        expect(screen.getByTestId('message-ids').textContent).toBe('');
+        expect(subscribeToTeamChatMessages).toHaveBeenLastCalledWith('a', 'b:c', expect.any(Function), expect.any(Function));
     });
 
     it('ignores an older-page success from the previous conversation', async () => {
