@@ -82,6 +82,7 @@ import {
 import { validateChatAttachmentCount } from '../../../lib/adapters/legacyChatService';
 import { APP_BACK_DISMISS_EVENT } from '../../../lib/nativeBackButton';
 import { sharePublicUrl } from '../../../lib/publicActions';
+import { useAppForegroundState } from '../../../lib/useAppForegroundState';
 import { useShellLayout } from '../../../lib/useShellLayout';
 import { useViewLoadTimer } from '../../../lib/viewLoadTiming';
 import type { AuthState } from '../../../lib/types';
@@ -375,6 +376,7 @@ export function ChatWindow({
   onInboxMuteChange?: (conversationId: string, isMuted: boolean) => void;
   embedded?: boolean;
 }) {
+  const isAppForeground = useAppForegroundState();
   const navigate = useNavigate();
   const { isDesktopWeb } = useShellLayout();
   const [recipientOptions, setRecipientOptions] = useState<ChatRecipientOption[]>([]);
@@ -633,7 +635,7 @@ export function ChatWindow({
     team,
     user: auth.user,
     selectedConversationId: effectiveConversationId,
-    enabled: !loadingContext && staffConversationReady,
+    enabled: !loadingContext && staffConversationReady && isAppForeground,
     onBeforeLiveUpdate: handleBeforeLiveUpdate,
     onLiveUpdateState: handleLiveUpdateState,
     onMessagesReset: handleMessagesReset,

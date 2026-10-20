@@ -207,4 +207,12 @@ describe('Chat composer audience lifecycle', () => {
     expect(handleSendSource.indexOf("setSelectedRecipientTarget('full_team');"))
       .toBeLessThan(handleSendSource.indexOf('enqueueChatSend(request);'));
   });
+
+  it('gates chat subscriptions on the combined app foreground state', () => {
+    const source = readFileSync(resolveAppSourcePath('src/pages/messages/components/ChatWindow.tsx'), 'utf8');
+
+    expect(source).toContain("import { useAppForegroundState } from '../../../lib/useAppForegroundState';");
+    expect(source).toContain('const isAppForeground = useAppForegroundState();');
+    expect(source).toContain('enabled: !loadingContext && staffConversationReady && isAppForeground');
+  });
 });
