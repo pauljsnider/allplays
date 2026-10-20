@@ -523,20 +523,34 @@ describe('ChatWindow foreground subscription lifecycle', () => {
 
     await waitFor(() => expect(chatMessagesMocks.useChatMessages).toHaveBeenCalled());
     expect(chatMessagesMocks.useChatMessages).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: true }));
+    chatMessagesMocks.useChatMessages.mockClear();
+
+    const enabledTransitions = () => chatMessagesMocks.useChatMessages.mock.calls
+      .map(([params]) => (params as { enabled: boolean }).enabled)
+      .filter((enabled, index, values) => index === 0 || enabled !== values[index - 1]);
 
     act(() => {
       foregroundState.value = false;
       foregroundState.listeners.forEach((listener) => listener());
     });
     await waitFor(() => expect(chatMessagesMocks.useChatMessages).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: false })));
-    const hiddenCallCount = chatMessagesMocks.useChatMessages.mock.calls.length;
+    expect(screen.getByText('Message live-220')).toBeInTheDocument();
+
+    act(() => {
+      foregroundState.listeners.forEach((listener) => listener());
+    });
+    expect(enabledTransitions()).toEqual([false]);
 
     act(() => {
       foregroundState.value = true;
       foregroundState.listeners.forEach((listener) => listener());
     });
-    await waitFor(() => expect(chatMessagesMocks.useChatMessages).toHaveBeenCalledTimes(hiddenCallCount + 1));
-    expect(chatMessagesMocks.useChatMessages).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: true }));
+    await waitFor(() => expect(enabledTransitions()).toEqual([false, true]));
+
+    act(() => {
+      foregroundState.listeners.forEach((listener) => listener());
+    });
+    expect(enabledTransitions()).toEqual([false, true]);
   });
 });
 
