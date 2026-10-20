@@ -672,9 +672,11 @@ function LiveGameReactionsPanel({ auth, event, diamondInteractionWindow }: {
   }, []);
 
   const isDiamondGame = event.trackingEngine === 'diamond-v2';
+  const diamondTrackingEngine = event.trackingEngine;
+  const diamondScorebookInstanceId = event.diamondScorebookInstanceId;
   const diamondContext = useMemo(
-    () => getDiamondLiveEngagementContext(event),
-    [event]
+    () => getDiamondLiveEngagementContext({ trackingEngine: diamondTrackingEngine, diamondScorebookInstanceId }),
+    [diamondTrackingEngine, diamondScorebookInstanceId]
   );
   const canReact = reactionsModule
     ? isDiamondGame
@@ -744,6 +746,8 @@ function LiveGameReactionsPanel({ auth, event, diamondInteractionWindow }: {
     event.isDbGame,
     event.teamId,
     isDiamondGame,
+    diamondTrackingEngine,
+    diamondScorebookInstanceId,
     diamondContext,
   ]);
 
@@ -864,9 +868,11 @@ function LiveGameChatPanel({ auth, event, diamondInteractionWindow }: {
   }, []);
 
   const isDiamondGame = event.trackingEngine === 'diamond-v2';
+  const diamondTrackingEngine = event.trackingEngine;
+  const diamondScorebookInstanceId = event.diamondScorebookInstanceId;
   const diamondContext = useMemo(
-    () => getDiamondLiveEngagementContext(event),
-    [event]
+    () => getDiamondLiveEngagementContext({ trackingEngine: diamondTrackingEngine, diamondScorebookInstanceId }),
+    [diamondTrackingEngine, diamondScorebookInstanceId]
   );
   const canChat = chatModule
     ? isDiamondGame
@@ -959,6 +965,8 @@ function LiveGameChatPanel({ auth, event, diamondInteractionWindow }: {
     event.isDbGame,
     event.teamId,
     isDiamondGame,
+    diamondTrackingEngine,
+    diamondScorebookInstanceId,
     diamondContext,
     scrollScheduler,
   ]);
