@@ -55,25 +55,43 @@ export function useChatMessages({
   const initialSnapshotLoadedRef = useRef(false);
   const olderPaginationStartedRef = useRef(false);
   const olderLoadGenerationRef = useRef(0);
+  const subscriptionContextRef = useRef<string | null>(null);
   const conversationId = normalizeConversationId(selectedConversationId);
   const canSubscribe = Boolean(enabled && team && user);
+  const subscriptionContext = `${teamId}:${conversationId}:${user?.uid || ''}:${retryVersion}`;
 
   const messages = useMemo(() => mergeChatMessageLists(olderMessages, liveMessages), [liveMessages, olderMessages]);
 
   useEffect(() => {
     const generation = ++olderLoadGenerationRef.current;
     setLoadingOlder(false);
-    if (!canSubscribe) return undefined;
+    const contextChanged = subscriptionContextRef.current !== subscriptionContext;
+    subscriptionContextRef.current = subscriptionContext;
+    if (!canSubscribe) {
+      if (contextChanged) {
+        setError(null);
+        setOlderMessages([]);
+        setLiveMessages([]);
+        setPaginationCursor(null);
+        setHasMoreMessages(false);
+        initialSnapshotLoadedRef.current = false;
+        olderPaginationStartedRef.current = false;
+        onMessagesReset?.();
+      }
+      return undefined;
+    }
 
     setLoadingMessages(true);
     setError(null);
-    setOlderMessages([]);
-    setLiveMessages([]);
-    setPaginationCursor(null);
-    setHasMoreMessages(false);
-    initialSnapshotLoadedRef.current = false;
-    olderPaginationStartedRef.current = false;
-    onMessagesReset?.();
+    if (contextChanged) {
+      setOlderMessages([]);
+      setLiveMessages([]);
+      setPaginationCursor(null);
+      setHasMoreMessages(false);
+      initialSnapshotLoadedRef.current = false;
+      olderPaginationStartedRef.current = false;
+      onMessagesReset?.();
+    }
 
     const subscription = subscribeToTeamChatMessages(
       teamId,
@@ -106,7 +124,7 @@ export function useChatMessages({
       }
       subscription.unsubscribe();
     };
-  }, [canSubscribe, conversationId, onBeforeLiveUpdate, onLiveUpdateState, onMarkRead, onMessagesReset, retryVersion, teamId]);
+  }, [canSubscribe, conversationId, onBeforeLiveUpdate, onLiveUpdateState, onMarkRead, onMessagesReset, retryVersion, subscriptionContext, teamId]);
 
   const retryMessages = useCallback(() => {
     if (!team || !user) return;
