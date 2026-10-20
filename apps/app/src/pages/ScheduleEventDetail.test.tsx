@@ -2609,6 +2609,68 @@ describe('ScheduleEventDetail assignments', () => {
     expect(chatInput.disabled).toBe(true);
   });
 
+  it('keeps Diamond subscriptions stable across score and clock updates', async () => {
+    const initialInstanceId = '00000000-0000-4000-8000-000000000001';
+    const nextInstanceId = '00000000-0000-4000-8000-000000000002';
+    const baseEvent = buildEvent({
+      liveStatus: 'live',
+      status: 'live',
+      trackingEngine: 'diamond-v2',
+      diamondScorebookInstanceId: initialInstanceId,
+      homeScore: 1,
+      awayScore: 0,
+      liveClockPeriod: 'Q1',
+      liveClockMs: 30_000,
+    });
+
+    const renderHub = (panel: 'chat' | 'reactions', event: ReturnType<typeof buildEvent>) => (
+      <MemoryRouter>
+        <scheduleGameHubSectionModule.ScheduleGameHubSection
+          auth={auth}
+          event={event}
+          childEvents={[event]}
+          requestedPanel={panel}
+          onPanelChange={vi.fn()}
+          onScoreUpdated={vi.fn()}
+          onLiveClockUpdated={vi.fn()}
+          onWrapupCompleted={vi.fn()}
+          onStatsheetImported={vi.fn()}
+          onGameCancelled={vi.fn()}
+          onPracticeOccurrenceCancelled={vi.fn()}
+          onGamePlanPublished={vi.fn()}
+          onReplayVideoUpdated={vi.fn()}
+          onEventRefresh={vi.fn()}
+        />
+      </MemoryRouter>
+    );
+
+    for (const panel of ['chat', 'reactions'] as const) {
+      const subscription = panel === 'chat'
+        ? liveGameChatServiceMocks.subscribeToLiveGameChat
+        : liveGameReactionsServiceMocks.subscribeToLiveGameReactions;
+      const { rerender, unmount } = render(renderHub(panel, baseEvent));
+      await waitFor(() => expect(subscription).toHaveBeenCalledTimes(1));
+      const unsubscribe = subscription.mock.results[0]?.value as ReturnType<typeof vi.fn>;
+
+      rerender(renderHub(panel, {
+        ...baseEvent,
+        homeScore: 2,
+        awayScore: 1,
+        liveClockPeriod: 'Q2',
+        liveClockMs: 45_000,
+      }));
+      await act(async () => { await Promise.resolve(); });
+      expect(subscription).toHaveBeenCalledTimes(1);
+      expect(unsubscribe).not.toHaveBeenCalled();
+
+      rerender(renderHub(panel, { ...baseEvent, diamondScorebookInstanceId: nextInstanceId }));
+      await waitFor(() => expect(subscription).toHaveBeenCalledTimes(2));
+      expect(unsubscribe).toHaveBeenCalledTimes(1);
+      unmount();
+      vi.clearAllMocks();
+    }
+  });
+
   it('invalidates a stale-open gate and pending Diamond send when the signed-in user changes', async () => {
     const instanceId = '00000000-0000-4000-8000-000000000001';
     const event = buildEvent({
