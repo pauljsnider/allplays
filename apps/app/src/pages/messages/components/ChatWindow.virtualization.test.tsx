@@ -26,6 +26,10 @@ const teamEmailSheetMocks = vi.hoisted(() => ({
   importModule: vi.fn(),
   render: vi.fn()
 }));
+const chatMessagesMocks = vi.hoisted(() => ({
+  useChatMessages: vi.fn()
+}));
+const foregroundState = vi.hoisted(() => ({ value: true }));
 const normalizeChatReactionsSpy = vi.fn();
 const getMessageAttachmentsSpy = vi.fn();
 const mockShellLayoutState = { isDesktopWeb: false };
@@ -79,6 +83,10 @@ const mockChatTeamState: {
   reloadConversations: vi.fn(),
   switchConversation: vi.fn(() => true)
 };
+
+vi.mock('../../../lib/useAppForegroundState', () => ({
+  useAppForegroundState: () => foregroundState.value
+}));
 
 vi.mock('../../../lib/chatLogic', async () => {
   const actual = await vi.importActual<typeof import('../../../lib/chatLogic')>('../../../lib/chatLogic');
@@ -256,7 +264,8 @@ vi.mock('../hooks/useChatMessages', async () => {
         ? "We couldn't open this conversation. Your team access may have changed."
         : (message || 'Unable to load chat messages.');
     },
-    useChatMessages: () => {
+    useChatMessages: (params: unknown) => {
+      chatMessagesMocks.useChatMessages(params);
       const [phase, setPhase] = React.useState<'error' | 'loading' | 'ready'>('error');
       const [olderMessages, setOlderMessages] = React.useState<ChatMessage[]>([]);
       const [loadingOlder, setLoadingOlder] = React.useState(false);
@@ -365,6 +374,7 @@ class MockResizeObserver {
 beforeEach(() => {
   useStatefulChatSheets = false;
   mockThreadLoadScenario = 'normal';
+  foregroundState.value = true;
   olderLoadGate = null;
   mockRouter.navigate.mockReset();
   mockShellLayoutState.isDesktopWeb = false;
@@ -409,6 +419,7 @@ beforeEach(() => {
   } as any);
   teamEmailSheetMocks.importModule.mockClear();
   teamEmailSheetMocks.render.mockClear();
+  chatMessagesMocks.useChatMessages.mockClear();
 });
 
 afterEach(() => {
@@ -483,6 +494,44 @@ describe('ChatWindow lazy Team Email loading', () => {
     await waitFor(() => expect(teamEmailSheetMocks.importModule).toHaveBeenCalledTimes(1));
     expect(screen.getByText('Lazy Team Email Mock')).toBeInTheDocument();
     expect(teamEmailSheetMocks.render).toHaveBeenCalledWith(true);
+  });
+});
+
+describe('ChatWindow foreground subscription lifecycle', () => {
+  beforeEach(() => {
+    vi.stubGlobal('ResizeObserver', MockResizeObserver as any);
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => window.setTimeout(() => callback(performance.now()), 0));
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => window.clearTimeout(id));
+  });
+
+  it('pauses chat subscriptions once while hidden and resumes once when visible', async () => {
+    const { rerender } = render(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(chatMessagesMocks.useChatMessages).toHaveBeenCalled());
+    expect(chatMessagesMocks.useChatMessages).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: true }));
+
+    foregroundState.value = false;
+    rerender(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(chatMessagesMocks.useChatMessages).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: false })));
+    const hiddenCallCount = chatMessagesMocks.useChatMessages.mock.calls.length;
+
+    foregroundState.value = true;
+    rerender(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(chatMessagesMocks.useChatMessages).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: true })));
+    const visibleCallCount = chatMessagesMocks.useChatMessages.mock.calls.length;
+    expect(visibleCallCount).toBe(hiddenCallCount + 1);
   });
 });
 
