@@ -20,6 +20,21 @@ type UseChatMessagesParams = {
   onMarkRead?: () => void;
 };
 
+type SubscriptionContext = {
+  teamId: string;
+  conversationId: string;
+  userId: string;
+  retryVersion: number;
+};
+
+function isSameSubscriptionContext(previous: SubscriptionContext | null, current: SubscriptionContext) {
+  return previous !== null
+    && previous.teamId === current.teamId
+    && previous.conversationId === current.conversationId
+    && previous.userId === current.userId
+    && previous.retryVersion === current.retryVersion;
+}
+
 function normalizeConversationId(conversationId: string) {
   return String(conversationId || '').trim() || DEFAULT_TEAM_CONVERSATION_ID;
 }
@@ -55,25 +70,44 @@ export function useChatMessages({
   const initialSnapshotLoadedRef = useRef(false);
   const olderPaginationStartedRef = useRef(false);
   const olderLoadGenerationRef = useRef(0);
+  const subscriptionContextRef = useRef<SubscriptionContext | null>(null);
   const conversationId = normalizeConversationId(selectedConversationId);
   const canSubscribe = Boolean(enabled && team && user);
+  const userId = user?.uid || '';
 
   const messages = useMemo(() => mergeChatMessageLists(olderMessages, liveMessages), [liveMessages, olderMessages]);
 
   useEffect(() => {
     const generation = ++olderLoadGenerationRef.current;
     setLoadingOlder(false);
-    if (!canSubscribe) return undefined;
+    const subscriptionContext = { teamId, conversationId, userId, retryVersion };
+    const contextChanged = !isSameSubscriptionContext(subscriptionContextRef.current, subscriptionContext);
+    subscriptionContextRef.current = subscriptionContext;
+    if (!canSubscribe) {
+      if (contextChanged) {
+        setError(null);
+        setOlderMessages([]);
+        setLiveMessages([]);
+        setPaginationCursor(null);
+        setHasMoreMessages(false);
+        initialSnapshotLoadedRef.current = false;
+        olderPaginationStartedRef.current = false;
+        onMessagesReset?.();
+      }
+      return undefined;
+    }
 
     setLoadingMessages(true);
     setError(null);
-    setOlderMessages([]);
-    setLiveMessages([]);
-    setPaginationCursor(null);
-    setHasMoreMessages(false);
-    initialSnapshotLoadedRef.current = false;
-    olderPaginationStartedRef.current = false;
-    onMessagesReset?.();
+    if (contextChanged) {
+      setOlderMessages([]);
+      setLiveMessages([]);
+      setPaginationCursor(null);
+      setHasMoreMessages(false);
+      initialSnapshotLoadedRef.current = false;
+      olderPaginationStartedRef.current = false;
+      onMessagesReset?.();
+    }
 
     const subscription = subscribeToTeamChatMessages(
       teamId,
@@ -106,7 +140,7 @@ export function useChatMessages({
       }
       subscription.unsubscribe();
     };
-  }, [canSubscribe, conversationId, onBeforeLiveUpdate, onLiveUpdateState, onMarkRead, onMessagesReset, retryVersion, teamId]);
+  }, [canSubscribe, conversationId, onBeforeLiveUpdate, onLiveUpdateState, onMarkRead, onMessagesReset, retryVersion, teamId, userId]);
 
   const retryMessages = useCallback(() => {
     if (!team || !user) return;
