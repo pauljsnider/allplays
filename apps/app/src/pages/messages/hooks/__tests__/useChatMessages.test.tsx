@@ -58,17 +58,19 @@ function deferred<T>() {
 }
 
 function MessagesProbe({
+    teamId = 'team-1',
     conversationId = 'team',
     enabled = true,
     onMessagesReset
 }: {
+    teamId?: string;
     conversationId?: string;
     enabled?: boolean;
     onMessagesReset?: () => void;
 }) {
     const handleBeforeLiveUpdate = useCallback(() => true, []);
     const state = useChatMessages({
-        teamId: 'team-1',
+        teamId,
         team: probeTeam,
         user,
         selectedConversationId: conversationId,
@@ -192,6 +194,21 @@ describe('useChatMessages', () => {
         expect(screen.getByTestId('loading').textContent).toBe('true');
         expect(screen.getByTestId('message-ids').textContent).toBe('');
         expect(subscribeToTeamChatMessages).toHaveBeenLastCalledWith('team-1', 'staff', expect.any(Function), expect.any(Function));
+    });
+
+    it('clears messages when distinct chat contexts have the same delimiter-joined value', async () => {
+        const onMessagesReset = vi.fn();
+        const { rerender } = render(<MessagesProbe teamId="a:b" conversationId="c" onMessagesReset={onMessagesReset} />);
+        act(() => {
+            liveCallback?.([message('first-context', 20)], { cursor: 'first' });
+        });
+        await waitFor(() => expect(screen.getByTestId('message-ids').textContent).toBe('first-context'));
+
+        rerender(<MessagesProbe teamId="a" conversationId="b:c" onMessagesReset={onMessagesReset} />);
+
+        expect(onMessagesReset).toHaveBeenCalledTimes(2);
+        expect(screen.getByTestId('message-ids').textContent).toBe('');
+        expect(subscribeToTeamChatMessages).toHaveBeenLastCalledWith('a', 'b:c', expect.any(Function), expect.any(Function));
     });
 
     it('ignores an older-page success from the previous conversation', async () => {

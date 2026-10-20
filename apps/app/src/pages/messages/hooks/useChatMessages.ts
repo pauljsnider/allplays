@@ -20,6 +20,21 @@ type UseChatMessagesParams = {
   onMarkRead?: () => void;
 };
 
+type SubscriptionContext = {
+  teamId: string;
+  conversationId: string;
+  userId: string;
+  retryVersion: number;
+};
+
+function isSameSubscriptionContext(previous: SubscriptionContext | null, current: SubscriptionContext) {
+  return previous !== null
+    && previous.teamId === current.teamId
+    && previous.conversationId === current.conversationId
+    && previous.userId === current.userId
+    && previous.retryVersion === current.retryVersion;
+}
+
 function normalizeConversationId(conversationId: string) {
   return String(conversationId || '').trim() || DEFAULT_TEAM_CONVERSATION_ID;
 }
@@ -55,17 +70,18 @@ export function useChatMessages({
   const initialSnapshotLoadedRef = useRef(false);
   const olderPaginationStartedRef = useRef(false);
   const olderLoadGenerationRef = useRef(0);
-  const subscriptionContextRef = useRef<string | null>(null);
+  const subscriptionContextRef = useRef<SubscriptionContext | null>(null);
   const conversationId = normalizeConversationId(selectedConversationId);
   const canSubscribe = Boolean(enabled && team && user);
-  const subscriptionContext = `${teamId}:${conversationId}:${user?.uid || ''}:${retryVersion}`;
+  const userId = user?.uid || '';
 
   const messages = useMemo(() => mergeChatMessageLists(olderMessages, liveMessages), [liveMessages, olderMessages]);
 
   useEffect(() => {
     const generation = ++olderLoadGenerationRef.current;
     setLoadingOlder(false);
-    const contextChanged = subscriptionContextRef.current !== subscriptionContext;
+    const subscriptionContext = { teamId, conversationId, userId, retryVersion };
+    const contextChanged = !isSameSubscriptionContext(subscriptionContextRef.current, subscriptionContext);
     subscriptionContextRef.current = subscriptionContext;
     if (!canSubscribe) {
       if (contextChanged) {
@@ -124,7 +140,7 @@ export function useChatMessages({
       }
       subscription.unsubscribe();
     };
-  }, [canSubscribe, conversationId, onBeforeLiveUpdate, onLiveUpdateState, onMarkRead, onMessagesReset, retryVersion, subscriptionContext, teamId]);
+  }, [canSubscribe, conversationId, onBeforeLiveUpdate, onLiveUpdateState, onMarkRead, onMessagesReset, retryVersion, teamId, userId]);
 
   const retryMessages = useCallback(() => {
     if (!team || !user) return;
