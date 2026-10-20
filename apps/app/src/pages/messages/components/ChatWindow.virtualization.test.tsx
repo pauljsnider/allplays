@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import * as React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ensureStaffChatConversation, loadChatRecipientOptions, sendTeamChatMessage, type ChatConversation, type ChatMessage } from '../../../lib/chatService';
@@ -29,7 +29,10 @@ const teamEmailSheetMocks = vi.hoisted(() => ({
 const chatMessagesMocks = vi.hoisted(() => ({
   useChatMessages: vi.fn()
 }));
-const foregroundState = vi.hoisted(() => ({ value: true }));
+const foregroundState = vi.hoisted(() => ({
+  value: true,
+  listeners: new Set<() => void>()
+}));
 const normalizeChatReactionsSpy = vi.fn();
 const getMessageAttachmentsSpy = vi.fn();
 const mockShellLayoutState = { isDesktopWeb: false };
@@ -85,7 +88,14 @@ const mockChatTeamState: {
 };
 
 vi.mock('../../../lib/useAppForegroundState', () => ({
-  useAppForegroundState: () => foregroundState.value
+  useAppForegroundState: () => React.useSyncExternalStore(
+    (listener) => {
+      foregroundState.listeners.add(listener);
+      return () => foregroundState.listeners.delete(listener);
+    },
+    () => foregroundState.value,
+    () => foregroundState.value
+  )
 }));
 
 vi.mock('../../../lib/chatLogic', async () => {
@@ -505,7 +515,7 @@ describe('ChatWindow foreground subscription lifecycle', () => {
   });
 
   it('pauses chat subscriptions once while hidden and resumes once when visible', async () => {
-    const { rerender } = render(
+    render(
       <MemoryRouter>
         <ChatWindow auth={auth} teamId="team-1" />
       </MemoryRouter>
@@ -514,24 +524,19 @@ describe('ChatWindow foreground subscription lifecycle', () => {
     await waitFor(() => expect(chatMessagesMocks.useChatMessages).toHaveBeenCalled());
     expect(chatMessagesMocks.useChatMessages).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: true }));
 
-    foregroundState.value = false;
-    rerender(
-      <MemoryRouter>
-        <ChatWindow auth={auth} teamId="team-1" />
-      </MemoryRouter>
-    );
+    act(() => {
+      foregroundState.value = false;
+      foregroundState.listeners.forEach((listener) => listener());
+    });
     await waitFor(() => expect(chatMessagesMocks.useChatMessages).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: false })));
     const hiddenCallCount = chatMessagesMocks.useChatMessages.mock.calls.length;
 
-    foregroundState.value = true;
-    rerender(
-      <MemoryRouter>
-        <ChatWindow auth={auth} teamId="team-1" />
-      </MemoryRouter>
-    );
-    await waitFor(() => expect(chatMessagesMocks.useChatMessages).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: true })));
-    const visibleCallCount = chatMessagesMocks.useChatMessages.mock.calls.length;
-    expect(visibleCallCount).toBe(hiddenCallCount + 1);
+    act(() => {
+      foregroundState.value = true;
+      foregroundState.listeners.forEach((listener) => listener());
+    });
+    await waitFor(() => expect(chatMessagesMocks.useChatMessages).toHaveBeenCalledTimes(hiddenCallCount + 1));
+    expect(chatMessagesMocks.useChatMessages).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: true }));
   });
 });
 
