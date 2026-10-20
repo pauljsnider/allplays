@@ -192,7 +192,7 @@
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
         import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
         import { getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions } from './js/schedule-print.js?v=2';
-        import { addCalendarLoadedRange, createLatestCalendarRangeLoader, getMissingCalendarLoadRanges } from './js/calendar-load-window.js?v=2';
+        import { addCalendarLoadedRange, createLatestCalendarRangeLoader, getMissingCalendarLoadRanges, mapWithConcurrency } from './js/calendar-load-window.js?v=2';
         import { fetchLegacyCalendarFeed } from './js/calendar-feed-loading.js?v=1';
         import { functions, httpsCallable } from './js/firebase.js?v=33';
 
@@ -214,6 +214,7 @@
         let syncCalendarPreparationId = 0;
         let calendarTeams = [];
         const RSVP_HYDRATION_CONCURRENCY = 6;
+        const CALENDAR_TEAM_CONCURRENCY = 6;
         const rsvpHydrationCache = new Map();
         const rsvpHydrationTasks = new Map();
         const rsvpHydrationQueue = [];
@@ -689,7 +690,7 @@
 
         const loadCalendarRange = createLatestCalendarRangeLoader(async (requestedRange) => {
                 const isAllHistory = !requestedRange;
-                const loadPromises = calendarTeams.map(async (team) => {
+                await mapWithConcurrency(calendarTeams, CALENDAR_TEAM_CONCURRENCY, async (team) => {
                     const teamId = team.id;
                     if (isAllHistory) {
                         if (fullyLoadedCalendarTeams.has(teamId)) return;
@@ -712,14 +713,13 @@
                         });
                     }
                 });
-                await Promise.all(loadPromises);
-                await Promise.all(calendarTeams.map(async (team) => {
+                await mapWithConcurrency(calendarTeams, CALENDAR_TEAM_CONCURRENCY, async (team) => {
                     const games = [...(calendarGamesByTeam.get(team.id)?.values() || [])];
                     return loadTeamEvents(team, games, (events) => {
                         calendarEventsByTeam.set(team.id, events);
                         publishCalendarEvents();
                     });
-                }));
+                });
                 publishCalendarEvents();
         });
 

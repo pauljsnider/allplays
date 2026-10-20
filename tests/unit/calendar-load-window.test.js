@@ -3,6 +3,7 @@ import {
     addCalendarLoadedRange,
     createLatestCalendarRangeLoader,
     getMissingCalendarLoadRanges,
+    mapWithConcurrency,
     normalizeCalendarLoadRange
 } from '../../js/calendar-load-window.js';
 
@@ -39,6 +40,42 @@ describe('calendar load window', () => {
         allHistory.set('team-1', true);
         expect(allHistory.get('team-1')).toBe(true);
         expect(getMissingCalendarLoadRanges([], range('2026-03-01', '2026-03-31'))).toHaveLength(1);
+    });
+
+    it('maps all items with a fixed concurrency and preserves input order', async () => {
+        let active = 0;
+        let peak = 0;
+        let completed = 0;
+        const pending = [];
+        const resultPromise = mapWithConcurrency([1, 2, 3, 4, 5], 2, async (value) => {
+            active += 1;
+            peak = Math.max(peak, active);
+            await new Promise((resolve) => pending.push(resolve));
+            active -= 1;
+            completed += 1;
+            return value * 2;
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(peak).toBe(2);
+        expect(pending).toHaveLength(2);
+        while (completed < 5) {
+            if (pending.length > 0) pending.shift()();
+            await Promise.resolve();
+        }
+
+        await expect(resultPromise).resolves.toEqual([2, 4, 6, 8, 10]);
+        expect(peak).toBe(2);
+    });
+
+    it('releases a rejected worker without hanging the mapper', async () => {
+        const started = [];
+        await expect(mapWithConcurrency([1, 2, 3], 2, async (value) => {
+            started.push(value);
+            if (value === 1) throw new Error('team failed');
+            return value;
+        })).rejects.toThrow('team failed');
+        expect(started).toEqual([1, 2, 3]);
     });
 
     it('loads the latest requested range after an overlapping load completes', async () => {

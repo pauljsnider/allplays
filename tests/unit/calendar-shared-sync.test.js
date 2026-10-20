@@ -190,6 +190,8 @@ describe('calendar page shared schedule sync wiring', () => {
 
         expect(source).toContain('await loadCalendarRange(getCalendarRangeForCurrentView());');
         expect(source).toContain('getGames(teamId, range)');
+        expect(source).toContain('await mapWithConcurrency(calendarTeams, CALENDAR_TEAM_CONCURRENCY');
+        expect(source).toContain('await mapWithConcurrency(calendarTeams, CALENDAR_TEAM_CONCURRENCY, async (team) => {');
         expect(source).toContain("if (currentTimeRange === 'all') return null;");
         expect(source).toContain('const games = await getGames(teamId);');
         expect(source).not.toContain('const games = await getGames(team.id);');
