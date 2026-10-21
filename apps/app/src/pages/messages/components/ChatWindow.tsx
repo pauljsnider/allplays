@@ -83,6 +83,7 @@ import { validateChatAttachmentCount } from '../../../lib/adapters/legacyChatSer
 import { APP_BACK_DISMISS_EVENT } from '../../../lib/nativeBackButton';
 import { sharePublicUrl } from '../../../lib/publicActions';
 import { useShellLayout } from '../../../lib/useShellLayout';
+import { useAppForegroundState } from '../../../lib/useAppForegroundState';
 import { useViewLoadTimer } from '../../../lib/viewLoadTiming';
 import type { AuthState } from '../../../lib/types';
 import { voiceRecognition, type VoiceListenerHandle } from '../../../lib/voiceService';
@@ -377,6 +378,7 @@ export function ChatWindow({
 }) {
   const navigate = useNavigate();
   const { isDesktopWeb } = useShellLayout();
+  const isAppForeground = useAppForegroundState();
   const [recipientOptions, setRecipientOptions] = useState<ChatRecipientOption[]>([]);
   const [recipientOptionsLoading, setRecipientOptionsLoading] = useState(false);
   const [recipientOptionsLoaded, setRecipientOptionsLoaded] = useState(false);
@@ -633,7 +635,7 @@ export function ChatWindow({
     team,
     user: auth.user,
     selectedConversationId: effectiveConversationId,
-    enabled: !loadingContext && staffConversationReady,
+    enabled: !loadingContext && staffConversationReady && isAppForeground,
     onBeforeLiveUpdate: handleBeforeLiveUpdate,
     onLiveUpdateState: handleLiveUpdateState,
     onMessagesReset: handleMessagesReset,

@@ -66,6 +66,14 @@ describe('Messages Sheet native back behavior', () => {
 });
 
 describe('Messages ALL PLAYS lazy loading', () => {
+  it('gates the selected chat subscription on app foreground state', () => {
+    const source = readFileSync(resolveAppSourcePath('src/pages/messages/components/ChatWindow.tsx'), 'utf8');
+
+    expect(source).toContain("import { useAppForegroundState } from '../../../lib/useAppForegroundState';");
+    expect(source).toContain("const isAppForeground = useAppForegroundState();");
+    expect(source).toContain("enabled: !loadingContext && staffConversationReady && isAppForeground");
+  });
+
   it('keeps the native speech plugin out of the eager Messages route bundle', () => {
     const source = readFileSync(resolveAppSourcePath('src/lib/voiceService.ts'), 'utf8');
 
