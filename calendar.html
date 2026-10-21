@@ -192,7 +192,7 @@
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
         import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
         import { getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions } from './js/schedule-print.js?v=2';
-        import { addCalendarLoadedRange, createLatestCalendarRangeLoader, getMissingCalendarLoadRanges } from './js/calendar-load-window.js?v=2';
+        import { addCalendarLoadedRange, createLatestCalendarRangeLoader, getMissingCalendarLoadRanges, mapWithConcurrency } from './js/calendar-load-window.js?v=3';
         import { fetchLegacyCalendarFeed } from './js/calendar-feed-loading.js?v=1';
         import { functions, httpsCallable } from './js/firebase.js?v=33';
 
@@ -687,9 +687,11 @@
                     return events;
         }
 
+        const CALENDAR_GAME_LOAD_CONCURRENCY = 6;
+
         const loadCalendarRange = createLatestCalendarRangeLoader(async (requestedRange) => {
                 const isAllHistory = !requestedRange;
-                const loadPromises = calendarTeams.map(async (team) => {
+                await mapWithConcurrency(calendarTeams, async (team) => {
                     const teamId = team.id;
                     if (isAllHistory) {
                         if (fullyLoadedCalendarTeams.has(teamId)) return;
@@ -711,8 +713,7 @@
                             ));
                         });
                     }
-                });
-                await Promise.all(loadPromises);
+                }, CALENDAR_GAME_LOAD_CONCURRENCY);
                 await Promise.all(calendarTeams.map(async (team) => {
                     const games = [...(calendarGamesByTeam.get(team.id)?.values() || [])];
                     return loadTeamEvents(team, games, (events) => {
