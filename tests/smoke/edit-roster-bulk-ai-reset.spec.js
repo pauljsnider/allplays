@@ -88,6 +88,7 @@ export async function denyParentMembershipRequest() {}
 export async function listTeamRegistrationForms() {
     return [];
 }
+export async function listTeamRegistrationReviewsPage() { return { registrations: [], lastDoc: null, hasMore: false }; }
 export async function listTeamRegistrationReviews() {
     return [];
 }
