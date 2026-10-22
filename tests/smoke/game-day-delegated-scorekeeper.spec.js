@@ -89,6 +89,10 @@ async function installModuleMocks(page) {
             return [clone(loadStore().game)];
         }
 
+        export async function listTeamRegistrationReviewsPage() {
+            return { registrations: [], lastDoc: null, hasMore: false };
+        }
+
         export async function getConfigs() {
             return clone(loadStore().configs || []);
         }
