@@ -530,6 +530,28 @@ if (admin.apps.length === 0) {
 }
 
 const firestore = admin.firestore();
+const { createResourcePacketHandlers } = require('./resource-packets-handlers.cjs');
+const { createResourcePacketTriggers } = require('./resource-packets-triggers.cjs');
+const { cleanupResourcePacketAccount } = require('./resource-packets-deletion.cjs');
+const resourcePacketsEnabled = () => process.env.RESOURCE_PACKETS_ENABLED === 'true';
+const resourcePacketHandlers = createResourcePacketHandlers({ functions, db: firestore, auth: admin.auth(), enabled: resourcePacketsEnabled });
+exports.resourcePacketsCommand = resourcePacketHandlers.command;
+exports.resourcePacketsQuery = resourcePacketHandlers.query;
+const resourcePacketTriggers = createResourcePacketTriggers({
+  functions,
+  db: firestore, auth: admin.auth(), enabled: resourcePacketsEnabled,
+  resolveTargets: (teamId, uids, actorUid) => getTargetsForCategoryUserIds(teamId, 'practice', uids, actorUid),
+  dispatch: ({ teamId, deliveryId, targets, beforeEffects }) => sendDirectTargetsNotification({
+    teamId, targets, category: 'practice', title: 'A practice packet is ready',
+    body: 'Open your family practice packets to review the assignment.',
+    appRouteOverride: '/schedule?view=packets',
+    linkOverride: 'https://allplays.ai/app/#/schedule?view=packets',
+    deliveryIdempotencyKey: deliveryId, requireCanonicalTeamAccess: true, beforeEffects
+  })
+});
+exports.resourcePacketPublished = resourcePacketTriggers.published;
+exports.resourcePacketAccountDeleted = resourcePacketTriggers.accountDeleted;
+
 const assertSensitiveEmailVerified = createVerifiedEmailSensitiveActionGuard({
   firestore,
   HttpsError: functions.https.HttpsError,
@@ -14412,8 +14434,10 @@ async function sendDirectTargetsNotification({
   requireCanonicalTeamAccess = false,
   audienceContext = {},
   beforeEffects = null,
-  onEffectsStarting = null
+  onEffectsStarting = null,
+  deliveryIdempotencyKey = null
 }) {
+  const normalizedDeliveryIdempotencyKey = normalizeNotificationDeliveryIdempotencyKey(deliveryIdempotencyKey);
   const logicalTargets = Array.isArray(targets) ? targets : [];
   const requestedInboxTargets = Array.isArray(inboxUids)
     ? inboxUids.map((uid) => ({ uid }))
@@ -14442,6 +14466,10 @@ async function sendDirectTargetsNotification({
   if (typeof beforeEffects === 'function') {
     const beforeEffectsResult = await beforeEffects({ authorizedTargets, pushTargets, inboxTargets });
     if (beforeEffectsResult === false) return null;
+    if (Array.isArray(beforeEffectsResult?.allowedTargetKeys)) {
+      const allowedKeys = new Set(beforeEffectsResult.allowedTargetKeys);
+      pushTargets = pushTargets.filter((target) => allowedKeys.has(`${target.uid}:${target.deviceId || ''}:${target.token || ''}`));
+    }
     if (Array.isArray(beforeEffectsResult?.allowedUserIds)) {
       const allowedUserIds = new Set(
         beforeEffectsResult.allowedUserIds.map((uid) => String(uid || '').trim()).filter(Boolean)
@@ -14495,7 +14523,8 @@ async function sendDirectTargetsNotification({
     teamId,
     gameId,
     eventId: eventId || gameId,
-    conversationId
+    conversationId,
+    deliveryIdempotencyKey: normalizedDeliveryIdempotencyKey
   });
 
   try {
@@ -14549,7 +14578,7 @@ async function sendDirectTargetsNotification({
     conversationId,
     batchId,
     recipientId,
-    dedupGuardApplied: false
+    dedupGuardApplied: Boolean(normalizedDeliveryIdempotencyKey)
   });
 
   return {
@@ -22766,6 +22795,8 @@ exports.processAccountDeletionRequest = functions
         migrationError.code = 'legacy-profile-photo-migration-required';
         throw migrationError;
       }
+
+      await cleanupResourcePacketAccount(firestore, uid);
 
       await cleanupAccountDiamondPrivateNotes({
         firestore,

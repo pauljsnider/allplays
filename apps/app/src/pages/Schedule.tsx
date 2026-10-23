@@ -1,3 +1,5 @@
+import { ResourcePacketQueue } from '../components/schedule/ResourcePacketQueue';
+import { resourcePacketsAvailable } from '../lib/resourcePacketsService';
 import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, ListChecks, MapPin, MessageCircle, RefreshCw, Sparkles } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -1468,6 +1470,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
               onDayClose={() => setSelectedDay(null)}
             />
           ) : view === 'packets' ? (
+            <>
+            {resourcePacketsAvailable() && auth.user && <ResourcePacketQueue uid={auth.user.uid} children={children} staffTeams={staffTeams} />}
             <PracticePacketsPanel
               rows={packetRows}
               totalCount={packetWindow.totalCount}
@@ -1478,6 +1482,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
               loadingMore={filter === 'past-all' && loadingPastHistory}
               onShowMore={handleShowMorePackets}
             />
+            </>
           ) : view === 'compact' ? (
             <CompactScheduleList
               events={listEntries}

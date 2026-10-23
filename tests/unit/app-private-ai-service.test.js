@@ -2,6 +2,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildPrivateAiLaunchPrompt } from '../../apps/app/src/lib/privateAiLaunch.ts';
 
+const resourcePacketMocks = vi.hoisted(() => ({
+    resourcePacketsAvailable: () => true,
+    loadResourcePacketStaff: vi.fn(),
+    loadResourcePacketFamily: vi.fn(),
+    resourcePacketCommand: vi.fn()
+}));
+vi.mock('../../apps/app/src/lib/resourcePacketsService', () => resourcePacketMocks);
+
 const dbMocks = vi.hoisted(() => ({
     getUserProfile: vi.fn()
 }));
@@ -7803,5 +7811,53 @@ describe('private AI service', () => {
             }
         });
         expect(result.answer).toContain('Forgot password');
+    });
+});
+
+
+describe('resource packet AI confirmation boundary', () => {
+    it('stages publication with exact revision and notification intent before any write', async () => {
+        resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue({
+            resources: [], players: [{ id: 'child-a', name: 'Synthetic child' }],
+            assignments: [{ assignmentId: 'packet', revision: 4, title: 'Footwork', items: [], playerIds: ['child-a'], dueAt: null }]
+        });
+        resourcePacketMocks.resourcePacketCommand.mockResolvedValue({ published: true });
+        const { runPrivateAiTool, generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const staged = await runPrivateAiTool(authUser, { name: 'prepare_resource_packet', args: { teamId: 'team-1', action: 'publish', assignmentId: 'packet', notify: false } });
+        expect(staged).toMatchObject({ ok: true, requiresConfirmation: true });
+        expect(resourcePacketMocks.resourcePacketCommand).not.toHaveBeenCalled();
+        await generatePrivateAiAnswer(authUser, `confirm ${staged.confirmationId}`);
+        expect(resourcePacketMocks.resourcePacketCommand).toHaveBeenCalledWith(authUser.uid, expect.objectContaining({ teamId: 'team-1', action: 'publish', assignmentId: 'packet', expectedRevision: 4, notify: false, confirm: true, requestId: expect.any(String) }));
+    });
+    it('includes later-page recipients in the confirmed audience and forwards read cursors', async () => {
+        const { buildResourcePacketAiTools } = await import('../../apps/app/src/lib/resourcePacketsAiTools.ts');
+        const tools = buildResourcePacketAiTools();
+        resourcePacketMocks.loadResourcePacketStaff.mockResolvedValueOnce({
+            resources: [], players: [{ id: 'child-a', name: 'First child' }],
+            assignments: [{ assignmentId: 'packet', revision: 4, title: 'Footwork', items: [], playerIds: ['child-a', 'child-z'], dueAt: null }],
+            cursors: { resources: null, assignments: null, players: 'child-a' }
+        }).mockResolvedValueOnce({ resources: [], assignments: [], players: [{ id: 'child-z', name: 'Later child' }], cursors: { players: null } });
+        const staged = await tools.find((tool) => tool.name === 'prepare_resource_packet').prepare(authUser, { teamId: 'team-1', action: 'publish', assignmentId: 'packet', notify: false });
+        expect(staged.previewSummary.players.map((player) => player.id)).toEqual(['child-a', 'child-z']);
+        expect(resourcePacketMocks.loadResourcePacketStaff).toHaveBeenLastCalledWith('team-1', expect.objectContaining({ players: 'child-a', tasks: null }));
+        await tools.find((tool) => tool.name === 'get_resource_packets').resolve(authUser, { teamId: 'team-1', view: 'staff', cursors: { resources: 'page-2' } });
+        expect(resourcePacketMocks.loadResourcePacketStaff).toHaveBeenLastCalledWith('team-1', { resources: 'page-2' });
+        expect(resourcePacketMocks.resourcePacketCommand).not.toHaveBeenCalled();
+    });
+    it('rejects an incomplete publication audience before confirmation', async () => {
+        const { buildResourcePacketAiTools } = await import('../../apps/app/src/lib/resourcePacketsAiTools.ts');
+        resourcePacketMocks.loadResourcePacketStaff.mockResolvedValueOnce({ resources: [], players: [], assignments: [{ assignmentId: 'packet', revision: 1, playerIds: ['missing'] }], cursors: {} });
+        await expect(buildResourcePacketAiTools().find((tool) => tool.name === 'prepare_resource_packet').prepare(authUser, { teamId: 'team-1', action: 'publish', assignmentId: 'packet', notify: true })).rejects.toThrow('selected audience changed');
+        expect(resourcePacketMocks.resourcePacketCommand).not.toHaveBeenCalled();
+    });
+    it('does not hide authorization denial as empty data or claim external video content', async () => {
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        resourcePacketMocks.loadResourcePacketFamily.mockRejectedValueOnce(new Error('This player is not linked to your account.'));
+        const denied = await runPrivateAiTool(authUser, { name: 'get_resource_packets', args: { teamId: 'team-1', playerId: 'other-child' } });
+        expect(denied).toMatchObject({ ok: false, failureStage: 'read' });
+        resourcePacketMocks.loadResourcePacketFamily.mockResolvedValueOnce({ tasks: [], cursors: { tasks: null } });
+        const result = await runPrivateAiTool(authUser, { name: 'get_resource_packets', args: { teamId: 'team-1', playerId: 'child-a' } });
+        expect(result.data).toMatchObject({ externalVideoContentAvailable: false, evidenceMeaning: expect.stringContaining('not proof of watching') });
+        expect(resourcePacketMocks.resourcePacketCommand).not.toHaveBeenCalled();
     });
 });

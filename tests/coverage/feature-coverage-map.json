@@ -981,6 +981,39 @@
                     "description": "Native deep-link and push-notification routes remain unit-covered only until emulator/device workflow tests are added."
                 }
             ]
+        },
+        {
+            "id": "practice.web-resource-packets",
+            "label": "Web resource packets and private family engagement",
+            "priority": "high",
+            "targetTiers": [
+                "unit",
+                "integration",
+                "workflow"
+            ],
+            "legacyPages": [],
+            "appPages": [
+                "apps/app/src/pages/ResourcePackets.tsx",
+        "apps/app/src/pages/PlayerResourcePackets.tsx"
+            ],
+            "cloudFunctions": [
+                "resourcePacketsCommand",
+                "resourcePacketsQuery",
+                "resourcePacketPublished",
+                "resourcePacketAccountDeleted"
+            ],
+            "unitTests": [
+                "apps/app/src/lib/resourcePacketsService.test.ts",
+                "tests/unit/app-private-ai-service.test.js",
+                "functions/test/send-category-notification.test.js"
+            ],
+            "integrationTests": [
+                "functions/test/resource-packets.emulator.cjs",
+                "functions/test/resource-packets.trigger.cjs"
+            ],
+            "workflowTests": [
+                "scripts/test-resource-packets-browser.mjs"
+            ]
         }
     ]
 }

@@ -5,6 +5,48 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { loadNotificationInternals } = require('./send-category-notification-test-helpers.cjs');
 
+test('resource packet adapter respects selected practice recipients and the final packet boundary', async () => {
+    const { internals, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['parent-1', 'parent-2', 'parent-3'],
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'd1', token: 't1', categories: { practice: true } },
+            { uid: 'parent-2', deviceId: 'd2', token: 't2', categories: { practice: false } },
+            { uid: 'parent-3', deviceId: 'd3', token: 't3', categories: { practice: true } }
+        ]
+    });
+    try {
+        const targets = await internals.getTargetsForCategoryUserIds('team-1', 'practice', ['parent-1', 'parent-2']);
+        assert.deepEqual(targets.map(target => target.uid), ['parent-1']);
+        const result = await internals.sendDirectTargetsNotification({
+            targets, teamId: 'team-1', category: 'practice', title: 'Practice packet', body: 'Review your family queue.',
+            deliveryIdempotencyKey: 'resource-packet-test', requireCanonicalTeamAccess: true,
+            beforeEffects: async () => false
+        });
+        assert.equal(result, null);
+        assert.equal(env.messagingCalls.length, 0);
+        assert.equal(env.inboxWrites.length, 0);
+    } finally { cleanup(); }
+});
+
+test('resource packet inbox uses a stable identity and drops a device revoked at the final boundary', async () => {
+    const { internals, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] }, parentUserIds: ['parent-1'],
+        indexedTargets: [{ uid: 'parent-1', deviceId: 'd1', token: 't1', categories: { practice: true } }]
+    });
+    try {
+        const targets = await internals.getTargetsForCategoryUserIds('team-1', 'practice', ['parent-1']);
+        const request = { targets, teamId: 'team-1', category: 'practice', title: 'Practice packet', body: 'Review your family queue.',
+            deliveryIdempotencyKey: 'resource-packet-stable', requireCanonicalTeamAccess: true,
+            beforeEffects: async () => ({ allowedUserIds: ['parent-1'], allowedTargetKeys: [] }) };
+        await internals.sendDirectTargetsNotification(request);
+        await internals.sendDirectTargetsNotification(request);
+        assert.equal(env.messagingCalls.length, 0);
+        assert.ok(env.inboxWrites.length > 0);
+        assert.deepEqual([...new Set(env.inboxWrites.map(write => write.id))], ['resource-packet-stable']);
+    } finally { cleanup(); }
+});
+
 test('public RSVP private contacts hydrate in bounded BatchGet chunks for a large roster', async () => {
         const eligibleCount = 205;
         const playerDocs = Object.fromEntries([

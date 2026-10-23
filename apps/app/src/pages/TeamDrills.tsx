@@ -1,3 +1,4 @@
+import { resourcePacketsAvailable } from '../lib/resourcePacketsService';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { ChevronLeft, ExternalLink, Heart, Loader2, Save, Search, Shield, Sparkles } from 'lucide-react';
@@ -392,6 +393,7 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
               Back to team
             </Link>
             <h1 className="mt-2 text-2xl font-black text-gray-950">{heading}</h1>
+            {resourcePacketsAvailable() && canManageDrills && <Link className="inline-block min-h-11 py-3 font-semibold text-emerald-800 underline" to={`/teams/${encodeURIComponent(teamId)}/resources`}>Create resources and assign practice packets</Link>}
             <p className="mt-1 text-sm font-semibold text-gray-600">Browse the shared {teamSport} drill library, filter it fast, and keep team favorites synced with the website.</p>
           </div>
           <div className="rounded-xl border border-primary-100 bg-primary-50 px-3 py-2 text-xs font-black text-primary-800">

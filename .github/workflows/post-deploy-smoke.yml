@@ -225,6 +225,7 @@ jobs:
           SMOKE_APP_BOOT_URL: https://allplays.ai/app/
           SMOKE_APP_BASE_URL: https://allplays.ai/app/
           SMOKE_SUITE: production
+          SMOKE_RESOURCE_PACKETS_ENABLED: ${{ vars.RESOURCE_PACKETS_ENABLED }}
           SMOKE_TEAM_ID: ${{ vars.SMOKE_TEAM_ID }}
           SMOKE_GAME_ID: ${{ vars.SMOKE_GAME_ID }}
           SMOKE_EVENT_ID: ${{ vars.SMOKE_EVENT_ID }}
@@ -270,6 +271,7 @@ jobs:
           SMOKE_APP_BOOT_URL: https://allplays.ai/app/
           SMOKE_APP_BASE_URL: https://allplays.ai/app/
           SMOKE_SUITE: production
+          SMOKE_RESOURCE_PACKETS_ENABLED: ${{ vars.RESOURCE_PACKETS_ENABLED }}
           SMOKE_TEAM_ID: ${{ vars.SMOKE_TEAM_ID }}
           SMOKE_GAME_ID: ${{ vars.SMOKE_GAME_ID }}
           SMOKE_EVENT_ID: ${{ vars.SMOKE_EVENT_ID }}
