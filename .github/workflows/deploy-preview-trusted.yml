@@ -134,12 +134,15 @@ jobs:
           run_json="$RUNNER_TEMP/firebase-preview-run.json"
           pr_json="$RUNNER_TEMP/firebase-preview-pr.json"
           artifacts_json="$RUNNER_TEMP/firebase-preview-artifacts.json"
+          workflow_json="$RUNNER_TEMP/firebase-preview-workflow.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pr-preview.yml" > "$workflow_json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$WORKFLOW_RUN_ID" > "$run_json"
           gh api "repos/$GITHUB_REPOSITORY/pulls/$WORKFLOW_PR_NUMBER" > "$pr_json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$WORKFLOW_RUN_ID/artifacts?per_page=100" > "$artifacts_json"
           node scripts/verify-preview-deploy-trigger.mjs \
             --event "$GITHUB_EVENT_PATH" \
             --run "$run_json" \
+            --workflow "$workflow_json" \
             --pull-request "$pr_json" \
             --artifacts "$artifacts_json" \
             --output "$GITHUB_OUTPUT"
@@ -206,11 +209,13 @@ jobs:
           node scripts/verify-preview-deploy-trigger.mjs \
             --event "$GITHUB_EVENT_PATH" \
             --run "$RUNNER_TEMP/firebase-preview-run.json" \
+            --workflow "$RUNNER_TEMP/firebase-preview-workflow.json" \
             --pull-request "$current_pr_json" \
             --artifacts "$RUNNER_TEMP/firebase-preview-artifacts.json" \
             --output "$recheck_output"
           cp "$GITHUB_EVENT_PATH" "$FIREBASE_PREVIEW_STAGE/context/event.json"
           cp "$RUNNER_TEMP/firebase-preview-run.json" "$FIREBASE_PREVIEW_STAGE/context/run.json"
+          cp "$RUNNER_TEMP/firebase-preview-workflow.json" "$FIREBASE_PREVIEW_STAGE/context/workflow.json"
           cp "$RUNNER_TEMP/firebase-preview-artifacts.json" "$FIREBASE_PREVIEW_STAGE/context/artifacts.json"
           cp scripts/verify-preview-deploy-trigger.mjs "$FIREBASE_PREVIEW_STAGE/context/verify-preview-deploy-trigger.mjs"
 
@@ -267,6 +272,7 @@ jobs:
           test -f "$bundle/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
           test -f "$bundle/context/event.json"
           test -f "$bundle/context/run.json"
+          test -f "$bundle/context/workflow.json"
           test -f "$bundle/context/artifacts.json"
           test -f "$bundle/context/verify-preview-deploy-trigger.mjs"
           if [[ -n "$(find "$bundle/site" -type l -print -quit)" ]]; then
@@ -313,7 +319,7 @@ jobs:
             echo "Trusted preview verifier must not be a symbolic link." >&2
             exit 1
           }
-          expected_verifier_sha256='795c938b2b7d16c5468d905a183810fd6cb9005f4f765e1c4fcd472a0a42fb81'
+          expected_verifier_sha256='6fdc559a4e5014784e2c3251b9e94a41b0709519c201148314a015f18ee823f6'
           printf '%s  %s\n' "$expected_verifier_sha256" "$verifier" | sha256sum --check --strict
 
           recheck_current_head() {
@@ -326,6 +332,7 @@ jobs:
             node "$verifier" \
               --event "$bundle/context/event.json" \
               --run "$bundle/context/run.json" \
+              --workflow "$bundle/context/workflow.json" \
               --pull-request "$current_pr_json" \
               --artifacts "$bundle/context/artifacts.json" \
               --output "$recheck_output"
@@ -464,6 +471,8 @@ jobs:
           run_json="$RUNNER_TEMP/firebase-preview-report-run.json"
           pr_json="$RUNNER_TEMP/firebase-preview-report-pr.json"
           artifacts_json="$RUNNER_TEMP/firebase-preview-report-artifacts.json"
+          workflow_json="$RUNNER_TEMP/firebase-preview-report-workflow.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pr-preview.yml" > "$workflow_json"
           verify_output="$RUNNER_TEMP/firebase-preview-report.outputs"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/${{ github.event.workflow_run.id }}" > "$run_json"
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$pr_json"
@@ -471,6 +480,7 @@ jobs:
           node scripts/verify-preview-deploy-trigger.mjs \
             --event "$GITHUB_EVENT_PATH" \
             --run "$run_json" \
+            --workflow "$workflow_json" \
             --pull-request "$pr_json" \
             --artifacts "$artifacts_json" \
             --output "$verify_output"
@@ -494,6 +504,7 @@ jobs:
           node scripts/verify-preview-deploy-trigger.mjs \
             --event "$GITHUB_EVENT_PATH" \
             --run "$run_json" \
+            --workflow "$workflow_json" \
             --pull-request "$current_pr_json" \
             --artifacts "$artifacts_json" \
             --output "$recheck_output"

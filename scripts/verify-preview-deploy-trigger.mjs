@@ -33,15 +33,22 @@ function readJson(filePath, label) {
     }
 }
 
-export function verifyPreviewDeployTrigger({ event, run, pullRequest, artifacts }) {
+export function verifyPreviewDeployTrigger({ event, run, workflow, pullRequest, artifacts }) {
     const repository = event?.repository?.full_name;
     if (typeof repository !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
         fail('event repository identity is invalid.');
     }
 
     const eventRun = event?.workflow_run;
-    if (!eventRun || eventRun.name !== PREVIEW_WORKFLOW_NAME) {
-        fail(`event must come from ${PREVIEW_WORKFLOW_NAME}.`);
+    // Run names can contain GitHub's dynamic run-name. Resolve identity using
+    // the canonical workflow fetched from the fixed repository workflow path.
+    const workflowId = requirePositiveInteger(workflow?.id, 'canonical workflow ID');
+    if (workflow.name !== PREVIEW_WORKFLOW_NAME || workflow.path !== PREVIEW_WORKFLOW_PATH || workflow.state !== 'active') {
+        fail('canonical preview workflow identity, path, or state is invalid.');
+    }
+    if (requirePositiveInteger(eventRun?.workflow_id, 'event workflow ID') !== workflowId
+        || requirePositiveInteger(run?.workflow_id, 'API workflow ID') !== workflowId) {
+        fail('event and API runs must belong to the canonical preview workflow.');
     }
     if (eventRun.event !== 'workflow_dispatch' || eventRun.status !== 'completed' || eventRun.conclusion !== 'success') {
         fail('triggering workflow must be a completed successful workflow_dispatch run.');
@@ -52,8 +59,7 @@ export function verifyPreviewDeployTrigger({ event, run, pullRequest, artifacts 
         fail('event and API workflow run IDs do not match.');
     }
     if (
-        run.name !== PREVIEW_WORKFLOW_NAME
-        || run.path !== PREVIEW_WORKFLOW_PATH
+        run.path !== PREVIEW_WORKFLOW_PATH
         || run.event !== 'workflow_dispatch'
         || run.status !== 'completed'
         || run.conclusion !== 'success'
@@ -137,11 +143,11 @@ function parseCliArgs(args) {
         const key = args[index];
         const value = args[index + 1];
         if (!key?.startsWith('--') || !value) {
-            throw new Error('Expected --event, --run, --pull-request, --artifacts, and --output paths.');
+            throw new Error('Expected --event, --run, --workflow, --pull-request, --artifacts, and --output paths.');
         }
         options[key.slice(2)] = value;
     }
-    for (const required of ['event', 'run', 'pull-request', 'artifacts', 'output']) {
+    for (const required of ['event', 'run', 'workflow', 'pull-request', 'artifacts', 'output']) {
         if (!options[required]) {
             throw new Error(`Missing required --${required} path.`);
         }
@@ -162,6 +168,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     const result = verifyPreviewDeployTrigger({
         event: readJson(options.event, 'workflow_run event'),
         run: readJson(options.run, 'workflow run response'),
+        workflow: readJson(options.workflow, 'canonical workflow response'),
         pullRequest: readJson(options['pull-request'], 'pull-request response'),
         artifacts: readJson(options.artifacts, 'artifact-list response')
     });
