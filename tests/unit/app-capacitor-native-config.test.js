@@ -169,7 +169,7 @@ describe('Capacitor native config', () => {
                 specifier: '^8.0.4',
                 version: '8.0.4'
             },
-            dompurify: { group: 'dependencies', specifier: '^3.4.16', version: '3.4.16' },
+            dompurify: { group: 'dependencies', specifier: '^3.4.17', version: '3.4.17' },
             'lucide-react': { group: 'dependencies', specifier: '^1.55.0', version: '1.55.0' },
             'react-router-dom': { group: 'dependencies', specifier: '7.18.2', version: '7.18.2' },
             'web-vitals': { group: 'dependencies', specifier: '^6.2.3', version: '6.2.3' },
