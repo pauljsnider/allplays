@@ -71,6 +71,7 @@ jobs:
       - name: Build React app
         env:
           VITE_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
+          VITE_RESOURCE_PACKETS_ENABLED: ${{ vars.RESOURCE_PACKETS_ENABLED }}
         run: npm run app:build
 
       - name: Stage untrusted Firebase Hosting bundle

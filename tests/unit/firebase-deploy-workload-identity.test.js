@@ -206,7 +206,13 @@ describe('Firebase deploy Workload Identity boundary', () => {
             retryEnabledExports.add(`functions:${match[1]}`);
         }
 
-        expect(retryEnabledExports.size).toBe(49);
+        const resourceTriggerSource = read('functions/resource-packets-triggers.cjs');
+        for (const match of resourceTriggerSource.matchAll(/([A-Za-z0-9_]+): functions\.runWith\(\{ failurePolicy: true \}\)/g)) {
+            const exported = functionsSource.match(new RegExp('exports\\.([A-Za-z0-9_]+) = resourcePacketTriggers\\.' + match[1] + ';'));
+            expect(exported).not.toBeNull();
+            retryEnabledExports.add(`functions:${exported[1]}`);
+        }
+        expect(retryEnabledExports.size).toBe(51);
         expect([...targets].sort()).toEqual([...retryEnabledExports].sort());
         expect(production.indexOf('"retry-enabled-functions"')).toBeLessThan(
             production.lastIndexOf('retry_firebase_deploy "hosting,functions" "application"')

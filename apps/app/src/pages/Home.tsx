@@ -1,3 +1,4 @@
+import { resourcePacketsAvailable } from '../lib/resourcePacketsService';
 import { FormEvent, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -616,6 +617,7 @@ export function Home({ auth }: { auth: AuthState }) {
               </span>
             </div>
             <h1 className="mt-0.5 text-xl font-black leading-tight text-gray-950">Your day</h1>
+            {resourcePacketsAvailable() && <Link className="inline-block min-h-11 py-3 text-sm font-semibold text-emerald-800 underline" to="/schedule?view=packets">Family practice packets</Link>}
             <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">{displayName} · {getHomeRoleContext(auth, resolvedOfficialsAccess)}</p>
           </div>
           <button type="button" className="ghost-button !h-11 !min-h-11 !w-11 !p-0 sm:!w-auto sm:!px-3 text-xs" onClick={() => refreshHome({ force: true })} disabled={loading} aria-label="Refresh Home" title="Refresh Home">

@@ -1,3 +1,4 @@
+import { buildResourcePacketAiTools } from './resourcePacketsAiTools';
 import {
   addDoc,
   collection,
@@ -2008,6 +2009,7 @@ async function runPrivateAiToolInternal(
 }
 
 const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
+  ...buildResourcePacketAiTools(),
   ...buildCoachAdminPrivateAiToolDefinitions(),
   {
     name: 'get_profile',

@@ -151,6 +151,22 @@ jobs:
         if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: npm run test:unit:ci
 
+      - name: Run isolated resource packet rules and callable tests
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
+        run: npm run test:resource-packets:emulators
+
+      - name: Run isolated resource packet trigger tests
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
+        run: npm run test:resource-packets:triggers
+
+      - name: Install resource packet browser runtime
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
+        run: npx playwright install --with-deps chromium
+
+      - name: Run isolated resource packet browser flow
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
+        run: npm run test:resource-packets:browser
+
       - name: Run notification functions coverage
         if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: npm run test:functions:notifications
