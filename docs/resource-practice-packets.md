@@ -98,8 +98,8 @@ resources and current progress, with bounded resumable cleanup.
 `RESOURCE_PACKETS_ENABLED` is a nonsecret rollout variable, default false.
 The production workflow packages it into the Functions environment and builds
 the web UI with `VITE_RESOURCE_PACKETS_ENABLED`. Native runtime gates remain
-off regardless of the build value. Enabling the variable requires the feature's
-security/release approval; these instructions do not grant that approval.
+off regardless of the build value. Enabling the variable follows the authorized feature release and existing
+release gates; these instructions do not grant authority to change access settings.
 
 Before release: exact-head CI, independent review, full-shell authenticated
 preview acceptance, the existing PaulBot landing process, and the exact deployed
@@ -121,7 +121,7 @@ Coaches can review private progress without pretending a click proves viewing.
 
 ## Pre-release validation checkpoint
 
-Local validation has passed the 12-case real Auth/Firestore/Functions suite,
+Local validation has passed the 13-case real Auth/Firestore/Functions suite,
 the real outbox/Auth-deletion trigger test, the isolated real-component browser
 flow, 201 AI tests, and the 145-test notification suite. Independent security
 review confirmed the deletion-attribution and complete-recipient-preview fixes.
@@ -137,10 +137,15 @@ tests without skips. Separate player login, library search and player actor
 attribution passed in the isolated browser flow; player-detail regressions and
 client tests passed 60 cases.
 
-The direct player route is verified, but standalone player discovery still needs
-a full-shell solution: the existing player-detail loader requires parent/staff
-access, so a self-only player may need a direct link today.
+Home → My player practice resources now discovers the signed-in account’s
+linked players, including self-only player ownership. The real App/Auth/Home
+shell sign-in and navigation passed against isolated Firebase adapters. This
+uses three player ownership collection-group indexes, deployed before activation.
+The harness does not deploy unrelated Functions, so unrelated Home sections can
+report unavailable data; the packet journey is exercised through real callables.
 
-Still required: standalone player discovery, full-shell authenticated preview, exact-head CI, security-sensitive backend rollout approval,
-shared release-hold disposition, and exact deployed revision verification.
+Still required: hosted authenticated preview, exact-head CI, shared release-hold disposition, and exact deployed revision verification.
 The draft PR must retain its ownership claim until the authorized handoff.
+
+CI remediation: DOMPurify was patched from 3.4.16 to 3.4.17 to clear the existing
+production dependency audit. No audit exception or threshold was changed.

@@ -993,7 +993,8 @@
             ],
             "legacyPages": [],
             "appPages": [
-                "apps/app/src/pages/ResourcePackets.tsx"
+                "apps/app/src/pages/ResourcePackets.tsx",
+        "apps/app/src/pages/PlayerResourcePackets.tsx"
             ],
             "cloudFunctions": [
                 "resourcePacketsCommand",

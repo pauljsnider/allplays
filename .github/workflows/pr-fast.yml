@@ -166,6 +166,8 @@ jobs:
       - name: Run isolated resource packet browser flow
         if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: npm run test:resource-packets:browser
+        env:
+          RESOURCE_PACKET_FULL_SHELL: '1'
 
       - name: Run notification functions coverage
         if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}

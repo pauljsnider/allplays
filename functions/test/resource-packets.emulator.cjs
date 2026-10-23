@@ -37,6 +37,17 @@ test('real Auth, callable and Firestore isolation with separate households', asy
   for (const player of ['child-a', 'sibling', 'child-b']) await db.doc(`teams/team-a/players/${player}`).set({ name: player, active: true });
   await db.doc('teams/team-a/players/child-a').update({ userId: 'player' });
   const resource = { action: 'saveResource', resourceId: 'resource-1', expectedRevision: 0, title: 'Footwork', teachingPoint: 'Keep your balance', url: 'https://www.youtube.com/watch?v=example' };
+  await t.test('linked-player discovery finds self-only accounts and isolates other households', async () => {
+    const own = await call('player', { view: 'linkedPlayers' }, 'query');
+    assert.deepEqual(own.players.map(row => row.playerId), ['child-a']);
+    const parent = await call('parent-a', { view: 'linkedPlayers' }, 'query');
+    assert.deepEqual(parent.players.map(row => row.playerId).sort(), ['child-a', 'sibling']);
+    assert.deepEqual((await call('outsider', { view: 'linkedPlayers' }, 'query')).players, []);
+    // The canonical userId wins over a stale alias that points at another account.
+    await db.doc('teams/team-a/players/child-a').update({ authUid: 'outsider' });
+    assert.deepEqual((await call('outsider', { view: 'linkedPlayers' }, 'query')).players, []);
+    await db.doc('teams/team-b').update({ active: false });
+  });
   await t.test('staff authors, unrelated and family cannot author', async () => {
     await denied(command('parent-a', resource)); await denied(command('outsider', resource));
     await denied(command('missing', resource), 'UNAUTHENTICATED');

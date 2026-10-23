@@ -30,12 +30,23 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator } from 'firebase/auth';
 import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
-export * from 'firebase/functions'; export * from 'firebase/auth'; export * from 'firebase/firestore';
+export * from 'firebase/functions'; export * from 'firebase/auth'; export * from 'firebase/firestore'; export * from 'firebase/app'; export * from 'firebase/storage';
+import { getStorage } from 'firebase/storage';
 const app = initializeApp({ projectId: 'demo-allplays-resource', apiKey: 'local-only', authDomain: 'localhost' });
+export const appCheckReady = Promise.resolve(); export const storage = getStorage(app);
 export const auth = getAuth(app); connectAuthEmulator(auth, 'http://127.0.0.1:9299', { disableWarnings: true });
 export const functions = getFunctions(app); connectFunctionsEmulator(functions, '127.0.0.1', 5201);
 export const db = getFirestore(app); connectFirestoreEmulator(db, '127.0.0.1', 8280);
 `);
+  writeFileSync(join(dir, 'auth-sdk.ts'), `
+import './firebase'; export * from 'firebase/app'; export * from 'firebase/auth';
+export const resolvePrimaryFirebaseConfig = async () => ({ projectId: 'demo-allplays-resource', apiKey: 'local-only', authDomain: 'localhost' });
+export const initializePrimaryAppCheck = async () => null;
+`);
+  writeFileSync(join(dir, 'app-check.ts'), `export const initializePrimaryAppCheck = async () => null; export const getPrimaryAppCheckToken = async () => null; export const getPrimaryAppCheckHeaders = async (headers = {}) => headers;`);
+  writeFileSync(join(dir, 'images.ts'), `import { storage } from './firebase'; export const imageStorage = storage; export const ensureImageAuth = async () => null; export const requireImageAuth = async () => null;`);
+  writeFileSync(join(dir, 'shell.html'), '<html><head><title>Isolated full app QA</title></head><body><div id="root"></div><script type="module" src="/shell.tsx"></script></body></html>');
+  writeFileSync(join(dir, 'shell.tsx'), "import '../src/main';");
   // The existing library service is retained; this test adapter uses only local
   // SDK reads and cannot initialize the separate production image project.
   writeFileSync(join(dir, 'drills.ts'), `
@@ -62,11 +73,19 @@ import '../src/styles/index.css';
 function App() {
  const [user, setUser] = useState(null); const [actor, setActor] = useState('web-staff');
  if (!user) return <form onSubmit={async event => { event.preventDefault(); const result = await signInWithEmailAndPassword(auth, actor + '@example.invalid', 'LocalBrowserFixture-123!'); setUser({ uid: result.user.uid, email: result.user.email, displayName: actor, roles: actor === 'web-staff' ? ['coach'] : ['parent'] }); }}><label>Fixture identity<select value={actor} onChange={event => setActor(event.target.value)}>{['web-staff','web-parent','web-other','web-player'].map(id => <option key={id}>{id}</option>)}</select></label><button>Sign in to isolated fixture</button></form>;
- return <MemoryRouter initialEntries={[actor === 'web-player' ? '/players/web-team/web-child/resources' : '/teams/web-team/resources']}><Routes><Route path="/players/:teamId/:playerId/resources" element={<PlayerResourcePackets auth={{ user, profile: {}, loading: false }} />} /><Route path="/teams/:teamId/resources" element={actor === 'web-staff' ? <ResourcePackets auth={{ user, profile: {}, loading: false }} /> : <ResourcePacketQueue uid={user.uid} children={[{teamId:'web-team',teamName:'Synthetic team',playerId:'web-child',playerName:'web-child'},{teamId:'web-team',teamName:'Synthetic team',playerId:'web-sibling',playerName:'web-sibling'}]} staffTeams={[]} />} /></Routes></MemoryRouter>;
+ return <MemoryRouter initialEntries={[actor === 'web-player' ? '/practice-resources' : '/teams/web-team/resources']}><Routes><Route path="/practice-resources" element={<PlayerResourcePackets auth={{ user, profile: {}, loading: false }} />} /><Route path="/players/:teamId/:playerId/resources" element={<PlayerResourcePackets auth={{ user, profile: {}, loading: false }} />} /><Route path="/teams/:teamId/resources" element={actor === 'web-staff' ? <ResourcePackets auth={{ user, profile: {}, loading: false }} /> : <ResourcePacketQueue uid={user.uid} children={[{teamId:'web-team',teamName:'Synthetic team',playerId:'web-child',playerName:'web-child'},{teamId:'web-team',teamName:'Synthetic team',playerId:'web-sibling',playerName:'web-sibling'}]} staffTeams={[]} />} /></Routes></MemoryRouter>;
 }
 createRoot(document.getElementById('root')).render(<App />);
 `);
-  server = await createServer({ configFile: false, root: dir, define: { 'import.meta.env.VITE_RESOURCE_PACKETS_ENABLED': JSON.stringify('true') }, esbuild: { jsx: 'automatic' }, resolve: { alias: { '@legacy/firebase.js': join(dir, 'firebase.ts') }, dedupe: ['react', 'react-dom'] }, plugins: [{ name: 'isolated-drill-adapter', enforce: 'pre', resolveId(id) { if (id.endsWith('/adapters/legacyTeamDrills')) return join(dir, 'drills.ts'); } }], server: { host: '127.0.0.1', port: 4179, strictPort: true, fs: { allow: [root] } } });
+  server = await createServer({ configFile: false, root: dir, define: { 'import.meta.env.VITE_RESOURCE_PACKETS_ENABLED': JSON.stringify('true') }, esbuild: { jsx: 'automatic' }, resolve: { alias: { '@legacy': join(root, 'js') }, dedupe: ['react', 'react-dom'] }, plugins: [{ name: 'isolated-drill-adapter', enforce: 'pre', async resolveId(id, importer) {
+ if (/\/adapters\/legacyTeamDrills$/.test(id)) return join(dir, 'drills.ts');
+ if (/\/adapters\/legacyFirebaseAuthSdk$/.test(id)) return join(dir, 'auth-sdk.ts');
+ if (/(?:^|\/)firebase\.js(?:\?|$)/.test(id)) return join(dir, 'firebase.ts');
+ if (/(?:^|\/)firebase-app-check(?:-rest)?\.js(?:\?|$)/.test(id)) return join(dir, 'app-check.ts');
+ if (/(?:^|\/)firebase-images\.js(?:\?|$)/.test(id)) return join(dir, 'images.ts');
+ const sdk = id.match(/vendor\/firebase-(app|auth|firestore|functions|storage)\.js(?:\?|$)/);
+ if (sdk) return this.resolve('firebase/' + sdk[1], join(dir, 'firebase.ts'), { skipSelf: true });
+ } }], server: { host: '127.0.0.1', port: 4179, strictPort: true, fs: { allow: [root] } } });
   await server.listen();
   browser = await chromium.launch({ headless: true });
   const errors = [];
@@ -158,11 +177,27 @@ createRoot(document.getElementById('root')).render(<App />);
   assert.equal((await db.collection('resourcePacketTeams/web-team/evidence').get()).size, beforeOffline + 1);
   const playerSession = await session('web-player', { width: 390, height: 844 });
   await expect(playerSession.page.getByRole('heading', { name: 'Player practice resources' })).toBeVisible();
+  await playerSession.page.getByRole('link', { name: 'web-child · Synthetic practice team' }).click();
   await expect(playerSession.page.getByRole('heading', { name: 'Home footwork' })).toBeVisible();
   await playerSession.page.getByLabel('We report: watched').first().tap();
   await expect(playerSession.page.getByLabel('We report: watched').first()).toBeChecked();
   const playerEvidence = (await db.collection('resourcePacketTeams/web-team/evidence').where('actorUid', '==', 'web-player').get()).docs.map(doc => doc.data());
   assert.equal(playerEvidence.length, 1); assert.equal(playerEvidence[0].playerId, 'web-child');
+  if (process.env.RESOURCE_PACKET_FULL_SHELL === '1') {
+    const shell = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await shell.route('**/*', route => ['127.0.0.1', 'localhost'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort());
+    const shellPage = await shell.newPage();
+    shellPage.on('pageerror', error => console.error('Full shell page error:', error.message));
+    await shellPage.goto('http://127.0.0.1:4179/shell.html#/auth');
+    await shellPage.getByLabel('Email', { exact: true }).fill('web-player@example.invalid');
+    await shellPage.getByLabel('Password', { exact: true }).fill('LocalBrowserFixture-123!');
+    await shellPage.locator('button[type="submit"]').filter({ hasText: 'Sign in' }).click();
+    await shellPage.getByRole('link', { name: 'My player practice resources', exact: true }).click({ timeout: 30000 });
+    await shellPage.getByRole('link', { name: 'web-child · Synthetic practice team', exact: true }).click();
+    await expect(shellPage.getByRole('heading', { name: 'Home footwork' })).toBeVisible();
+    console.log('PASS: full App/Auth/Home shell sign-in and self-only player discovery into authorized packet queue.');
+    await shell.close();
+  }
   if (process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR) {
     mkdirSync(process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR, { recursive: true });
     await staff.page.screenshot({ path: join(process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR, 'coach-resources.png'), fullPage: true });

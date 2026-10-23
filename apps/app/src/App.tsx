@@ -450,6 +450,7 @@ export default function App() {
             </Protected>
           }
         />
+        <Route path="/practice-resources" element={<Protected auth={auth}><PlayerResourcePackets auth={auth} /></Protected>} />
         <Route path="/players/:teamId/:playerId/resources" element={<Protected auth={auth}><PlayerResourcePackets auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/resources" element={<Protected auth={auth}><ResourcePackets auth={auth} /></Protected>} />
         <Route

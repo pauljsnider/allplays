@@ -105,3 +105,11 @@ export async function openResourcePacketLink(uid: string, task: PacketTask, item
     throw error;
   }
 }
+
+export async function loadResourcePacketLinkedPlayers(): Promise<{
+  players: { teamId: string; playerId: string; teamName: string; playerName: string }[];
+}> {
+  return (await invoke('resourcePacketsQuery', { view: 'linkedPlayers' })) as {
+    players: { teamId: string; playerId: string; teamName: string; playerName: string }[];
+  };
+}

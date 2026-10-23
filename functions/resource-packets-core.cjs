@@ -203,7 +203,38 @@ function createResourcePacketsService({ db, auth, enabled = () => false, now = (
     });
   }
   async function query(input, context) {
-    const principal = await caller(context); const teamId = id(input.teamId);
+    const principal = await caller(context);
+    if (input.view === 'linkedPlayers') return db.runTransaction(async (tx) => {
+      const [user, deletion, barrier, ...owned] = await Promise.all([
+        tx.get(db.doc(`users/${principal.uid}`)), tx.get(db.doc(`accountDeletionRequests/${principal.uid}`)),
+        tx.get(db.doc(`resourcePacketAccountBarriers/${accountBarrierId(principal.uid)}`)),
+        ...['userId', 'authUid', 'accountUserId'].map(field => tx.get(db.collectionGroup('players').where(field, '==', principal.uid).limit(101)))
+      ]);
+      const profile = user.data();
+      if (!active(profile) || deletion.exists || barrier.exists) fail('permission-denied', 'This account is unavailable.');
+      const keys = new Set([...(profile.parentPlayerKeys || []), ...(profile.playerKeys || [])]);
+      for (const result of owned) {
+        if (result.size > 100) fail('resource-exhausted', 'Too many linked players to load safely.');
+        for (const document of result.docs) {
+          const parts = document.ref.path.split('/');
+          if (parts.length === 4 && parts[0] === 'teams' && parts[2] === 'players') keys.add(`${parts[1]}::${parts[3]}`);
+        }
+      }
+      if (keys.size > 100) fail('resource-exhausted', 'Too many linked players to load safely.');
+      const players = [];
+      for (const key of keys) {
+        if (typeof key !== 'string' || !/^[A-Za-z0-9_-]{1,100}::[A-Za-z0-9_-]{1,100}$/.test(key)) continue;
+        const [teamId, playerId] = key.split('::');
+        const [team, player] = await Promise.all([tx.get(db.doc(`teams/${teamId}`)), tx.get(db.doc(`teams/${teamId}/players/${playerId}`))]);
+        const record = player.data();
+        if (!active(team.data()) || !active(record)) continue;
+        const owner = record.userId ?? record.authUid ?? record.accountUserId;
+        if (!isGuardian(profile, teamId, playerId) && !(profile.playerKeys || []).includes(key) && owner !== principal.uid) continue;
+        players.push({ teamId, playerId, teamName: String(team.data().name || 'Team'), playerName: String(record.name || 'Player') });
+      }
+      return { players };
+    }, { readOnly: true });
+    const teamId = id(input.teamId);
     return db.runTransaction(async (tx) => {
     const scope = await access(tx, teamId, principal);
     async function page(name, source, size = 100) {
