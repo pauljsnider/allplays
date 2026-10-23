@@ -459,15 +459,21 @@ function ResourcePacketsContent({ auth }: { auth: AuthState }) {
                 type="button"
                 onClick={() =>
                   void run(
-                    () =>
-                      resourcePacketCommand(auth.user!.uid, {
+                    async () => {
+                      const result = (await resourcePacketCommand(auth.user!.uid, {
                         teamId,
                         action: 'publish',
                         assignmentId: review.assignmentId,
                         expectedRevision: review.revision,
                         confirm: true,
                         notify
-                      }),
+                      })) as { assignmentId: string; revision: number; version: number };
+                      setDraft((current) =>
+                        current?.assignmentId === result.assignmentId
+                          ? { ...current, revision: result.revision, publishedVersion: result.version }
+                          : current
+                      );
+                    },
                     'Packet published. Review notification status below.'
                   )
                 }
