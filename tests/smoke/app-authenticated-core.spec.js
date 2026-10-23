@@ -187,6 +187,31 @@ test('parent account reaches every critical family workflow with linked fixtures
     });
 });
 
+test('resource packet rollout and authorized staff/family reads match the deployed configuration', async () => {
+    const packetsEnabled = process.env.SMOKE_RESOURCE_PACKETS_ENABLED === 'true';
+    await withAuthenticatedPage(staffSession, async (page) => {
+        await openAuthenticatedAppRoute(page, config.appBaseUrl, '/home?section=players', { heading: 'Your day' });
+        const entry = page.getByRole('link', { name: 'My player practice resources', exact: true });
+        if (!packetsEnabled) {
+            await expect(entry).toHaveCount(0);
+            return;
+        }
+        await expect(entry).toBeVisible();
+        await openAuthenticatedAppRoute(page, config.appBaseUrl, `/teams/${encodeURIComponent(config.teamId)}/resources`, { heading: 'Resources and practice packets' });
+        await expect(page.getByRole('heading', { name: '1. Reusable resources' })).toBeVisible();
+        await expect(page.getByRole('alert')).toHaveCount(0);
+    });
+    if (packetsEnabled) await withAuthenticatedPage(parentWorkflowSession, async (page) => {
+        await openAuthenticatedAppRoute(page, config.appBaseUrl, '/practice-resources', { heading: 'Player practice resources' });
+        const route = `/players/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.playerId)}/resources`;
+        await page.locator(`a[href="#${route}"]`).click();
+        await expect(page.getByRole('heading', { name: 'Practice resources', exact: true })).toBeVisible();
+        await expect(page.getByRole('status')).toHaveCount(0, { timeout: 30000 });
+        await expect(page.getByRole('alert')).toHaveCount(0);
+    });
+    // Deliberately no draft, publish, report, open-link or notification actions.
+});
+
 test('role boundaries, logout, refresh persistence, and signed-out rejection hold', async () => {
     await withAuthenticatedPage(parentWorkflowSession, async (page) => {
         await page.goto(buildAppSmokeUrl(config.appBaseUrl, `/teams/${encodeURIComponent(config.teamId)}/fees`));

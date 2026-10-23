@@ -187,7 +187,8 @@ createRoot(document.getElementById('root')).render(<App />);
     const shell = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await shell.route('**/*', route => ['127.0.0.1', 'localhost'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort());
     const shellPage = await shell.newPage();
-    shellPage.on('pageerror', error => console.error('Full shell page error:', error.message));
+    const shellErrors = [];
+    shellPage.on('pageerror', error => shellErrors.push(error.message));
     await shellPage.goto('http://127.0.0.1:4179/shell.html#/auth');
     await shellPage.getByLabel('Email', { exact: true }).fill('web-player@example.invalid');
     await shellPage.getByLabel('Password', { exact: true }).fill('LocalBrowserFixture-123!');
@@ -195,6 +196,7 @@ createRoot(document.getElementById('root')).render(<App />);
     await shellPage.getByRole('link', { name: 'My player practice resources', exact: true }).click({ timeout: 30000 });
     await shellPage.getByRole('link', { name: 'web-child · Synthetic practice team', exact: true }).click();
     await expect(shellPage.getByRole('heading', { name: 'Home footwork' })).toBeVisible();
+    assert.deepEqual(shellErrors, [], 'Full app shell must not throw page errors');
     console.log('PASS: full App/Auth/Home shell sign-in and self-only player discovery into authorized packet queue.');
     await shell.close();
   }
