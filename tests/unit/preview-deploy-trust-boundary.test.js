@@ -54,10 +54,14 @@ function validTriggerFixture() {
     const prNumber = 4032;
     const headSha = 'dc655278753f7cdd3c7b3f4f9bc54deff999cdc4';
     return {
+        workflow: { id: 325197432, name: 'pr-preview', path: '.github/workflows/pr-preview.yml', state: 'active' },
         event: {
             repository: { full_name: repository },
             workflow_run: {
                 id: runId,
+                workflow_id: 325197432,
+                actor: { id: 123 },
+                triggering_actor: { id: 123 },
                 name: 'pr-preview',
                 display_title: `PR preview #${prNumber} @ ${headSha}`,
                 event: 'workflow_dispatch',
@@ -71,6 +75,9 @@ function validTriggerFixture() {
         },
         run: {
             id: runId,
+            workflow_id: 325197432,
+            actor: { id: 123 },
+            triggering_actor: { id: 123 },
             name: 'pr-preview',
             display_title: `PR preview #${prNumber} @ ${headSha}`,
             path: '.github/workflows/pr-preview.yml',
@@ -573,6 +580,30 @@ describe('preview deployment trigger verification', () => {
             repository: 'pauljsnider/allplays',
             runId: 29647460622
         });
+    });
+
+    it('accepts the observed dynamic run name using canonical workflow identity', () => {
+        const fixture = validTriggerFixture();
+        fixture.event.workflow_run.name = fixture.event.workflow_run.display_title;
+        fixture.run.name = fixture.run.display_title;
+        expect(verifyPreviewDeployTrigger(fixture).prNumber).toBe(4032);
+    });
+
+    it.each([
+        ['missing workflow', (f) => { delete f.workflow; }],
+        ['wrong canonical ID', (f) => { f.workflow.id += 1; }],
+        ['wrong canonical name', (f) => { f.workflow.name = 'other'; }],
+        ['wrong canonical path', (f) => { f.workflow.path = '.github/workflows/other.yml'; }],
+        ['inactive workflow', (f) => { f.workflow.state = 'disabled_manually'; }],
+        ['wrong event workflow', (f) => { f.event.workflow_run.workflow_id += 1; }],
+        ['wrong API workflow', (f) => { f.run.workflow_id += 1; }],
+        ['wrong API path', (f) => { f.run.path = '.github/workflows/other.yml'; }],
+        ['mismatched display title', (f) => { f.run.display_title += 'x'; }],
+        ['mismatched run SHA', (f) => { f.run.head_sha = '1'.repeat(40); }]
+    ])('rejects %s even with the expected run name', (_label, mutate) => {
+        const fixture = validTriggerFixture();
+        mutate(fixture);
+        expect(() => verifyPreviewDeployTrigger(fixture)).toThrow(/Preview deploy trust check failed/);
     });
 
     it('rejects fork identity, stale pull-request heads, and unsuccessful runs', () => {
