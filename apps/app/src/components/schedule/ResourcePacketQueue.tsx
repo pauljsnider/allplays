@@ -6,23 +6,27 @@ import { loadResourcePacketFamily, openResourcePacketLink, resourcePacketCommand
 export function ResourcePacketQueue({
   uid,
   children,
-  staffTeams
+  staffTeams,
+  singlePlayer = false
 }: {
   uid: string;
   children: ParentScheduleChild[];
   staffTeams: ParentScheduleStaffTeam[];
+  singlePlayer?: boolean;
 }) {
-  return <ResourcePacketQueueContent key={uid} uid={uid} children={children} staffTeams={staffTeams} />;
+  return <ResourcePacketQueueContent key={uid} uid={uid} linkedChildren={children} staffTeams={staffTeams} singlePlayer={singlePlayer} />;
 }
 
 function ResourcePacketQueueContent({
   uid,
-  children,
-  staffTeams
+  linkedChildren: children,
+  staffTeams,
+  singlePlayer
 }: {
   uid: string;
-  children: ParentScheduleChild[];
+  linkedChildren: ParentScheduleChild[];
   staffTeams: ParentScheduleStaffTeam[];
+  singlePlayer: boolean;
 }) {
   const [loadedScope, setLoadedScope] = useState('');
   const [selected, setSelected] = useState('');
@@ -79,7 +83,7 @@ function ResourcePacketQueueContent({
           Practice resources
         </h2>
         <p className="mt-1 text-sm text-gray-600">
-          Choose a child before opening a link or reporting practice. Link opened records a click, not viewing time. Watched and practiced
+          {singlePlayer ? 'Open a resource or report practice for this player.' : 'Choose a child before opening a link or reporting practice.'} Link opened records a click, not viewing time. Watched and practiced
           are your own reports.
         </p>
       </div>
@@ -92,7 +96,7 @@ function ResourcePacketQueueContent({
           Manage {team.teamName} packets
         </Link>
       ))}
-      {children.length > 0 ? (
+      {children.length > 0 ? (singlePlayer ? null : (
         <label className="block text-sm font-semibold">
           Child and team
           <select
@@ -108,7 +112,7 @@ function ResourcePacketQueueContent({
             ))}
           </select>
         </label>
-      ) : (
+      )) : (
         <p className="text-sm text-gray-600">No linked children are available in this schedule.</p>
       )}
       {loading && <p role="status">Loading practice resources…</p>}

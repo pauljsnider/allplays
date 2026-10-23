@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
@@ -16,12 +16,14 @@ const root = resolve(import.meta.dirname, '..');
 const dir = mkdtempSync(join(root, 'apps/app/.resource-browser-'));
 let server; let browser;
 try {
-  for (const uid of ['web-staff', 'web-parent', 'web-other']) {
+  for (const uid of ['web-staff', 'web-parent', 'web-other', 'web-player']) {
     await admin.auth().createUser({ uid, email: `${uid}@example.invalid`, password: 'LocalBrowserFixture-123!', emailVerified: true });
     await db.doc(`users/${uid}`).set({ active: true, parentTeamIds: uid === 'web-parent' ? ['web-team'] : [], parentPlayerKeys: uid === 'web-parent' ? ['web-team::web-child', 'web-team::web-sibling'] : [] });
   }
+  await db.doc('drillLibrary/synthetic-drill').set({ source: 'community', title: 'Balance library drill', description: 'Synthetic balance instruction', youtubeUrl: 'https://example.com/footwork', sport: 'Soccer' });
   await db.doc('teams/web-team').set({ ownerId: 'web-staff', name: 'Synthetic practice team', sport: 'Soccer', active: true, adminEmails: [] });
   for (const id of ['web-child', 'web-sibling']) await db.doc(`teams/web-team/players/${id}`).set({ name: id, active: true });
+  await db.doc('teams/web-team/players/web-child').update({ userId: 'web-player' });
   await db.doc('teams/web-team/games/web-practice').set({ type: 'practice', title: 'Synthetic practice', active: true });
   writeFileSync(join(dir, 'firebase.ts'), `
 import { initializeApp } from 'firebase/app';
@@ -53,13 +55,14 @@ export const removeDrillFavorite = addDrillFavorite;
 import React, { useState } from 'react'; import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { auth, signInWithEmailAndPassword } from './firebase';
+import { PlayerResourcePackets } from '../src/pages/PlayerResourcePackets';
 import { ResourcePackets } from '../src/pages/ResourcePackets';
 import { ResourcePacketQueue } from '../src/components/schedule/ResourcePacketQueue';
 import '../src/styles/index.css';
 function App() {
  const [user, setUser] = useState(null); const [actor, setActor] = useState('web-staff');
- if (!user) return <form onSubmit={async event => { event.preventDefault(); const result = await signInWithEmailAndPassword(auth, actor + '@example.invalid', 'LocalBrowserFixture-123!'); setUser({ uid: result.user.uid, email: result.user.email, displayName: actor, roles: actor === 'web-staff' ? ['coach'] : ['parent'] }); }}><label>Fixture identity<select value={actor} onChange={event => setActor(event.target.value)}>{['web-staff','web-parent','web-other'].map(id => <option key={id}>{id}</option>)}</select></label><button>Sign in to isolated fixture</button></form>;
- return <MemoryRouter initialEntries={['/teams/web-team/resources']}><Routes><Route path="/teams/:teamId/resources" element={actor === 'web-staff' ? <ResourcePackets auth={{ user, profile: {}, loading: false }} /> : <ResourcePacketQueue uid={user.uid} children={[{teamId:'web-team',teamName:'Synthetic team',playerId:'web-child',playerName:'web-child'},{teamId:'web-team',teamName:'Synthetic team',playerId:'web-sibling',playerName:'web-sibling'}]} staffTeams={[]} />} /></Routes></MemoryRouter>;
+ if (!user) return <form onSubmit={async event => { event.preventDefault(); const result = await signInWithEmailAndPassword(auth, actor + '@example.invalid', 'LocalBrowserFixture-123!'); setUser({ uid: result.user.uid, email: result.user.email, displayName: actor, roles: actor === 'web-staff' ? ['coach'] : ['parent'] }); }}><label>Fixture identity<select value={actor} onChange={event => setActor(event.target.value)}>{['web-staff','web-parent','web-other','web-player'].map(id => <option key={id}>{id}</option>)}</select></label><button>Sign in to isolated fixture</button></form>;
+ return <MemoryRouter initialEntries={[actor === 'web-player' ? '/players/web-team/web-child/resources' : '/teams/web-team/resources']}><Routes><Route path="/players/:teamId/:playerId/resources" element={<PlayerResourcePackets auth={{ user, profile: {}, loading: false }} />} /><Route path="/teams/:teamId/resources" element={actor === 'web-staff' ? <ResourcePackets auth={{ user, profile: {}, loading: false }} /> : <ResourcePacketQueue uid={user.uid} children={[{teamId:'web-team',teamName:'Synthetic team',playerId:'web-child',playerName:'web-child'},{teamId:'web-team',teamName:'Synthetic team',playerId:'web-sibling',playerName:'web-sibling'}]} staffTeams={[]} />} /></Routes></MemoryRouter>;
 }
 createRoot(document.getElementById('root')).render(<App />);
 `);
@@ -82,6 +85,10 @@ createRoot(document.getElementById('root')).render(<App />);
   }
   const staff = await session('web-staff');
   await expect(staff.page.getByRole('heading', { name: '1. Reusable resources' })).toBeVisible();
+  await staff.page.getByLabel('Find an existing library drill').fill('Balance');
+  await staff.page.getByRole('button', { name: 'Search drill library' }).click();
+  await staff.page.getByRole('button', { name: 'Use Balance library drill', exact: true }).click();
+  await expect(staff.page.getByLabel('External HTTPS link')).toHaveValue('https://example.com/footwork');
   await staff.page.getByLabel('Title', { exact: true }).fill('Balance exercise');
   await staff.page.getByLabel('External HTTPS link').fill('https://example.com/footwork');
   await staff.page.getByLabel('Teaching point').fill('Keep your knees soft and your head up.');
@@ -149,6 +156,19 @@ createRoot(document.getElementById('root')).render(<App />);
   await parent.page.getByLabel('We report: practiced').first().tap();
   await expect(parent.page.getByLabel('We report: practiced').first()).toBeChecked();
   assert.equal((await db.collection('resourcePacketTeams/web-team/evidence').get()).size, beforeOffline + 1);
+  const playerSession = await session('web-player', { width: 390, height: 844 });
+  await expect(playerSession.page.getByRole('heading', { name: 'Player practice resources' })).toBeVisible();
+  await expect(playerSession.page.getByRole('heading', { name: 'Home footwork' })).toBeVisible();
+  await playerSession.page.getByLabel('We report: watched').first().tap();
+  await expect(playerSession.page.getByLabel('We report: watched').first()).toBeChecked();
+  const playerEvidence = (await db.collection('resourcePacketTeams/web-team/evidence').where('actorUid', '==', 'web-player').get()).docs.map(doc => doc.data());
+  assert.equal(playerEvidence.length, 1); assert.equal(playerEvidence[0].playerId, 'web-child');
+  if (process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR) {
+    mkdirSync(process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR, { recursive: true });
+    await staff.page.screenshot({ path: join(process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR, 'coach-resources.png'), fullPage: true });
+    await parent.page.screenshot({ path: join(process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR, 'family-resources.png'), fullPage: true });
+    await playerSession.page.screenshot({ path: join(process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR, 'player-resources.png'), fullPage: true });
+  }
   assert.deepEqual(errors, []);
   console.log('PASS: real-component desktop coach and mobile family flow; draft/publish/click/self-report/sibling isolation/outsider denial; no external network.');
 } finally { await browser?.close(); await server?.close(); rmSync(dir, { recursive: true, force: true }); }

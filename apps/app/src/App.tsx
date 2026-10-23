@@ -58,6 +58,7 @@ const TeamDetail = lazyNamedPage(() => import('./pages/TeamDetail'), 'TeamDetail
 const TeamSettings = lazyNamedPage(() => import('./pages/TeamSettings'), 'TeamSettings');
 const TeamCertificates = lazyNamedPage(() => import('./pages/TeamCertificates'), 'TeamCertificates');
 const TeamDrills = lazyNamedPage(() => import('./pages/TeamDrills'), 'TeamDrills');
+const PlayerResourcePackets = lazyNamedPage(() => import('./pages/PlayerResourcePackets'), 'PlayerResourcePackets');
 const ResourcePackets = lazyNamedPage(() => import('./pages/ResourcePackets'), 'ResourcePackets');
 const TeamFees = lazyNamedPage(() => import('./pages/TeamFees'), 'TeamFees');
 const TeamMedia = lazyNamedPage(() => import('./pages/TeamMedia'), 'TeamMedia');
@@ -449,6 +450,7 @@ export default function App() {
             </Protected>
           }
         />
+        <Route path="/players/:teamId/:playerId/resources" element={<Protected auth={auth}><PlayerResourcePackets auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/resources" element={<Protected auth={auth}><ResourcePackets auth={auth} /></Protected>} />
         <Route
           path="/teams/:teamId/drills"

@@ -31,9 +31,9 @@ an opened-link record. Automatic reads, previews, hover and AI reads do not
 record opens.
 
 **We report: watched** and **We report: practiced** are separate optional
-self-reports. Co-guardians can report for a linked child. A linked player may
-access their own task through the authorized API; the current Schedule queue
-uses the app's existing linked-child discovery. Other families cannot read
+self-reports. Co-guardians can report for a linked child. Linked player accounts can use the authenticated
+`/players/:teamId/:playerId/resources` route, linked from the player detail page;
+the Schedule queue continues to use existing linked-child discovery. Other families cannot read
 the evidence, even if they belong to the same team.
 
 AI can read authorized notes and progress, clearly identifying self-reports.
@@ -132,7 +132,15 @@ Functions suite passed 1,616 tests; its credential-probe test passed separately
 with DNS access, and seven existing emulator-only tests require the standard
 rules suite. These are local results, not exact-head CI or deployed acceptance.
 
-Still required: standalone player-login UI discovery/acceptance, full-shell
-authenticated preview, exact-head CI, security-sensitive backend rollout approval,
+The standard existing rules suite also passed 358 cases and all 45 friend-invite
+tests without skips. Separate player login, library search and player actor
+attribution passed in the isolated browser flow; player-detail regressions and
+client tests passed 60 cases.
+
+The direct player route is verified, but standalone player discovery still needs
+a full-shell solution: the existing player-detail loader requires parent/staff
+access, so a self-only player may need a direct link today.
+
+Still required: standalone player discovery, full-shell authenticated preview, exact-head CI, security-sensitive backend rollout approval,
 shared release-hold disposition, and exact deployed revision verification.
 The draft PR must retain its ownership claim until the authorized handoff.

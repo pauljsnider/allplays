@@ -1,3 +1,4 @@
+import { resourcePacketsAvailable } from '../lib/resourcePacketsService';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type InputHTMLAttributes } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
@@ -817,6 +818,11 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
             <span className="hidden sm:inline">Refresh</span>
           </button>
         </div>
+        {resourcePacketsAvailable() && (
+          <Link className="inline-block min-h-11 px-4 py-3 text-emerald-800 underline" to={`/players/${encodeURIComponent(data.child.teamId)}/${encodeURIComponent(data.child.playerId)}/resources`}>
+            Open player practice resources
+          </Link>
+        )}
         {isLinkedParent ? (
           <div className="flex gap-1.5 overflow-x-auto border-t border-gray-100 px-3 py-1.5 sm:px-4">
             <SignalChip
