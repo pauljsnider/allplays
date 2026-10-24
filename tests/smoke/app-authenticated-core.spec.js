@@ -3,6 +3,7 @@ import {
     AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS,
     assertAuthenticatedAppRoute,
     assertNotificationInbox,
+    assertResourcePacketFamilyReady,
     buildAppSmokeUrl,
     closeAuthenticatedAppSession,
     createAuthenticatedAppSessions,
@@ -206,8 +207,7 @@ test('resource packet rollout and authorized staff/family reads match the deploy
         const route = `/players/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.playerId)}/resources`;
         await page.locator(`a[href="#${route}"]`).click();
         await expect(page.getByRole('heading', { name: 'Video assignments', exact: true })).toBeVisible();
-        await expect(page.getByRole('status')).toHaveCount(0, { timeout: 30000 });
-        await expect(page.getByRole('alert')).toHaveCount(0);
+        await assertResourcePacketFamilyReady(page, 'Video assignments');
     });
     // Deliberately no draft, publish, report, open-link or notification actions.
 });

@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
-import { assertAuthenticatedAppRoute, assertNotificationInbox, collectAppRuntimeIssues, openAuthenticatedAppRoute } from './helpers/app-auth.js';
+import { assertAuthenticatedAppRoute, assertNotificationInbox, assertResourcePacketFamilyReady, collectAppRuntimeIssues, openAuthenticatedAppRoute } from './helpers/app-auth.js';
 import { withAppFailureDiagnostic } from './helpers/app-route-diagnostic.js';
 
 const base = 'http://smoke.invalid/app/';
@@ -165,4 +165,20 @@ test('notification assertion closes its dialog so the next family action is usab
     await assertNotificationInbox(page);
     await page.getByRole('link', { name: 'Child assignment' }).click();
     await expect(page).toHaveURL(/#\/players\/synthetic\/child\/resources$/);
+});
+
+test('family resource readiness waits for its loader while preserving the shell notification live region', async ({ page }) => {
+    await page.setContent('<div role="status" aria-label="Notification status"></div><section aria-labelledby="resources"><h2 id="resources">Practice resources</h2><p role="status">Loading practice resources…</p></section>');
+    const ready = assertResourcePacketFamilyReady(page);
+    await page.evaluate(() => setTimeout(() => {
+        document.querySelector('section [role="status"]').replaceWith(Object.assign(document.createElement('p'), { textContent: 'No resource packets assigned to Synthetic child.' }));
+    }, 100));
+    await ready;
+    await expect(page.getByRole('status', { name: 'Notification status' })).toHaveCount(1);
+    await expect(page.getByText('No resource packets assigned to Synthetic child.')).toBeVisible();
+});
+
+test('family resource readiness rejects a route error even with a shell notification live region', async ({ page }) => {
+    await page.setContent('<div role="status" aria-label="Notification status"></div><section aria-labelledby="resources"><h2 id="resources">Practice resources</h2><div role="alert">Unable to load assignments.</div></section>');
+    await expect(assertResourcePacketFamilyReady(page)).rejects.toThrow();
 });
