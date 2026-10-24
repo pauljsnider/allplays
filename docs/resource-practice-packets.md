@@ -42,7 +42,10 @@ is retained without being relabeled as verified playback. Co-guardians share
 child completion; one child's click never completes a sibling's task.
 
 Contextual AI entry points prepare editable coaching assistance or reminder text
-and answer authorized progress questions. Existing write actions require explicit
+and answer authorized progress questions. Composer help opens a new tab with every
+video, the coaching note, audience, due date, practice and notification choice;
+the original unsaved composer stays open. Return to that tab to keep editing.
+Opening AI does not save or publish. Existing write actions require explicit
 confirmation and revalidate permissions/revisions. AI cannot inspect linked video
 content, claim playback, record an open, or silently notify families. Manual
 sharing and progress review do not require AI.

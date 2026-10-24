@@ -215,6 +215,41 @@ describe('ResourcePackets', () => {
     );
   });
 
+  it('carries the full existing composition into AI without navigating away or writing', async () => {
+    renderPage();
+    await screen.findByRole('heading', { name: 'Home footwork' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit assignment' }));
+    fireEvent.change(screen.getByLabelText('Coaching note (optional)'), { target: { value: 'Keep your eyes up.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add another video' }));
+    fireEvent.change(screen.getByLabelText('Video link 2'), { target: { value: 'https://example.com/second' } });
+    fireEvent.change(screen.getByLabelText('Video title 2'), { target: { value: 'Second exercise' } });
+    fireEvent.change(screen.getByLabelText(/Due date \(/), { target: { value: '2026-11-01T18:30' } });
+    const link = screen.getByRole('link', { name: 'Help me with AI (new tab)' });
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    const destination = new URL(link.getAttribute('href')!, 'https://example.invalid');
+    const prompt = destination.searchParams.get('prompt')!;
+    const composition = JSON.parse(prompt.split('Composition: ')[1]);
+    expect(composition).toMatchObject({
+      teamId: 'team-1',
+      assignmentId: 'packet-1',
+      expectedRevision: 4,
+      title: 'Home footwork',
+      notes: 'Keep your eyes up.',
+      playerIds: ['player-1'],
+      dueLocal: '2026-11-01T18:30',
+      notify: false,
+      items: [
+        { resourceId: 'resource-1', resourceVersion: 1, url: 'https://example.com/balance' },
+        { resourceVersion: 0, url: 'https://example.com/second', title: 'Second exercise' }
+      ]
+    });
+    expect(prompt).toContain('explicit confirmation before any save, publication or notification');
+    expect(resourcePacketMocks.resourcePacketCommand).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Coaching note (optional)')).toHaveValue('Keep your eyes up.');
+    expect(screen.getByLabelText('Video link 2')).toHaveValue('https://example.com/second');
+  });
+
   it('shows a recoverable publication error without discarding the composer', async () => {
     resourcePacketMocks.resourcePacketCommand.mockRejectedValue(new Error('Offline: retry when connected.'));
     renderPage();
