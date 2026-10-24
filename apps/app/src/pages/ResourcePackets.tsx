@@ -12,6 +12,7 @@ import {
 } from '../lib/resourcePacketsService';
 import { loadTeamDrillLibraryPage, type TeamDrillSummary } from '../lib/teamDrillsService';
 import { assignmentAiPath, assignmentProgress, videoPreview } from '../lib/resourceAssignmentPresentation';
+import { assignmentComposition, compositionLabels, reconcileAssignment, type AssignmentComposition } from '../lib/assignmentConflict';
 import { Modal } from '../components/Modal';
 import { VideoCard } from '../components/assignments/VideoCard';
 
@@ -43,6 +44,11 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
   const originalItems = useRef(new Map<string, EditableItem>());
   const resourceCache = useRef(new Map<string, PacketResource>());
   const [pendingPublication, setPendingPublication] = useState<Record<string, unknown> | null>(null);
+  const compositionBase = useRef<AssignmentComposition | null>(null);
+  const [needsReconcile, setNeedsReconcile] = useState(false);
+  const [resourceConflictId, setResourceConflictId] = useState('');
+  const [reconcileReady, setReconcileReady] = useState(false);
+  const [choices, setChoices] = useState<Partial<Record<keyof AssignmentComposition, 'mine' | 'latest'>>>({});
   const [notify, setNotify] = useState(true);
   const [preview, setPreview] = useState(false);
   const [search, setSearch] = useState('');
@@ -71,7 +77,10 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
         }
         view.cursors = next.cursors;
       }
-      if (!cancelled) setData(view);
+      if (!cancelled) {
+        setData(view);
+        setReconcileReady(true);
+      }
     })().catch((cause) => {
       if (!cancelled) setError(cause instanceof Error ? cause.message : 'Unable to load assignments.');
     });
@@ -80,7 +89,11 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
     };
   }, [uid, teamId, refresh]);
   function start(row?: PacketAssignment) {
-    const nextItems = row ? row.items.map((item) => ({ ...item, version: item.resourceVersion })) : [blankItem()];
+    const nextItems = row ? assignmentComposition(row).items : [blankItem()];
+    compositionBase.current = row ? assignmentComposition(row) : null;
+    setNeedsReconcile(false);
+    setResourceConflictId('');
+    setChoices({});
     originalItems.current = new Map(nextItems.map((item) => [item.resourceId, item]));
     setAssignmentId(row?.assignmentId || crypto.randomUUID());
     setRevision(row?.revision || 0);
@@ -116,10 +129,11 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
   }
   async function send(event: FormEvent) {
     event.preventDefault();
-    if (!uid || !data) return;
+    if (!uid || !data || needsReconcile || resourceConflictId) return;
     setBusy(true);
     setError('');
     setStatus('');
+    let savingResourceId = '';
     try {
       if (pendingPublication) {
         await resourcePacketCommand(uid, pendingPublication);
@@ -143,11 +157,24 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
           saved[i] = original;
           continue;
         }
+        if (
+          cached &&
+          cached.version === item.version &&
+          cached.title === item.title &&
+          cached.url === item.url &&
+          cached.teachingPoint === item.teachingPoint
+        ) {
+          // A completed partial resource save is an immutable selection. A newer
+          // library head must not turn an assignment retry into another library write.
+          saved[i] = cached;
+          continue;
+        }
         if (existing && existing.title === item.title && existing.url === item.url && existing.teachingPoint === item.teachingPoint) {
           saved[i] = existing;
           continue;
         }
         // Revision checks prevent overwriting a newer resource edit.
+        savingResourceId = item.resourceId;
         saved[i] = (await resourcePacketCommand(uid, {
           teamId,
           action: 'saveResource',
@@ -158,6 +185,7 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
           teachingPoint: item.teachingPoint,
           ...(item.drillId ? { drillId: item.drillId } : {})
         })) as PacketResource;
+        savingResourceId = '';
         resourceCache.current.set(saved[i].resourceId, saved[i]);
         setItems([...saved]);
       }
@@ -176,6 +204,7 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
       })) as PacketAssignment;
       setRevision(draft.revision);
+      compositionBase.current = { title: title.trim() || saved[0].title, notes, items: saved, players, due, practiceId };
       const publication = { teamId, action: 'publish', assignmentId, expectedRevision: draft.revision, confirm: true, notify };
       setPendingPublication(publication);
       const result = (await resourcePacketCommand(uid, publication)) as { revision: number };
@@ -196,12 +225,72 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
         )
       ) {
         setPendingPublication(null);
+        if (code === 'functions/aborted' && savingResourceId) {
+          setReconcileReady(false);
+          setResourceConflictId(savingResourceId);
+        } else if (code === 'functions/aborted' && compositionBase.current) {
+          setReconcileReady(false);
+          setNeedsReconcile(true);
+          setChoices({});
+        }
         setRefresh((value) => value + 1);
       }
       setError(cause instanceof Error ? cause.message : 'Unable to share. Your work is still here; retry when ready.');
     } finally {
       setBusy(false);
     }
+  }
+  const latestAssignment = data?.assignments.find((row) => row.assignmentId === assignmentId);
+  const latestComposition = latestAssignment ? assignmentComposition(latestAssignment) : null;
+  const reconciliation =
+    needsReconcile && reconcileReady && latestComposition && compositionBase.current
+      ? reconcileAssignment(compositionBase.current, { title, notes, items, players, due, practiceId }, latestComposition)
+      : null;
+  function applyReconciliation() {
+    if (!latestAssignment || !latestComposition || !reconciliation || reconciliation.conflicts.some((key) => !choices[key])) return;
+    const merged = { ...reconciliation.merged };
+    for (const key of reconciliation.conflicts) {
+      if (choices[key] === 'latest') Object.assign(merged, { [key]: latestComposition[key] });
+    }
+    const originals = new Map(latestComposition.items.map((item) => [item.resourceId, item]));
+    for (const item of merged.items) {
+      const prior = originalItems.current.get(item.resourceId);
+      if (
+        prior &&
+        prior.title === item.title &&
+        prior.url === item.url &&
+        prior.teachingPoint === item.teachingPoint &&
+        prior.version === item.version
+      ) {
+        originals.set(item.resourceId, prior);
+      }
+    }
+    originalItems.current = originals;
+    compositionBase.current = latestComposition;
+    setRevision(latestAssignment.revision);
+    setTitle(merged.title);
+    setNotes(merged.notes);
+    setItems(merged.items);
+    setPlayers(merged.players);
+    setDue(merged.due);
+    setPracticeId(merged.practiceId);
+    setNeedsReconcile(false);
+    setChoices({});
+    setError('');
+    setStatus('Draft reconciled. Review it, then share when ready. Nothing has been sent.');
+  }
+  function conflictValue(value: AssignmentComposition[keyof AssignmentComposition]) {
+    if (Array.isArray(value))
+      return (
+        value
+          .map((item) =>
+            typeof item === 'string'
+              ? data?.players.find((player) => player.id === item)?.name || item
+              : `${item.title}: ${item.url} (version ${item.version}). ${item.teachingPoint || ''}`
+          )
+          .join('; ') || 'None'
+      );
+    return value || 'None';
   }
   if (!resourcePacketsAvailable()) return <main className="p-4">Assignments are not available in this app.</main>;
   const current = data?.assignments.find((row) => row.assignmentId === selected);
@@ -242,9 +331,94 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
         </p>
       )}
       {!data && !error && <p role="status">Loading assignments and progress…</p>}
+      {editing && resourceConflictId && (
+        <section aria-label="Resolve video changes" className="space-y-4 rounded-xl border border-amber-400 bg-amber-50 p-4">
+          <h2 className="text-lg font-bold">This library video changed while you were editing</h2>
+          <p>
+            Your edited video is still in the draft. Save it as a separate resource to keep both coaches’ changes, or use the latest library
+            video.
+          </p>
+          {reconcileReady && data?.resources.find((item) => item.resourceId === resourceConflictId) && (
+            <p>Latest library video: {conflictValue([data.resources.find((item) => item.resourceId === resourceConflictId)!])}</p>
+          )}
+          <button
+            type="button"
+            className={primary}
+            disabled={!reconcileReady}
+            onClick={() => {
+              setItems((old) =>
+                old.map((item) =>
+                  item.resourceId === resourceConflictId ? { ...item, resourceId: crypto.randomUUID(), version: 0 } : item
+                )
+              );
+              setResourceConflictId('');
+              setError('');
+            }}
+          >
+            Keep my video as a separate resource
+          </button>
+          <button
+            type="button"
+            className={secondary}
+            disabled={!reconcileReady || !data?.resources.some((item) => item.resourceId === resourceConflictId)}
+            onClick={() => {
+              const latest = data?.resources.find((item) => item.resourceId === resourceConflictId);
+              if (!latest) return;
+              originalItems.current.set(latest.resourceId, latest);
+              setItems((old) => old.map((item) => (item.resourceId === resourceConflictId ? latest : item)));
+              setResourceConflictId('');
+              setError('');
+            }}
+          >
+            Use latest library video
+          </button>
+        </section>
+      )}
+      {editing && needsReconcile && (
+        <section aria-label="Resolve assignment changes" className="space-y-4 rounded-xl border border-amber-400 bg-amber-50 p-4">
+          <h2 className="text-lg font-bold">This assignment changed while you were editing</h2>
+          <p>
+            Your draft is still here. Untouched fields will use the latest assignment. Choose which changes to keep where both versions
+            differ.
+          </p>
+          {reconciliation ? (
+            <>
+              {reconciliation.conflicts.map((key) => (
+                <fieldset key={key} className="space-y-2">
+                  <legend className="font-bold">{compositionLabels[key]}</legend>
+                  {(['mine', 'latest'] as const).map((choice) => (
+                    <label key={choice} className="flex min-h-12 items-start gap-3 rounded-lg border bg-white p-3">
+                      <input
+                        type="radio"
+                        name={`conflict-${key}`}
+                        checked={choices[key] === choice}
+                        onChange={() => setChoices((old) => ({ ...old, [key]: choice }))}
+                      />
+                      <span>
+                        {choice === 'mine' ? 'My draft' : 'Latest assignment'}:{' '}
+                        {conflictValue(choice === 'mine' ? reconciliation.merged[key] : latestComposition![key])}
+                      </span>
+                    </label>
+                  ))}
+                </fieldset>
+              ))}
+              <button
+                type="button"
+                className={primary}
+                disabled={reconciliation.conflicts.some((key) => !choices[key])}
+                onClick={applyReconciliation}
+              >
+                Update draft with these choices
+              </button>
+            </>
+          ) : (
+            <p>The latest assignment is unavailable. Reload assignments to try again. Your draft has not been discarded.</p>
+          )}
+        </section>
+      )}
       {data && editing ? (
         <form onSubmit={(event) => void send(event)} className="space-y-5 rounded-2xl border bg-white p-4 sm:p-6">
-          <fieldset disabled={busy || Boolean(pendingPublication)} className="space-y-5">
+          <fieldset disabled={busy || Boolean(pendingPublication) || needsReconcile || Boolean(resourceConflictId)} className="space-y-5">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-xl font-bold">{revision ? 'Edit assignment' : 'Share a video'}</h2>
               <button type="button" disabled={busy} className={secondary} onClick={() => setEditing(false)}>
@@ -519,7 +693,11 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
               {items.length} video{items.length === 1 ? '' : 's'} · {players.length} player{players.length === 1 ? '' : 's'} ·{' '}
               {notify ? 'Notify eligible families using their preferences' : 'No notifications'}
             </p>
-            <button className={`${primary} w-full`} disabled={busy || !players.length} type="submit">
+            <button
+              className={`${primary} w-full`}
+              disabled={busy || needsReconcile || Boolean(resourceConflictId) || !players.length}
+              type="submit"
+            >
               {busy ? 'Sharing…' : notify ? 'Assign & notify' : 'Assign without notifying'}
             </button>
           </div>

@@ -191,6 +191,27 @@ createRoot(document.getElementById('root')).render(<App />);
   await refreshParent();
   await expect(parent.page.getByText('Corrected coaching instruction.')).toBeVisible();
   await expect(parent.page.getByRole('button', { name: 'Watch again' })).toBeVisible();
+  // A concurrent server edit must not trap the existing composer at its old revision.
+  await staff.page.getByRole('button', { name: 'Edit assignment', exact: true }).click();
+  await staff.page.getByLabel('Coaching note (optional)').fill('Corrected coaching instruction.');
+  const concurrentDoc = (await db.collection('resourcePacketTeams/web-team/assignments').get()).docs[0];
+  await concurrentDoc.ref.update({ revision: concurrentDoc.data().revision + 1, title: 'Concurrent coach title' });
+  await staff.page.getByRole('button', { name: 'Assign without notifying', exact: true }).click();
+  await expect(staff.page.getByRole('heading', { name: 'This assignment changed while you were editing' })).toBeVisible();
+  await expect(staff.page.getByRole('button', { name: 'Assign without notifying', exact: true })).toBeDisabled();
+  if (process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR) {
+    await staff.page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await staff.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await staff.page.screenshot({ path: join(process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR, 'assignment-conflict-mobile.png'), fullPage: true });
+  }
+  await staff.page.getByRole('button', { name: 'Update draft with these choices' }).click();
+  await staff.page.getByRole('button', { name: 'Assign without notifying', exact: true }).click();
+  await expect(staff.page.getByRole('status')).toContainText('Assignment shared');
+  const reconciledAssignment = (await concurrentDoc.ref.get()).data();
+  assert.equal(reconciledAssignment.title, 'Concurrent coach title');
+  assert.equal(reconciledAssignment.notes, 'Corrected coaching instruction.');
+  assert.equal(reconciledAssignment.items[0].resourceVersion, 1);
+  console.log('PASS: real callable revision conflict reconciles in place and preserves pinned media.');
   // A material URL replacement needs a new open; unchanged item progress is retained.
   await staff.page.getByRole('button', { name: 'Edit assignment', exact: true }).click();
   await staff.page.getByLabel('Video link 1').fill('https://example.com/removed');
@@ -227,7 +248,7 @@ createRoot(document.getElementById('root')).render(<App />);
   assert.equal((await db.collection('resourcePacketTeams/web-team/evidence').get()).size, beforeBlocked + 1);
   const playerSession = await session('web-player', { width: 390, height: 844 });
   await playerSession.page.getByRole('link', { name: 'web-child · Synthetic practice team' }).click();
-  await expect(playerSession.page.locator('article > h3').filter({ hasText: /^Home footwork$/ })).toBeVisible();
+  await expect(playerSession.page.locator('article > h3').filter({ hasText: /^Concurrent coach title$/ })).toBeVisible();
   const playerPopup = playerSession.page.waitForEvent('popup');
   await playerSession.page.getByRole('button', { name: 'Watch again' }).nth(1).tap();
   await expect((await playerPopup).getByRole('heading', { name: 'Synthetic external destination' })).toBeVisible();
@@ -271,7 +292,7 @@ createRoot(document.getElementById('root')).render(<App />);
     await shellPage.getByLabel('Password', { exact: true }).fill('LocalBrowserFixture-123!');
     await shellPage.locator('button[type="submit"]').filter({ hasText: 'Sign in' }).click();
     await expect(shellPage).toHaveURL(new RegExp(`#\\/players/web-team/web-child/resources\\?assignmentId=${assignmentId}`));
-    await expect(shellPage.locator('article > h3').filter({ hasText: /^Home footwork$/ })).toBeVisible();
+    await expect(shellPage.locator('article > h3').filter({ hasText: /^Concurrent coach title$/ })).toBeVisible();
     assert.deepEqual(shellErrors, [], 'Full app shell must not throw page errors');
     console.log('PASS: full App/Auth shell preserves exact child assignment through sign-in.');
     await shell.close();

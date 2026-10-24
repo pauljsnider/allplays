@@ -167,6 +167,148 @@ describe('ResourcePackets', () => {
     );
   });
 
+  it('reconciles an intervening assignment edit without losing the local note or overwriting the newer title', async () => {
+    const latest = { ...assignment, revision: 5, title: 'Another coach title' };
+    let attempts = 0;
+    resourcePacketMocks.resourcePacketCommand.mockImplementation(async (_uid, command) => {
+      if (command.action === 'saveDraft' && attempts++ === 0) {
+        resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue({ ...staffView, assignments: [latest] });
+        throw Object.assign(new Error('Assignment changed'), { code: 'functions/aborted' });
+      }
+      if (command.action === 'saveDraft') return { ...latest, revision: 6 };
+      if (command.action === 'publish') return { revision: 7 };
+      throw new Error('Unexpected command');
+    });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Home footwork' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit assignment' }));
+    fireEvent.change(screen.getByLabelText('Coaching note (optional)'), { target: { value: 'My unsaved note' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+    const reconcile = await screen.findByRole('button', { name: 'Update draft with these choices' });
+    expect(screen.getByRole('button', { name: 'Assign without notifying' })).toBeDisabled();
+    fireEvent.click(reconcile);
+    expect(screen.getByLabelText('Coaching note (optional)')).toHaveValue('My unsaved note');
+    fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+    await screen.findByText(/Assignment shared/);
+    const saves = resourcePacketMocks.resourcePacketCommand.mock.calls.map((call) => call[1]).filter((c) => c.action === 'saveDraft');
+    expect(saves.map((c) => c.expectedRevision)).toEqual([4, 5]);
+    expect(saves[1]).toMatchObject({ title: 'Another coach title', notes: 'My unsaved note', resourceVersions: [1] });
+  });
+
+  it('requires a choice for overlapping notes and can recover from a second intervening edit', async () => {
+    let attempts = 0;
+    resourcePacketMocks.resourcePacketCommand.mockImplementation(async (_uid, command) => {
+      if (command.action === 'saveDraft') {
+        attempts++;
+        if (attempts <= 2) {
+          resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue({
+            ...staffView,
+            assignments: [{ ...assignment, revision: 4 + attempts, notes: `Other note ${attempts}` }]
+          });
+          throw Object.assign(new Error('Assignment changed'), { code: 'functions/aborted' });
+        }
+        return { ...assignment, revision: 7 };
+      }
+      if (command.action === 'publish') return { revision: 8 };
+      throw new Error('Unexpected command');
+    });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Home footwork' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit assignment' }));
+    fireEvent.change(screen.getByLabelText('Coaching note (optional)'), { target: { value: 'My unsaved note' } });
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+      await screen.findByLabelText(`Latest assignment: Other note ${attempt}`);
+      expect(screen.getByRole('button', { name: 'Update draft with these choices' })).toBeDisabled();
+      fireEvent.click(screen.getByLabelText('My draft: My unsaved note'));
+      fireEvent.click(screen.getByRole('button', { name: 'Update draft with these choices' }));
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+    await screen.findByText(/Assignment shared/);
+    const saves = resourcePacketMocks.resourcePacketCommand.mock.calls.map((call) => call[1]).filter((c) => c.action === 'saveDraft');
+    expect(saves.map((c) => c.expectedRevision)).toEqual([4, 5, 6]);
+    expect(saves[2].notes).toBe('My unsaved note');
+  });
+
+  it.each(['Keep my video as a separate resource', 'Use latest library video'])(
+    'resolves a shared resource conflict explicitly: %s',
+    async (choice) => {
+      let resourceAttempts = 0;
+      const latest = { ...staffView.resources[0], version: 2, url: 'https://example.com/other-coach' };
+      resourcePacketMocks.resourcePacketCommand.mockImplementation(async (_uid, command) => {
+        if (command.action === 'saveResource') {
+          resourceAttempts++;
+          if (resourceAttempts === 1) {
+            resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue({ ...staffView, resources: [latest] });
+            throw Object.assign(new Error('Resource changed'), { code: 'functions/aborted' });
+          }
+          return { ...command, version: 1 };
+        }
+        if (command.action === 'saveDraft') return { ...assignment, revision: 5 };
+        if (command.action === 'publish') return { revision: 6 };
+        throw new Error('Unexpected command');
+      });
+      renderPage();
+      await screen.findByRole('heading', { name: 'Home footwork' });
+      fireEvent.click(screen.getByRole('button', { name: 'Edit assignment' }));
+      fireEvent.change(screen.getByLabelText('Video link 1'), { target: { value: 'https://example.com/my-edit' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+      await screen.findByText(/Latest library video:.*other-coach/);
+      expect(screen.queryByRole('button', { name: 'Update draft with these choices' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Assign without notifying' })).toBeDisabled();
+      fireEvent.click(screen.getByRole('button', { name: choice }));
+      fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+      await screen.findByText(/Assignment shared/);
+      const saves = resourcePacketMocks.resourcePacketCommand.mock.calls.map((call) => call[1]).filter((c) => c.action === 'saveResource');
+      if (choice === 'Use latest library video') {
+        expect(saves).toHaveLength(1);
+        expect(resourcePacketMocks.resourcePacketCommand).toHaveBeenCalledWith(
+          'coach-1',
+          expect.objectContaining({ action: 'saveDraft', resourceVersions: [2] })
+        );
+      } else {
+        expect(saves).toHaveLength(2);
+        expect(saves[1].resourceId).not.toBe('resource-1');
+        expect(saves[1]).toMatchObject({ expectedRevision: 0, url: 'https://example.com/my-edit' });
+      }
+    }
+  );
+
+  it('pins a successful partial media save when both the assignment and library advance before retry', async () => {
+    const local = { ...staffView.resources[0], version: 2, url: 'https://example.com/my-edit' };
+    const latest = { ...assignment, revision: 5, title: 'Other coach title' };
+    let drafts = 0;
+    resourcePacketMocks.resourcePacketCommand.mockImplementation(async (_uid, command) => {
+      if (command.action === 'saveResource') return local;
+      if (command.action === 'saveDraft' && drafts++ === 0) {
+        resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue({
+          ...staffView,
+          assignments: [latest],
+          resources: [{ ...local, version: 3, url: 'https://example.com/other-edit' }]
+        });
+        throw Object.assign(new Error('Assignment changed'), { code: 'functions/aborted' });
+      }
+      if (command.action === 'saveDraft') return { ...latest, revision: 6 };
+      if (command.action === 'publish') return { revision: 7 };
+      throw new Error('Unexpected command');
+    });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Home footwork' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit assignment' }));
+    fireEvent.change(screen.getByLabelText('Video link 1'), { target: { value: local.url } });
+    fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Update draft with these choices' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+    await screen.findByText(/Assignment shared/);
+    const commands = resourcePacketMocks.resourcePacketCommand.mock.calls.map((call) => call[1]);
+    expect(commands.filter((c) => c.action === 'saveResource')).toHaveLength(1);
+    expect(commands.filter((c) => c.action === 'saveDraft').slice(-1)[0]).toMatchObject({
+      expectedRevision: 5,
+      resourceVersions: [2],
+      title: 'Other coach title'
+    });
+  });
+
   it('keeps historical media and completion when a second assignment receives a note-only edit', async () => {
     const newerAssignment = {
       ...assignment,
@@ -276,7 +418,7 @@ describe('ResourcePackets', () => {
     );
   });
 
-  it('recovers from an intervening coach update using the refreshed server revision', async () => {
+  it('pins a successful partial resource save while correcting invalid assignment input', async () => {
     const normalCommand = resourcePacketMocks.resourcePacketCommand.getMockImplementation()!;
     let rejectDraft = true;
     resourcePacketMocks.resourcePacketCommand.mockImplementation(async (uid, command) => {
@@ -303,10 +445,10 @@ describe('ResourcePackets', () => {
     const saves = resourcePacketMocks.resourcePacketCommand.mock.calls
       .map((call) => call[1])
       .filter((command) => command.action === 'saveResource');
-    expect(saves.map((command) => command.expectedRevision)).toEqual([1, 3]);
+    expect(saves.map((command) => command.expectedRevision)).toEqual([1]);
     expect(resourcePacketMocks.resourcePacketCommand).toHaveBeenCalledWith(
       'coach-1',
-      expect.objectContaining({ action: 'saveDraft', resourceVersions: [4] })
+      expect.objectContaining({ action: 'saveDraft', resourceVersions: [2] })
     );
   });
 
