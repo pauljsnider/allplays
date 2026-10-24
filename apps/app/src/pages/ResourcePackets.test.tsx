@@ -127,6 +127,30 @@ describe('ResourcePackets', () => {
     );
   });
 
+  it('reconciles an assignment resource snapshot before saving a note-only edit', async () => {
+    resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue({
+      ...staffView,
+      resources: [
+        {
+          resourceId: 'resource-1',
+          version: 2,
+          title: 'Updated balance drill',
+          teachingPoint: 'Keep your hips level.',
+          url: 'https://example.com/updated-balance'
+        }
+      ]
+    });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Home footwork' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit assignment' }));
+    expect(screen.getByLabelText('Video title 1')).toHaveValue('Updated balance drill');
+    expect(screen.getByLabelText('Video link 1')).toHaveValue('https://example.com/updated-balance');
+    fireEvent.change(screen.getByLabelText('Coaching note (optional)'), { target: { value: 'Updated instruction.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+    await screen.findByText(/Assignment shared/);
+    expect(resourcePacketMocks.resourcePacketCommand.mock.calls.map((call) => call[1].action)).toEqual(['saveDraft', 'publish']);
+  });
+
   it('shows a recoverable publication error without discarding the composer', async () => {
     resourcePacketMocks.resourcePacketCommand.mockRejectedValue(new Error('Offline: retry when connected.'));
     renderPage();

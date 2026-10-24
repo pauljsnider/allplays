@@ -84,7 +84,15 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
     setRevision(row?.revision || 0);
     setTitle(row?.title || '');
     setNotes(row?.notes || '');
-    setItems(row ? row.items.map((item) => ({ ...item, version: item.resourceVersion })) : [blankItem()]);
+    setItems(
+      row
+        ? row.items.map((item) => {
+            const current =
+              resourceCache.current.get(item.resourceId) || data!.resources.find((resource) => resource.resourceId === item.resourceId);
+            return current || { ...item, version: item.resourceVersion };
+          })
+        : [blankItem()]
+    );
     setPlayers(row?.playerIds || data!.players.map((player) => player.id));
     const date = row?.dueAt ? new Date(row.dueAt) : null;
     setDue(date ? new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '');
