@@ -269,3 +269,11 @@ export async function assertNotificationInbox(page) {
     await inbox.getByRole('button', { name: 'Close notifications', exact: true }).click();
     await expect(inbox).not.toBeVisible();
 }
+
+export async function assertResourcePacketFamilyReady(page, heading = 'Practice resources') {
+    const content = page.getByRole('region', { name: heading, exact: true });
+    await expect(content).toBeVisible();
+    // AppShell keeps a permanent notification live region outside route content.
+    await expect(content.getByRole('status')).toHaveCount(0, { timeout: 30000 });
+    await expect(content.getByRole('alert')).toHaveCount(0);
+}
