@@ -397,25 +397,103 @@ describe('ResourcePackets', () => {
     );
   });
 
-  it('uses the known current library revision for a new replacement of historical media', async () => {
-    resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue({
-      ...staffView,
-      resources: [{ ...staffView.resources[0], version: 2, url: 'https://example.com/library-update' }]
+  it.each(['Keep my video as a separate resource', 'Use latest library video'])(
+    'requires a decision before replacing historical media: %s',
+    async (choice) => {
+      resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue({
+        ...staffView,
+        resources: [
+          {
+            ...staffView.resources[0],
+            version: 2,
+            title: 'New library title',
+            teachingPoint: 'New library instruction',
+            url: 'https://example.com/library-update'
+          }
+        ]
+      });
+      renderPage();
+      await screen.findByRole('heading', { name: 'Home footwork' });
+      fireEvent.click(screen.getByRole('button', { name: 'Edit assignment' }));
+      fireEvent.change(screen.getByLabelText('Video link 1'), { target: { value: 'https://example.com/replacement' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+      await screen.findByText(/Latest library video:.*New library title/);
+      expect(resourcePacketMocks.resourcePacketCommand).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: choice }));
+      fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+      await screen.findByText(/Assignment shared/);
+      const commands = resourcePacketMocks.resourcePacketCommand.mock.calls.map((call) => call[1]);
+      const saves = commands.filter((c) => c.action === 'saveResource');
+      if (choice === 'Use latest library video') {
+        expect(saves).toHaveLength(0);
+        expect(commands.find((c) => c.action === 'saveDraft')).toMatchObject({ resourceIds: ['resource-1'], resourceVersions: [2] });
+      } else {
+        expect(saves).toHaveLength(1);
+        expect(saves[0].resourceId).not.toBe('resource-1');
+        expect(saves[0]).toMatchObject({ expectedRevision: 0, url: 'https://example.com/replacement' });
+      }
+    }
+  );
+
+  it('requires a decision when editing a partial save after the library advances', async () => {
+    const normalCommand = resourcePacketMocks.resourcePacketCommand.getMockImplementation()!;
+    let rejectDraft = true;
+    resourcePacketMocks.resourcePacketCommand.mockImplementation(async (uid, command) => {
+      if (command.action === 'saveDraft' && rejectDraft) {
+        rejectDraft = false;
+        resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue({
+          ...staffView,
+          resources: [{ ...staffView.resources[0], version: 3, title: 'Other coach title', url: 'https://example.com/other' }]
+        });
+        throw Object.assign(new Error('Correct the note.'), { code: 'functions/invalid-argument' });
+      }
+      return normalCommand(uid, command);
     });
     renderPage();
     await screen.findByRole('heading', { name: 'Home footwork' });
     fireEvent.click(screen.getByRole('button', { name: 'Edit assignment' }));
-    fireEvent.change(screen.getByLabelText('Video link 1'), { target: { value: 'https://example.com/replacement' } });
+    fireEvent.change(screen.getByLabelText('Video link 1'), { target: { value: 'https://example.com/partial' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+    await screen.findByText('Correct the note.');
+    await waitFor(() => expect(resourcePacketMocks.loadResourcePacketStaff).toHaveBeenCalledTimes(2));
+    fireEvent.change(screen.getByLabelText('Video title 1'), { target: { value: 'My subsequent edit' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+    await screen.findByRole('heading', { name: 'This library video changed while you were editing' });
+    expect(resourcePacketMocks.resourcePacketCommand.mock.calls.filter((call) => call[1].action === 'saveResource')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Keep my video as a separate resource' }));
     fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
     await screen.findByText(/Assignment shared/);
-    expect(resourcePacketMocks.resourcePacketCommand).toHaveBeenCalledWith(
-      'coach-1',
-      expect.objectContaining({ action: 'saveResource', expectedRevision: 2, url: 'https://example.com/replacement' })
-    );
-    expect(resourcePacketMocks.resourcePacketCommand).toHaveBeenCalledWith(
-      'coach-1',
-      expect.objectContaining({ action: 'saveDraft', resourceVersions: [3] })
-    );
+    const saves = resourcePacketMocks.resourcePacketCommand.mock.calls.map((call) => call[1]).filter((c) => c.action === 'saveResource');
+    expect(saves).toHaveLength(2);
+    expect(saves[1]).toMatchObject({ expectedRevision: 0, title: 'My subsequent edit' });
+    expect(saves[1].resourceId).not.toBe('resource-1');
+  });
+
+  it.each([
+    [2, 3],
+    [11, 13]
+  ])('loads unequal collection page counts %i/%i without duplicates or cycling', async (resourcePages, assignmentPages) => {
+    resourcePacketMocks.loadResourcePacketStaff.mockImplementation(async (_team, cursors) => {
+      const r = Number(cursors?.resources || 0);
+      const a = Number(cursors?.assignments || 0);
+      return {
+        ...staffView,
+        resources: [{ ...staffView.resources[0], resourceId: `resource-${r}` }],
+        assignments: [{ ...assignment, assignmentId: `assignment-${a}`, title: `Assignment page ${a}` }],
+        players: [...staffView.players],
+        tasks: [],
+        practices: [],
+        deliveries: [],
+        cursors: { resources: r + 1 < resourcePages ? String(r + 1) : null, assignments: a + 1 < assignmentPages ? String(a + 1) : null }
+      };
+    });
+    renderPage();
+    await screen.findByRole('heading', { name: `Assignment page ${assignmentPages - 1}` });
+    expect(resourcePacketMocks.loadResourcePacketStaff).toHaveBeenCalledTimes(assignmentPages);
+    expect(screen.getAllByRole('heading', { name: /Assignment page/ })).toHaveLength(assignmentPages);
+    fireEvent.click(screen.getByRole('button', { name: 'Share a video' }));
+    expect(screen.getAllByLabelText('Player One')).toHaveLength(1);
+    expect(screen.getByLabelText('Player One')).toBeChecked();
   });
 
   it('pins a successful partial resource save while correcting invalid assignment input', async () => {

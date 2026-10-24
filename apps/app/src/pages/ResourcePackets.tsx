@@ -71,11 +71,14 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
       // Counts and whole-team selection must never use a truncated roster/task page.
       for (let page = 0; Object.values(view.cursors).some(Boolean); page++) {
         if (page >= 100) throw new Error('Too many assignments to load safely. Please contact support.');
-        const next = await loadResourcePacketStaff(teamId, view.cursors);
-        for (const key of ['resources', 'assignments', 'tasks', 'players', 'practices', 'deliveries'] as const) {
+        const active = (['resources', 'assignments', 'tasks', 'players', 'practices', 'deliveries'] as const).filter((key) =>
+          Boolean(view.cursors[key])
+        );
+        const next = await loadResourcePacketStaff(teamId, { ...view.cursors });
+        for (const key of active) {
           (view[key] as unknown[]).push(...next[key]);
+          view.cursors[key] = next.cursors[key] || null;
         }
-        view.cursors = next.cursors;
       }
       if (!cancelled) {
         setData(view);
@@ -173,6 +176,13 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
           saved[i] = existing;
           continue;
         }
+        if (existing && existing.version > item.version) {
+          // The loaded library head is newer than the composition's base. Do
+          // not silently adopt its revision to write older metadata over it.
+          setResourceConflictId(item.resourceId);
+          setReconcileReady(true);
+          return;
+        }
         // Revision checks prevent overwriting a newer resource edit.
         savingResourceId = item.resourceId;
         saved[i] = (await resourcePacketCommand(uid, {
@@ -240,6 +250,10 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
       setBusy(false);
     }
   }
+  const loadedConflict = data?.resources.find((item) => item.resourceId === resourceConflictId);
+  const cachedConflict = resourceCache.current.get(resourceConflictId);
+  const conflictResource =
+    cachedConflict && (!loadedConflict || cachedConflict.version > loadedConflict.version) ? cachedConflict : loadedConflict;
   const latestAssignment = data?.assignments.find((row) => row.assignmentId === assignmentId);
   const latestComposition = latestAssignment ? assignmentComposition(latestAssignment) : null;
   const reconciliation =
@@ -338,9 +352,7 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
             Your edited video is still in the draft. Save it as a separate resource to keep both coaches’ changes, or use the latest library
             video.
           </p>
-          {reconcileReady && data?.resources.find((item) => item.resourceId === resourceConflictId) && (
-            <p>Latest library video: {conflictValue([data.resources.find((item) => item.resourceId === resourceConflictId)!])}</p>
-          )}
+          {reconcileReady && conflictResource && <p>Latest library video: {conflictValue([conflictResource])}</p>}
           <button
             type="button"
             className={primary}
@@ -360,9 +372,9 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
           <button
             type="button"
             className={secondary}
-            disabled={!reconcileReady || !data?.resources.some((item) => item.resourceId === resourceConflictId)}
+            disabled={!reconcileReady || !conflictResource}
             onClick={() => {
-              const latest = data?.resources.find((item) => item.resourceId === resourceConflictId);
+              const latest = conflictResource;
               if (!latest) return;
               originalItems.current.set(latest.resourceId, latest);
               setItems((old) => old.map((item) => (item.resourceId === resourceConflictId ? latest : item)));
