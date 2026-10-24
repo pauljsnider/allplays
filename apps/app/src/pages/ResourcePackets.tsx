@@ -60,7 +60,6 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
   useEffect(() => {
     if (!uid || !resourcePacketsAvailable()) return;
     let cancelled = false;
-    setError('');
     void (async () => {
       const view = await loadResourcePacketStaff(teamId);
       // Counts and whole-team selection must never use a truncated roster/task page.
@@ -123,8 +122,11 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
         const existing =
           resourceCache.current.get(item.resourceId) || data.resources.find((resource) => resource.resourceId === item.resourceId);
         const original = originalItems.current.get(item.resourceId);
-        if (original && original.title === item.title && original.url === item.url && original.teachingPoint === item.teachingPoint)
+        if (original && original.title === item.title && original.url === item.url && original.teachingPoint === item.teachingPoint) {
+          // A prior partial save may have advanced item.version before the coach reverted its contents.
+          saved[i] = original;
           continue;
+        }
         if (existing && existing.title === item.title && existing.url === item.url && existing.teachingPoint === item.teachingPoint) {
           saved[i] = existing;
           continue;
@@ -134,7 +136,7 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
           teamId,
           action: 'saveResource',
           resourceId: item.resourceId,
-          expectedRevision: item.version,
+          expectedRevision: existing?.version ?? item.version,
           title: item.title,
           url: item.url,
           teachingPoint: item.teachingPoint,
@@ -207,7 +209,13 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
       {error && (
         <div role="alert" className="rounded-xl bg-red-50 p-4 text-red-900">
           {error}{' '}
-          <button className="min-h-12 underline" onClick={() => setRefresh((value) => value + 1)}>
+          <button
+            className="min-h-12 underline"
+            onClick={() => {
+              setError('');
+              setRefresh((value) => value + 1);
+            }}
+          >
             Reload assignments
           </button>
         </div>

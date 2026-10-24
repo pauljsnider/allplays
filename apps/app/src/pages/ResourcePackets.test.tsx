@@ -215,6 +215,57 @@ describe('ResourcePackets', () => {
     );
   });
 
+  it('uses the known current library revision for a new replacement of historical media', async () => {
+    resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue({
+      ...staffView,
+      resources: [{ ...staffView.resources[0], version: 2, url: 'https://example.com/library-update' }]
+    });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Home footwork' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit assignment' }));
+    fireEvent.change(screen.getByLabelText('Video link 1'), { target: { value: 'https://example.com/replacement' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+    await screen.findByText(/Assignment shared/);
+    expect(resourcePacketMocks.resourcePacketCommand).toHaveBeenCalledWith(
+      'coach-1',
+      expect.objectContaining({ action: 'saveResource', expectedRevision: 2, url: 'https://example.com/replacement' })
+    );
+    expect(resourcePacketMocks.resourcePacketCommand).toHaveBeenCalledWith(
+      'coach-1',
+      expect.objectContaining({ action: 'saveDraft', resourceVersions: [3] })
+    );
+  });
+
+  it('restores the original resource version when reverting after a partial save failure', async () => {
+    const normalCommand = resourcePacketMocks.resourcePacketCommand.getMockImplementation()!;
+    let rejectDraft = true;
+    resourcePacketMocks.resourcePacketCommand.mockImplementation(async (uid, command) => {
+      if (command.action === 'saveDraft' && rejectDraft) {
+        rejectDraft = false;
+        throw Object.assign(new Error('Draft rejected; correct the note and retry.'), { code: 'functions/invalid-argument' });
+      }
+      return normalCommand(uid, command);
+    });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Home footwork' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit assignment' }));
+    fireEvent.change(screen.getByLabelText('Video link 1'), { target: { value: 'https://example.com/replacement' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+    await screen.findByText('Draft rejected; correct the note and retry.');
+    fireEvent.change(screen.getByLabelText('Video link 1'), { target: { value: 'https://example.com/balance' } });
+    fireEvent.change(screen.getByLabelText('Coaching note (optional)'), { target: { value: 'Keep the original exercise.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+    await screen.findByText(/Assignment shared/);
+    const commands = resourcePacketMocks.resourcePacketCommand.mock.calls.map((call) => call[1]);
+    expect(commands.filter((command) => command.action === 'saveResource')).toHaveLength(1);
+    const drafts = commands.filter((command) => command.action === 'saveDraft');
+    expect(drafts[drafts.length - 1]).toMatchObject({
+      resourceIds: ['resource-1'],
+      resourceVersions: [1],
+      notes: 'Keep the original exercise.'
+    });
+  });
+
   it('carries the full existing composition into AI without navigating away or writing', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'Home footwork' });

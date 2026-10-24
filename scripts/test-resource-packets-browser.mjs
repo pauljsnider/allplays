@@ -169,9 +169,22 @@ createRoot(document.getElementById('root')).render(<App />);
   const outsider = await session('web-other'); await expect(outsider.page.getByRole('alert')).toContainText('not linked');
   // Publish, edit, and publish again without losing the returned revision or completion.
   await staff.page.getByRole('button', { name: 'Edit assignment', exact: true }).click();
+  // Resource saving can succeed before invalid draft notes fail. Reverting the
+  // visible media must restore its original version, not silently select v2.
+  await staff.page.getByLabel('Video link 1').fill('https://example.com/partial-replacement');
+  await staff.page.getByLabel('Coaching note (optional)').fill('   ');
+  await staff.page.getByRole('button', { name: 'Assign without notifying', exact: true }).click();
+  await expect(staff.page.getByRole('alert')).toContainText('Enter a valid packet notes.');
+  const partialResource = (await db.collection('resourcePacketTeams/web-team/resources').get()).docs[0].data();
+  assert.equal(partialResource.url, 'https://example.com/partial-replacement');
+  assert.equal(partialResource.version, 2);
+  await staff.page.getByLabel('Video link 1').fill('https://example.com/footwork');
   await staff.page.getByLabel('Coaching note (optional)').fill('Corrected coaching instruction.');
   await staff.page.getByRole('button', { name: 'Assign without notifying', exact: true }).click();
   await expect(staff.page.getByRole('status')).toContainText('Assignment shared');
+  const revertedAssignment = (await db.collection('resourcePacketTeams/web-team/assignments').get()).docs[0].data();
+  assert.equal(revertedAssignment.items[0].url, 'https://example.com/footwork');
+  assert.equal(revertedAssignment.items[0].resourceVersion, 1);
   async function refreshParent() {
     await parent.page.reload(); await parent.page.getByLabel('Fixture identity').selectOption('web-parent'); await parent.page.getByRole('button', { name: 'Sign in to isolated fixture' }).click();
   }
