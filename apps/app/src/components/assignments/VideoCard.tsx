@@ -20,7 +20,7 @@ export function VideoCard({
     <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
       {preview?.thumbnail && failed !== url ? (
         <img
-          className="aspect-video w-full object-cover"
+          className="aspect-video max-h-48 w-full bg-gray-950 object-contain"
           src={preview.thumbnail}
           alt=""
           referrerPolicy="no-referrer"

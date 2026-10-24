@@ -3,16 +3,17 @@ import { Link } from 'react-router-dom';
 import { loadResourcePacketFamily, loadResourcePacketLinkedPlayers, type PacketTask } from '../../lib/resourcePacketsService';
 import { assignmentPath, assignmentProgress } from '../../lib/resourceAssignmentPresentation';
 
-export function HomeAssignments({ uid }: { uid: string }) {
-  return <FamilyAssignments key={uid} />;
+export function HomeAssignments({ uid, onCount }: { uid: string; onCount?: (count: number | null) => void }) {
+  return <FamilyAssignments key={uid} onCount={onCount} />;
 }
-function FamilyAssignments() {
+function FamilyAssignments({ onCount }: { onCount?: (count: number | null) => void }) {
   const [tasks, setTasks] = useState<PacketTask[] | null>(null);
   const [error, setError] = useState('');
   const [reload, setReload] = useState(0);
   useEffect(() => {
     let cancelled = false;
     setError('');
+    onCount?.(null);
     void (async () => {
       const { players } = await loadResourcePacketLinkedPlayers();
       const result: PacketTask[] = [];
@@ -27,14 +28,17 @@ function FamilyAssignments() {
           cursor = page.cursors.tasks || undefined;
         } while (cursor);
       }
-      if (!cancelled) setTasks(result);
+      if (!cancelled) {
+        setTasks(result);
+        onCount?.(result.filter((task) => !assignmentProgress(task).complete).length);
+      }
     })().catch(() => {
       if (!cancelled) setError('Video assignments could not load.');
     });
     return () => {
       cancelled = true;
     };
-  }, [reload]);
+  }, [reload, onCount]);
   const outstanding = tasks?.filter((task) => !assignmentProgress(task).complete);
   return (
     <section className="my-4 space-y-3 rounded-2xl border bg-white p-4" aria-label="Family video assignments">

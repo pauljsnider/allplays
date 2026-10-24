@@ -185,6 +185,7 @@ function handleParentCoreDrillInClick(
 }
 
 export function Home({ auth }: { auth: AuthState }) {
+  const [resourceOpenCount, setResourceOpenCount] = useState<number | null>(null);
   const [home, setHome] = useState<ParentHomeModel>(() => emptyHome());
   const [social, setSocial] = useState<SocialHomeModel>(() => emptySocialHome());
   const [activeSection, setActiveSection] = useState<HomeSectionId>('today');
@@ -489,7 +490,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const canRenderHomeSections = !loading || hasRenderableHome;
   const displayName = auth.user?.displayName || auth.user?.email || 'ALL PLAYS User';
   const standaloneActionCount = home.actionItems.filter((action) => action.kind === 'assignment' || action.kind === 'rideshare').length;
-  const openCount = home.metrics.rsvpNeeded + home.metrics.packetsReady + home.metrics.unreadMessages + home.fees.length + social.metrics.incomingRequests + standaloneActionCount;
+  const openCount = home.metrics.rsvpNeeded + home.metrics.packetsReady + home.metrics.unreadMessages + home.fees.length + social.metrics.incomingRequests + standaloneActionCount + (resourceOpenCount || 0);
   const today = new Date();
   const selectedComposerType = (searchParams.get('type') || 'manual_post') as SocialPostType;
   const homeSectionRoute = getHomeSectionRoute(activeSection);
@@ -614,11 +615,10 @@ export function Home({ auth }: { auth: AuthState }) {
             <div className="flex min-w-0 items-center gap-2">
               <span className="app-label">Home</span>
               <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] ${homeDetailsRefreshFailed ? 'bg-rose-50 text-rose-700' : homeDetailsPending ? 'bg-gray-100 text-gray-600' : openCount ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
-                {homeDetailsRefreshFailed ? 'Needs refresh' : homeDetailsPending ? 'Loading' : openCount ? `${openCount} open` : 'Caught up'}
+                {homeDetailsRefreshFailed ? 'Needs refresh' : homeDetailsPending ? 'Loading' : openCount ? `${openCount} open` : resourcePacketsAvailable() && resourceOpenCount === null ? 'Checking videos' : 'Caught up'}
               </span>
             </div>
             <h1 className="mt-0.5 text-xl font-black leading-tight text-gray-950">Your day</h1>
-            {resourcePacketsAvailable() && auth.user && <HomeAssignments uid={auth.user.uid} />}
             {resourcePacketsAvailable() && <Link className="inline-block min-h-11 py-3 text-sm font-semibold text-emerald-800 underline" to="/practice-resources">My player practice resources</Link>}
             <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">{displayName} · {getHomeRoleContext(auth, resolvedOfficialsAccess)}</p>
           </div>
@@ -637,7 +637,7 @@ export function Home({ auth }: { auth: AuthState }) {
           <PulseChip icon={UserRound} label="Players" value={String(home.metrics.players)} to="/home?section=players" />
           <PulseChip icon={Users} label="Teams" value={String(home.metrics.teams)} to="/home?section=teams" />
           <PulseChip icon={ClipboardCheck} label="RSVP" value={String(home.metrics.rsvpNeeded)} to={home.metrics.rsvpNeeded > 1 ? '/schedule?bulkRsvp=1' : '/schedule'} urgent={home.metrics.rsvpNeeded > 0} />
-          <PulseChip icon={ClipboardCheck} label="Packets" value={String(home.metrics.packetsReady)} to="/schedule?view=packets" urgent={home.metrics.packetsReady > 0} />
+          <PulseChip icon={ClipboardCheck} label="Packets" value={String(home.metrics.packetsReady + (resourceOpenCount || 0))} to="/schedule?view=packets" urgent={home.metrics.packetsReady + (resourceOpenCount || 0) > 0} />
           <PulseChip icon={MessageCircle} label="Unread" value={String(home.metrics.unreadMessages)} to="/messages" urgent={home.metrics.unreadMessages > 0} />
           <PulseChip icon={Newspaper} label="Feed" value={String(social.metrics.feedItems)} to="/home?section=feed" />
           <PulseChip icon={UserPlus} label="Requests" value={String(social.metrics.incomingRequests)} to="/home?section=friends" urgent={social.metrics.incomingRequests > 0} />
@@ -672,6 +672,7 @@ export function Home({ auth }: { auth: AuthState }) {
       {error ? <Status tone="error" message={error} /> : null}
       {socialStatus ? <Status tone={socialStatus.tone} message={socialStatus.message} /> : null}
 
+      {resourcePacketsAvailable() && auth.user && <div hidden={activeSection !== 'today'}><HomeAssignments uid={auth.user.uid} onCount={setResourceOpenCount} /></div>}
       {showInitialHomeSkeleton ? <HomePageSkeleton /> : null}
 
       {showBlockingErrorState || showIncompleteHomeError ? <HomeLoadErrorState error={homeLoadError} onRetry={() => refreshHome({ force: true })} retrying={loading} /> : null}

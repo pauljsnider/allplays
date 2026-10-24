@@ -147,7 +147,8 @@ describe('ResourcePackets', () => {
       }
       throw new Error('Unexpected write');
     });
-    renderPage(); await screen.findByRole('heading', { name: 'Assignments' });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Assignments' });
     fireEvent.click(screen.getByRole('button', { name: 'Edit assignment' }));
     fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
     await screen.findByText(/Connection lost after send/);
@@ -157,5 +158,4 @@ describe('ResourcePackets', () => {
     expect(resourcePacketMocks.resourcePacketCommand.mock.calls.map((call) => call[1].action)).toEqual(['saveDraft', 'publish', 'publish']);
     expect(resourcePacketMocks.resourcePacketCommand.mock.calls[1][1]).toEqual(resourcePacketMocks.resourcePacketCommand.mock.calls[2][1]);
   });
-
 });

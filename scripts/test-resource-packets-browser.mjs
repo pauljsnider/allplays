@@ -27,14 +27,14 @@ try {
   await db.doc('teams/web-team/games/web-practice').set({ type: 'practice', title: 'Synthetic practice', active: true });
   writeFileSync(join(dir, 'firebase.ts'), `
 import { initializeApp } from 'firebase/app';
-import { getAuth, connectAuthEmulator } from 'firebase/auth';
+import { initializeAuth, browserLocalPersistence, connectAuthEmulator } from 'firebase/auth';
 import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
 import { initializeFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 export * from 'firebase/functions'; export * from 'firebase/auth'; export * from 'firebase/firestore'; export * from 'firebase/app'; export * from 'firebase/storage';
 import { getStorage } from 'firebase/storage';
 const app = initializeApp({ projectId: 'demo-allplays-resource', apiKey: 'local-only', authDomain: 'localhost' });
 export const appCheckReady = Promise.resolve(); export const storage = getStorage(app);
-export const auth = getAuth(app); connectAuthEmulator(auth, 'http://127.0.0.1:9299', { disableWarnings: true });
+export const auth = initializeAuth(app, { persistence: browserLocalPersistence }); connectAuthEmulator(auth, 'http://127.0.0.1:9299', { disableWarnings: true });
 export const functions = getFunctions(app); connectFunctionsEmulator(functions, '127.0.0.1', 5201);
 export const db = initializeFirestore(app, { experimentalForceLongPolling: true, useFetchStreams: false }); connectFirestoreEmulator(db, '127.0.0.1', 8280);
 `);
@@ -50,9 +50,12 @@ export const initializePrimaryAppCheck = async () => null;
   // The existing library service is retained; this test adapter uses only local
   // SDK reads and cannot initialize the separate production image project.
   writeFileSync(join(dir, 'drills.ts'), `
-import { db, doc, getDoc, collection, query, where, getDocs } from './firebase';
+import './firebase';
+import { getApp } from 'firebase/app';
+import { getFirestore, connectFirestoreEmulator, doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore/lite';
+const db = getFirestore(getApp()); connectFirestoreEmulator(db, '127.0.0.1', 8280);
 export const DRILL_TYPES = []; export const DRILL_LEVELS = [];
-export { hasFullTeamAccess } from '@legacy/team-access.js';
+export { hasFullTeamAccess } from '@legacy/team-access.js?v=44338';
 export const getTeam = async id => ({ id, ...(await getDoc(doc(db, 'teams', id))).data() });
 export const getDrill = async id => ({ id, ...(await getDoc(doc(db, 'drillLibrary', id))).data() });
 export const getDrillFavorites = async () => [];
@@ -119,6 +122,8 @@ createRoot(document.getElementById('root')).render(<App />);
   await staff.page.getByRole('button', { name: 'Preview family view' }).click();
   await expect(staff.page.getByRole('region', { name: 'Family preview' })).toContainText('Home footwork');
   assert.equal((await db.collection('resourcePacketTeams/web-team/evidence').get()).size, 0, 'preview must not record completion');
+  await staff.page.getByRole('button', { name: 'Close preview' }).click();
+  await staff.page.getByText('1 player', { exact: true }).click();
   if (process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR) {
     mkdirSync(process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR, { recursive: true });
     await staff.page.screenshot({ path: join(process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR, 'coach-composer.png'), fullPage: true });
@@ -218,7 +223,7 @@ createRoot(document.getElementById('root')).render(<App />);
     await expect(shellPage).toHaveURL(new RegExp(`#\\/players/web-team/web-child/resources\\?assignmentId=${assignmentId}`));
     await expect(shellPage.locator('article > h3').filter({ hasText: /^Home footwork$/ })).toBeVisible();
     assert.deepEqual(shellErrors, [], 'Full app shell must not throw page errors');
-    console.log('PASS: full App/Auth/Home shell sign-in and self-only player discovery into authorized packet queue.');
+    console.log('PASS: full App/Auth shell preserves exact child assignment through sign-in.');
     await shell.close();
   }
   if (process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR) {

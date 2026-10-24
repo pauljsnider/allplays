@@ -26,6 +26,14 @@ const { createResourcePacketHandlers } = require(${JSON.stringify(join(root, 'fu
 const db = new (require('firebase-admin/firestore').Firestore)({ projectId: 'demo-allplays-resource' });
 const handlers = createResourcePacketHandlers({ functions, db, auth: admin.auth(), enabled: () => true });
 Object.assign(exports, handlers, { resourcePacketsCommand: handlers.command, resourcePacketsQuery: handlers.query });
+if (${JSON.stringify(process.argv.includes('--browser'))}) {
+ // Full-shell Auth attempts this unrelated projection service. Explicitly fail
+ // through the callable protocol (including CORS) rather than a missing-route
+ // browser transport error. Never fake a successful projection or deploy it.
+ exports.syncPublicUserProfileProjection = functions.https.onCall(() => {
+   throw new functions.https.HttpsError('unavailable', 'Profile projection is outside this isolated feature fixture.');
+ });
+}
 if (${JSON.stringify(process.argv.includes('--triggers'))}) {
  const { createResourcePacketTriggers } = require(${JSON.stringify(join(root, 'functions/resource-packets-triggers.cjs'))});
  const triggers = createResourcePacketTriggers({ functions, db, auth: admin.auth(), enabled: () => true,

@@ -12,6 +12,7 @@ import {
 } from '../lib/resourcePacketsService';
 import { loadTeamDrillLibraryPage, type TeamDrillSummary } from '../lib/teamDrillsService';
 import { assignmentAiPath, assignmentProgress, videoPreview } from '../lib/resourceAssignmentPresentation';
+import { Modal } from '../components/Modal';
 import { VideoCard } from '../components/assignments/VideoCard';
 
 const field = 'mt-1 block min-h-12 w-full rounded-xl border border-gray-300 p-3';
@@ -158,6 +159,18 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
       setRefresh((value) => value + 1);
       setStatus(notify ? 'Assignment shared. Notifications follow family preferences.' : 'Assignment shared without notifications.');
     } catch (cause) {
+      // Definitive callable rejections did not commit. Unlock editing; ambiguous
+      // transport failures keep the exact publication frozen for idempotent retry.
+      const wrapped = cause as { code?: string; cause?: { code?: string } };
+      const code = wrapped?.cause?.code || wrapped?.code;
+      if (
+        ['functions/aborted', 'functions/failed-precondition', 'functions/permission-denied', 'functions/invalid-argument'].includes(
+          code || ''
+        )
+      ) {
+        setPendingPublication(null);
+        setRefresh((value) => value + 1);
+      }
       setError(cause instanceof Error ? cause.message : 'Unable to share. Your work is still here; retry when ready.');
     } finally {
       setBusy(false);
@@ -286,7 +299,10 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
                     type="button"
                     key={resource.resourceId}
                     disabled={busy || items.some((item) => item.resourceId === resource.resourceId)}
-                    onClick={() => setItems(items.length === 1 && !items[0].url ? [resource] : [...items, resource].slice(0, 12))}
+                    onClick={(event) => {
+                      event.currentTarget.closest('details')?.removeAttribute('open');
+                      setItems(items.length === 1 && !items[0].url ? [resource] : [...items, resource].slice(0, 12));
+                    }}
                   >
                     {resource.title}
                   </button>
@@ -315,7 +331,8 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
                     type="button"
                     className={secondary}
                     disabled={!drill.youtubeUrl || busy}
-                    onClick={() => {
+                    onClick={(event) => {
+                      event.currentTarget.closest('details')?.removeAttribute('open');
                       const item = {
                         ...blankItem(),
                         title: drill.title,
@@ -410,16 +427,24 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
               {preview ? 'Hide family preview' : 'Preview family view'}
             </button>
             {preview && (
-              <section aria-label="Family preview" className="space-y-4 rounded-2xl bg-emerald-50 p-4">
-                <h2 className="text-xl font-bold">{title || items[0]?.title || 'Your assignment'}</h2>
-                <p>{notes}</p>
-                {items.map((item) => (
-                  <VideoCard key={item.resourceId} url={item.url} title={item.title} note={item.teachingPoint}>
-                    <span className={primary}>Watch</span>
-                  </VideoCard>
-                ))}
-                <p className="text-sm">Opening the video completes the item. This preview never records completion.</p>
-              </section>
+              <Modal ariaLabel="Family preview" onClose={() => setPreview(false)}>
+                <section
+                  aria-label="Family preview"
+                  className="max-h-[85vh] w-full max-w-md space-y-4 overflow-y-auto rounded-2xl bg-emerald-50 p-4"
+                >
+                  <button type="button" className={secondary} onClick={() => setPreview(false)}>
+                    Close preview
+                  </button>
+                  <h2 className="text-xl font-bold">{title || items[0]?.title || 'Your assignment'}</h2>
+                  <p>{notes}</p>
+                  {items.map((item) => (
+                    <VideoCard key={item.resourceId} url={item.url} title={item.title} note={item.teachingPoint}>
+                      <span className={primary}>Watch</span>
+                    </VideoCard>
+                  ))}
+                  <p className="text-sm">Opening the video completes the item. This preview never records completion.</p>
+                </section>
+              </Modal>
             )}
             {revision > 0 && (
               <p className="text-sm text-gray-600">

@@ -17,12 +17,10 @@ it('counts unfinished assignments across pages and links the exact child', async
     items: [{ resourceId: 'r' }],
     signals: {}
   };
-  mocks.family
-    .mockResolvedValueOnce({ tasks: [task], cursors: { tasks: 'a' } })
-    .mockResolvedValueOnce({
-      tasks: [{ ...task, assignmentId: 'b', signals: { r: { opened: { value: true } } } }],
-      cursors: { tasks: null }
-    });
+  mocks.family.mockResolvedValueOnce({ tasks: [task], cursors: { tasks: 'a' } }).mockResolvedValueOnce({
+    tasks: [{ ...task, assignmentId: 'b', signals: { r: { opened: { value: true } } } }],
+    cursors: { tasks: null }
+  });
   render(
     <MemoryRouter>
       <HomeAssignments uid="parent" />
