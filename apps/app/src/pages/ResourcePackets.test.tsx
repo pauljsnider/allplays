@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthState } from '../lib/types';
@@ -233,6 +233,40 @@ describe('ResourcePackets', () => {
     expect(resourcePacketMocks.resourcePacketCommand).toHaveBeenCalledWith(
       'coach-1',
       expect.objectContaining({ action: 'saveDraft', resourceVersions: [3] })
+    );
+  });
+
+  it('recovers from an intervening coach update using the refreshed server revision', async () => {
+    const normalCommand = resourcePacketMocks.resourcePacketCommand.getMockImplementation()!;
+    let rejectDraft = true;
+    resourcePacketMocks.resourcePacketCommand.mockImplementation(async (uid, command) => {
+      if (command.action === 'saveDraft' && rejectDraft) {
+        rejectDraft = false;
+        resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue({
+          ...staffView,
+          resources: [{ ...staffView.resources[0], version: 3, url: 'https://example.com/other-coach' }]
+        });
+        throw Object.assign(new Error('Correct the note and retry.'), { code: 'functions/invalid-argument' });
+      }
+      return normalCommand(uid, command);
+    });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Home footwork' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit assignment' }));
+    fireEvent.change(screen.getByLabelText('Video link 1'), { target: { value: 'https://example.com/replacement' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+    await screen.findByText('Correct the note and retry.');
+    await waitFor(() => expect(resourcePacketMocks.loadResourcePacketStaff).toHaveBeenCalledTimes(2));
+    fireEvent.change(screen.getByLabelText('Coaching note (optional)'), { target: { value: 'Corrected note.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+    await screen.findByText(/Assignment shared/);
+    const saves = resourcePacketMocks.resourcePacketCommand.mock.calls
+      .map((call) => call[1])
+      .filter((command) => command.action === 'saveResource');
+    expect(saves.map((command) => command.expectedRevision)).toEqual([1, 3]);
+    expect(resourcePacketMocks.resourcePacketCommand).toHaveBeenCalledWith(
+      'coach-1',
+      expect.objectContaining({ action: 'saveDraft', resourceVersions: [4] })
     );
   });
 

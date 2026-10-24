@@ -119,8 +119,9 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
       const saved = [...items];
       for (let i = 0; i < saved.length; i++) {
         const item = saved[i];
-        const existing =
-          resourceCache.current.get(item.resourceId) || data.resources.find((resource) => resource.resourceId === item.resourceId);
+        const cached = resourceCache.current.get(item.resourceId);
+        const loaded = data.resources.find((resource) => resource.resourceId === item.resourceId);
+        const existing = cached && (!loaded || cached.version > loaded.version) ? cached : loaded;
         const original = originalItems.current.get(item.resourceId);
         if (original && original.title === item.title && original.url === item.url && original.teachingPoint === item.teachingPoint) {
           // A prior partial save may have advanced item.version before the coach reverted its contents.
