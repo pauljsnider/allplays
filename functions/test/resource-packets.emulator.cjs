@@ -153,7 +153,7 @@ test('real Auth, callable and Firestore isolation with separate households', asy
     await command('staff', { action: 'publish', assignmentId: 'packet-1', expectedRevision: 3, confirm: true, notify: false });
     await denied(command('player', { action: 'report', assignmentId: 'packet-1', version: 1, playerId: 'child-a', resourceId: 'resource-1', kind: 'opened' }), 'FAILED_PRECONDITION');
     const task = (await call('player', { teamId: 'team-a', view: 'family', playerId: 'child-a' }, 'query')).tasks[0];
-    assert.equal(task.version, 2); assert.equal(task.items[0].resourceVersion, 2); assert.equal(task.signals['resource-1'].opened.actorUid, 'parent-a');
+    assert.equal(task.version, 2); assert.equal(task.items[0].resourceVersion, 2); assert.equal(task.items[0].url, 'https://example.com/updated-footwork'); assert.deepEqual(task.signals, {});
     assert.equal((await db.collection(`${ROOT}/team-a/evidence`).get()).size, 3);
     assert.deepEqual((await call('parent-a', { teamId: 'team-a', view: 'family', playerId: 'sibling' }, 'query')).tasks, []);
   });
