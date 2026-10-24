@@ -304,6 +304,9 @@ createRoot(document.getElementById('root')).render(<App />);
   if (process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR) {
     mkdirSync(process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR, { recursive: true });
     await staff.page.screenshot({ path: join(process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR, 'coach-resources.png'), fullPage: true });
+    await staff.page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await staff.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'mobile progress/recovery layout has no horizontal overflow');
+    await staff.page.screenshot({ path: join(process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR, 'coach-progress-mobile.png'), fullPage: true });
     await parent.page.screenshot({ path: join(process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR, 'family-resources.png'), fullPage: true });
     await playerSession.page.screenshot({ path: join(process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR, 'player-resources.png'), fullPage: true });
   }
