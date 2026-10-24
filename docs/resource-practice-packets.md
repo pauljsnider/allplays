@@ -52,6 +52,11 @@ sharing and progress review do not require AI.
 
 ## Delivery states and recovery
 
+Open **View progress → Notification status**. **Retry pending notification**
+explicitly requests recovery; merely viewing status never sends. **Check
+interrupted delivery (after 15 minutes)** reconciles an old attempt without
+resending it. The server enforces eligibility and the waiting period.
+
 - `pending`: no provider attempt claimed. Staff may explicitly retry pending
   delivery after a temporary failure or rollout pause.
 - `dispatching`: a single delivery boundary was claimed. After 15 minutes,
@@ -134,9 +139,10 @@ The redesign uses synthetic staff, parent, co-guardian, player and outsider
 identities. Real Auth/Firestore/Functions tests passed 14 cases without skips;
 the real outbox/Auth-deletion trigger sink passed. Notification resolver tests
 passed 145 cases and permission/confirmation-scoped AI tests passed 201 cases.
-The smoke repair has two regression tests: cold content uses the existing
-25-second readiness contract, and the notification check closes its own dialog.
-Neither change raises a timeout or hides an assertion.
+The smoke repair covers cold content within the existing 25-second readiness
+contract, notification dialog cleanup, and family loading/error assertions scoped
+to the assignment region rather than the permanent shell accessibility status.
+All 16 readiness tests pass; no timeout or security assertion is weakened.
 
 Chromium and WebKit exercise the three journeys with mobile touch viewports,
 text edits, media replacements, multi-item completion, sibling/household denial,

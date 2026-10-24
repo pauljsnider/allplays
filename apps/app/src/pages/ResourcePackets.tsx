@@ -99,6 +99,21 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
   function updateItem(index: number, value: Partial<EditableItem>) {
     setItems((old) => old.map((item, i) => (i === index ? { ...item, ...value } : item)));
   }
+  async function recoverNotification(deliveryId: string) {
+    if (!uid || busy) return;
+    setBusy(true);
+    setError('');
+    setStatus('');
+    try {
+      await resourcePacketCommand(uid, { teamId, action: 'retryNotification', deliveryId, confirm: true });
+      setStatus('Notification recovery checked. Uncertain sends are never repeated.');
+      setRefresh((value) => value + 1);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to check notification recovery.');
+    } finally {
+      setBusy(false);
+    }
+  }
   async function send(event: FormEvent) {
     event.preventDefault();
     if (!uid || !data) return;
@@ -595,9 +610,22 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
                   {data.deliveries
                     .filter((delivery) => delivery.assignmentId === current.assignmentId)
                     .map((delivery) => (
-                      <p key={delivery.version}>
-                        Publication {delivery.version}: {delivery.state}. This is not proof of reading.
-                      </p>
+                      <div key={delivery.deliveryId} className="space-y-2 border-t py-3">
+                        <p>
+                          Publication {delivery.version}: {delivery.state}. This is not proof of reading.
+                        </p>
+                        {['pending', 'dispatching'].includes(delivery.state) && (
+                          <button
+                            type="button"
+                            className={secondary}
+                            disabled={busy}
+                            onClick={() => void recoverNotification(delivery.deliveryId)}
+                          >
+                            {delivery.state === 'pending' ? 'Retry pending notification' : 'Check interrupted delivery (after 15 minutes)'}
+                          </button>
+                        )}
+                        {delivery.state === 'uncertain' && <p>Delivery could not be confirmed. It will not be sent again automatically.</p>}
+                      </div>
                     ))}
                 </details>
                 <Link

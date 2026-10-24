@@ -233,6 +233,14 @@ createRoot(document.getElementById('root')).render(<App />);
   await expect((await playerPopup).getByRole('heading', { name: 'Synthetic external destination' })).toBeVisible();
   const playerEvidence = (await db.collection('resourcePacketTeams/web-team/evidence').where('actorUid', '==', 'web-player').get()).docs.map(doc => doc.data());
   assert.equal(playerEvidence.length, 1); assert.equal(playerEvidence[0].playerId, 'web-child');
+  // Synthetic outbox records only. This browser stack has no provider delivery
+  // trigger; the separate trigger suite verifies recipient sinks/idempotency.
+  const recoveryAssignmentId = (await db.collection('resourcePacketTeams/web-team/assignments').get()).docs[0].id;
+  const pendingDelivery = db.doc('resourcePacketTeams/web-team/outbox/browser-pending');
+  const interruptedDelivery = db.doc('resourcePacketTeams/web-team/outbox/browser-interrupted');
+  const deliveryFixture = { teamId: 'web-team', assignmentId: recoveryAssignmentId, playerIds: ['web-child'], actorUid: 'web-staff', createdAt: new Date().toISOString() };
+  await pendingDelivery.set({ ...deliveryFixture, version: 1, state: 'pending' });
+  await interruptedDelivery.set({ ...deliveryFixture, version: 2, state: 'dispatching', attemptedAt: '2020-01-01T00:00:00.000Z' });
   // Refresh staff data and measure the deterministic outstanding-player filter journey.
   await staff.page.reload(); await staff.page.getByLabel('Fixture identity').selectOption('web-staff'); await staff.page.getByRole('button', { name: 'Sign in to isolated fixture' }).click();
   await expect(staff.page.getByText('1 of 1 complete', { exact: true })).toBeVisible();
@@ -241,6 +249,15 @@ createRoot(document.getElementById('root')).render(<App />);
   await staff.page.getByRole('button', { name: 'View progress' }).click();
   await staff.page.getByRole('button', { name: 'Outstanding (0)' }).click();
   console.log(`MEASURED automated outstanding-player filter journey: ${Date.now() - progressStarted}ms (not a human usability timing).`);
+  await staff.page.getByText('Notification status', { exact: true }).click();
+  assert.equal((await pendingDelivery.get()).data().retryRequestedAt, undefined, 'viewing status must not retry');
+  await staff.page.getByRole('button', { name: 'Retry pending notification', exact: true }).click();
+  await expect(staff.page.getByRole('status')).toContainText('Notification recovery checked');
+  assert.ok((await pendingDelivery.get()).data().retryRequestedAt);
+  await staff.page.getByRole('button', { name: 'Check interrupted delivery (after 15 minutes)', exact: true }).click();
+  await expect(staff.page.getByText('Delivery could not be confirmed. It will not be sent again automatically.')).toBeVisible();
+  assert.equal((await interruptedDelivery.get()).data().state, 'uncertain');
+  await expect(staff.page.getByRole('button', { name: 'Check interrupted delivery (after 15 minutes)', exact: true })).toHaveCount(0);
   if (process.env.RESOURCE_PACKET_FULL_SHELL === '1') {
     const shell = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await shell.route('**/*', route => ['127.0.0.1', 'localhost'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort());

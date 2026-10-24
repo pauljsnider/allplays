@@ -91,6 +91,46 @@ describe('ResourcePackets', () => {
 
   afterEach(cleanup);
 
+  it.each([
+    ['pending', 'Retry pending notification'],
+    ['dispatching', 'Check interrupted delivery (after 15 minutes)']
+  ])('keeps explicit staff recovery for %s notifications', async (state, label) => {
+    resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue({
+      ...staffView,
+      deliveries: [{ deliveryId: 'delivery-1', assignmentId: 'packet-1', version: 1, state }]
+    });
+    resourcePacketMocks.resourcePacketCommand.mockResolvedValue({
+      notification: state === 'pending' ? 'pending' : 'uncertain',
+      resent: false
+    });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Home footwork' });
+    fireEvent.click(screen.getByRole('button', { name: 'View progress' }));
+    fireEvent.click(screen.getByText('Notification status', { exact: true }));
+    expect(resourcePacketMocks.resourcePacketCommand).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: label }));
+    await screen.findByText(/Notification recovery checked/);
+    expect(resourcePacketMocks.resourcePacketCommand).toHaveBeenCalledExactlyOnceWith('coach-1', {
+      teamId: 'team-1',
+      action: 'retryNotification',
+      deliveryId: 'delivery-1',
+      confirm: true
+    });
+  });
+
+  it('never offers to resend an uncertain notification', async () => {
+    resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue({
+      ...staffView,
+      deliveries: [{ deliveryId: 'delivery-1', assignmentId: 'packet-1', version: 1, state: 'uncertain' }]
+    });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Home footwork' });
+    fireEvent.click(screen.getByRole('button', { name: 'View progress' }));
+    fireEvent.click(screen.getByText('Notification status', { exact: true }));
+    expect(screen.queryByRole('button', { name: /Retry pending notification|Check interrupted delivery/ })).not.toBeInTheDocument();
+    expect(resourcePacketMocks.resourcePacketCommand).not.toHaveBeenCalled();
+  });
+
   it('shares from one composer without resource save or publication wizard', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'Assignments' });
