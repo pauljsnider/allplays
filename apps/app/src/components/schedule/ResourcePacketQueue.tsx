@@ -1,5 +1,7 @@
+import { VideoCard } from '../assignments/VideoCard';
+import { assignmentAiPath, assignmentProgress } from '../../lib/resourceAssignmentPresentation';
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import type { ParentScheduleChild, ParentScheduleStaffTeam } from '../../lib/scheduleService';
 import { loadResourcePacketFamily, openResourcePacketLink, resourcePacketCommand, type PacketTask } from '../../lib/resourcePacketsService';
 
@@ -28,6 +30,8 @@ function ResourcePacketQueueContent({
   staffTeams: ParentScheduleStaffTeam[];
   singlePlayer: boolean;
 }) {
+  const [params] = useSearchParams();
+  const assignmentId = params.get('assignmentId') || undefined;
   const [loadedScope, setLoadedScope] = useState('');
   const [selected, setSelected] = useState('');
   const [cursor, setCursor] = useState<string | null>(null);
@@ -46,7 +50,7 @@ function ResourcePacketQueueContent({
     setError('');
     if (!teamId || !playerId) return;
     setLoading(true);
-    void loadResourcePacketFamily(teamId, playerId)
+    void loadResourcePacketFamily(teamId, playerId, undefined, assignmentId)
       .then((rows) => {
         if (!cancelled) {
           setLoadedScope(`${teamId}::${playerId}`);
@@ -63,7 +67,7 @@ function ResourcePacketQueueContent({
     return () => {
       cancelled = true;
     };
-  }, [uid, teamId, playerId, reload]);
+  }, [uid, teamId, playerId, reload, assignmentId]);
   async function run(action: () => Promise<unknown>) {
     setBusy(true);
     setError('');
@@ -80,11 +84,13 @@ function ResourcePacketQueueContent({
     <section className="mb-6 space-y-4 rounded-2xl border border-gray-200 bg-white p-4" aria-labelledby="resource-packet-title">
       <div>
         <h2 id="resource-packet-title" className="text-xl font-bold text-gray-950">
-          Practice resources
+          Video assignments
         </h2>
         <p className="mt-1 text-sm text-gray-600">
-          {singlePlayer ? 'Open a resource or report practice for this player.' : 'Choose a child before opening a link or reporting practice.'} Link opened records a click, not viewing time. Watched and practiced
-          are your own reports.
+          {singlePlayer
+            ? 'Open each video to complete the assignment.'
+            : 'Choose your child, then open each video to complete the assignment.'}{' '}
+          No extra confirmation needed. Playback is not verified.
         </p>
       </div>
       {staffTeams.map((team) => (
@@ -93,26 +99,28 @@ function ResourcePacketQueueContent({
           key={team.teamId}
           to={`/teams/${encodeURIComponent(team.teamId)}/resources`}
         >
-          Manage {team.teamName} packets
+          Manage {team.teamName} assignments
         </Link>
       ))}
-      {children.length > 0 ? (singlePlayer ? null : (
-        <label className="block text-sm font-semibold">
-          Child and team
-          <select
-            className="mt-1 block min-h-11 w-full rounded-lg border border-gray-300 p-2"
-            value={selectedChild ? `${teamId}::${playerId}` : ''}
-            disabled={busy}
-            onChange={(event) => setSelected(event.target.value)}
-          >
-            {children.map((child) => (
-              <option key={`${child.teamId}::${child.playerId}`} value={`${child.teamId}::${child.playerId}`}>
-                {child.playerName} · {child.teamName}
-              </option>
-            ))}
-          </select>
-        </label>
-      )) : (
+      {children.length > 0 ? (
+        singlePlayer ? null : (
+          <label className="block text-sm font-semibold">
+            Child and team
+            <select
+              className="mt-1 block min-h-11 w-full rounded-lg border border-gray-300 p-2"
+              value={selectedChild ? `${teamId}::${playerId}` : ''}
+              disabled={busy}
+              onChange={(event) => setSelected(event.target.value)}
+            >
+              {children.map((child) => (
+                <option key={`${child.teamId}::${child.playerId}`} value={`${child.teamId}::${child.playerId}`}>
+                  {child.playerName} · {child.teamName}
+                </option>
+              ))}
+            </select>
+          </label>
+        )
+      ) : (
         <p className="text-sm text-gray-600">No linked children are available in this schedule.</p>
       )}
       {loading && <p role="status">Loading practice resources…</p>}
@@ -150,61 +158,74 @@ function ResourcePacketQueueContent({
         <article key={`${task.assignmentId}:${task.version}`} className="space-y-3 rounded-xl border border-gray-200 p-4">
           <h3 className="text-lg font-bold">{task.title}</h3>
           <p className="text-sm text-gray-600">
-            For {task.playerName} · Version {task.version}
+            For {task.playerName}
             {task.dueAt
               ? ` · Due ${new Date(task.dueAt).toLocaleString(undefined, { timeZone: task.timeZone || undefined })} (${task.timeZone})`
               : ''}
+          </p>
+          <p className="font-semibold text-emerald-800">
+            {assignmentProgress(task).complete
+              ? 'Complete — video opened'
+              : `${assignmentProgress(task).opened} of ${task.items.length} opened`}
           </p>
           {task.notes && <p className="whitespace-pre-wrap">{task.notes}</p>}
           {task.items.map((item) => {
             const signals = task.signals[item.resourceId] || {};
             return (
-              <div key={item.resourceId} className="space-y-2 border-t border-gray-100 pt-3">
-                <h4 className="font-semibold">{item.title}</h4>
-                <p className="text-sm whitespace-pre-wrap">{item.teachingPoint}</p>
-                <p className="text-xs break-all text-gray-500">External website: {new URL(item.url).hostname}</p>
+              <VideoCard
+                key={item.resourceId}
+                url={item.url}
+                title={item.title}
+                note={item.teachingPoint}
+                showTitle={task.items.length > 1 || item.title !== task.title}
+              >
                 <button
-                  className="min-h-11 rounded-lg bg-emerald-800 px-4 text-white disabled:opacity-50"
+                  className="min-h-12 w-full rounded-xl bg-emerald-800 px-5 py-3 font-bold text-white disabled:opacity-50"
                   disabled={busy}
                   type="button"
                   onClick={() => void run(() => openResourcePacketLink(uid, task, item))}
                 >
-                  Open link in new tab
+                  {signals.opened ? 'Watch again' : 'Watch'}
                 </button>
                 <p className="text-sm text-gray-600">
-                  {signals.opened ? `Link opened ${new Date(signals.opened.at).toLocaleString()}` : 'Link not yet opened'}
+                  {signals.opened ? 'Complete — video opened' : 'Opens an external video and completes this item.'}
                 </p>
-                <div className="flex flex-wrap gap-4">
-                  {(['watched', 'practiced'] as const).map((kind) => (
-                    <label key={kind} className="flex min-h-11 items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        disabled={busy}
-                        checked={signals[kind]?.value === true}
-                        onChange={(event) => {
-                          const value = event.target.checked;
-                          void run(() =>
-                            resourcePacketCommand(uid, {
-                              teamId: task.teamId,
-                              action: 'report',
-                              assignmentId: task.assignmentId,
-                              version: task.version,
-                              playerId: task.playerId,
-                              resourceId: item.resourceId,
-                              kind,
-                              value
-                            })
-                          );
-                        }}
-                      />
-                      {kind === 'watched' ? 'We report: watched' : 'We report: practiced'}
-                    </label>
-                  ))}
-                </div>
-              </div>
+                <details>
+                  <summary className="min-h-12 cursor-pointer py-3 text-sm">Optional practice feedback</summary>
+                  <label className="flex min-h-12 items-center gap-3">
+                    <input
+                      type="checkbox"
+                      disabled={busy}
+                      checked={signals.practiced?.value === true}
+                      onChange={(event) => {
+                        const value = event.target.checked;
+                        void run(() =>
+                          resourcePacketCommand(uid, {
+                            teamId: task.teamId,
+                            action: 'report',
+                            assignmentId: task.assignmentId,
+                            version: task.version,
+                            playerId: task.playerId,
+                            resourceId: item.resourceId,
+                            kind: 'practiced',
+                            value
+                          })
+                        );
+                      }}
+                    />
+                    We practiced this
+                  </label>
+                </details>
+              </VideoCard>
             );
           })}
-          <Link className="inline-block min-h-11 py-3 text-emerald-800 underline" to="/ai">
+          <Link
+            className="inline-block min-h-11 py-3 text-emerald-800 underline"
+            to={assignmentAiPath(
+              task.teamId,
+              `Help explain the coach notes for assignment ${task.assignmentId}, player ${task.playerId}, team ${task.teamId}. Read only authorized notes. Do not claim to know the video content.`
+            )}
+          >
             Ask AI about your practice notes
           </Link>
         </article>

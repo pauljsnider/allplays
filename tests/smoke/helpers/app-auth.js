@@ -266,4 +266,6 @@ export async function assertNotificationInbox(page) {
         'The smoke account must have a seeded notification with a meaningful app deep link'
     ).toBeVisible({ timeout: 20_000 });
     await expect(inbox).not.toContainText('No notifications yet');
+    await inbox.getByRole('button', { name: 'Close notifications', exact: true }).click();
+    await expect(inbox).not.toBeVisible();
 }
