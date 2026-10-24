@@ -277,3 +277,8 @@ export async function assertResourcePacketFamilyReady(page, heading = 'Practice 
     await expect(content.getByRole('status')).toHaveCount(0, { timeout: 30000 });
     await expect(content.getByRole('alert')).toHaveCount(0);
 }
+
+export async function assertResourcePacketStaffReady(page) {
+    await expect(page.getByRole('heading', { name: 'Assignments', exact: true })).toBeVisible();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+}

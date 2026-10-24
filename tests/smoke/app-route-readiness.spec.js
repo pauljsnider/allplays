@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
-import { assertAuthenticatedAppRoute, assertNotificationInbox, assertResourcePacketFamilyReady, collectAppRuntimeIssues, openAuthenticatedAppRoute } from './helpers/app-auth.js';
+import { assertAuthenticatedAppRoute, assertNotificationInbox, assertResourcePacketFamilyReady, assertResourcePacketStaffReady, collectAppRuntimeIssues, openAuthenticatedAppRoute } from './helpers/app-auth.js';
 import { withAppFailureDiagnostic } from './helpers/app-route-diagnostic.js';
 
 const base = 'http://smoke.invalid/app/';
@@ -181,4 +181,20 @@ test('family resource readiness waits for its loader while preserving the shell 
 test('family resource readiness rejects a route error even with a shell notification live region', async ({ page }) => {
     await page.setContent('<div role="status" aria-label="Notification status"></div><section aria-labelledby="resources"><h2 id="resources">Practice resources</h2><div role="alert">Unable to load assignments.</div></section>');
     await expect(assertResourcePacketFamilyReady(page)).rejects.toThrow();
+});
+
+
+test('staff resource readiness distinguishes the assignment section from the page title', async ({ page }) => {
+    await page.setContent('<main><h1>Video assignments</h1><h2>Assignments</h2></main>');
+    await assertResourcePacketStaffReady(page);
+});
+
+test('staff resource readiness rejects a title-only page without the assignment section', async ({ page }) => {
+    await page.setContent('<main><h1>Video assignments</h1></main>');
+    await expect(assertResourcePacketStaffReady(page)).rejects.toThrow();
+});
+
+test('staff resource readiness rejects a visible assignment error', async ({ page }) => {
+    await page.setContent('<main><h2>Assignments</h2><p role="alert">Unable to load assignments.</p></main>');
+    await expect(assertResourcePacketStaffReady(page)).rejects.toThrow();
 });

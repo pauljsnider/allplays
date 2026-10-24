@@ -4,6 +4,7 @@ import {
     assertAuthenticatedAppRoute,
     assertNotificationInbox,
     assertResourcePacketFamilyReady,
+    assertResourcePacketStaffReady,
     buildAppSmokeUrl,
     closeAuthenticatedAppSession,
     createAuthenticatedAppSessions,
@@ -199,8 +200,7 @@ test('resource packet rollout and authorized staff/family reads match the deploy
         }
         await expect(entry).toBeVisible();
         await openAuthenticatedAppRoute(page, config.appBaseUrl, `/teams/${encodeURIComponent(config.teamId)}/resources`, { heading: 'Video assignments', panelHeading: 'Assignments' });
-        await expect(page.getByRole('heading', { name: 'Assignments' })).toBeVisible();
-        await expect(page.getByRole('alert')).toHaveCount(0);
+        await assertResourcePacketStaffReady(page);
     });
     if (packetsEnabled) await withAuthenticatedPage(parentWorkflowSession, async (page) => {
         await openAuthenticatedAppRoute(page, config.appBaseUrl, '/practice-resources', { heading: 'Player practice resources' });
