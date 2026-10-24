@@ -541,11 +541,11 @@ const resourcePacketTriggers = createResourcePacketTriggers({
   functions,
   db: firestore, auth: admin.auth(), enabled: resourcePacketsEnabled,
   resolveTargets: (teamId, uids, actorUid) => getTargetsForCategoryUserIds(teamId, 'practice', uids, actorUid),
-  dispatch: ({ teamId, deliveryId, targets, beforeEffects }) => sendDirectTargetsNotification({
-    teamId, targets, category: 'practice', title: 'A practice packet is ready',
-    body: 'Open your family practice packets to review the assignment.',
-    appRouteOverride: '/schedule?view=packets',
-    linkOverride: 'https://allplays.ai/app/#/schedule?view=packets',
+  dispatch: ({ teamId, assignmentId, deliveryId, targets, beforeEffects }) => sendDirectTargetsNotification({
+    teamId, targets, category: 'practice', title: 'New video assignment',
+    body: 'Open your assignment. Opening each video completes the item.',
+    appRouteOverride: `/practice-resources?teamId=${encodeURIComponent(teamId)}&assignmentId=${encodeURIComponent(assignmentId)}`,
+    linkOverride: `https://allplays.ai/app/#/practice-resources?teamId=${encodeURIComponent(teamId)}&assignmentId=${encodeURIComponent(assignmentId)}`,
     deliveryIdempotencyKey: deliveryId, requireCanonicalTeamAccess: true, beforeEffects
   })
 });

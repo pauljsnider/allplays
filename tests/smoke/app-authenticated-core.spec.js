@@ -198,16 +198,16 @@ test('resource packet rollout and authorized staff/family reads match the deploy
             return;
         }
         await expect(entry).toBeVisible();
-        await openAuthenticatedAppRoute(page, config.appBaseUrl, `/teams/${encodeURIComponent(config.teamId)}/resources`, { heading: 'Resources and practice packets', panelHeading: '1. Reusable resources' });
-        await expect(page.getByRole('heading', { name: '1. Reusable resources' })).toBeVisible();
+        await openAuthenticatedAppRoute(page, config.appBaseUrl, `/teams/${encodeURIComponent(config.teamId)}/resources`, { heading: 'Video assignments', panelHeading: 'Assignments' });
+        await expect(page.getByRole('heading', { name: 'Assignments' })).toBeVisible();
         await expect(page.getByRole('alert')).toHaveCount(0);
     });
     if (packetsEnabled) await withAuthenticatedPage(parentWorkflowSession, async (page) => {
         await openAuthenticatedAppRoute(page, config.appBaseUrl, '/practice-resources', { heading: 'Player practice resources' });
         const route = `/players/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.playerId)}/resources`;
         await page.locator(`a[href="#${route}"]`).click();
-        await expect(page.getByRole('heading', { name: 'Practice resources', exact: true })).toBeVisible();
-        await assertResourcePacketFamilyReady(page);
+        await expect(page.getByRole('heading', { name: 'Video assignments', exact: true })).toBeVisible();
+        await assertResourcePacketFamilyReady(page, 'Video assignments');
     });
     // Deliberately no draft, publish, report, open-link or notification actions.
 });
