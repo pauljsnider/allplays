@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthState } from '../lib/types';
@@ -127,9 +127,25 @@ describe('ResourcePackets', () => {
     );
   });
 
-  it('reconciles an assignment resource snapshot before saving a note-only edit', async () => {
+  it('keeps historical media and completion when a second assignment receives a note-only edit', async () => {
+    const newerAssignment = {
+      ...assignment,
+      assignmentId: 'packet-newer',
+      title: 'Updated library assignment',
+      items: [
+        {
+          resourceId: 'resource-1',
+          resourceVersion: 2,
+          title: 'Updated balance drill',
+          teachingPoint: 'Keep your hips level.',
+          url: 'https://example.com/updated-balance'
+        }
+      ]
+    };
+    const historicalAssignment = { ...assignment, assignmentId: 'packet-historical' };
     resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue({
       ...staffView,
+      assignments: [newerAssignment, historicalAssignment],
       resources: [
         {
           resourceId: 'resource-1',
@@ -138,17 +154,38 @@ describe('ResourcePackets', () => {
           teachingPoint: 'Keep your hips level.',
           url: 'https://example.com/updated-balance'
         }
+      ],
+      tasks: [
+        {
+          teamId: 'team-1',
+          assignmentId: 'packet-historical',
+          version: 1,
+          playerId: 'player-1',
+          playerName: 'Player One',
+          title: historicalAssignment.title,
+          notes: historicalAssignment.notes,
+          items: historicalAssignment.items,
+          dueAt: null,
+          timeZone: 'UTC',
+          signals: { 'resource-1': { opened: { value: true, at: '2026-10-23T00:00:00.000Z', actorUid: 'parent-1' } } }
+        }
       ]
     });
     renderPage();
     await screen.findByRole('heading', { name: 'Home footwork' });
-    fireEvent.click(screen.getByRole('button', { name: 'Edit assignment' }));
-    expect(screen.getByLabelText('Video title 1')).toHaveValue('Updated balance drill');
-    expect(screen.getByLabelText('Video link 1')).toHaveValue('https://example.com/updated-balance');
+    const historicalCard = screen.getByRole('heading', { name: 'Home footwork' }).closest('article');
+    fireEvent.click(within(historicalCard!).getByRole('button', { name: 'Edit assignment' }));
+    expect(screen.getByLabelText('Video title 1')).toHaveValue('Balance drill');
+    expect(screen.getByLabelText('Video link 1')).toHaveValue('https://example.com/balance');
     fireEvent.change(screen.getByLabelText('Coaching note (optional)'), { target: { value: 'Updated instruction.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
     await screen.findByText(/Assignment shared/);
     expect(resourcePacketMocks.resourcePacketCommand.mock.calls.map((call) => call[1].action)).toEqual(['saveDraft', 'publish']);
+    expect(resourcePacketMocks.resourcePacketCommand).toHaveBeenCalledWith(
+      'coach-1',
+      expect.objectContaining({ action: 'saveDraft', resourceIds: ['resource-1'], resourceVersions: [1] })
+    );
+    expect(screen.getAllByText('1 of 1 complete')).toHaveLength(1);
   });
 
   it('shows a recoverable publication error without discarding the composer', async () => {

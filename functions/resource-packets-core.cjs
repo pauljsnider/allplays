@@ -153,7 +153,17 @@ function createResourcePacketsService({ db, auth, enabled = () => false, now = (
           if (!Array.isArray(input.resourceIds) || !input.resourceIds.length || input.resourceIds.length > MAX_ITEMS || new Set(input.resourceIds).size !== input.resourceIds.length) fail('invalid-argument', 'Choose 1 to 12 distinct resources.');
           const resources = await Promise.all(input.resourceIds.map((key) => tx.get(ref(teamId, 'resources', id(key)))));
           if (resources.some((doc) => !doc.exists)) fail('failed-precondition', 'A resource is unavailable.');
-          const items = resources.map((doc) => { const r = doc.data(); return { resourceId: r.resourceId, resourceVersion: r.version, title: r.title, teachingPoint: r.teachingPoint, url: r.url, ...(r.drillId ? { drillId: r.drillId } : {}) }; });
+          let snapshots = resources;
+          if (input.resourceVersions !== undefined) {
+            if (!Array.isArray(input.resourceVersions) || input.resourceVersions.length !== resources.length) fail('invalid-argument', 'Choose a version for every resource.');
+            const versions = input.resourceVersions.map((value) => revision(value));
+            if (versions.some((value) => value < 1)) fail('invalid-argument', 'Choose a valid resource version.');
+            snapshots = await Promise.all(resources.map((doc, index) => versions[index] === doc.data().version
+              ? doc
+              : tx.get(doc.ref.collection('versions').doc(String(versions[index])))));
+            if (snapshots.some((doc) => !doc.exists)) fail('failed-precondition', 'A resource version is unavailable.');
+          }
+          const items = snapshots.map((doc) => { const r = doc.data(); return { resourceId: r.resourceId, resourceVersion: r.version, title: r.title, teachingPoint: r.teachingPoint, url: r.url, ...(r.drillId ? { drillId: r.drillId } : {}) }; });
           if (!Array.isArray(input.playerIds)) fail('invalid-argument', 'Select the assigned players.');
           const players = await roster(tx, teamId, [...new Set(input.playerIds)]);
           let practiceId = null;

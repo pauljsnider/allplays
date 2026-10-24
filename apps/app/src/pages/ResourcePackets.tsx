@@ -40,6 +40,7 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
   const [players, setPlayers] = useState<string[]>([]);
   const [due, setDue] = useState('');
   const [practiceId, setPracticeId] = useState('');
+  const originalItems = useRef(new Map<string, EditableItem>());
   const resourceCache = useRef(new Map<string, PacketResource>());
   const [pendingPublication, setPendingPublication] = useState<Record<string, unknown> | null>(null);
   const [notify, setNotify] = useState(true);
@@ -80,19 +81,13 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
     };
   }, [uid, teamId, refresh]);
   function start(row?: PacketAssignment) {
+    const nextItems = row ? row.items.map((item) => ({ ...item, version: item.resourceVersion })) : [blankItem()];
+    originalItems.current = new Map(nextItems.map((item) => [item.resourceId, item]));
     setAssignmentId(row?.assignmentId || crypto.randomUUID());
     setRevision(row?.revision || 0);
     setTitle(row?.title || '');
     setNotes(row?.notes || '');
-    setItems(
-      row
-        ? row.items.map((item) => {
-            const current =
-              resourceCache.current.get(item.resourceId) || data!.resources.find((resource) => resource.resourceId === item.resourceId);
-            return current || { ...item, version: item.resourceVersion };
-          })
-        : [blankItem()]
-    );
+    setItems(nextItems);
     setPlayers(row?.playerIds || data!.players.map((player) => player.id));
     const date = row?.dueAt ? new Date(row.dueAt) : null;
     setDue(date ? new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '');
@@ -127,6 +122,9 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
         const item = saved[i];
         const existing =
           resourceCache.current.get(item.resourceId) || data.resources.find((resource) => resource.resourceId === item.resourceId);
+        const original = originalItems.current.get(item.resourceId);
+        if (original && original.title === item.title && original.url === item.url && original.teachingPoint === item.teachingPoint)
+          continue;
         if (existing && existing.title === item.title && existing.url === item.url && existing.teachingPoint === item.teachingPoint)
           continue;
         // Revision checks prevent overwriting a newer resource edit.
@@ -151,6 +149,7 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
         title: title.trim() || saved[0].title,
         notes,
         resourceIds: saved.map((item) => item.resourceId),
+        resourceVersions: saved.map((item) => item.version),
         playerIds: players,
         practiceId: practiceId || null,
         dueAt,
