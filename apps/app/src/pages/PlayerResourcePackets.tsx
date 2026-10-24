@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import type { AuthState } from '../lib/types';
-import { resourcePacketsAvailable, loadResourcePacketLinkedPlayers } from '../lib/resourcePacketsService';
+import { resourcePacketsAvailable, loadResourcePacketLinkedPlayers, loadResourcePacketFamily } from '../lib/resourcePacketsService';
 import { ResourcePacketQueue } from '../components/schedule/ResourcePacketQueue';
 
 /** A direct authenticated route also serves linked player accounts without parent-only Schedule discovery. */
 export function PlayerResourcePackets({ auth }: { auth: AuthState }) {
   const { teamId = '', playerId = '' } = useParams();
+  const [params] = useSearchParams();
+  const assignmentId = params.get('assignmentId');
+  const assignmentTeam = params.get('teamId');
   const [players, setPlayers] = useState<Awaited<ReturnType<typeof loadResourcePacketLinkedPlayers>>['players']>([]);
   const [loadedUid, setLoadedUid] = useState('');
   const [error, setError] = useState('');
@@ -19,9 +22,18 @@ export function PlayerResourcePackets({ auth }: { auth: AuthState }) {
     setLoadedUid('');
     setError('');
     void loadResourcePacketLinkedPlayers()
-      .then((result) => {
+      .then(async (result) => {
+        let linked = result.players.filter((player) => !assignmentTeam || player.teamId === assignmentTeam);
+        if (assignmentId) {
+          const assigned = [];
+          for (const player of linked) {
+            const page = await loadResourcePacketFamily(player.teamId, player.playerId, undefined, assignmentId);
+            if (page.tasks.length) assigned.push(player);
+          }
+          linked = assigned;
+        }
         if (!cancelled) {
-          setPlayers(result.players);
+          setPlayers(linked);
           setLoadedUid(uid);
         }
       })
@@ -31,7 +43,7 @@ export function PlayerResourcePackets({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [uid, enabled, teamId, playerId, reload]);
+  }, [uid, enabled, teamId, playerId, reload, assignmentTeam, assignmentId]);
   return (
     <main className="mx-auto max-w-3xl space-y-4 p-4 pb-24">
       <Link className="inline-block min-h-11 py-3 text-emerald-800 underline" to="/schedule?view=packets">
@@ -57,13 +69,15 @@ export function PlayerResourcePackets({ auth }: { auth: AuthState }) {
               </div>
             ) : loadedUid !== uid ? (
               <p role="status">Loading your players…</p>
+            ) : players.length === 1 && assignmentId ? (
+              <ResourcePacketQueue uid={auth.user.uid} children={players} staffTeams={[]} singlePlayer />
             ) : players.length ? (
               <ul>
                 {players.map((player) => (
                   <li key={`${player.teamId}:${player.playerId}`}>
                     <Link
                       className="inline-block min-h-11 py-3 text-emerald-800 underline"
-                      to={`/players/${encodeURIComponent(player.teamId)}/${encodeURIComponent(player.playerId)}/resources`}
+                      to={`/players/${encodeURIComponent(player.teamId)}/${encodeURIComponent(player.playerId)}/resources${assignmentId ? `?assignmentId=${encodeURIComponent(assignmentId)}` : ''}`}
                     >
                       {player.playerName} · {player.teamName}
                     </Link>
@@ -71,7 +85,11 @@ export function PlayerResourcePackets({ auth }: { auth: AuthState }) {
                 ))}
               </ul>
             ) : (
-              <p>No active players are linked to your account.</p>
+              <p>
+                {assignmentId
+                  ? 'This assignment is not available for your linked players.'
+                  : 'No active players are linked to your account.'}
+              </p>
             )}
           </section>
         )

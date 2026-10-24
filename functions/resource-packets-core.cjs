@@ -136,7 +136,7 @@ function createResourcePacketsService({ db, auth, enabled = () => false, now = (
           const previous = await tx.get(resourceRef);
           const current = previous.exists ? previous.data().version : 0;
           if (revision(input.expectedRevision) !== current) fail('aborted', 'This resource changed. Refresh before saving.');
-          const resource = { schemaVersion: 1, resourceId, version: current + 1, title: text(input.title, 160, 'title'), teachingPoint: text(input.teachingPoint, 2000, 'teaching point'), url: externalUrl(input.url), updatedAt: at, updatedBy: principal.uid };
+          const resource = { schemaVersion: 1, resourceId, version: current + 1, title: text(input.title, 160, 'title'), teachingPoint: input.teachingPoint ? text(input.teachingPoint, 2000, 'teaching point') : '', url: externalUrl(input.url), updatedAt: at, updatedBy: principal.uid };
           if (input.drillId) {
             const drill = await tx.get(db.doc(`drillLibrary/${id(input.drillId)}`));
             if (!drill.exists || !(drill.data().source === 'community' || drill.data().publishedToCommunity === true || drill.data().teamId === teamId)) fail('permission-denied', 'That library drill is unavailable.');
@@ -190,7 +190,17 @@ function createResourcePacketsService({ db, auth, enabled = () => false, now = (
           remember(assignmentRef.collection('versions').doc(String(version)));
           tx.update(assignmentRef, { publishedVersion: version, revision: draft.revision + 1 });
           for (const old of oldTasks.docs) if (!draft.playerIds.includes(old.data().playerId)) tx.update(old.ref, { withdrawn: true, updatedAt: at });
-          for (const player of players) tx.set(ref(teamId, 'tasks', taskId(assignmentId, player.id)), { schemaVersion: 1, teamId, assignmentId, version, playerId: player.id, playerName: player.name, title: draft.title, notes: draft.notes, items: draft.items, practiceId: draft.practiceId, dueAt: draft.dueAt, timeZone: draft.timeZone, signals: {}, withdrawn: false, publishedAt: at, updatedAt: at });
+          for (const player of players) {
+            const previousTask = oldTasks.docs.find((old) => old.data().playerId === player.id)?.data();
+            // Carry evidence only for the same item and exact destination. Text-only corrections
+            // do not create new work; replacing media never inherits an old completion.
+            const signals = {};
+            for (const item of draft.items) {
+              const priorItem = previousTask?.items.find((prior) => prior.resourceId === item.resourceId && prior.url === item.url);
+              if (priorItem && previousTask.signals?.[item.resourceId]) signals[item.resourceId] = previousTask.signals[item.resourceId];
+            }
+            tx.set(ref(teamId, 'tasks', taskId(assignmentId, player.id)), { schemaVersion: 1, teamId, assignmentId, version, playerId: player.id, playerName: player.name, title: draft.title, notes: draft.notes, items: draft.items, practiceId: draft.practiceId, dueAt: draft.dueAt, timeZone: draft.timeZone, signals, withdrawn: false, publishedAt: at, updatedAt: at });
+          }
           const deliveryId = digest(`${teamId}:${assignmentId}:${version}`);
           if (input.notify) tx.create(ref(teamId, 'outbox', deliveryId), { teamId, assignmentId, version, playerIds: draft.playerIds, actorUid: principal.uid, state: 'pending', createdAt: at });
           if (input.notify) remember(ref(teamId, 'outbox', deliveryId));
@@ -252,6 +262,7 @@ function createResourcePacketsService({ db, auth, enabled = () => false, now = (
         page('resources', db.collection(`${ROOT}/${teamId}/resources`)), page('assignments', db.collection(`${ROOT}/${teamId}/assignments`)), page('tasks', db.collection(`${ROOT}/${teamId}/tasks`)), page('players', db.collection(`teams/${teamId}/players`)), page('deliveries', db.collection(`${ROOT}/${teamId}/outbox`)), page('practices', db.collection(`teams/${teamId}/games`).where('type', 'in', ['practice', 'Practice']))
       ]);
       return {
+        teamName: String(scope.team?.name || 'Team'),
         cursors: { resources: resources.cursor, assignments: assignments.cursor, tasks: tasks.cursor, players: players.cursor, deliveries: outbox.cursor, practices: practices.cursor },
         practices: practices.docs.filter((d) => active(d.data())).map((d) => ({ id: d.id, title: String(d.data().title || d.data().name || 'Practice') })),
         resources: resources.docs.map((d) => d.data()), assignments: assignments.docs.map((d) => d.data()),
@@ -263,6 +274,10 @@ function createResourcePacketsService({ db, auth, enabled = () => false, now = (
     if (input.view !== 'family') fail('invalid-argument', 'Unknown packet view.');
     const playerId = id(input.playerId);
     await family(tx, scope.profile, principal, teamId, playerId);
+    if (input.assignmentId) {
+      const task = await tx.get(ref(teamId, 'tasks', taskId(id(input.assignmentId), playerId)));
+      return { tasks: task.exists && !task.data().withdrawn ? [task.data()] : [], cursors: { tasks: null } };
+    }
     const tasks = await page('tasks', db.collection(`${ROOT}/${teamId}/tasks`).where('playerId', '==', playerId));
     return { tasks: tasks.docs.filter((d) => !d.data().withdrawn).map((d) => d.data()), cursors: { tasks: tasks.cursor } };
     }, { readOnly: true });

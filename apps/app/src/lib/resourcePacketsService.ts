@@ -30,6 +30,7 @@ export type PacketTask = {
   signals: Record<string, Partial<Record<'opened' | 'watched' | 'practiced', PacketSignal>>>;
 };
 export type PacketStaffView = {
+  teamName?: string;
   cursors: Record<string, string | null>;
   practices: { id: string; title: string }[];
   resources: PacketResource[];
@@ -63,12 +64,14 @@ export async function loadResourcePacketStaff(teamId: string, cursors?: Record<s
 export async function loadResourcePacketFamily(
   teamId: string,
   playerId: string,
-  cursor?: string
+  cursor?: string,
+  assignmentId?: string
 ): Promise<{ tasks: PacketTask[]; cursors: { tasks: string | null } }> {
   return (await invoke('resourcePacketsQuery', {
     teamId,
     playerId,
     view: 'family',
+    ...(assignmentId ? { assignmentId } : {}),
     ...(cursor ? { cursors: { tasks: cursor } } : {})
   })) as { tasks: PacketTask[]; cursors: { tasks: string | null } };
 }

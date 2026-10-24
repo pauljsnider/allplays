@@ -665,7 +665,8 @@ function Protected({ auth, children }: { auth: AuthState; children: ReactNode })
   }
 
   if (!auth.user) {
-    return <Navigate to="/auth" replace />;
+    const assignmentDestination = !isNativeRuntime() && (location.pathname === '/practice-resources' || /^\/players\/[^/]+\/[^/]+\/resources$/.test(location.pathname));
+    return <Navigate to={assignmentDestination ? `/auth?next=${encodeURIComponent(location.pathname + location.search)}` : '/auth'} replace />;
   }
 
   return (

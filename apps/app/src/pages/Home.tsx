@@ -1,3 +1,4 @@
+import { HomeAssignments } from '../components/assignments/HomeAssignments';
 import { resourcePacketsAvailable } from '../lib/resourcePacketsService';
 import { FormEvent, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
@@ -617,7 +618,7 @@ export function Home({ auth }: { auth: AuthState }) {
               </span>
             </div>
             <h1 className="mt-0.5 text-xl font-black leading-tight text-gray-950">Your day</h1>
-            {resourcePacketsAvailable() && <Link className="inline-block min-h-11 py-3 text-sm font-semibold text-emerald-800 underline" to="/schedule?view=packets">Family practice packets</Link>}
+            {resourcePacketsAvailable() && auth.user && <HomeAssignments uid={auth.user.uid} />}
             {resourcePacketsAvailable() && <Link className="inline-block min-h-11 py-3 text-sm font-semibold text-emerald-800 underline" to="/practice-resources">My player practice resources</Link>}
             <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">{displayName} · {getHomeRoleContext(auth, resolvedOfficialsAccess)}</p>
           </div>

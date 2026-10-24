@@ -144,9 +144,22 @@ test('real Auth, callable and Firestore isolation with separate households', asy
     await command('staff', { action: 'publish', assignmentId: 'packet-1', expectedRevision: 3, confirm: true, notify: false });
     await denied(command('player', { action: 'report', assignmentId: 'packet-1', version: 1, playerId: 'child-a', resourceId: 'resource-1', kind: 'opened' }), 'FAILED_PRECONDITION');
     const task = (await call('player', { teamId: 'team-a', view: 'family', playerId: 'child-a' }, 'query')).tasks[0];
-    assert.equal(task.version, 2); assert.equal(task.items[0].resourceVersion, 2); assert.deepEqual(task.signals, {});
+    assert.equal(task.version, 2); assert.equal(task.items[0].resourceVersion, 2); assert.equal(task.signals['resource-1'].opened.actorUid, 'parent-a');
     assert.equal((await db.collection(`${ROOT}/team-a/evidence`).get()).size, 2);
     assert.deepEqual((await call('parent-a', { teamId: 'team-a', view: 'family', playerId: 'sibling' }, 'query')).tasks, []);
+  });
+  await t.test('exact assignment reads retain household authorization and replaced videos lose completion', async () => {
+    const query = { teamId: 'team-a', view: 'family', playerId: 'child-a', assignmentId: 'packet-1' };
+    assert.equal((await call('parent-a', query, 'query')).tasks.length, 1);
+    await denied(call('parent-b', query, 'query'));
+    assert.deepEqual((await call('parent-a', { ...query, assignmentId: 'unknown' }, 'query')).tasks, []);
+    await command('staff', { ...resource, expectedRevision: 2, teachingPoint: '', url: 'https://example.com/replacement' });
+    await command('staff', { action: 'saveDraft', assignmentId: 'packet-1', expectedRevision: 4, title: 'New video', resourceIds: ['resource-1'], playerIds: ['child-a'] });
+    await command('staff', { action: 'publish', assignmentId: 'packet-1', expectedRevision: 5, confirm: true, notify: false });
+    const task = (await call('parent-a', query, 'query')).tasks[0];
+    assert.deepEqual(task.signals, {});
+    assert.equal(task.items[0].teachingPoint, '');
+    assert.equal((await db.collection(`${ROOT}/team-a/evidence`).get()).size, 2);
   });
   await t.test('revoked guardians and account deletion requests block reads and retry', async () => {
     await db.doc('users/parent-a').update({ parentPlayerKeys: [] });

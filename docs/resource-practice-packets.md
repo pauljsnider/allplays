@@ -2,44 +2,50 @@
 
 ## Coach quick start
 
-On the modern web app, open a team's **Drills**, then **Create resources and
-assign practice packets**. Save an HTTPS link, title and teaching point, or find
-an existing library drill and use its link. This searches the AllPlays library;
-it does not search YouTube or inspect video content.
+In the modern web app, open a team's Drills and its assignment link, or use
+Schedule → Packets → Manage team assignments. The assignments dashboard shows
+completed-player counts. Choose **Share a video**, paste an HTTPS link and give
+it a short title, or choose an existing resource/drill. Add an optional coaching
+note. The current team and whole roster are the default context; change the
+visible audience, due date or notification preference as needed.
 
-Choose one or more saved resources, the current roster or selected players,
-optional practice, and an optional due date in the displayed local timezone.
-Save the draft. Families cannot see drafts. Select **Review publication**, check
-the recipients and resource versions, and explicitly confirm publication with
-or without notification. Notification preferences apply; this flow uses the
-existing practice inbox/push channels and does not promise email delivery.
+YouTube links show a thumbnail when available; other links show their source.
+**Preview video** opens the external site without recording completion.
+**Preview family view** shows the card families will receive. Add another video
+for a multi-item assignment. **Assign & notify** explicitly shares the assignment
+using eligible existing channels/preferences; email is not guaranteed. There is
+no separate save-resource/reselect/draft/publication wizard. An uncertain send
+can only retry the same frozen publication, not silently send a new one.
 
-Editing a reusable resource does not change an existing published packet.
-Saving and publishing a packet again creates a new version and resets its
-current progress. Prior evidence remains versioned. The staff view displays
-the current version; load additional pages when prompted.
+Use **View progress → Outstanding** for players who have not opened every item.
+Notification delivery is shown separately and never proves viewing. Text-only
+corrections retain completion for unchanged item IDs and exact destinations;
+new or replaced videos require an open. Old version evidence remains retained.
 
 ## Family experience and truthful evidence
 
-Use **Family practice packets** on Home or **Schedule → Packets**. Existing
-practice packets remain alongside the new resource queue. Select a child and
-team before opening a resource. The deliberate button click opens an external
-tab and records **Link opened**, attributed to the signed-in actor, child,
-assignment version and resource version. It does not measure viewing time or
-prove that a video was watched. A broken external destination can still have
-an opened-link record. Automatic reads, previews, hover and AI reads do not
-record opens.
+Home shows the number of unfinished video assignments with links for each child.
+Notifications open the specific assignment. One eligible assigned child opens
+directly; siblings require deliberate child selection. The assignment destination
+survives sign-in. Existing Schedule and player-resource links remain supported.
 
-**We report: watched** and **We report: practiced** are separate optional
-self-reports. Co-guardians can report for a linked child. Linked player accounts can use the authenticated
-`/players/:teamId/:playerId/resources` route, linked from the player detail page;
-the Schedule queue continues to use existing linked-child discovery. Other families cannot read
-the evidence, even if they belong to the same team.
+**Watch** opens the external video and records an authenticated **Link opened**
+event. That item becomes **Complete — video opened** without another checkbox
+or Save action. A multi-video assignment is complete when all items were opened.
+This records a click, not playback or viewing time. A broken external destination
+can still have an opened-link record. Reads, previews, hover and AI never record
+opens. Blocked popups do not record completion. Failed writes do not report
+success; explicit retry retains its idempotency identity.
 
-AI can read authorized notes and progress, clearly identifying self-reports.
-Coach resource/draft/publication changes use the existing explicit-confirmation
-pipeline and revalidate permission and revision at execution. AI has no access
-to the contents of linked videos and cannot record a link open.
+Optional practiced feedback is secondary. Existing watched/practiced evidence
+is retained without being relabeled as verified playback. Co-guardians share
+child completion; one child's click never completes a sibling's task.
+
+Contextual AI entry points prepare editable coaching assistance or reminder text
+and answer authorized progress questions. Existing write actions require explicit
+confirmation and revalidate permissions/revisions. AI cannot inspect linked video
+content, claim playback, record an open, or silently notify families. Manual
+sharing and progress review do not require AI.
 
 ## Delivery states and recovery
 

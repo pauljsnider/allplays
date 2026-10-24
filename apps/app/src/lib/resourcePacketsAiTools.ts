@@ -59,7 +59,7 @@ export function buildResourcePacketAiTools() {
       domain: 'practice',
       audience: 'manager' as const,
       description:
-        'Prepare a staff resource, packet draft, or publication for explicit confirmation. Args teamId, action=saveResource|saveDraft|publish. Resources need title,url,teachingPoint and optional resourceId/drillId. Drafts need title,resourceIds,playerIds and optional notes,practiceId,dueAt ISO,timeZone,assignmentId. Publish needs assignmentId and explicit notify boolean. Never invent video content or report an open on behalf of someone.',
+        'Prepare a staff resource, packet draft, or publication for explicit confirmation. Args teamId, action=saveResource|saveDraft|publish. Resources need title,url and optional teachingPoint and optional resourceId/drillId. Drafts need title,resourceIds,playerIds and optional notes,practiceId,dueAt ISO,timeZone,assignmentId. Publish needs assignmentId and explicit notify boolean. Never invent video content or report an open on behalf of someone.',
       prepare: async (_user: AuthUser, args: Record<string, unknown>) => {
         const teamId = String(args.teamId || '');
         const view = await loadPreparationView(teamId);
@@ -72,8 +72,8 @@ export function buildResourcePacketAiTools() {
           const existing = view.resources.find((row) => row.resourceId === args.resourceId);
           if (args.resourceId && !existing)
             throw new Error('That resource is not in this authorized page. Load the correct page before editing.');
-          if (![args.title, args.url, args.teachingPoint].every((value) => typeof value === 'string' && value.trim()))
-            throw new Error('Provide a title, external URL and teaching point before preparing the resource.');
+          if (![args.title, args.url].every((value) => typeof value === 'string' && value.trim()))
+            throw new Error('Provide a title and external URL before preparing the resource.');
           prepared = {
             teamId,
             action,
@@ -81,13 +81,13 @@ export function buildResourcePacketAiTools() {
             expectedRevision: existing?.version || 0,
             title: args.title,
             url: args.url,
-            teachingPoint: args.teachingPoint,
+            teachingPoint: args.teachingPoint || '',
             ...(args.drillId ? { drillId: args.drillId } : {})
           };
           previewSummary = {
             title: args.title,
             url: args.url,
-            teachingPoint: args.teachingPoint,
+            teachingPoint: args.teachingPoint || '',
             effect: 'Save a reusable resource; do not publish or notify.'
           };
         } else {
@@ -114,7 +114,8 @@ export function buildResourcePacketAiTools() {
               players,
               dueAt: existing.dueAt,
               notify: args.notify,
-              effect: 'Publish a new version; reset current progress. Eligible notification channels and preferences apply.'
+              effect:
+                'Publish a new version; preserve opened progress for unchanged video destinations; changed videos need a new open. Eligible notification channels and preferences apply.'
             };
           } else {
             prepared = {
