@@ -59,7 +59,7 @@ export function buildResourcePacketAiTools() {
       domain: 'practice',
       audience: 'manager' as const,
       description:
-        'Prepare a staff resource, packet draft, or publication for explicit confirmation. Args teamId, action=saveResource|saveDraft|publish. Resources need title,url and optional teachingPoint and optional resourceId/drillId. Drafts need title,resourceIds,playerIds and optional notes,practiceId,dueAt ISO,timeZone,assignmentId. Publish needs assignmentId and explicit notify boolean. Never invent video content or report an open on behalf of someone.',
+        'Prepare a staff resource, packet draft, or publication for explicit confirmation. Args teamId, action=saveResource|saveDraft|publish. Resources need title,url and optional teachingPoint and optional resourceId/drillId. Drafts need title,resourceIds,playerIds and optional matching resourceVersions,notes,practiceId,dueAt ISO,timeZone,assignmentId. Omit resourceVersions to preserve versions from an existing assignment and select current versions for newly added resources; pass current versions to explicitly adopt updated media. Publish needs assignmentId and explicit notify boolean. Never invent video content or report an open on behalf of someone.',
       prepare: async (_user: AuthUser, args: Record<string, unknown>) => {
         const teamId = String(args.teamId || '');
         const view = await loadPreparationView(teamId);
@@ -118,6 +118,24 @@ export function buildResourcePacketAiTools() {
                 'Publish a new version; preserve opened progress for unchanged video destinations; changed videos need a new open. Eligible notification channels and preferences apply.'
             };
           } else {
+            if (!Array.isArray(args.resourceIds) || !args.resourceIds.every((value) => typeof value === 'string'))
+              throw new Error('Choose the resources to include in the draft.');
+            const resourceIds = args.resourceIds as string[];
+            const suppliedVersions = args.resourceVersions;
+            if (suppliedVersions !== undefined && (!Array.isArray(suppliedVersions) || suppliedVersions.length !== resourceIds.length))
+              throw new Error('Choose a version for every resource.');
+            const selectedItems = resourceIds.map((resourceId, index) => {
+              const current = view.resources.find((row) => row.resourceId === resourceId);
+              const prior = existing?.items.find((item) => item.resourceId === resourceId);
+              const selectedVersion = Array.isArray(suppliedVersions)
+                ? suppliedVersions[index]
+                : (prior?.resourceVersion ?? current?.version);
+              if (!Number.isInteger(selectedVersion) || Number(selectedVersion) < 1)
+                throw new Error('Choose a valid version for every resource.');
+              if (prior && prior.resourceVersion === selectedVersion) return prior;
+              if (current && current.version === selectedVersion) return { ...current, resourceVersion: current.version };
+              throw new Error('That resource version is not in this authorized page. Load the correct page before preparing the draft.');
+            });
             prepared = {
               teamId,
               action,
@@ -125,13 +143,14 @@ export function buildResourcePacketAiTools() {
               expectedRevision: existing?.revision || 0,
               title: args.title,
               notes: args.notes || '',
-              resourceIds: args.resourceIds,
+              resourceIds,
+              resourceVersions: selectedItems.map((item) => item.resourceVersion),
               playerIds: args.playerIds,
               practiceId: args.practiceId || null,
               dueAt: args.dueAt || null,
               timeZone: args.timeZone || null
             };
-            previewSummary = { ...prepared, effect: 'Save a draft only; do not publish or notify.' };
+            previewSummary = { ...prepared, items: selectedItems, effect: 'Save a draft only; do not publish or notify.' };
           }
         }
         return {

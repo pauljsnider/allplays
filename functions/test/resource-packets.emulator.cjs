@@ -142,7 +142,7 @@ test('real Auth, callable and Firestore isolation with separate households', asy
     await command('staff', { action: 'saveDraft', assignmentId: 'packet-2', expectedRevision: 0, title: 'Historical video', resourceIds: ['resource-1'], playerIds: ['child-a'] });
     await command('staff', { action: 'publish', assignmentId: 'packet-2', expectedRevision: 1, confirm: true, notify: false });
     await command('parent-a', { action: 'report', assignmentId: 'packet-2', version: 1, playerId: 'child-a', resourceId: 'resource-1', kind: 'opened' });
-    await command('staff', { ...resource, expectedRevision: 1, title: 'Updated footwork' });
+    await command('staff', { ...resource, expectedRevision: 1, title: 'Updated footwork', url: 'https://example.com/updated-footwork' });
     await command('staff', { action: 'saveDraft', assignmentId: 'packet-2', expectedRevision: 2, title: 'Historical video', notes: 'New coaching note', resourceIds: ['resource-1'], resourceVersions: [1], playerIds: ['child-a'] });
     await command('staff', { action: 'publish', assignmentId: 'packet-2', expectedRevision: 3, confirm: true, notify: false });
     const historical = (await call('parent-a', { teamId: 'team-a', view: 'family', playerId: 'child-a', assignmentId: 'packet-2' }, 'query')).tasks[0];

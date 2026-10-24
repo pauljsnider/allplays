@@ -188,6 +188,33 @@ describe('ResourcePackets', () => {
     expect(screen.getAllByText('1 of 1 complete')).toHaveLength(1);
   });
 
+  it('pins the current resource version when an edit explicitly adopts its media', async () => {
+    const currentResource = {
+      resourceId: 'resource-1',
+      version: 2,
+      title: 'Balance drill',
+      teachingPoint: 'Stay balanced.',
+      url: 'https://example.com/updated-balance'
+    };
+    resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue({
+      ...staffView,
+      resources: [currentResource]
+    });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Home footwork' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit assignment' }));
+    fireEvent.change(screen.getByLabelText('Video link 1'), {
+      target: { value: currentResource.url }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Assign without notifying' }));
+    await screen.findByText(/Assignment shared/);
+    expect(resourcePacketMocks.resourcePacketCommand.mock.calls.map((call) => call[1].action)).toEqual(['saveDraft', 'publish']);
+    expect(resourcePacketMocks.resourcePacketCommand).toHaveBeenCalledWith(
+      'coach-1',
+      expect.objectContaining({ action: 'saveDraft', resourceIds: ['resource-1'], resourceVersions: [2] })
+    );
+  });
+
   it('shows a recoverable publication error without discarding the composer', async () => {
     resourcePacketMocks.resourcePacketCommand.mockRejectedValue(new Error('Offline: retry when connected.'));
     renderPage();

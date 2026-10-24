@@ -125,8 +125,10 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
         const original = originalItems.current.get(item.resourceId);
         if (original && original.title === item.title && original.url === item.url && original.teachingPoint === item.teachingPoint)
           continue;
-        if (existing && existing.title === item.title && existing.url === item.url && existing.teachingPoint === item.teachingPoint)
+        if (existing && existing.title === item.title && existing.url === item.url && existing.teachingPoint === item.teachingPoint) {
+          saved[i] = existing;
           continue;
+        }
         // Revision checks prevent overwriting a newer resource edit.
         saved[i] = (await resourcePacketCommand(uid, {
           teamId,
