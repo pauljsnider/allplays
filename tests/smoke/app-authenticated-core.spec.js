@@ -197,7 +197,7 @@ test('resource packet rollout and authorized staff/family reads match the deploy
             return;
         }
         await expect(entry).toBeVisible();
-        await openAuthenticatedAppRoute(page, config.appBaseUrl, `/teams/${encodeURIComponent(config.teamId)}/resources`, { heading: 'Resources and practice packets' });
+        await openAuthenticatedAppRoute(page, config.appBaseUrl, `/teams/${encodeURIComponent(config.teamId)}/resources`, { heading: 'Resources and practice packets', panelHeading: '1. Reusable resources' });
         await expect(page.getByRole('heading', { name: '1. Reusable resources' })).toBeVisible();
         await expect(page.getByRole('alert')).toHaveCount(0);
     });

@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
-import { assertAuthenticatedAppRoute, collectAppRuntimeIssues, openAuthenticatedAppRoute } from './helpers/app-auth.js';
+import { assertAuthenticatedAppRoute, assertNotificationInbox, collectAppRuntimeIssues, openAuthenticatedAppRoute } from './helpers/app-auth.js';
 import { withAppFailureDiagnostic } from './helpers/app-route-diagnostic.js';
 
 const base = 'http://smoke.invalid/app/';
@@ -145,4 +145,24 @@ test('Awards panel assertions stay strict when its navigation link has the same 
     await expect(page.getByText('Awards', { exact: true })).toHaveCount(2);
     await expect(page.getByRole('heading', { name: 'Awards', exact: true })).toBeVisible();
     await expect(page.locator('main')).not.toContainText('No published awards');
+});
+
+
+test('resource content waits beyond the shell assertion window within the original route budget', async ({ page }) => {
+    await page.route('http://smoke.invalid/**', (request) => request.fulfill({ contentType: 'text/html', body: '<main><h1>Resources and practice packets</h1><div id="loaded"></div></main>' }));
+    await page.addInitScript(() => window.addEventListener('DOMContentLoaded', () => {
+        setTimeout(() => { document.querySelector('#loaded').innerHTML = '<h2>1. Reusable resources</h2>'; }, 5_200);
+    }));
+    await openAuthenticatedAppRoute(page, base, '/teams/synthetic/resources', { heading: 'Resources and practice packets', panelHeading: '1. Reusable resources' });
+    await expect(page.getByRole('heading', { name: '1. Reusable resources' })).toBeVisible();
+});
+
+test('notification assertion closes its dialog so the next family action is usable', async ({ page }) => {
+    await page.setContent(`<button onclick="document.querySelector('dialog').showModal()">Notifications</button>
+      <dialog aria-label="Notifications"><h2>Notifications</h2><ul><li><a href="#/practice-resources">Synthetic assignment</a></li></ul>
+      <button aria-label="Close notifications" onclick="this.closest('dialog').close()">Close</button></dialog>
+      <a href="#/players/synthetic/child/resources">Child assignment</a>`);
+    await assertNotificationInbox(page);
+    await page.getByRole('link', { name: 'Child assignment' }).click();
+    await expect(page).toHaveURL(/#\/players\/synthetic\/child\/resources$/);
 });
