@@ -3,6 +3,8 @@ const call = vi.hoisted(() => vi.fn());
 const browser = vi.hoisted(() => ({ open: vi.fn(), available: vi.fn(() => true) }));
 vi.mock('@capacitor/browser', () => ({ Browser: { open: browser.open } }));
 vi.mock('@capacitor/core', () => ({ Capacitor: { isPluginAvailable: browser.available } }));
+const principal = vi.hoisted(() => vi.fn(() => 'native-parent'));
+vi.mock('./authService', () => ({ getNativeAuthUserId: principal }));
 const native = vi.hoisted(() => vi.fn(() => false));
 vi.mock('./adapters/resourcePacketsFirebase', () => ({ resourcePacketCall: call }));
 vi.mock('./nativeRuntime', () => ({ isNativeRuntime: native }));
@@ -91,6 +93,7 @@ describe('native assignment opening', () => {
   beforeEach(() => {
     vi.stubEnv('VITE_RESOURCE_PACKETS_ENABLED', 'true');
     native.mockReturnValue(true);
+    principal.mockReturnValue('native-parent');
     browser.available.mockReturnValue(true);
     browser.open.mockReset().mockResolvedValue(undefined);
     call.mockReset().mockImplementation(async (name) => name === 'resourcePacketsQuery' ? { tasks: [task] } : { recorded: true });
@@ -101,11 +104,22 @@ describe('native assignment opening', () => {
     await openResourcePacketLink('native-parent', task, task.items[0]);
     expect(resourcePacketsAvailable()).toBe(true);
     expect(popup).not.toHaveBeenCalled();
-    expect(call.mock.calls[0]).toEqual(['resourcePacketsQuery', { view: 'family', teamId: 'team', playerId: 'child', assignmentId: 'packet' }]);
+    expect(call.mock.calls[0]).toEqual(['resourcePacketsQuery', { view: 'family', teamId: 'team', playerId: 'child', assignmentId: 'packet' }, 'native-parent']);
     expect(browser.open).toHaveBeenCalledWith({ url: task.items[0].url });
     expect(call.mock.invocationCallOrder[0]).toBeLessThan(browser.open.mock.invocationCallOrder[0]);
     expect(browser.open.mock.invocationCallOrder[0]).toBeLessThan(call.mock.invocationCallOrder[1]);
     expect(call.mock.calls[1][1]).toMatchObject({ action: 'report', kind: 'opened', playerId: 'child', version: 1 });
+  });
+  it.each([null, 'another-parent'])('does not launch after the initiating account changes during the query (%s)', async (uid) => {
+    let resolveQuery!: (page: { tasks: PacketTask[] }) => void;
+    call.mockImplementationOnce(() => new Promise(resolve => { resolveQuery = resolve; }));
+    const result = openResourcePacketLink('native-parent', task, task.items[0]);
+    await vi.waitFor(() => expect(call).toHaveBeenCalledOnce());
+    principal.mockReturnValue(uid as string);
+    resolveQuery({ tasks: [task] });
+    await expect(result).rejects.toThrow('Account changed');
+    expect(browser.open).not.toHaveBeenCalled();
+    expect(call).toHaveBeenCalledOnce();
   });
   it('does not record a failed native launch', async () => {
     browser.open.mockRejectedValue(new Error('Native launch cancelled'));
@@ -134,6 +148,7 @@ describe('native assignment opening', () => {
     expect(browser.open).not.toHaveBeenCalled();
   });
   it('keeps uncertain progress identity and reports launch truthfully on explicit retry', async () => {
+    principal.mockReturnValue('native-retry');
     call.mockResolvedValueOnce({tasks: [task]}).mockRejectedValueOnce(new Error('offline'));
     await expect(openResourcePacketLink('native-retry', task, task.items[0])).rejects.toThrow('link opened, but progress could not be confirmed');
     const requestId = call.mock.calls[1][1].requestId;

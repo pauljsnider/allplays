@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { StrictMode } from 'react';
+import { StrictMode, type ReactNode } from 'react';
+import App from '../App';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router-dom';
+import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthPage } from './AuthPage';
 import type { AuthState, AuthUser } from '../lib/types';
@@ -42,6 +43,13 @@ const publicActionsMocks = vi.hoisted(() => ({
   openPublicUrl: vi.fn(async () => undefined)
 }));
 
+vi.mock('../lib/useAuth', () => ({ useAuth: () => auth }));
+vi.mock('../components/AppShell', () => ({ AppShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
+vi.mock('./DiamondScorebookRoute', () => ({ DiamondScorebookRoute: () => null }));
+vi.mock('./PlayerResourcePackets', () => ({ PlayerResourcePackets: () => { const location = useLocation(); return <div>Assignment destination: {location.pathname}{location.search}</div>; } }));
+vi.mock('../lib/nativeDeepLinkRouting', () => ({ addNativeDeepLinkListener: async () => () => {} }));
+vi.mock('../lib/nativeBackButton', () => ({ addNativeBackButtonListener: async () => () => {}, dispatchNativeBackDismissEvent: () => false, exitNativeApp: vi.fn(), getNativeBackTarget: () => null, isNativeExitRoute: () => false, nativeBackExitPressWindowMs: 2000 }));
+vi.mock('../lib/pushService', () => ({ addPushNotificationOpenListener: async () => () => {}, ensureAndroidNotificationChannels: async () => {} }));
 vi.mock('../lib/authService', () => authServiceMocks);
 vi.mock('../lib/nativeRuntime', () => ({
   isNativeRuntime: () => nativeRuntimeMocks.native
@@ -145,6 +153,24 @@ describe('AuthPage native post-login routing', () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  it.each(['/practice-resources?teamId=team-1&assignmentId=assignment-1', '/players/team-1/child-1/resources?assignmentId=assignment-1'])('preserves a logged-out native assignment through the real login route and reload (%s)', async (destination) => {
+    nativeRuntimeMocks.native = true;
+    const user = { uid: 'parent-1', email: 'parent@example.invalid', displayName: 'Synthetic parent', roles: ['parent'] as ['parent'] };
+    authServiceMocks.signInWithEmail.mockResolvedValue({ user, nativeRest: true });
+    authServiceMocks.hydrateFirebaseUser.mockResolvedValue({ user, profile: {} });
+    const view = render(<MemoryRouter initialEntries={[destination]}><App /></MemoryRouter>);
+    await screen.findByRole('button', { name: 'Sign in' }, { timeout: 5000 });
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: user.email } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'local-test-password' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await waitFor(() => expect(window.location.hash).toBe('#' + destination));
+    expect(window.location.reload).toHaveBeenCalledOnce();
+    view.unmount();
+    auth.user = user;
+    render(<MemoryRouter initialEntries={[window.location.hash.slice(1)]}><App /></MemoryRouter>);
+    expect(await screen.findByText('Assignment destination: ' + destination)).toBeVisible();
   });
 
   it('reloads native email sign-in to the home page', async () => {

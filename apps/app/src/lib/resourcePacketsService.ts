@@ -92,7 +92,11 @@ export async function openResourcePacketLink(uid: string, task: PacketTask, item
       throw new Error('Video opening is unavailable in this app.');
     // Reauthorize and resolve the current destination without recording an open.
     // A stale/replaced assignment must never launch or complete another item.
-    const page = await loadResourcePacketFamily(task.teamId, task.playerId, undefined, task.assignmentId);
+    const page = (await invoke('resourcePacketsQuery', {
+      teamId: task.teamId, playerId: task.playerId, assignmentId: task.assignmentId, view: 'family'
+    }, uid)) as { tasks: PacketTask[] };
+    const { getNativeAuthUserId } = await import('./authService');
+    if (getNativeAuthUserId() !== uid) throw new Error('Account changed. Reload before opening this video.');
     const current = page.tasks.find((entry) => entry.assignmentId === task.assignmentId && entry.version === task.version);
     const resource = current?.items.find((entry) => entry.resourceId === item.resourceId && entry.resourceVersion === item.resourceVersion && entry.url === item.url);
     if (!resource) throw new Error('This assignment changed or is unavailable. Reload before opening it.');
