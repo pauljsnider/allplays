@@ -124,10 +124,11 @@ const resolveActiveConversationId = (
   return hasCurrent ? currentConversationId : nextConversations[0]?.id || DEFAULT_PRIVATE_AI_CONVERSATION_ID;
 };
 
-export function PrivateAiChat({ auth }: { auth: AuthState }) {
+export function PrivateAiChat({ auth, launchSearch }: { auth: AuthState; launchSearch?: string }) {
   const { isDesktopWeb } = useShellLayout();
   const location = useLocation();
-  const launchContext = useMemo(() => parsePrivateAiLaunchContext(location.search), [location.search]);
+  const contextSearch = launchSearch ?? location.search;
+  const launchContext = useMemo(() => parsePrivateAiLaunchContext(contextSearch), [contextSearch]);
   const [messages, setMessages] = useState<PrivateAiMessage[]>([]);
   const [conversations, setConversations] = useState<PrivateAiConversation[]>([]);
   const [conversationLoading, setConversationLoading] = useState(true);
@@ -181,8 +182,8 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
   }, [auth.user, hasDeclaredTeamManagerAccess]);
 
   useEffect(() => {
-    if (appliedLaunchSearchRef.current === location.search) return;
-    appliedLaunchSearchRef.current = location.search;
+    if (appliedLaunchSearchRef.current === contextSearch) return;
+    appliedLaunchSearchRef.current = contextSearch;
     setActiveLaunchContext(launchContext.teamId ? launchContext : null);
     pendingLaunchIntentRef.current = launchContext.intent || '';
     if (launchContext.newChat) {
@@ -191,7 +192,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
       setAttachment(null);
     }
     if (launchContext.prompt) setDraft(launchContext.prompt);
-  }, [launchContext, location.search]);
+  }, [launchContext, contextSearch]);
 
   const refreshConversations = async (showLoading = true, currentConversationId = activeConversationId) => {
     if (!auth.user) {

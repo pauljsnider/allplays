@@ -6,6 +6,7 @@ type NativeDeepLinkEvent = {
 };
 
 type NativeDeepLinkPlugin = {
+  getLaunchUrl?: () => Promise<NativeDeepLinkEvent | undefined>;
   addListener: (eventName: 'appUrlOpen', listener: (event: NativeDeepLinkEvent) => void) => Promise<{ remove: () => Promise<void> | void }>;
 };
 
@@ -25,10 +26,20 @@ export async function addNativeDeepLinkListener(onRoute: (route: string) => void
   if (!isNativePlatform() || !isPluginAvailable('App')) return () => {};
 
   const plugin = deps.appPlugin || (CapacitorApp as NativeDeepLinkPlugin);
+  let receivedLiveLink = false;
   const handle = await plugin.addListener('appUrlOpen', (event) => {
+    receivedLiveLink = true;
     const route = resolveNativeDeepLinkRoute(event.url);
     if (route) onRoute(route);
   });
+
+  try {
+    const launch = await plugin.getLaunchUrl?.();
+    const route = resolveNativeDeepLinkRoute(launch?.url);
+    if (!receivedLiveLink && route) onRoute(route);
+  } catch {
+    // A failed cold-start lookup must not disable subsequent link handling.
+  }
 
   return () => {
     void handle.remove();

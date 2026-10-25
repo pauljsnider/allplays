@@ -24,7 +24,7 @@ const callableErrorCodes = new Set([
   'unknown'
 ]);
 
-type NativeCallableOptions = { timeoutMs?: number; errorLabel?: string };
+type NativeCallableOptions = { timeoutMs?: number; errorLabel?: string; expectedUid?: string };
 
 type NativeCallableAuth = {
   projectId: string;
@@ -142,8 +142,10 @@ export async function callNativeFirebaseFunction<T = unknown>(
 ): Promise<T> {
   // Keep the authenticated transport reusable during auth bootstrap without a
   // static authService cycle. Normal callers still use the current native token.
-  const { firebaseAuth, getNativeAuthIdToken } = await import('./authService');
+  const { firebaseAuth, getNativeAuthIdToken, getNativeAuthUserId } = await import('./authService');
+  if (options.expectedUid && getNativeAuthUserId() !== options.expectedUid) throw new Error('Account changed. Reload before trying again.');
   const idToken = await getNativeAuthIdToken(true);
+  if (options.expectedUid && getNativeAuthUserId() !== options.expectedUid) throw new Error('Account changed. Reload before trying again.');
   return callNativeFirebaseFunctionWithAuth<T>(
     functionName,
     data,

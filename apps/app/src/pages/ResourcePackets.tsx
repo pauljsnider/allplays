@@ -14,6 +14,9 @@ import { loadTeamDrillLibraryPage, type TeamDrillSummary } from '../lib/teamDril
 import { assignmentAiPath, assignmentProgress, videoPreview } from '../lib/resourceAssignmentPresentation';
 import { assignmentComposition, compositionLabels, reconcileAssignment, type AssignmentComposition } from '../lib/assignmentConflict';
 import { Modal } from '../components/Modal';
+import { AssignmentAiLink } from '../components/assignments/AssignmentAiLink';
+import { openPublicUrl } from '../lib/publicActions';
+import { isNativeRuntime } from '../lib/nativeRuntime';
 import { VideoCard } from '../components/assignments/VideoCard';
 
 const field = 'mt-1 block min-h-12 w-full rounded-xl border border-gray-300 p-3';
@@ -471,6 +474,11 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
                     <a
                       className="inline-flex min-h-12 items-center font-semibold text-emerald-800 underline"
                       href={item.url}
+                      onClick={(event) => {
+                        if (!isNativeRuntime()) return;
+                        event.preventDefault();
+                        void openPublicUrl(item.url).catch(() => setError('Unable to open the video preview. Try again.'));
+                      }}
                       target="_blank"
                       rel="noopener noreferrer"
                     >
@@ -499,7 +507,7 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
               >
                 Add another video
               </button>
-              <Link
+              <AssignmentAiLink auth={auth}
                 className={secondary}
                 to={assignmentAiPath(
                   teamId,
@@ -526,11 +534,9 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
                     }
                   )}`
                 )}
-                target="_blank"
-                rel="noopener noreferrer"
               >
                 Help me with AI (new tab)
-              </Link>
+              </AssignmentAiLink>
             </div>
             <p className="text-sm text-gray-600">Your unsaved assignment stays open here while you use AI.</p>
             <details className="rounded-xl border p-3">

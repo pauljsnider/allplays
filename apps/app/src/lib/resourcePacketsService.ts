@@ -1,3 +1,5 @@
+import { Browser } from '@capacitor/browser';
+import { Capacitor } from '@capacitor/core';
 import { isNativeRuntime } from './nativeRuntime';
 import { toAppServiceError } from './appErrors';
 
@@ -40,7 +42,7 @@ export type PacketStaffView = {
   deliveries: { deliveryId: string; assignmentId: string; version: number; state: string }[];
 };
 const pending = new Map<string, string>();
-export const resourcePacketsAvailable = () => !isNativeRuntime() && import.meta.env.VITE_RESOURCE_PACKETS_ENABLED === 'true';
+export const resourcePacketsAvailable = () => import.meta.env.VITE_RESOURCE_PACKETS_ENABLED === 'true';
 export function packetDueDate(value: string) {
   if (!value) return null;
   const date = new Date(value);
@@ -49,11 +51,11 @@ export function packetDueDate(value: string) {
   return date.toISOString();
 }
 
-async function invoke(name: string, data: Record<string, unknown>) {
-  if (!resourcePacketsAvailable()) throw new Error('Resource packets are not enabled for this web app.');
+async function invoke(name: string, data: Record<string, unknown>, expectedUid?: string) {
+  if (!resourcePacketsAvailable()) throw new Error('Resource packets are not enabled for this app.');
   try {
     const { resourcePacketCall } = await import('./adapters/resourcePacketsFirebase');
-    return await resourcePacketCall(name, data);
+    return await (expectedUid && isNativeRuntime() ? resourcePacketCall(name, data, expectedUid) : resourcePacketCall(name, data));
   } catch (error) {
     throw toAppServiceError(error, 'Unable to load or save practice packets. Try again.');
   }
@@ -80,11 +82,38 @@ export async function resourcePacketCommand(uid: string, data: Record<string, un
   const key = JSON.stringify([uid, data]);
   const requestId = typeof data.requestId === 'string' ? data.requestId : pending.get(key) || crypto.randomUUID();
   pending.set(key, requestId);
-  const result = await invoke('resourcePacketsCommand', { ...data, requestId });
+  const result = await invoke('resourcePacketsCommand', { ...data, requestId }, uid);
   pending.delete(key);
   return result;
 }
 export async function openResourcePacketLink(uid: string, task: PacketTask, item: PacketItem) {
+  if (isNativeRuntime()) {
+    if (!resourcePacketsAvailable() || !Capacitor.isPluginAvailable('Browser'))
+      throw new Error('Video opening is unavailable in this app.');
+    // Reauthorize and resolve the current destination without recording an open.
+    // A stale/replaced assignment must never launch or complete another item.
+    const page = await loadResourcePacketFamily(task.teamId, task.playerId, undefined, task.assignmentId);
+    const current = page.tasks.find((entry) => entry.assignmentId === task.assignmentId && entry.version === task.version);
+    const resource = current?.items.find((entry) => entry.resourceId === item.resourceId && entry.resourceVersion === item.resourceVersion && entry.url === item.url);
+    if (!resource) throw new Error('This assignment changed or is unavailable. Reload before opening it.');
+    const url = new URL(resource.url);
+    if (url.protocol !== 'https:' || url.username || url.password)
+      throw new Error('This link is unavailable.');
+    // Browser.open resolves when the native browser opens, not when playback starts.
+    // A rejected launch must not write completion. Returning to the app needs no
+    // browser redirect and never creates another signal.
+    await Browser.open({ url: url.href });
+    try {
+      await resourcePacketCommand(uid, {
+        teamId: task.teamId, action: 'report', assignmentId: task.assignmentId,
+        version: task.version, playerId: task.playerId, resourceId: item.resourceId, kind: 'opened'
+      });
+    } catch {
+      throw new Error('The video link opened, but progress could not be confirmed. Retry Watch to confirm it. Playback is not verified.');
+    }
+    return;
+  }
+
   // No href, preload, hover or AI read calls this function. Reserve a new tab
   // during the deliberate gesture, before the authenticated command resolves.
   const tab = window.open('about:blank', '_blank');
