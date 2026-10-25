@@ -110,6 +110,8 @@ describe('TV marketing availability boundaries', () => {
         expect(roku).toContain('Not yet available to install');
         expect(roku).not.toMatch(/<a\b/);
         expect(home + app).not.toMatch(/channelstore\.roku\.com|my\.roku\.com/);
-        expect(app).toContain('currently open web signup');
+        expect(app).toContain('Use ALL PLAYS in your mobile browser.');
+        expect(app).not.toMatch(/App Store|Google Play|Free to download/);
+        expect((app.match(/href="\/app\/#\/auth\?mode=signup"/g) || [])).toHaveLength(3);
     });
 });
