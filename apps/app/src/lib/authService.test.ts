@@ -368,6 +368,41 @@ describe('getNativeAuthIdToken', () => {
     expect(nativeAuthenticationMocks.getIdToken).toHaveBeenCalledTimes(2);
   });
 
+  it.each([false, true])('rechecks an initial native auth event without accepting a changed principal (changed=%s)', async (changed) => {
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({ uid: 'parent', provider: 'native-plugin' }));
+    nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'parent-token' });
+    await getNativeAuthIdToken(false);
+    const listener = nativeAuthenticationMocks.addListener.mock.calls.find(([event]) => event === 'authStateChange')?.[1];
+    nativeAuthenticationMocks.getCurrentUser.mockImplementationOnce(async () => {
+      listener({ user: { uid: changed ? 'other-parent' : 'parent' } });
+      return { user: { uid: 'parent' } };
+    });
+    nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({ user: { uid: changed ? 'other-parent' : 'parent' } });
+    nativeAuthenticationMocks.getIdToken.mockClear();
+    if (changed) {
+      await expect(getNativeAuthIdToken(false)).rejects.toThrow('does not match');
+      expect(nativeAuthenticationMocks.getIdToken).not.toHaveBeenCalled();
+    } else {
+      await expect(getNativeAuthIdToken(false)).resolves.toBe('parent-token');
+      expect(nativeAuthenticationMocks.getIdToken).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('bounds the initial auth-event recheck and never requests a token during repeated changes', async () => {
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({ uid: 'parent', provider: 'native-plugin' }));
+    nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'parent-token' });
+    await getNativeAuthIdToken(false);
+    const listener = nativeAuthenticationMocks.addListener.mock.calls.find(([event]) => event === 'authStateChange')?.[1];
+    nativeAuthenticationMocks.getCurrentUser.mockClear().mockImplementation(async () => {
+      listener({ user: { uid: 'parent' } });
+      return { user: { uid: 'parent' } };
+    });
+    nativeAuthenticationMocks.getIdToken.mockClear();
+    await expect(getNativeAuthIdToken(false)).rejects.toThrow('session changed');
+    expect(nativeAuthenticationMocks.getCurrentUser).toHaveBeenCalledTimes(2);
+    expect(nativeAuthenticationMocks.getIdToken).not.toHaveBeenCalled();
+  });
+
   it('clears the reusable token at sign-out', async () => {
     nativeAuthenticationMocks.getIdToken
       .mockResolvedValueOnce({ token: 'before-sign-out' })

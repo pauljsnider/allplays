@@ -195,6 +195,12 @@ async function ensureNativePluginAuthStateListener() {
   return registration;
 }
 
+class NativeUserVerificationInterrupted extends Error {
+  constructor() {
+    super('Native Firebase auth session changed while verifying the current user.');
+  }
+}
+
 async function verifyNativePluginUser(expectedUid: string) {
   const generation = nativePluginTokenGeneration;
   const pendingVerification = nativePluginUserVerificationRequest;
@@ -205,7 +211,7 @@ async function verifyNativePluginUser(expectedUid: string) {
   const promise = FirebaseAuthentication.getCurrentUser()
     .then((result) => {
       if (generation !== nativePluginTokenGeneration) {
-        throw new Error('Native Firebase auth session changed while verifying the current user.');
+        throw new NativeUserVerificationInterrupted();
       }
       const currentUid = normalizeNativeAuthUid(result?.user?.uid);
       if (!currentUid) {
@@ -553,7 +559,16 @@ async function getNativePluginToken(forceRefresh = false, expectedUid = '') {
     throw new Error('Native Firebase auth has no signed-in user.');
   }
   await ensureNativePluginAuthStateListener();
-  await verifyNativePluginUser(uid);
+  try {
+    await verifyNativePluginUser(uid);
+  } catch (error) {
+    if (!(error instanceof NativeUserVerificationInterrupted)) throw error;
+    // The plugin may deliver its retained initial auth event after registering
+    // the listener. Re-read the principal once before requesting any token.
+    // Different users and a second event still fail closed; in-flight tokens
+    // retain their stricter generation checks below.
+    await verifyNativePluginUser(uid);
+  }
   const now = Date.now();
   const cachedToken = nativePluginTokenCache;
   if (!forceRefresh && cachedToken && cachedToken.uid === uid && cachedToken.expiresAt > now) {

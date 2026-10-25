@@ -119,6 +119,7 @@ jobs:
 
       - name: Build React app
         env:
+          VITE_RESOURCE_PACKETS_ENABLED: ${{ vars.RESOURCE_PACKETS_ENABLED }}
           VITE_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
         run: npm run app:build:native
 
@@ -208,6 +209,7 @@ jobs:
 
       - name: Build React app
         env:
+          VITE_RESOURCE_PACKETS_ENABLED: ${{ vars.RESOURCE_PACKETS_ENABLED }}
           VITE_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
         run: npm run app:build:native
 
