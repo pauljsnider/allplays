@@ -5,7 +5,12 @@ import type { AuthState } from '../../lib/types';
 const native = vi.hoisted(() => vi.fn(() => true));
 vi.mock('../../lib/nativeRuntime', () => ({ isNativeRuntime: native }));
 vi.mock('../../pages/PrivateAiChat', () => ({
-  PrivateAiChat: ({ launchSearch }: { launchSearch: string }) => <div>AI context: {launchSearch}</div>
+  PrivateAiChat: ({ launchSearch }: { launchSearch: string }) => (
+    <form aria-label="AI chat" onSubmit={(event) => event.preventDefault()}>
+      <div>AI context: {launchSearch}</div>
+      <button type="submit">Send AI message</button>
+    </form>
+  )
 }));
 import { AssignmentAiLink } from './AssignmentAiLink';
 afterEach(() => {
@@ -27,6 +32,21 @@ describe('native composer AI', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Return to unsaved assignment' }));
     expect(screen.getByLabelText('Unsaved coaching note')).toHaveValue('Keep balance');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+  it('does not submit the assignment form when sending an AI message', async () => {
+    const sendAssignment = vi.fn((event: React.FormEvent) => event.preventDefault());
+    render(
+      <MemoryRouter>
+        <form aria-label="Assignment composer" onSubmit={sendAssignment}>
+          <AssignmentAiLink auth={{ user: { uid: 'synthetic-coach' } } as AuthState} to="/ai?teamId=team">
+            Help me with AI (new tab)
+          </AssignmentAiLink>
+        </form>
+      </MemoryRouter>
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Help me with AI' }));
+    fireEvent.submit(await screen.findByRole('form', { name: 'AI chat' }));
+    expect(sendAssignment).not.toHaveBeenCalled();
   });
   it('keeps the existing new-tab behavior on web', () => {
     native.mockReturnValue(false);

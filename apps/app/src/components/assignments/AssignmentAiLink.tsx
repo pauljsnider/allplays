@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { isNativeRuntime } from '../../lib/nativeRuntime';
 import type { AuthState } from '../../lib/types';
@@ -29,18 +30,20 @@ export function AssignmentAiLink({
       <button type="button" className={className} onClick={() => setSearch(to.slice(to.indexOf('?')))}>
         Help me with AI
       </button>
-      {search !== null && (
-        <Modal ariaLabel="Assignment coaching help" onClose={() => setSearch(null)}>
-          <div className="max-h-[90dvh] w-full overflow-auto rounded-xl bg-white p-4">
-            <button type="button" className="min-h-12 underline" onClick={() => setSearch(null)}>
-              Return to unsaved assignment
-            </button>
-            <Suspense fallback={<p role="status">Loading coaching help…</p>}>
-              <Chat auth={auth} launchSearch={search} />
-            </Suspense>
-          </div>
-        </Modal>
-      )}
+      {search !== null &&
+        createPortal(
+          <Modal ariaLabel="Assignment coaching help" onClose={() => setSearch(null)}>
+            <div className="max-h-[90dvh] w-full overflow-auto rounded-xl bg-white p-4" onSubmit={(event) => event.stopPropagation()}>
+              <button type="button" className="min-h-12 underline" onClick={() => setSearch(null)}>
+                Return to unsaved assignment
+              </button>
+              <Suspense fallback={<p role="status">Loading coaching help…</p>}>
+                <Chat auth={auth} launchSearch={search} />
+              </Suspense>
+            </div>
+          </Modal>,
+          document.body
+        )}
     </>
   );
 }

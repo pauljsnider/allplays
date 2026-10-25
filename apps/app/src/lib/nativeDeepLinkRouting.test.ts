@@ -54,4 +54,34 @@ describe('native assignment destinations', () => {
     });
     expect(navigate).toHaveBeenCalledExactlyOnceWith('/home');
   });
+  it('consumes a cold-start URL only once when the listener is registered again', async () => {
+    const firstNavigate = vi.fn();
+    const secondNavigate = vi.fn();
+    const getLaunchUrl = vi.fn(async () => ({ url: `https://allplays.ai/app/#${route}` }));
+    const listeners: Array<(event: { url: string }) => void> = [];
+    const appPlugin = {
+      addListener: async (_name: 'appUrlOpen', callback: (event: { url: string }) => void) => {
+        listeners.push(callback);
+        return { remove: vi.fn() };
+      },
+      getLaunchUrl
+    };
+
+    await addNativeDeepLinkListener(firstNavigate, {
+      isNativePlatform: () => true,
+      isPluginAvailable: () => true,
+      appPlugin
+    });
+    await addNativeDeepLinkListener(secondNavigate, {
+      isNativePlatform: () => true,
+      isPluginAvailable: () => true,
+      appPlugin
+    });
+
+    expect(getLaunchUrl).toHaveBeenCalledOnce();
+    expect(firstNavigate).toHaveBeenCalledExactlyOnceWith(route);
+    expect(secondNavigate).not.toHaveBeenCalled();
+    listeners[1]?.({ url: 'allplays://home' });
+    expect(secondNavigate).toHaveBeenCalledExactlyOnceWith('/home');
+  });
 });
