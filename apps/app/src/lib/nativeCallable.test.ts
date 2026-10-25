@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const httpMocks = vi.hoisted(() => ({ post: vi.fn() }));
 const authMocks = vi.hoisted(() => ({
   getNativeAuthIdToken: vi.fn(),
+  getNativeAuthUserId: vi.fn(),
   firebaseAuth: { app: { options: { projectId: 'demo-project' } } }
 }));
 const appCheckMocks = vi.hoisted(() => ({
@@ -22,6 +23,12 @@ describe('native callable transport', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     authMocks.getNativeAuthIdToken.mockResolvedValue('native-id-token');
+  });
+
+  it('pins assignment writes to the initiating principal across token refresh', async () => {
+    authMocks.getNativeAuthUserId.mockReturnValueOnce('parent-a').mockReturnValueOnce('parent-b');
+    await expect(callNativeFirebaseFunction('resourcePacketsCommand', {}, { expectedUid: 'parent-a' })).rejects.toThrow('Account changed');
+    expect(httpMocks.post).not.toHaveBeenCalled();
   });
 
   it('attaches native auth and App Check with bounded timeouts', async () => {

@@ -6,6 +6,7 @@ type NativeDeepLinkEvent = {
 };
 
 type NativeDeepLinkPlugin = {
+  getLaunchUrl?: () => Promise<NativeDeepLinkEvent | undefined>;
   addListener: (eventName: 'appUrlOpen', listener: (event: NativeDeepLinkEvent) => void) => Promise<{ remove: () => Promise<void> | void }>;
 };
 
@@ -18,17 +19,32 @@ type NativeDeepLinkDeps = {
 const appHosts = new Set(['allplays.ai', 'www.allplays.ai']);
 const appPathPrefix = '/app';
 const customSchemes = new Set(['allplays', 'ai.allplays.lite']);
+const launchUrlConsumedPlugins = new WeakSet<NativeDeepLinkPlugin>();
 
 export async function addNativeDeepLinkListener(onRoute: (route: string) => void, deps: NativeDeepLinkDeps = {}) {
   const isNativePlatform = deps.isNativePlatform || (() => Capacitor.isNativePlatform());
-  const isPluginAvailable = deps.isPluginAvailable || ((pluginName: string) => (Capacitor as any).isPluginAvailable?.(pluginName) !== false);
+  const isPluginAvailable =
+    deps.isPluginAvailable || ((pluginName: string) => (Capacitor as any).isPluginAvailable?.(pluginName) !== false);
   if (!isNativePlatform() || !isPluginAvailable('App')) return () => {};
 
   const plugin = deps.appPlugin || (CapacitorApp as NativeDeepLinkPlugin);
+  let receivedLiveLink = false;
   const handle = await plugin.addListener('appUrlOpen', (event) => {
+    receivedLiveLink = true;
     const route = resolveNativeDeepLinkRoute(event.url);
     if (route) onRoute(route);
   });
+
+  if (!launchUrlConsumedPlugins.has(plugin)) {
+    launchUrlConsumedPlugins.add(plugin);
+    try {
+      const launch = await plugin.getLaunchUrl?.();
+      const route = resolveNativeDeepLinkRoute(launch?.url);
+      if (!receivedLiveLink && route) onRoute(route);
+    } catch {
+      // A failed cold-start lookup must not disable subsequent link handling.
+    }
+  }
 
   return () => {
     void handle.remove();
