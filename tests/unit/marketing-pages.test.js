@@ -97,3 +97,19 @@ describe('marketing pages integration', () => {
         expect(html).toContain('.catch(() => {');
     });
 });
+
+describe('TV marketing availability boundaries', () => {
+    it('keeps the concept separate from install availability and links real existing destinations', () => {
+        const home = read('index.html');
+        const app = read('app.html');
+        expect(home).toContain('Roku experience · In development');
+        expect(home).toContain('Concept preview · Illustrative game imagery');
+        expect(home).toContain('href="app.html#platforms"');
+        expect(app).toContain('id="platforms"');
+        const roku = app.match(/<article id="roku-availability"[\s\S]*?<\/article>/)[0];
+        expect(roku).toContain('Not yet available to install');
+        expect(roku).not.toMatch(/<a\b/);
+        expect(home + app).not.toMatch(/channelstore\.roku\.com|my\.roku\.com/);
+        expect(app).toContain('currently open web signup');
+    });
+});
