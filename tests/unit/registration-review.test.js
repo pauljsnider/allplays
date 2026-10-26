@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import {
+    appendRegistrationReviewPage,
+    collectRegistrationReviewPages,
+    createRegistrationReviewPaginationState,
+    LEGACY_REGISTRATION_REVIEW_PAGE_SIZE
+} from '../../js/registration-review-pagination.js';
+import {
     buildRegistrationReviewCsv,
     buildRegistrationReviewCsvFilename,
     buildRegistrationRosterDecision,
@@ -19,6 +25,55 @@ import {
 } from '../../js/registration-review.js';
 
 describe('registration review helpers', () => {
+    it('resets and appends bounded legacy review pages without duplicate registration ids', () => {
+        let state = createRegistrationReviewPaginationState();
+        const firstPage = Array.from({ length: LEGACY_REGISTRATION_REVIEW_PAGE_SIZE }, (_, index) => ({ id: `reg-${index + 1}` }));
+        state = appendRegistrationReviewPage(state, {
+            registrations: firstPage,
+            lastDoc: { id: 'cursor-1' },
+            hasMore: true
+        });
+        state = appendRegistrationReviewPage(state, {
+            registrations: [{ id: 'reg-25' }, { id: 'reg-26' }],
+            lastDoc: { id: 'cursor-2' },
+            hasMore: false
+        });
+
+        expect(state.registrations).toHaveLength(26);
+        expect(state.registrations.at(-1)?.id).toBe('reg-26');
+        expect(state.hasMore).toBe(false);
+        expect(createRegistrationReviewPaginationState()).toEqual({
+            registrations: [],
+            lastDoc: null,
+            hasMore: true
+        });
+    });
+
+    it('walks successive bounded cursor pages for explicit exports', async () => {
+        const cursors = [];
+        const pages = [
+            {
+                registrations: Array.from({ length: 25 }, (_, index) => ({ id: `reg-${index + 1}` })),
+                lastDoc: { id: 'cursor-1' },
+                hasMore: true
+            },
+            {
+                registrations: [{ id: 'reg-25' }, ...Array.from({ length: 11 }, (_, index) => ({ id: `reg-${index + 26}` }))],
+                lastDoc: { id: 'cursor-2' },
+                hasMore: false
+            }
+        ];
+
+        const registrations = await collectRegistrationReviewPages(async (afterDoc) => {
+            cursors.push(afterDoc);
+            return pages.shift();
+        });
+
+        expect(cursors).toEqual([null, { id: 'cursor-1' }]);
+        expect(registrations).toHaveLength(36);
+        expect(registrations.at(-1)?.id).toBe('reg-36');
+    });
+
     it('normalizes submitted player and guardian fields for review', () => {
         const registration = {
             status: 'submitted',
@@ -244,6 +299,17 @@ describe('registration review helpers', () => {
             playerId: 'generated-player-id',
             type: 'new-player'
         });
+    });
+
+    it('wires legacy roster review to bounded pages and explicit paged export', () => {
+        const editRosterPage = fs.readFileSync('edit-roster.html', 'utf8');
+
+        expect(editRosterPage).toContain('listTeamRegistrationReviewsPage');
+        expect(editRosterPage).not.toContain('listTeamRegistrationReviews(');
+        expect(editRosterPage).toContain('pageSize: LEGACY_REGISTRATION_REVIEW_PAGE_SIZE');
+        expect(editRosterPage).toContain('load-more-registration-reviews-btn');
+        expect(editRosterPage).toContain('collectRegistrationReviewPages');
+        expect(editRosterPage).toContain('Loaded applications · Volunteer screening:');
     });
 
     it('wires roster registration review to admin-only screening updates', () => {

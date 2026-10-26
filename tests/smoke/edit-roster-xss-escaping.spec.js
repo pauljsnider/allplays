@@ -57,8 +57,13 @@ export async function reorderRosterFieldDefinitions() {}
 export async function listTeamParentMembershipRequests() { return []; }
 export async function approveParentMembershipRequest() {}
 export async function denyParentMembershipRequest() {}
-export async function listTeamRegistrationForms() { return []; }
-export async function listTeamRegistrationReviews() { return []; }
+export async function listTeamRegistrationForms() { return globalThis.__registrationForms || []; }
+export async function listTeamRegistrationReviewsPage(_teamId, _formId, options) {
+    globalThis.__registrationReviewPageCalls = globalThis.__registrationReviewPageCalls || [];
+    globalThis.__registrationReviewPageCalls.push(options);
+    return (globalThis.__registrationReviewPages || []).shift() || { registrations: [], lastDoc: null, hasMore: false };
+}
+export async function listTeamRegistrationReviews() { throw new Error('unbounded registration review read'); }
 export async function approveTeamRegistration() {}
 export async function rejectTeamRegistration() {}
 export async function extendTeamRegistrationOffer() {}
@@ -183,4 +188,70 @@ test('malicious AI-imported player name is escaped in proposed changes (no XSS)'
     // No injected element and no fired handler from either field.
     expect(await page.locator('#proposed-changes-list img').count()).toBe(0);
     expect(await page.evaluate(() => window.__xssFired)).toBeFalsy();
+});
+
+test('legacy registration review loads 25 rows then appends the next cursor page', async ({ page, baseURL }) => {
+    const buildRegistration = (number) => ({
+        id: `reg-${number}`,
+        status: 'pending',
+        submittedAt: `2026-10-${String(number).padStart(2, '0')}T12:00:00.000Z`,
+        submittedData: {
+            athlete: { name: `Player ${number}` },
+            guardian: { guardianEmail: `guardian${number}@example.com` }
+        }
+    });
+    const firstPage = Array.from({ length: 25 }, (_, index) => buildRegistration(index + 1));
+    const secondPage = Array.from({ length: 5 }, (_, index) => buildRegistration(index + 26));
+
+    await page.addInitScript(({ first, second }) => {
+        globalThis.__registrationForms = [{ id: 'form-1', name: 'Fall registration' }];
+        globalThis.__registrationReviewPages = [
+            { registrations: first, lastDoc: { id: 'cursor-25' }, hasMore: true },
+            { registrations: second, lastDoc: { id: 'cursor-30' }, hasMore: false }
+        ];
+    }, { first: firstPage, second: secondPage });
+    await mockEditRosterDependencies(page);
+    page.on('dialog', (dialog) => dialog.accept());
+    await page.goto(`${baseURL}/edit-roster.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+
+    const cards = page.locator('#registration-review-list [data-registration-id]');
+    await expect(cards).toHaveCount(25);
+    await expect(page.locator('#load-more-registration-reviews-btn')).toBeVisible();
+    expect(await page.evaluate(() => globalThis.__registrationReviewPageCalls)).toEqual([
+        { status: 'pending', pageSize: 25, afterDoc: null }
+    ]);
+
+    await page.click('#load-more-registration-reviews-btn');
+    await expect(cards).toHaveCount(30);
+    await expect(page.locator('#load-more-registration-reviews-btn')).toBeHidden();
+    expect(await page.evaluate(() => globalThis.__registrationReviewPageCalls)).toEqual([
+        { status: 'pending', pageSize: 25, afterDoc: null },
+        { status: 'pending', pageSize: 25, afterDoc: { id: 'cursor-25' } }
+    ]);
+
+    await page.evaluate((first) => {
+        globalThis.__registrationReviewPages = [
+            { registrations: first, lastDoc: { id: 'cursor-mutation' }, hasMore: true }
+        ];
+    }, firstPage);
+    await page.locator('.reject-registration-btn').first().click();
+    await expect(cards).toHaveCount(25);
+    expect((await page.evaluate(() => globalThis.__registrationReviewPageCalls)).at(-1)).toEqual({
+        status: 'pending',
+        pageSize: 25,
+        afterDoc: null
+    });
+
+    await page.evaluate((first) => {
+        globalThis.__registrationReviewPages = [
+            { registrations: first, lastDoc: { id: 'cursor-reset' }, hasMore: true }
+        ];
+    }, firstPage);
+    await page.selectOption('#registration-screening-status-filter', 'cleared');
+    await expect(page.locator('#registration-review-list')).toContainText('Load more to continue searching.');
+    expect((await page.evaluate(() => globalThis.__registrationReviewPageCalls)).at(-1)).toEqual({
+        status: 'pending',
+        pageSize: 25,
+        afterDoc: null
+    });
 });

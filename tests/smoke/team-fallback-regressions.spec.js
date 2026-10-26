@@ -271,6 +271,7 @@ export async function reorderRosterFieldDefinitions() {}
 export async function listTeamRegistrationForms() {
     throw permissionDenied();
 }
+export async function listTeamRegistrationReviewsPage() { return { registrations: [], lastDoc: null, hasMore: false }; }
 export async function listTeamRegistrationReviews() {
     throw permissionDenied();
 }
