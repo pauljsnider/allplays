@@ -107,10 +107,10 @@ describe('TV marketing availability boundaries', () => {
         expect(home).toContain('href="app.html#platforms"');
         expect(app).toContain('id="platforms"');
         const roku = app.match(/<article id="roku-availability"[\s\S]*?<\/article>/)[0];
-        expect(roku).toContain('Not yet available to install');
+        expect(roku).toContain('Not yet publicly available');
         expect(roku).not.toMatch(/<a\b/);
         expect(home + app).not.toMatch(/channelstore\.roku\.com|my\.roku\.com/);
-        expect(app).toContain('Use ALL PLAYS in your mobile browser.');
+        expect(app).toContain('iPhone or Android browser.');
         expect(app).not.toMatch(/App Store|Google Play|Free to download/);
         expect((app.match(/href="\/app\/#\/auth\?mode=signup"/g) || [])).toHaveLength(3);
     });

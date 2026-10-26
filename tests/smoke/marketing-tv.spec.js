@@ -14,7 +14,7 @@ for (const width of [320, 390, 1280]) {
         await expect(page).toHaveURL(/app.html#platforms$/);
         await expect(page.getByRole('link', { name: /App Store|Google Play/ })).toHaveCount(0);
         await expect(page.locator('#get').getByRole('link', { name: 'Get started on the web' })).toHaveAttribute('href', '/app/#/auth?mode=signup');
-        await expect(page.locator('#roku-availability')).toContainText('Not yet available to install');
+        await expect(page.locator('#roku-availability')).toContainText('Not yet publicly available');
         await expect(page.locator('#roku-availability a')).toHaveCount(0);
         await expect(page.locator('#platforms').getByRole('link', { name: 'Get started on the web' })).toHaveAttribute('href', '/app/#/auth?mode=signup');
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
