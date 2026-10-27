@@ -35,6 +35,11 @@ const opportunityServiceMocks = vi.hoisted(() => ({
   listPublicOpportunities: vi.fn()
 }));
 
+const resourcePacketMocks = vi.hoisted(() => ({
+  available: vi.fn(() => false),
+  loadHomeTasks: vi.fn()
+}));
+
 const uxTimingMocks = vi.hoisted(() => ({
   recordFirstMeaningfulRender: vi.fn(),
   startScreenMountTimer: vi.fn(() => ({ end: vi.fn() })),
@@ -48,6 +53,10 @@ vi.mock('../lib/homeService', () => homeServiceMocks);
 vi.mock('../lib/socialService', () => socialServiceMocks);
 vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
 vi.mock('../lib/opportunityService', () => opportunityServiceMocks);
+vi.mock('../lib/resourcePacketsService', () => ({
+  resourcePacketsAvailable: resourcePacketMocks.available,
+  loadResourcePacketHomeTasks: resourcePacketMocks.loadHomeTasks
+}));
 vi.mock('../lib/uxTiming', () => uxTimingMocks);
 vi.mock('lucide-react', () => {
   const Icon = () => null;
@@ -60,6 +69,7 @@ vi.mock('lucide-react', () => {
     ChevronRight: Icon,
     ClipboardCheck: Icon,
     DollarSign: Icon,
+    Dumbbell: Icon,
     Flag: Icon,
     Heart: Icon,
     ImagePlus: Icon,
@@ -434,6 +444,8 @@ describe('Home', () => {
     });
     scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValue({ hasAccess: false, teamCount: 0, isPartial: false });
     opportunityServiceMocks.listPublicOpportunities.mockResolvedValue({ items: [], nextCursor: null });
+    resourcePacketMocks.available.mockReturnValue(false);
+    resourcePacketMocks.loadHomeTasks.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -648,10 +660,36 @@ describe('Home', () => {
     expect(screen.getByRole('link', { name: /Players4/ }).getAttribute('href')).toBe('/home?section=players');
     expect(screen.getByRole('link', { name: /Teams3/ }).getAttribute('href')).toBe('/home?section=teams');
     expect(screen.getByRole('link', { name: /RSVP2/ }).getAttribute('href')).toBe('/schedule?bulkRsvp=1');
-    expect(screen.getByRole('link', { name: /Packets1/ }).getAttribute('href')).toBe('/schedule?view=packets');
+    expect(screen.getByRole('link', { name: /Practice1/ }).getAttribute('href')).toBe('/schedule?view=packets');
     expect(screen.getByRole('link', { name: /Unread4/ }).getAttribute('href')).toBe('/messages');
     expect(screen.getByRole('link', { name: /Feed1/ }).getAttribute('href')).toBe('/home?section=feed');
     expect(screen.getByRole('link', { name: /Requests1/ }).getAttribute('href')).toBe('/home?section=friends');
+  });
+
+  it('places an outstanding exact-child practice assignment in the ordinary Today actions', async () => {
+    resourcePacketMocks.available.mockReturnValue(true);
+    resourcePacketMocks.loadHomeTasks.mockResolvedValue([{
+      teamId: 'team-1',
+      teamName: 'Bears',
+      assignmentId: 'practice-1',
+      version: 1,
+      playerId: 'player-1',
+      playerName: 'Pat Player',
+      title: 'Ball control',
+      notes: 'Five minutes.',
+      completionPolicy: 'practice_ack',
+      dueAt: null,
+      timeZone: null,
+      signals: {},
+      items: [{ resourceId: 'video-1', resourceVersion: 1, title: 'Ball control', teachingPoint: '', url: 'https://youtu.be/abcdefghijk' }]
+    }]);
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Practice with Pat Player' })).toBeInTheDocument();
+    const action = screen.getByRole('link', { name: 'Open action' });
+    expect(action.getAttribute('href')).toBe('/players/team-1/player-1/resources?assignmentId=practice-1');
+    expect(screen.getByText(/Ball control · 1 practice item left · Bears/)).toBeInTheDocument();
   });
 
   it('shows player-scoped Multi RSVP only for players with at least two due responses', async () => {

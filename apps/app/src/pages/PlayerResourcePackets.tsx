@@ -46,10 +46,10 @@ export function PlayerResourcePackets({ auth }: { auth: AuthState }) {
   }, [uid, enabled, teamId, playerId, reload, assignmentTeam, assignmentId]);
   return (
     <main className="mx-auto max-w-3xl space-y-4 p-4 pb-24">
-      <Link className="inline-block min-h-11 py-3 text-emerald-800 underline" to="/schedule?view=packets">
-        Back to Schedule
+      <Link className="inline-block min-h-11 py-3 text-emerald-800 underline" to="/home">
+        Back to Home
       </Link>
-      <h1 className="text-2xl font-bold">Player practice resources</h1>
+      <h1 className="text-2xl font-bold">Practice task</h1>
       {enabled && auth.user ? (
         teamId && playerId ? (
           <ResourcePacketQueue
@@ -94,7 +94,7 @@ export function PlayerResourcePackets({ auth }: { auth: AuthState }) {
           </section>
         )
       ) : (
-        <p>Resource packets are not available in this app.</p>
+        <p>Practice tasks are not available right now.</p>
       )}
     </main>
   );

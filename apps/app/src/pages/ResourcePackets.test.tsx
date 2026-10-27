@@ -7,11 +7,13 @@ import { ResourcePackets } from './ResourcePackets';
 
 const resourcePacketMocks = vi.hoisted(() => ({
   loadResourcePacketStaff: vi.fn(),
+  loadResourcePacketYouTubeMetadata: vi.fn(),
   resourcePacketCommand: vi.fn()
 }));
 
 vi.mock('../lib/resourcePacketsService', () => ({
   loadResourcePacketStaff: resourcePacketMocks.loadResourcePacketStaff,
+  loadResourcePacketYouTubeMetadata: resourcePacketMocks.loadResourcePacketYouTubeMetadata,
   packetDueDate: vi.fn(() => null),
   resourcePacketCommand: resourcePacketMocks.resourcePacketCommand,
   resourcePacketsAvailable: vi.fn(() => true)
@@ -20,7 +22,6 @@ vi.mock('../lib/resourcePacketsService', () => ({
 vi.mock('../lib/teamDrillsService', () => ({
   loadTeamDrillLibraryPage: vi.fn()
 }));
-
 const auth = {
   user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach' },
   profile: null,
@@ -81,6 +82,13 @@ describe('ResourcePackets', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue(staffView);
+    resourcePacketMocks.loadResourcePacketYouTubeMetadata.mockResolvedValue({
+      videoId: 'abcdefghijk',
+      title: 'First-touch technique',
+      authorName: 'Example Coach',
+      thumbnailUrl: 'https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg',
+      source: 'youtube_oembed'
+    });
     resourcePacketMocks.resourcePacketCommand.mockImplementation(async (_uid, command) => {
       if (command.action === 'publish') return { assignmentId: 'packet-1', revision: 5, version: 2 };
       if (command.action === 'saveDraft') return { ...assignment, ...command, revision: command.expectedRevision + 1 };
@@ -144,10 +152,28 @@ describe('ResourcePackets', () => {
       'saveDraft',
       'publish'
     ]);
+    expect(resourcePacketMocks.resourcePacketCommand).toHaveBeenCalledWith(
+      'coach-1',
+      expect.objectContaining({ action: 'saveDraft', completionPolicy: 'practice_ack' })
+    );
     expect(resourcePacketMocks.resourcePacketCommand).toHaveBeenLastCalledWith(
       'coach-1',
       expect.objectContaining({ action: 'publish', confirm: true, notify: true, expectedRevision: 1 })
     );
+  });
+
+  it('prefills official YouTube metadata through the authenticated team service', async () => {
+    renderPage();
+    await screen.findByRole('heading', { name: 'Assignments' });
+    fireEvent.click(screen.getByRole('button', { name: 'Share a video' }));
+    const url = 'https://youtu.be/abcdefghijk';
+    const link = screen.getByLabelText('Video link 1');
+    fireEvent.change(link, { target: { value: url } });
+    fireEvent.blur(link);
+    await waitFor(() => expect(screen.getByLabelText('Video title 1')).toHaveValue('First-touch technique'));
+    expect(resourcePacketMocks.loadResourcePacketYouTubeMetadata).toHaveBeenCalledExactlyOnceWith('team-1', url);
+    expect(screen.getByLabelText('What to focus on (optional)')).toHaveValue('');
+    expect(screen.getByText('YouTube · Example Coach')).toBeInTheDocument();
   });
 
   it('saves edited publication from the current revision and preserves the visible audience', async () => {
@@ -165,6 +191,18 @@ describe('ResourcePackets', () => {
       'coach-1',
       expect.objectContaining({ action: 'publish', expectedRevision: 5, notify: false })
     );
+  });
+
+  it('keeps an existing blank note and legacy completion policy when editing', async () => {
+    resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue({
+      ...staffView,
+      assignments: [{ ...assignment, notes: '' }]
+    });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Home footwork' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit assignment' }));
+    expect(screen.getByLabelText('Coaching note (optional)')).toHaveValue('');
+    expect(screen.getByText(/keeps its legacy open-to-complete behavior/i)).toBeInTheDocument();
   });
 
   it('reconciles an intervening assignment edit without losing the local note or overwriting the newer title', async () => {

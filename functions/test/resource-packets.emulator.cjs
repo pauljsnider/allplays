@@ -50,6 +50,7 @@ test('real Auth, callable and Firestore isolation with separate households', asy
   });
   await t.test('staff authors, unrelated and family cannot author', async () => {
     await denied(command('parent-a', resource)); await denied(command('outsider', resource));
+    await denied(call('parent-a', { teamId: 'team-a', view: 'youtubeMetadata', url: 'https://youtu.be/abcdefghijk' }, 'query'));
     await denied(command('missing', resource), 'UNAUTHENTICATED');
     const saved = await command('staff', resource); assert.equal(saved.version, 1);
   });
@@ -57,7 +58,7 @@ test('real Auth, callable and Firestore isolation with separate households', asy
     for (const url of ['javascript:alert(1)', 'http://example.com', 'https://localhost/x', 'https://127.0.0.1', 'https://user:pass@example.com', 'https://example.com:444']) await denied(command('staff', { ...resource, expectedRevision: 1, url }), 'INVALID_ARGUMENT');
     await denied(command('staff', resource), 'ABORTED');
   });
-  await command('staff', { action: 'saveDraft', assignmentId: 'packet-1', expectedRevision: 0, title: 'Practice at home', resourceIds: ['resource-1'], playerIds: ['child-a', 'sibling'] });
+  await command('staff', { action: 'saveDraft', assignmentId: 'packet-1', expectedRevision: 0, title: 'Practice at home', resourceIds: ['resource-1'], playerIds: ['child-a', 'sibling'], completionPolicy: 'practice_ack' });
   await t.test('drafts invisible, explicit publish, durable duplicate protection', async () => {
     assert.deepEqual((await call('parent-a', { teamId: 'team-a', view: 'family', playerId: 'child-a' }, 'query')).tasks, []);
     await denied(command('staff', { action: 'publish', assignmentId: 'packet-1', expectedRevision: 1, notify: true }), 'FAILED_PRECONDITION');
@@ -77,6 +78,7 @@ test('real Auth, callable and Firestore isolation with separate households', asy
     await command('parent-a', report);
     await command('co-guardian', { ...report, kind: 'practiced', value: true, requestId: 'practice-once' });
     const task = (await call('parent-a', query, 'query')).tasks[0];
+    assert.equal(task.completionPolicy, 'practice_ack');
     assert.equal(task.signals['resource-1'].opened.actorUid, 'parent-a');
     assert.equal(task.signals['resource-1'].practiced.actorUid, 'co-guardian');
     assert.equal(task.signals['resource-1'].watched, undefined);

@@ -3,10 +3,12 @@ import { Link, useParams } from 'react-router-dom';
 import type { AuthState } from '../lib/types';
 import {
   loadResourcePacketStaff,
+  loadResourcePacketYouTubeMetadata,
   packetDueDate,
   resourcePacketCommand,
   resourcePacketsAvailable,
   type PacketAssignment,
+  type PacketCompletionPolicy,
   type PacketResource,
   type PacketStaffView
 } from '../lib/resourcePacketsService';
@@ -15,6 +17,7 @@ import { assignmentAiPath, assignmentProgress, videoPreview } from '../lib/resou
 import { assignmentComposition, compositionLabels, reconcileAssignment, type AssignmentComposition } from '../lib/assignmentConflict';
 import { Modal } from '../components/Modal';
 import { VideoCard } from '../components/assignments/VideoCard';
+import { youtubeMetadataFallback, type YouTubeMetadata } from '../lib/youtubeMetadata';
 
 const field = 'mt-1 block min-h-12 w-full rounded-xl border border-gray-300 p-3';
 const primary = 'min-h-12 rounded-xl bg-emerald-800 px-5 py-3 font-bold text-white disabled:opacity-50';
@@ -41,6 +44,7 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
   const [players, setPlayers] = useState<string[]>([]);
   const [due, setDue] = useState('');
   const [practiceId, setPracticeId] = useState('');
+  const [completionPolicy, setCompletionPolicy] = useState<PacketCompletionPolicy>('practice_ack');
   const originalItems = useRef(new Map<string, EditableItem>());
   const resourceCache = useRef(new Map<string, PacketResource>());
   const [pendingPublication, setPendingPublication] = useState<Record<string, unknown> | null>(null);
@@ -56,6 +60,9 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
   const progressRef = useRef<HTMLElement>(null);
   const [selected, setSelected] = useState('');
   const [filter, setFilter] = useState('all');
+  const [youtubeMetadata, setYoutubeMetadata] = useState<Record<string, YouTubeMetadata>>({});
+  const [metadataLoadingId, setMetadataLoadingId] = useState('');
+  const metadataRequestUrls = useRef(new Map<string, string>());
   const uid = auth.user?.uid;
   useEffect(() => {
     if (selected) {
@@ -101,16 +108,40 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
     setAssignmentId(row?.assignmentId || crypto.randomUUID());
     setRevision(row?.revision || 0);
     setTitle(row?.title || '');
-    setNotes(row?.notes || '');
+    setNotes(row ? row.notes : 'Watch the video, then practice the skill together. Focus on the coach’s teaching point.');
     setItems(nextItems);
     setPlayers(row?.playerIds || data!.players.map((player) => player.id));
     const date = row?.dueAt ? new Date(row.dueAt) : null;
     setDue(date ? new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '');
     setPracticeId(row?.practiceId || '');
+    setCompletionPolicy(row?.completionPolicy || (row ? 'link_opened_legacy' : 'practice_ack'));
     setNotify(!row?.publishedVersion);
     setEditing(true);
     setPreview(false);
+    setYoutubeMetadata({});
+    metadataRequestUrls.current.clear();
     setError('');
+  }
+  async function previewYouTube(item: EditableItem, index: number) {
+    const fallback = youtubeMetadataFallback(item.url);
+    if (!fallback) return;
+    metadataRequestUrls.current.set(item.resourceId, item.url);
+    setMetadataLoadingId(item.resourceId);
+    try {
+      const metadata = await loadResourcePacketYouTubeMetadata(teamId, item.url).catch(() => fallback);
+      if (metadataRequestUrls.current.get(item.resourceId) !== item.url) return;
+      setYoutubeMetadata((current) => ({ ...current, [item.resourceId]: metadata }));
+      setItems((current) => current.map((candidate, candidateIndex) => (
+        candidateIndex === index && candidate.url === item.url && !candidate.title.trim()
+          ? { ...candidate, title: metadata.title }
+          : candidate
+      )));
+    } finally {
+      if (metadataRequestUrls.current.get(item.resourceId) === item.url) {
+        metadataRequestUrls.current.delete(item.resourceId);
+        setMetadataLoadingId((current) => current === item.resourceId ? '' : current);
+      }
+    }
   }
   function updateItem(index: number, value: Partial<EditableItem>) {
     setItems((old) => old.map((item, i) => (i === index ? { ...item, ...value } : item)));
@@ -211,6 +242,7 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
         playerIds: players,
         practiceId: practiceId || null,
         dueAt,
+        completionPolicy,
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
       })) as PacketAssignment;
       setRevision(draft.revision);
@@ -306,7 +338,7 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
       );
     return value || 'None';
   }
-  if (!resourcePacketsAvailable()) return <main className="p-4">Assignments are not available in this app.</main>;
+  if (!resourcePacketsAvailable()) return <main className="p-4">Practice assignments are not available right now.</main>;
   const current = data?.assignments.find((row) => row.assignmentId === selected);
   const tasks = data?.tasks.filter((task) => task.assignmentId === selected) || [];
   return (
@@ -316,8 +348,8 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
           <Link className="text-sm text-emerald-800 underline" to={`/teams/${teamId}`}>
             {data?.teamName || 'Back to team'}
           </Link>
-          <h1 className="mt-2 text-2xl font-bold">Video assignments</h1>
-          <p className="mt-1 text-gray-600">Share something useful. See who has opened it.</p>
+          <h1 className="mt-2 text-2xl font-bold">Practice assignments</h1>
+          <p className="mt-1 text-gray-600">Paste a video, choose players, and assign. Families report when they practice.</p>
         </div>
         {data && !editing && (
           <button className={primary} onClick={() => start()}>
@@ -437,7 +469,11 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
                 Cancel
               </button>
             </div>
-            <p className="text-sm text-gray-600">Opening each video completes it. Playback is not verified.</p>
+            <p className="text-sm text-gray-600">
+              {completionPolicy === 'practice_ack'
+                ? 'The family opens the video, returns to ALL PLAYS, and explicitly reports the practice.'
+                : 'This existing assignment keeps its legacy open-to-complete behavior. New assignments use explicit practice acknowledgment.'}
+            </p>
             {items.map((item, index) => (
               <section key={item.resourceId} className="space-y-3" aria-label={`Video ${index + 1}`}>
                 <label className="block font-semibold">
@@ -451,9 +487,25 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
                     placeholder="Paste an HTTPS video link"
                     value={item.url}
                     disabled={busy}
-                    onChange={(event) => updateItem(index, { url: event.target.value })}
+                    onChange={(event) => {
+                      updateItem(index, { url: event.target.value });
+                      metadataRequestUrls.current.delete(item.resourceId);
+                      setYoutubeMetadata((current) => {
+                        const next = { ...current };
+                        delete next[item.resourceId];
+                        return next;
+                      });
+                    }}
+                    onBlur={() => void previewYouTube(item, index)}
                   />
                 </label>
+                {metadataLoadingId === item.resourceId && <p role="status" className="text-sm text-gray-600">Loading YouTube preview…</p>}
+                {youtubeMetadata[item.resourceId]?.authorName && (
+                  <p className="text-sm text-gray-600">YouTube · {youtubeMetadata[item.resourceId].authorName}</p>
+                )}
+                {youtubeMetadata[item.resourceId]?.source === 'url_fallback' && (
+                  <p className="text-sm text-amber-800">YouTube details could not load. The preview still works; add the title manually.</p>
+                )}
                 <label className="block font-semibold">
                   Video title {index + 1}
                   <input
@@ -464,6 +516,17 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
                     disabled={busy}
                     placeholder="What is this video about?"
                     onChange={(event) => updateItem(index, { title: event.target.value })}
+                  />
+                </label>
+                <label className="block font-semibold">
+                  What to focus on (optional)
+                  <textarea
+                    className={field}
+                    maxLength={2000}
+                    value={item.teachingPoint}
+                    disabled={busy}
+                    placeholder="One cue the player should notice or try"
+                    onChange={(event) => updateItem(index, { teachingPoint: event.target.value })}
                   />
                 </label>
                 {videoPreview(item.url) && (
@@ -534,7 +597,7 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
             </div>
             <p className="text-sm text-gray-600">Your unsaved assignment stays open here while you use AI.</p>
             <details className="rounded-xl border p-3">
-              <summary className="cursor-pointer py-2 font-semibold">Choose from our library</summary>
+              <summary className="cursor-pointer py-2 font-semibold">Reuse from the team practice library</summary>
               <div className="space-y-3 pt-3">
                 {data.resources.map((resource) => (
                   <button
@@ -682,16 +745,17 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
                   <p>{notes}</p>
                   {items.map((item) => (
                     <VideoCard key={item.resourceId} url={item.url} title={item.title} note={item.teachingPoint}>
-                      <span className={primary}>Watch</span>
+                      <span className={primary}>Open video</span>
                     </VideoCard>
                   ))}
-                  <p className="text-sm">Opening the video completes the item. This preview never records completion.</p>
+                  <span className={`${secondary} block text-center`}>We practiced this</span>
+                  <p className="text-sm">Opening and practice acknowledgment are separate. This preview records neither.</p>
                 </section>
               </Modal>
             )}
             {revision > 0 && (
               <p className="text-sm text-gray-600">
-                Text changes keep progress. Replaced or added videos need a new open; unchanged videos stay complete.
+                Text changes keep prior activity. Replaced or added videos need a new practice acknowledgment; unchanged videos keep theirs.
               </p>
             )}
           </fieldset>
@@ -725,7 +789,7 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
                 className={secondary}
                 to={assignmentAiPath(
                   teamId,
-                  `Read all authorized resource assignment progress for team ${teamId}, including all pages. Summarize outstanding players and notification issues. Link opened means completion, not verified playback. Do not send anything.`
+                  `Read all authorized resource assignment progress for team ${teamId}, including all pages. Keep external-link opens separate from explicit family practice acknowledgments, and summarize outstanding players and notification issues. Do not send anything.`
                 )}
               >
                 Summarize with AI
@@ -734,7 +798,7 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
             {!data.assignments.length && (
               <div className="rounded-2xl bg-emerald-50 p-6">
                 <h3 className="font-bold">Give your team one thing to focus on</h3>
-                <p className="mt-2">Share a video or choose a drill. Families open it; you see progress here.</p>
+                <p className="mt-2">Paste a video or reuse one from your library. Families watch, practice, and report back here.</p>
               </div>
             )}
             {data.assignments.map((row) => {
@@ -773,7 +837,9 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
                 tabIndex={-1}
               >
                 <h2 className="text-xl font-bold">Progress: {current.title}</h2>
-                <p className="text-sm text-gray-600">Complete means every video link was opened. Playback is not verified.</p>
+                <p className="text-sm text-gray-600">
+                  New practice is complete only after the family reports practicing. “Opened” means the external link opened, not that playback finished.
+                </p>
                 <div className="flex flex-wrap items-start gap-2">
                   {['all', 'outstanding', 'complete'].map((value) => (
                     <button key={value} className={secondary} aria-pressed={filter === value} onClick={() => setFilter(value)}>
@@ -790,7 +856,11 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
                       return (
                         <li key={task.playerId} className="py-4">
                           <strong>{task.playerName}</strong>
-                          <p>{progress.complete ? 'Complete — video opened' : `${progress.opened} of ${progress.total} opened`}</p>
+                          <p>
+                            {progress.legacy
+                              ? progress.complete ? 'Legacy complete — every link opened' : `${progress.opened} of ${progress.total} links opened · legacy`
+                              : progress.complete ? 'Practice reported' : `${progress.practiced} of ${progress.total} practiced · ${progress.opened} opened`}
+                          </p>
                         </li>
                       );
                     })}

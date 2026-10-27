@@ -967,6 +967,7 @@ const teamNavigationIcons: Record<string, LucideIcon> = {
   'manage-roster': Users,
   'manage-schedule': CalendarDays,
   fees: DollarSign,
+  'assign-practice': Dumbbell,
   'practice-command': Dumbbell,
   'game-plan': ClipboardList,
   'game-day': Radio,

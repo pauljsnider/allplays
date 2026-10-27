@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const call = vi.hoisted(() => vi.fn());
 const native = vi.hoisted(() => vi.fn(() => false));
+const publicOpen = vi.hoisted(() => vi.fn());
 vi.mock('./adapters/resourcePacketsFirebase', () => ({ resourcePacketCall: call }));
 vi.mock('./nativeRuntime', () => ({ isNativeRuntime: native }));
+vi.mock('./publicActions', () => ({ openPublicUrl: publicOpen }));
 import {
   loadResourcePacketFamily,
+  loadResourcePacketYouTubeMetadata,
   openResourcePacketLink,
   resourcePacketCommand,
   resourcePacketsAvailable,
@@ -27,18 +30,16 @@ describe('web resource packet service', () => {
   beforeEach(() => {
     vi.stubEnv('VITE_RESOURCE_PACKETS_ENABLED', 'true');
     call.mockReset();
+    publicOpen.mockReset();
     native.mockReturnValue(false);
   });
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
-  it('fails closed for native and disabled rollouts', async () => {
+  it('uses the same feature flag on native and web', async () => {
     native.mockReturnValue(true);
-    expect(resourcePacketsAvailable()).toBe(false);
-    await expect(loadResourcePacketFamily('team', 'child')).rejects.toThrow('not enabled');
-    expect(call).not.toHaveBeenCalled();
-    native.mockReturnValue(false);
+    expect(resourcePacketsAvailable()).toBe(true);
     vi.stubEnv('VITE_RESOURCE_PACKETS_ENABLED', 'false');
     expect(resourcePacketsAvailable()).toBe(false);
   });
@@ -46,6 +47,15 @@ describe('web resource packet service', () => {
     call.mockResolvedValue({ tasks: [task] });
     await loadResourcePacketFamily('team', 'child');
     expect(call).toHaveBeenCalledExactlyOnceWith('resourcePacketsQuery', { teamId: 'team', playerId: 'child', view: 'family' });
+  });
+  it('loads YouTube metadata through the authenticated team query', async () => {
+    call.mockResolvedValue({ videoId: 'abcdefghijk', source: 'youtube_oembed' });
+    await loadResourcePacketYouTubeMetadata('team', 'https://youtu.be/abcdefghijk');
+    expect(call).toHaveBeenCalledExactlyOnceWith('resourcePacketsQuery', {
+      teamId: 'team',
+      view: 'youtubeMetadata',
+      url: 'https://youtu.be/abcdefghijk'
+    });
   });
   it('preserves request identity after uncertain network failure and separates actors', async () => {
     call.mockRejectedValueOnce(new Error('Network unavailable')).mockResolvedValue({ recorded: true });
@@ -78,5 +88,12 @@ describe('web resource packet service', () => {
     expect(replace).toHaveBeenCalledWith(task.items[0].url);
     expect(call.mock.calls[0][1]).toMatchObject({ playerId: 'child', version: 1, kind: 'opened' });
     expect(call.mock.calls[0][1]).not.toHaveProperty('watched');
+  });
+  it('uses the system browser for a deliberate native open', async () => {
+    native.mockReturnValue(true);
+    call.mockResolvedValue({ url: task.items[0].url });
+    await openResourcePacketLink('parent', task, task.items[0]);
+    expect(publicOpen).toHaveBeenCalledWith(task.items[0].url);
+    expect(call.mock.calls[0][1]).toMatchObject({ playerId: 'child', kind: 'opened' });
   });
 });

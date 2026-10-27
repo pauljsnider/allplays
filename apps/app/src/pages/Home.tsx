@@ -1,5 +1,5 @@
-import { HomeAssignments } from '../components/assignments/HomeAssignments';
-import { resourcePacketsAvailable } from '../lib/resourcePacketsService';
+import { loadResourcePacketHomeTasks, resourcePacketsAvailable, type PacketHomeTask } from '../lib/resourcePacketsService';
+import { practiceHomeActions } from '../lib/resourceAssignmentPresentation';
 import { FormEvent, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -11,6 +11,7 @@ import {
   ChevronRight,
   ClipboardCheck,
   DollarSign,
+  Dumbbell,
   Flag,
   Heart,
   ImagePlus,
@@ -115,6 +116,7 @@ const homeSections: Array<{ id: HomeSectionId; label: string }> = [
 const actionIcons: Record<HomeActionKind, LucideIcon> = {
   rsvp: ClipboardCheck,
   packet: ClipboardCheck,
+  practice: Dumbbell,
   assignment: CheckCircle2,
   rideshare: Car,
   fee: DollarSign,
@@ -185,7 +187,9 @@ function handleParentCoreDrillInClick(
 }
 
 export function Home({ auth }: { auth: AuthState }) {
-  const [resourceOpenCount, setResourceOpenCount] = useState<number | null>(null);
+  const [practiceTasks, setPracticeTasks] = useState<PacketHomeTask[] | null>(null);
+  const [practiceTasksUserId, setPracticeTasksUserId] = useState('');
+  const [practiceLoadError, setPracticeLoadError] = useState('');
   const [home, setHome] = useState<ParentHomeModel>(() => emptyHome());
   const [social, setSocial] = useState<SocialHomeModel>(() => emptySocialHome());
   const [activeSection, setActiveSection] = useState<HomeSectionId>('today');
@@ -210,6 +214,21 @@ export function Home({ auth }: { auth: AuthState }) {
   const hasHomePreview = Boolean(authUserId) && authUserId === previewHomeUserId;
   const hasLoadedHomeDetails = Boolean(authUserId) && authUserId === loadedHomeDetailsUserId;
 
+  const refreshPractice = async () => {
+    const userId = auth.user?.uid;
+    if (!userId || !resourcePacketsAvailable()) return;
+    setPracticeLoadError('');
+    try {
+      const nextTasks = await loadResourcePacketHomeTasks();
+      if (currentAuthUserIdRef.current !== userId) return;
+      setPracticeTasks(nextTasks);
+      setPracticeTasksUserId(userId);
+    } catch {
+      if (currentAuthUserIdRef.current !== userId) return;
+      setPracticeLoadError('Practice tasks could not load.');
+    }
+  };
+
   const refreshHome = async ({
     force = false,
     forceSecondary = false,
@@ -217,6 +236,7 @@ export function Home({ auth }: { auth: AuthState }) {
   }: { force?: boolean; forceSecondary?: boolean; preserveCurrentHome?: boolean } = {}) => {
     const user = auth.user;
     if (!user) return;
+    void refreshPractice();
     const loadGeneration = homeLoadGenerationRef.current + 1;
     homeLoadGenerationRef.current = loadGeneration;
     const isCurrentHomeLoad = () => (
@@ -421,6 +441,8 @@ export function Home({ auth }: { auth: AuthState }) {
     if (!auth.user?.uid) {
       hasStartedInitialHomeLoadRef.current = false;
       homeLoadGenerationRef.current += 1;
+      setPracticeTasks(null);
+      setPracticeTasksUserId('');
       return undefined;
     }
     hasStartedInitialHomeLoadRef.current = true;
@@ -489,8 +511,16 @@ export function Home({ auth }: { auth: AuthState }) {
   const showInitialHomeSkeleton = Boolean(authUserId) && !hasRenderableHome && !homeLoadError;
   const canRenderHomeSections = !loading || hasRenderableHome;
   const displayName = auth.user?.displayName || auth.user?.email || 'ALL PLAYS User';
-  const standaloneActionCount = home.actionItems.filter((action) => action.kind === 'assignment' || action.kind === 'rideshare').length;
-  const openCount = home.metrics.rsvpNeeded + home.metrics.packetsReady + home.metrics.unreadMessages + home.fees.length + social.metrics.incomingRequests + standaloneActionCount + (resourceOpenCount || 0);
+  const practiceActions = useMemo(
+    () => practiceTasks && practiceTasksUserId === authUserId ? practiceHomeActions(practiceTasks) : [],
+    [practiceTasks, practiceTasksUserId, authUserId]
+  );
+  const homeWithPractice = useMemo<ParentHomeModel>(() => ({
+    ...home,
+    actionItems: [...home.actionItems, ...practiceActions].sort((left, right) => left.priority - right.priority || Number(left.date || Infinity) - Number(right.date || Infinity))
+  }), [home, practiceActions]);
+  const standaloneActionCount = homeWithPractice.actionItems.filter((action) => action.kind === 'assignment' || action.kind === 'rideshare' || action.kind === 'practice').length;
+  const openCount = home.metrics.rsvpNeeded + home.metrics.packetsReady + home.metrics.unreadMessages + home.fees.length + social.metrics.incomingRequests + standaloneActionCount;
   const today = new Date();
   const selectedComposerType = (searchParams.get('type') || 'manual_post') as SocialPostType;
   const homeSectionRoute = getHomeSectionRoute(activeSection);
@@ -615,11 +645,10 @@ export function Home({ auth }: { auth: AuthState }) {
             <div className="flex min-w-0 items-center gap-2">
               <span className="app-label">Home</span>
               <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] ${homeDetailsRefreshFailed ? 'bg-rose-50 text-rose-700' : homeDetailsPending ? 'bg-gray-100 text-gray-600' : openCount ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
-                {homeDetailsRefreshFailed ? 'Needs refresh' : homeDetailsPending ? 'Loading' : openCount ? `${openCount} open` : resourcePacketsAvailable() && resourceOpenCount === null ? 'Checking videos' : 'Caught up'}
+                {homeDetailsRefreshFailed ? 'Needs refresh' : homeDetailsPending ? 'Loading' : openCount ? `${openCount} open` : resourcePacketsAvailable() && practiceTasksUserId !== authUserId ? 'Checking practice' : 'Caught up'}
               </span>
             </div>
             <h1 className="mt-0.5 text-xl font-black leading-tight text-gray-950">Your day</h1>
-            {resourcePacketsAvailable() && <Link className="inline-block min-h-11 py-3 text-sm font-semibold text-emerald-800 underline" to="/practice-resources">My player practice resources</Link>}
             <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">{displayName} · {getHomeRoleContext(auth, resolvedOfficialsAccess)}</p>
           </div>
           <button type="button" className="ghost-button !h-11 !min-h-11 !w-11 !p-0 sm:!w-auto sm:!px-3 text-xs" onClick={() => refreshHome({ force: true })} disabled={loading} aria-label="Refresh Home" title="Refresh Home">
@@ -637,7 +666,7 @@ export function Home({ auth }: { auth: AuthState }) {
           <PulseChip icon={UserRound} label="Players" value={String(home.metrics.players)} to="/home?section=players" />
           <PulseChip icon={Users} label="Teams" value={String(home.metrics.teams)} to="/home?section=teams" />
           <PulseChip icon={ClipboardCheck} label="RSVP" value={String(home.metrics.rsvpNeeded)} to={home.metrics.rsvpNeeded > 1 ? '/schedule?bulkRsvp=1' : '/schedule'} urgent={home.metrics.rsvpNeeded > 0} />
-          <PulseChip icon={ClipboardCheck} label="Packets" value={String(home.metrics.packetsReady + (resourceOpenCount || 0))} to="/schedule?view=packets" urgent={home.metrics.packetsReady + (resourceOpenCount || 0) > 0} />
+          <PulseChip icon={Dumbbell} label="Practice" value={String(home.metrics.packetsReady + practiceActions.length)} to={practiceActions[0]?.to || '/schedule?view=packets'} urgent={home.metrics.packetsReady + practiceActions.length > 0} />
           <PulseChip icon={MessageCircle} label="Unread" value={String(home.metrics.unreadMessages)} to="/messages" urgent={home.metrics.unreadMessages > 0} />
           <PulseChip icon={Newspaper} label="Feed" value={String(social.metrics.feedItems)} to="/home?section=feed" />
           <PulseChip icon={UserPlus} label="Requests" value={String(social.metrics.incomingRequests)} to="/home?section=friends" urgent={social.metrics.incomingRequests > 0} />
@@ -672,7 +701,9 @@ export function Home({ auth }: { auth: AuthState }) {
       {error ? <Status tone="error" message={error} /> : null}
       {socialStatus ? <Status tone={socialStatus.tone} message={socialStatus.message} /> : null}
 
-      {resourcePacketsAvailable() && auth.user && <div hidden={activeSection !== 'today'}><HomeAssignments uid={auth.user.uid} onCount={setResourceOpenCount} /></div>}
+      {practiceLoadError && activeSection === 'today' ? (
+        <Status tone="error" message={practiceLoadError} action={<button className="font-black underline" type="button" onClick={() => void refreshPractice()}>Retry</button>} />
+      ) : null}
       {showInitialHomeSkeleton ? <HomePageSkeleton /> : null}
 
       {showBlockingErrorState || showIncompleteHomeError ? <HomeLoadErrorState error={homeLoadError} onRetry={() => refreshHome({ force: true })} retrying={loading} /> : null}
@@ -683,7 +714,7 @@ export function Home({ auth }: { auth: AuthState }) {
 
       {canRenderHomeSections && !showBlockingErrorState && !showIncompleteHomeError && activeSection === 'today' ? (
         <TodaySection
-          home={home}
+          home={homeWithPractice}
           social={social}
           socialLoading={socialLoading}
           hasLoadedHomeDetails={canRenderFirstRunHome}
@@ -880,11 +911,11 @@ function TodaySection({
         />
         <SignalCard
           icon={ClipboardCheck}
-          label="Practice packets"
-          value={!hasLoadedHomeDetails && !home.metrics.packetsReady ? '…' : String(home.metrics.packetsReady)}
-          detail={home.metrics.packetsReady ? 'Ready to review' : hasLoadedHomeDetails ? 'None open' : 'Checking packets…'}
-          to={packetAction?.to || '/schedule'}
-          urgent={home.metrics.packetsReady > 0}
+          label="Practice"
+          value={!hasLoadedHomeDetails && !home.metrics.packetsReady ? '…' : String(home.actionItems.filter((action) => action.kind === 'packet' || action.kind === 'practice').length)}
+          detail={home.actionItems.some((action) => action.kind === 'practice') ? 'A player has practice to do' : home.metrics.packetsReady ? 'A packet is ready' : hasLoadedHomeDetails ? 'Nothing due' : 'Checking practice…'}
+          to={home.actionItems.find((action) => action.kind === 'practice')?.to || packetAction?.to || '/schedule'}
+          urgent={home.metrics.packetsReady > 0 || home.actionItems.some((action) => action.kind === 'practice')}
         />
       </section>
 
@@ -2740,7 +2771,7 @@ function HomeLoadErrorState({ error, onRetry, retrying }: { error: AppServiceErr
   );
 }
 
-function Status({ tone, message }: { tone: 'error' | 'success'; message: string }) {
+function Status({ tone, message, action }: { tone: 'error' | 'success'; message: string; action?: ReactNode }) {
   const isError = tone === 'error';
   return (
     <div
@@ -2750,7 +2781,8 @@ function Status({ tone, message }: { tone: 'error' | 'success'; message: string 
       aria-atomic="true"
     >
       {isError ? <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />}
-      {message}
+      <span className="flex-1">{message}</span>
+      {action}
     </div>
   );
 }

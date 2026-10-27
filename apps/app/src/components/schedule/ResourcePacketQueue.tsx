@@ -84,24 +84,12 @@ function ResourcePacketQueueContent({
     <section className="mb-6 space-y-4 rounded-2xl border border-gray-200 bg-white p-4" aria-labelledby="resource-packet-title">
       <div>
         <h2 id="resource-packet-title" className="text-xl font-bold text-gray-950">
-          Video assignments
+          Practice
         </h2>
         <p className="mt-1 text-sm text-gray-600">
-          {singlePlayer
-            ? 'Open each video to complete the assignment.'
-            : 'Choose your child, then open each video to complete the assignment.'}{' '}
-          No extra confirmation needed. Playback is not verified.
+          {singlePlayer ? 'Watch the coach’s video, return here, and tell the coach when you practiced.' : 'Choose your child, watch the coach’s video, then record the practice.'}
         </p>
       </div>
-      {staffTeams.map((team) => (
-        <Link
-          className="mr-4 inline-block py-3 font-semibold text-emerald-800 underline"
-          key={team.teamId}
-          to={`/teams/${encodeURIComponent(team.teamId)}/resources`}
-        >
-          Manage {team.teamName} assignments
-        </Link>
-      ))}
       {children.length > 0 ? (
         singlePlayer ? null : (
           <label className="block text-sm font-semibold">
@@ -133,7 +121,12 @@ function ResourcePacketQueueContent({
           </button>
         </div>
       )}
-      {!loading && !error && selectedChild && tasks.length === 0 && <p>No resource packets assigned to {selectedChild.playerName}.</p>}
+      {!loading && !error && selectedChild && tasks.length === 0 && (
+        <div className="rounded-xl border border-dashed border-gray-300 p-5 text-center">
+          <p className="font-bold">No practice due for {selectedChild.playerName}</p>
+          <p className="mt-1 text-sm text-gray-600">New coach assignments will appear here and on Home.</p>
+        </div>
+      )}
       {cursor && (
         <button
           className="min-h-11 underline"
@@ -154,8 +147,10 @@ function ResourcePacketQueueContent({
           Load more resource packets
         </button>
       )}
-      {(loadedScope === `${teamId}::${playerId}` ? tasks : []).map((task) => (
-        <article key={`${task.assignmentId}:${task.version}`} className="space-y-3 rounded-xl border border-gray-200 p-4">
+      {(loadedScope === `${teamId}::${playerId}` ? tasks : []).map((task) => {
+        const progress = assignmentProgress(task);
+        return (
+        <article key={`${task.assignmentId}:${task.version}`} className="space-y-4 rounded-xl border border-gray-200 p-4 shadow-sm">
           <h3 className="text-lg font-bold">{task.title}</h3>
           <p className="text-sm text-gray-600">
             For {task.playerName}
@@ -163,11 +158,11 @@ function ResourcePacketQueueContent({
               ? ` · Due ${new Date(task.dueAt).toLocaleString(undefined, { timeZone: task.timeZone || undefined })} (${task.timeZone})`
               : ''}
           </p>
-          <p className="font-semibold text-emerald-800">
-            {assignmentProgress(task).complete
-              ? 'Complete — video opened'
-              : `${assignmentProgress(task).opened} of ${task.items.length} opened`}
-          </p>
+          <div className={`rounded-lg px-3 py-2 text-sm font-semibold ${progress.complete ? 'bg-emerald-50 text-emerald-800' : 'bg-blue-50 text-blue-800'}`}>
+            {progress.legacy
+              ? progress.complete ? 'Legacy assignment complete — every link was opened' : `${progress.opened} of ${progress.total} links opened · legacy assignment`
+              : progress.complete ? 'Practice reported to the coach' : `${progress.practiced} of ${progress.total} practice items reported`}
+          </div>
           {task.notes && <p className="whitespace-pre-wrap">{task.notes}</p>}
           {task.items.map((item) => {
             const signals = task.signals[item.resourceId] || {};
@@ -185,37 +180,54 @@ function ResourcePacketQueueContent({
                   type="button"
                   onClick={() => void run(() => openResourcePacketLink(uid, task, item))}
                 >
-                  {signals.opened ? 'Watch again' : 'Watch'}
+                  {signals.opened?.value ? 'Open video again' : 'Open video'}
                 </button>
                 <p className="text-sm text-gray-600">
-                  {signals.opened ? 'Complete — video opened' : 'Opens an external video and completes this item.'}
+                  {signals.opened?.value
+                    ? 'Opened. ALL PLAYS does not claim the whole video was watched.'
+                    : 'Opens YouTube or the video site. Come back here when you finish.'}
                 </p>
-                <details>
-                  <summary className="min-h-12 cursor-pointer py-3 text-sm">Optional practice feedback</summary>
-                  <label className="flex min-h-12 items-center gap-3">
-                    <input
-                      type="checkbox"
+                {signals.practiced?.value ? (
+                  <div className="rounded-xl bg-emerald-50 p-3 text-emerald-900">
+                    <p className="font-bold">Practice reported</p>
+                    <p className="text-sm">{new Date(signals.practiced.at).toLocaleString()}</p>
+                    <button
+                      className="mt-2 min-h-11 font-semibold underline disabled:opacity-50"
                       disabled={busy}
-                      checked={signals.practiced?.value === true}
-                      onChange={(event) => {
-                        const value = event.target.checked;
-                        void run(() =>
-                          resourcePacketCommand(uid, {
-                            teamId: task.teamId,
-                            action: 'report',
-                            assignmentId: task.assignmentId,
-                            version: task.version,
-                            playerId: task.playerId,
-                            resourceId: item.resourceId,
-                            kind: 'practiced',
-                            value
-                          })
-                        );
-                      }}
-                    />
+                      type="button"
+                      onClick={() => void run(() => resourcePacketCommand(uid, {
+                        teamId: task.teamId,
+                        action: 'report',
+                        assignmentId: task.assignmentId,
+                        version: task.version,
+                        playerId: task.playerId,
+                        resourceId: item.resourceId,
+                        kind: 'practiced',
+                        value: false
+                      }))}
+                    >
+                      Undo
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    className="min-h-12 w-full rounded-xl border-2 border-emerald-800 px-5 py-3 font-bold text-emerald-900 disabled:opacity-50"
+                    disabled={busy}
+                    type="button"
+                    onClick={() => void run(() => resourcePacketCommand(uid, {
+                      teamId: task.teamId,
+                      action: 'report',
+                      assignmentId: task.assignmentId,
+                      version: task.version,
+                      playerId: task.playerId,
+                      resourceId: item.resourceId,
+                      kind: 'practiced',
+                      value: true
+                    }))}
+                  >
                     We practiced this
-                  </label>
-                </details>
+                  </button>
+                )}
               </VideoCard>
             );
           })}
@@ -229,7 +241,21 @@ function ResourcePacketQueueContent({
             Ask AI about your practice notes
           </Link>
         </article>
-      ))}
+      )})}
+      {staffTeams.length > 0 && (
+        <details className="border-t border-gray-200 pt-3">
+          <summary className="min-h-11 cursor-pointer py-3 text-sm font-semibold text-gray-700">Coach tools</summary>
+          {staffTeams.map((team) => (
+            <Link
+              className="mr-4 inline-block min-h-11 py-3 font-semibold text-emerald-800 underline"
+              key={team.teamId}
+              to={`/teams/${encodeURIComponent(team.teamId)}/resources`}
+            >
+              Assign practice for {team.teamName}
+            </Link>
+          ))}
+        </details>
+      )}
     </section>
   );
 }
