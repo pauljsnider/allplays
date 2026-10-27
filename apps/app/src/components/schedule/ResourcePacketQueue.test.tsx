@@ -1,5 +1,4 @@
 // @vitest-environment jsdom
-/* eslint-disable react/no-children-prop -- ResourcePacketQueue intentionally names the linked-player collection `children`. */
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -47,7 +46,7 @@ function renderQueue() {
       <ResourcePacketQueue
         uid="guardian-1"
         singlePlayer
-        children={[{ teamId: 'team-1', playerId: 'player-1', teamName: 'Bears', playerName: 'Pat Player' }]}
+        linkedChildren={[{ teamId: 'team-1', playerId: 'player-1', teamName: 'Bears', playerName: 'Pat Player' }]}
         staffTeams={[]}
       />
     </MemoryRouter>

@@ -7,16 +7,16 @@ import { loadResourcePacketFamily, openResourcePacketLink, resourcePacketCommand
 
 export function ResourcePacketQueue({
   uid,
-  children,
+  linkedChildren,
   staffTeams,
   singlePlayer = false
 }: {
   uid: string;
-  children: ParentScheduleChild[];
+  linkedChildren: ParentScheduleChild[];
   staffTeams: ParentScheduleStaffTeam[];
   singlePlayer?: boolean;
 }) {
-  return <ResourcePacketQueueContent key={uid} uid={uid} linkedChildren={children} staffTeams={staffTeams} singlePlayer={singlePlayer} />;
+  return <ResourcePacketQueueContent key={uid} uid={uid} linkedChildren={linkedChildren} staffTeams={staffTeams} singlePlayer={singlePlayer} />;
 }
 
 function ResourcePacketQueueContent({
