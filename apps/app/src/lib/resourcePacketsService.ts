@@ -1,5 +1,6 @@
+import { Browser } from '@capacitor/browser';
+import { Capacitor } from '@capacitor/core';
 import { isNativeRuntime } from './nativeRuntime';
-import { openPublicUrl } from './publicActions';
 import { toAppServiceError } from './appErrors';
 import type { YouTubeMetadata } from './youtubeMetadata';
 
@@ -55,11 +56,11 @@ export function packetDueDate(value: string) {
   return date.toISOString();
 }
 
-async function invoke(name: string, data: Record<string, unknown>) {
-  if (!resourcePacketsAvailable()) throw new Error('Resource packets are not enabled for this web app.');
+async function invoke(name: string, data: Record<string, unknown>, expectedUid?: string) {
+  if (!resourcePacketsAvailable()) throw new Error('Resource packets are not enabled for this app.');
   try {
     const { resourcePacketCall } = await import('./adapters/resourcePacketsFirebase');
-    return await resourcePacketCall(name, data);
+    return await (expectedUid && isNativeRuntime() ? resourcePacketCall(name, data, expectedUid) : resourcePacketCall(name, data));
   } catch (error) {
     throw toAppServiceError(error, 'Unable to load or save practice packets. Try again.');
   }
@@ -89,11 +90,11 @@ export async function resourcePacketCommand(uid: string, data: Record<string, un
   const key = JSON.stringify([uid, data]);
   const requestId = typeof data.requestId === 'string' ? data.requestId : pending.get(key) || crypto.randomUUID();
   pending.set(key, requestId);
-  const result = await invoke('resourcePacketsCommand', { ...data, requestId });
+  const result = await invoke('resourcePacketsCommand', { ...data, requestId }, uid);
   pending.delete(key);
   return result;
 }
-export async function authorizeResourcePacketLink(task: PacketTask, item: PacketItem): Promise<string> {
+export async function authorizeResourcePacketLink(task: PacketTask, item: PacketItem, expectedUid?: string): Promise<string> {
   const result = (await invoke('resourcePacketsQuery', {
     teamId: task.teamId,
     view: 'openLink',
@@ -101,9 +102,14 @@ export async function authorizeResourcePacketLink(task: PacketTask, item: Packet
     version: task.version,
     playerId: task.playerId,
     resourceId: item.resourceId
-  })) as { url: string };
+  }, expectedUid)) as { url: string };
   const url = new URL(result.url);
-  if (url.protocol !== 'https:') throw new Error('This link is unavailable.');
+  const assignedUrl = new URL(item.url);
+  if (
+    url.protocol !== 'https:' || url.username || url.password ||
+    assignedUrl.protocol !== 'https:' || assignedUrl.username || assignedUrl.password ||
+    url.href !== assignedUrl.href
+  ) throw new Error('This link is unavailable or changed. Reload before opening it.');
   return url.href;
 }
 async function recordResourcePacketOpen(uid: string, task: PacketTask, item: PacketItem) {
@@ -119,9 +125,20 @@ async function recordResourcePacketOpen(uid: string, task: PacketTask, item: Pac
 }
 export async function openResourcePacketLink(uid: string, task: PacketTask, item: PacketItem) {
   if (isNativeRuntime()) {
-    const url = await authorizeResourcePacketLink(task, item);
-    await openPublicUrl(url);
-    await recordResourcePacketOpen(uid, task, item);
+    if (!resourcePacketsAvailable() || !Capacitor.isPluginAvailable('Browser'))
+      throw new Error('Video opening is unavailable in this app.');
+    const url = await authorizeResourcePacketLink(task, item, uid);
+    const { getNativeAuthUserId } = await import('./authService');
+    if (getNativeAuthUserId() !== uid) throw new Error('Account changed. Reload before opening this video.');
+    // Browser.open resolves when the native browser opens, not when playback starts.
+    // A rejected launch must not write completion. Returning to the app needs no
+    // browser redirect and never creates another signal.
+    await Browser.open({ url });
+    try {
+      await recordResourcePacketOpen(uid, task, item);
+    } catch {
+      throw new Error('The video link opened, but progress could not be confirmed. Retry Open video to confirm it. Playback is not verified.');
+    }
     return;
   }
   // No href, preload, hover or AI read calls this function. Reserve a new tab

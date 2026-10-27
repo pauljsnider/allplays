@@ -1,4 +1,4 @@
-# Web resource practice packets
+# Resource practice packets
 
 ## Coach quick start
 
@@ -121,8 +121,7 @@ resources and current progress, with bounded resumable cleanup.
 
 `RESOURCE_PACKETS_ENABLED` is a nonsecret rollout variable, default false.
 The production workflow packages it into the Functions environment and builds
-the web UI with `VITE_RESOURCE_PACKETS_ENABLED`. Native runtime gates remain
-off regardless of the build value. Enabling the variable follows the authorized feature release and existing
+the web UI with `VITE_RESOURCE_PACKETS_ENABLED`. Native packages use the same opt-in build flag, passed explicitly by both mobile workflows. Native calls use the current native Auth token and App Check. Before opening a family video, the app re-reads the exact assigned child/version; only a successful native browser launch is followed by an opened-link report. A failed launch records nothing, and a failed report after launch explicitly says progress is unconfirmed. Closing the browser returns to the still-mounted assignment; it never records another open. Cold-start and warm notification links retain the exact assignment. Coach previews never record progress; native coaching help opens in a dismissible in-app dialog so the unsaved composer remains mounted. Enabling the variable follows the authorized feature release and existing
 release gates; these instructions do not grant authority to change access settings.
 
 Before release: exact-head CI, independent review, isolated authenticated full-shell
@@ -173,3 +172,24 @@ those cases are established by isolated tests, not production claims.
 Exact final-head CI, PaulBot review/landing and exact deployed-revision protected
 smoke are release evidence, recorded in the PR rather than inferred from local
 results. Keep unrelated PR holds intact.
+
+### Native release acceptance
+
+A native asset build must receive `VITE_RESOURCE_PACKETS_ENABLED=true` (the mobile
+workflows inherit the repository/environment `RESOURCE_PACKETS_ENABLED` variable).
+A successful web deployment does not update an installed app. Record the exact
+source SHA and build number separately for iOS and Android before distribution.
+
+Before store release, test the packaged application with dedicated test accounts:
+coach create/edit/cancel, roster and due date selection, notification preference,
+AI return with unsaved draft, family Home and notification entry, exact assignment
+cold/warm links, external-browser launch and return, revoked access, account switch,
+and offline/retry. Verify that a failed launch writes no `opened` signal and that
+returning from the browser writes no additional signal. Follow the physical-device
+and internal-distribution checklist in `mobile-store-release-runbook.md`.
+
+Synthetic Capacitor shells using local Auth/Firestore/Functions emulators can
+validate shared components and real Browser plugin behavior without live writes.
+They do **not** establish production native authentication, App Check, push delivery,
+full-shell layout, or physical-device acceptance. Keep these evidence categories
+separate; an unsigned simulator app or debug APK is not a store release.

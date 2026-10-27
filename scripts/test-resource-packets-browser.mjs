@@ -341,6 +341,9 @@ createRoot(document.getElementById('root')).render(<App />);
   const playerPopup = playerSession.page.waitForEvent('popup');
   await playerSession.page.getByRole('button', { name: 'Open video again' }).nth(1).tap();
   await expect((await playerPopup).getByRole('heading', { name: 'Synthetic external destination' })).toBeVisible();
+  await expect.poll(async () => (
+    await db.collection('resourcePacketTeams/web-team/evidence').where('actorUid', '==', 'web-player').get()
+  ).size).toBe(1);
   const playerEvidence = (await db.collection('resourcePacketTeams/web-team/evidence').where('actorUid', '==', 'web-player').get()).docs.map(doc => doc.data());
   assert.equal(playerEvidence.length, 1); assert.equal(playerEvidence[0].playerId, 'web-child');
   // Synthetic outbox records only. This browser stack has no provider delivery

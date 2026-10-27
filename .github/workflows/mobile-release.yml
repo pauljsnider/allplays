@@ -65,6 +65,8 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: 'platform-tools'
       - name: Install dependencies
         run: |
           npm ci
@@ -86,6 +88,7 @@ jobs:
         run: echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/allplays-upload.jks"
       - name: Build signed Android release artifacts
         env:
+          VITE_RESOURCE_PACKETS_ENABLED: ${{ vars.RESOURCE_PACKETS_ENABLED }}
           VITE_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
           ALLPLAYS_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/allplays-upload.jks
           ALLPLAYS_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -222,6 +225,7 @@ jobs:
           echo "IOS_PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
       - name: Build web assets and sync iOS
         env:
+          VITE_RESOURCE_PACKETS_ENABLED: ${{ vars.RESOURCE_PACKETS_ENABLED }}
           VITE_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
         run: npm run mobile:sync
       - name: Archive signed iOS app

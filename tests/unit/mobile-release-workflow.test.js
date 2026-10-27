@@ -8,6 +8,13 @@ const workflowSource = readFileSync(resolve(process.cwd(), workflowPath), 'utf8'
 const workflow = parseYaml(workflowSource);
 
 describe('mobile release workflow', () => {
+    it('installs supported Android packages without the retired tools package', () => {
+        const setup = workflow.jobs['android-release'].steps.find(
+            (step) => step.uses?.startsWith('android-actions/setup-android@')
+        );
+        expect(setup.with?.packages).toBe('platform-tools');
+    });
+
     it('builds App Store archives with an iOS 26 SDK toolchain', () => {
         const iosRelease = workflow.jobs['ios-release'];
         const toolchainStep = iosRelease.steps.find(
