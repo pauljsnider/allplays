@@ -312,6 +312,17 @@ function createResourcePacketsService({ db, auth, enabled = () => false, now = (
     }
     return db.runTransaction(async (tx) => {
     const scope = await access(tx, teamId, principal);
+    if (input.view === 'openLink') {
+      const playerId = id(input.playerId);
+      const assignmentId = id(input.assignmentId);
+      const resourceId = id(input.resourceId);
+      await family(tx, scope.profile, principal, teamId, playerId);
+      const task = (await tx.get(ref(teamId, 'tasks', taskId(assignmentId, playerId)))).data();
+      if (!task || task.withdrawn || task.version !== revision(input.version)) fail('failed-precondition', 'This packet changed. Refresh before opening.');
+      const item = task.items.find((entry) => entry.resourceId === resourceId);
+      if (!item) fail('invalid-argument', 'This resource is not assigned to this player.');
+      return { url: item.url };
+    }
     async function page(name, source, size = 100) {
       const cursors = input.cursors || {};
       if (Object.hasOwn(cursors, name) && cursors[name] === null) return { docs: [], cursor: null };

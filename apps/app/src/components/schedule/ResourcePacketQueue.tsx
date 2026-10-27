@@ -153,7 +153,7 @@ function ResourcePacketQueueContent({
         <article key={`${task.assignmentId}:${task.version}`} className="space-y-4 rounded-xl border border-gray-200 p-4 shadow-sm">
           <h3 className="text-lg font-bold">{task.title}</h3>
           <p className="text-sm text-gray-600">
-            For {task.playerName}
+            For {task.playerName} · {selectedChild.teamName}
             {task.dueAt
               ? ` · Due ${new Date(task.dueAt).toLocaleString(undefined, { timeZone: task.timeZone || undefined })} (${task.timeZone})`
               : ''}
@@ -187,7 +187,7 @@ function ResourcePacketQueueContent({
                     ? 'Opened. ALL PLAYS does not claim the whole video was watched.'
                     : 'Opens YouTube or the video site. Come back here when you finish.'}
                 </p>
-                {signals.practiced?.value ? (
+                {task.completionPolicy === 'practice_ack' && (signals.practiced?.value ? (
                   <div className="rounded-xl bg-emerald-50 p-3 text-emerald-900">
                     <p className="font-bold">Practice reported</p>
                     <p className="text-sm">{new Date(signals.practiced.at).toLocaleString()}</p>
@@ -227,7 +227,7 @@ function ResourcePacketQueueContent({
                   >
                     We practiced this
                   </button>
-                )}
+                ))}
               </VideoCard>
             );
           })}

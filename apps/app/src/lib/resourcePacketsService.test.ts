@@ -75,25 +75,58 @@ describe('web resource packet service', () => {
     open.mockReturnValue({ opener: {}, close, location: { replace } } as unknown as Window);
     call.mockRejectedValue(new Error('Access removed'));
     await expect(openResourcePacketLink('parent', task, task.items[0])).rejects.toThrow('Access removed');
+    expect(call).toHaveBeenCalledExactlyOnceWith('resourcePacketsQuery', expect.objectContaining({ view: 'openLink' }));
     expect(close).toHaveBeenCalled();
     expect(replace).not.toHaveBeenCalled();
   });
-  it('records only an authenticated deliberate open before navigating', async () => {
-    const replace = vi.fn();
+  it('authorizes, navigates, then records a deliberate web open', async () => {
+    const events: string[] = [];
+    const replace = vi.fn(() => events.push('navigate'));
     const tab = { opener: {}, close: vi.fn(), location: { replace } };
     vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
-    call.mockResolvedValue({ url: task.items[0].url });
+    call.mockImplementation(async (name, data) => {
+      if (name === 'resourcePacketsQuery') {
+        events.push('authorize');
+        return { url: task.items[0].url };
+      }
+      events.push('report');
+      expect(data).toMatchObject({ playerId: 'child', version: 1, kind: 'opened' });
+      return { recorded: true };
+    });
     await openResourcePacketLink('parent', task, task.items[0]);
     expect(tab.opener).toBeNull();
     expect(replace).toHaveBeenCalledWith(task.items[0].url);
-    expect(call.mock.calls[0][1]).toMatchObject({ playerId: 'child', version: 1, kind: 'opened' });
-    expect(call.mock.calls[0][1]).not.toHaveProperty('watched');
+    expect(events).toEqual(['authorize', 'navigate', 'report']);
+    expect(call.mock.calls[1][1]).not.toHaveProperty('watched');
   });
-  it('uses the system browser for a deliberate native open', async () => {
+  it('uses the system browser before recording a deliberate native open', async () => {
+    const events: string[] = [];
     native.mockReturnValue(true);
-    call.mockResolvedValue({ url: task.items[0].url });
+    call.mockImplementation(async (name) => {
+      events.push(name === 'resourcePacketsQuery' ? 'authorize' : 'report');
+      return name === 'resourcePacketsQuery' ? { url: task.items[0].url } : { recorded: true };
+    });
+    publicOpen.mockImplementation(async () => events.push('open'));
     await openResourcePacketLink('parent', task, task.items[0]);
     expect(publicOpen).toHaveBeenCalledWith(task.items[0].url);
-    expect(call.mock.calls[0][1]).toMatchObject({ playerId: 'child', kind: 'opened' });
+    expect(events).toEqual(['authorize', 'open', 'report']);
+    expect(call.mock.calls[1][1]).toMatchObject({ playerId: 'child', kind: 'opened' });
+  });
+  it('does not record an open when the native browser launch fails', async () => {
+    native.mockReturnValue(true);
+    call.mockResolvedValue({ url: task.items[0].url });
+    publicOpen.mockRejectedValue(new Error('Browser unavailable'));
+    await expect(openResourcePacketLink('parent', task, task.items[0])).rejects.toThrow('Browser unavailable');
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(call).toHaveBeenCalledWith('resourcePacketsQuery', expect.objectContaining({ view: 'openLink' }));
+  });
+  it('keeps the navigated tab open when recording fails afterward', async () => {
+    const close = vi.fn();
+    const replace = vi.fn();
+    vi.spyOn(window, 'open').mockReturnValue({ opener: {}, close, location: { replace } } as unknown as Window);
+    call.mockResolvedValueOnce({ url: task.items[0].url }).mockRejectedValueOnce(new Error('Save unavailable'));
+    await expect(openResourcePacketLink('parent', task, task.items[0])).rejects.toThrow('Save unavailable');
+    expect(replace).toHaveBeenCalledWith(task.items[0].url);
+    expect(close).not.toHaveBeenCalled();
   });
 });

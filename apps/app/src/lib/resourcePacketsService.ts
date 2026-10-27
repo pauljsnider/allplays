@@ -93,20 +93,35 @@ export async function resourcePacketCommand(uid: string, data: Record<string, un
   pending.delete(key);
   return result;
 }
+export async function authorizeResourcePacketLink(task: PacketTask, item: PacketItem): Promise<string> {
+  const result = (await invoke('resourcePacketsQuery', {
+    teamId: task.teamId,
+    view: 'openLink',
+    assignmentId: task.assignmentId,
+    version: task.version,
+    playerId: task.playerId,
+    resourceId: item.resourceId
+  })) as { url: string };
+  const url = new URL(result.url);
+  if (url.protocol !== 'https:') throw new Error('This link is unavailable.');
+  return url.href;
+}
+async function recordResourcePacketOpen(uid: string, task: PacketTask, item: PacketItem) {
+  await resourcePacketCommand(uid, {
+    teamId: task.teamId,
+    action: 'report',
+    assignmentId: task.assignmentId,
+    version: task.version,
+    playerId: task.playerId,
+    resourceId: item.resourceId,
+    kind: 'opened'
+  });
+}
 export async function openResourcePacketLink(uid: string, task: PacketTask, item: PacketItem) {
   if (isNativeRuntime()) {
-    const result = (await resourcePacketCommand(uid, {
-      teamId: task.teamId,
-      action: 'report',
-      assignmentId: task.assignmentId,
-      version: task.version,
-      playerId: task.playerId,
-      resourceId: item.resourceId,
-      kind: 'opened'
-    })) as { url: string };
-    const url = new URL(result.url);
-    if (url.protocol !== 'https:') throw new Error('This link is unavailable.');
-    await openPublicUrl(url.href);
+    const url = await authorizeResourcePacketLink(task, item);
+    await openPublicUrl(url);
+    await recordResourcePacketOpen(uid, task, item);
     return;
   }
   // No href, preload, hover or AI read calls this function. Reserve a new tab
@@ -114,21 +129,14 @@ export async function openResourcePacketLink(uid: string, task: PacketTask, item
   const tab = window.open('about:blank', '_blank');
   if (!tab) throw new Error('Allow this link to open in a new tab, then try again.');
   tab.opener = null;
+  let navigated = false;
   try {
-    const result = (await resourcePacketCommand(uid, {
-      teamId: task.teamId,
-      action: 'report',
-      assignmentId: task.assignmentId,
-      version: task.version,
-      playerId: task.playerId,
-      resourceId: item.resourceId,
-      kind: 'opened'
-    })) as { url: string };
-    const url = new URL(result.url);
-    if (url.protocol !== 'https:') throw new Error('This link is unavailable.');
-    tab.location.replace(url.href);
+    const url = await authorizeResourcePacketLink(task, item);
+    tab.location.replace(url);
+    navigated = true;
+    await recordResourcePacketOpen(uid, task, item);
   } catch (error) {
-    tab.close();
+    if (!navigated) tab.close();
     throw error;
   }
 }

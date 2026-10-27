@@ -82,6 +82,7 @@ describe('ResourcePacketQueue practice task', () => {
   it('keeps external open distinct from persisted practice and supports Undo', async () => {
     renderQueue();
     expect(await screen.findByText('0 of 1 practice items reported')).toBeInTheDocument();
+    expect(screen.getByText('For Pat Player · Bears')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Open video' }));
     await waitFor(() => expect(mocks.openLink).toHaveBeenCalledOnce());
@@ -117,5 +118,14 @@ describe('ResourcePacketQueue practice task', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Network unavailable');
     expect(screen.queryByText('Practice reported to the coach')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'We practiced this' })).toBeEnabled();
+  });
+
+  it('keeps legacy link-open completion free of practice acknowledgment controls', async () => {
+    task = { ...baseTask(), completionPolicy: 'link_opened_legacy' };
+    renderQueue();
+    expect(await screen.findByText('0 of 1 links opened · legacy assignment')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'We practiced this' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open video' }));
+    await waitFor(() => expect(mocks.openLink).toHaveBeenCalledOnce());
   });
 });

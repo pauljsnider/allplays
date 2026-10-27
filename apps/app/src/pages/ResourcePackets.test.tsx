@@ -51,6 +51,7 @@ const assignment = {
 };
 
 const staffView = {
+  teamName: 'Bears',
   cursors: { resources: null, assignments: null, tasks: null, players: null, practices: null, deliveries: null },
   resources: [
     {
@@ -174,6 +175,114 @@ describe('ResourcePackets', () => {
     expect(resourcePacketMocks.loadResourcePacketYouTubeMetadata).toHaveBeenCalledExactlyOnceWith('team-1', url);
     expect(screen.getByLabelText('What to focus on (optional)')).toHaveValue('');
     expect(screen.getByText('YouTube · Example Coach')).toBeInTheDocument();
+  });
+
+  it('clears an auto-derived title when the URL changes but preserves a coach-edited title', async () => {
+    resourcePacketMocks.loadResourcePacketYouTubeMetadata
+      .mockResolvedValueOnce({
+        videoId: 'abcdefghijk', title: 'First video', authorName: 'Coach One', thumbnailUrl: '', source: 'youtube_oembed'
+      })
+      .mockResolvedValueOnce({
+        videoId: 'lmnopqrstuv', title: 'Second video', authorName: 'Coach Two', thumbnailUrl: '', source: 'youtube_oembed'
+      });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Assignments' });
+    fireEvent.click(screen.getByRole('button', { name: 'Share a video' }));
+    const link = screen.getByLabelText('Video link 1');
+    fireEvent.change(link, { target: { value: 'https://youtu.be/abcdefghijk' } });
+    fireEvent.blur(link);
+    await waitFor(() => expect(screen.getByLabelText('Video title 1')).toHaveValue('First video'));
+    fireEvent.change(link, { target: { value: 'https://youtu.be/lmnopqrstuv' } });
+    expect(screen.getByLabelText('Video title 1')).toHaveValue('');
+    fireEvent.blur(link);
+    await waitFor(() => expect(screen.getByLabelText('Video title 1')).toHaveValue('Second video'));
+    fireEvent.change(screen.getByLabelText('Video title 1'), { target: { value: 'My coaching title' } });
+    fireEvent.change(link, { target: { value: 'https://youtu.be/zyxwvutsrqp' } });
+    expect(screen.getByLabelText('Video title 1')).toHaveValue('My coaching title');
+  });
+
+  it('ignores stale metadata that returns after a newer URL preview', async () => {
+    let resolveFirst!: (value: unknown) => void;
+    let resolveSecond!: (value: unknown) => void;
+    resourcePacketMocks.loadResourcePacketYouTubeMetadata.mockImplementation((_teamId, url) => new Promise((resolve) => {
+      if (url.includes('abcdefghijk')) resolveFirst = resolve;
+      else resolveSecond = resolve;
+    }));
+    renderPage();
+    await screen.findByRole('heading', { name: 'Assignments' });
+    fireEvent.click(screen.getByRole('button', { name: 'Share a video' }));
+    const link = screen.getByLabelText('Video link 1');
+    fireEvent.change(link, { target: { value: 'https://youtu.be/abcdefghijk' } });
+    fireEvent.blur(link);
+    fireEvent.change(link, { target: { value: 'https://youtu.be/lmnopqrstuv' } });
+    fireEvent.blur(link);
+    resolveSecond({ videoId: 'lmnopqrstuv', title: 'New title', authorName: 'New author', thumbnailUrl: '', source: 'youtube_oembed' });
+    await waitFor(() => expect(screen.getByLabelText('Video title 1')).toHaveValue('New title'));
+    resolveFirst({ videoId: 'abcdefghijk', title: 'Stale title', authorName: 'Stale author', thumbnailUrl: '', source: 'youtube_oembed' });
+    await waitFor(() => expect(screen.queryByText('YouTube · Stale author')).not.toBeInTheDocument());
+    expect(screen.getByLabelText('Video title 1')).toHaveValue('New title');
+    expect(screen.getByText('YouTube · New author')).toBeInTheDocument();
+  });
+
+  it('previews exact team, audience and per-video practice actions', async () => {
+    resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue({
+      ...staffView,
+      players: [{ id: 'player-1', name: 'Player One' }, { id: 'player-2', name: 'Player Two' }]
+    });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Assignments' });
+    fireEvent.click(screen.getByRole('button', { name: 'Share a video' }));
+    fireEvent.change(screen.getByLabelText('Video link 1'), { target: { value: 'https://example.com/one' } });
+    fireEvent.change(screen.getByLabelText('Video title 1'), { target: { value: 'One' } });
+    fireEvent.click(screen.getByText('Whole team', { exact: true }));
+    fireEvent.click(screen.getByLabelText('Player Two'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add another video' }));
+    fireEvent.change(screen.getByLabelText('Video link 2'), { target: { value: 'https://example.com/two' } });
+    fireEvent.change(screen.getByLabelText('Video title 2'), { target: { value: 'Two' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview family view' }));
+    const dialog = screen.getByRole('dialog', { name: 'Family preview' });
+    expect(within(dialog).getByText(/Bears · For Player One · No due date/)).toBeInTheDocument();
+    expect(within(dialog).getAllByText('We practiced this')).toHaveLength(2);
+    expect(within(dialog).getByText(/Each video has its own practice acknowledgment/)).toBeInTheDocument();
+  });
+
+  it('previews legacy completion without a false practice-acknowledgment instruction', async () => {
+    renderPage();
+    await screen.findByRole('heading', { name: 'Home footwork' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit assignment' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview family view' }));
+    const dialog = screen.getByRole('dialog', { name: 'Family preview' });
+    expect(within(dialog).queryByText('We practiced this')).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/Opening each video link completes this legacy assignment/)).toBeInTheDocument();
+    expect(screen.getByText(/Replaced or added videos need a new link open/)).toBeInTheDocument();
+  });
+
+  it('assigns again with a new identity while preserving the exact audience and pinned videos', async () => {
+    resourcePacketMocks.loadResourcePacketStaff.mockResolvedValue({
+      ...staffView,
+      players: [{ id: 'player-1', name: 'Player One' }, { id: 'player-2', name: 'Player Two' }]
+    });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Home footwork' });
+    fireEvent.click(screen.getByRole('button', { name: 'Assign again' }));
+    expect(screen.getByText('1 player', { exact: true })).toBeInTheDocument();
+    expect(screen.getByLabelText('Player One')).toBeChecked();
+    expect(screen.getByLabelText('Player Two')).not.toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: 'Assign & notify' }));
+    await screen.findByText(/Assignment shared/);
+    const commands = resourcePacketMocks.resourcePacketCommand.mock.calls.map((call) => call[1]);
+    expect(commands.filter((command) => command.action === 'saveResource')).toHaveLength(0);
+    const save = commands.find((command) => command.action === 'saveDraft');
+    expect(save).toMatchObject({
+      expectedRevision: 0,
+      title: 'Home footwork',
+      playerIds: ['player-1'],
+      resourceVersions: [1],
+      completionPolicy: 'practice_ack',
+      dueAt: null,
+      practiceId: null
+    });
+    expect(save.assignmentId).not.toBe('packet-1');
   });
 
   it('saves edited publication from the current revision and preserves the visible audience', async () => {

@@ -63,6 +63,7 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
   const [youtubeMetadata, setYoutubeMetadata] = useState<Record<string, YouTubeMetadata>>({});
   const [metadataLoadingId, setMetadataLoadingId] = useState('');
   const metadataRequestUrls = useRef(new Map<string, string>());
+  const autoMetadataTitles = useRef(new Map<string, string>());
   const uid = auth.user?.uid;
   useEffect(() => {
     if (selected) {
@@ -98,28 +99,29 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
       cancelled = true;
     };
   }, [uid, teamId, refresh]);
-  function start(row?: PacketAssignment) {
+  function start(row?: PacketAssignment, copy = false) {
     const nextItems = row ? assignmentComposition(row).items : [blankItem()];
-    compositionBase.current = row ? assignmentComposition(row) : null;
+    compositionBase.current = row && !copy ? assignmentComposition(row) : null;
     setNeedsReconcile(false);
     setResourceConflictId('');
     setChoices({});
     originalItems.current = new Map(nextItems.map((item) => [item.resourceId, item]));
-    setAssignmentId(row?.assignmentId || crypto.randomUUID());
-    setRevision(row?.revision || 0);
+    setAssignmentId(row && !copy ? row.assignmentId : crypto.randomUUID());
+    setRevision(row && !copy ? row.revision : 0);
     setTitle(row?.title || '');
     setNotes(row ? row.notes : 'Watch the video, then practice the skill together. Focus on the coach’s teaching point.');
     setItems(nextItems);
     setPlayers(row?.playerIds || data!.players.map((player) => player.id));
-    const date = row?.dueAt ? new Date(row.dueAt) : null;
+    const date = row?.dueAt && !copy ? new Date(row.dueAt) : null;
     setDue(date ? new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '');
-    setPracticeId(row?.practiceId || '');
-    setCompletionPolicy(row?.completionPolicy || (row ? 'link_opened_legacy' : 'practice_ack'));
-    setNotify(!row?.publishedVersion);
+    setPracticeId(row && !copy ? row.practiceId || '' : '');
+    setCompletionPolicy(copy ? 'practice_ack' : row?.completionPolicy || (row ? 'link_opened_legacy' : 'practice_ack'));
+    setNotify(copy || !row?.publishedVersion);
     setEditing(true);
     setPreview(false);
     setYoutubeMetadata({});
     metadataRequestUrls.current.clear();
+    autoMetadataTitles.current.clear();
     setError('');
   }
   async function previewYouTube(item: EditableItem, index: number) {
@@ -133,7 +135,10 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
       setYoutubeMetadata((current) => ({ ...current, [item.resourceId]: metadata }));
       setItems((current) => current.map((candidate, candidateIndex) => (
         candidateIndex === index && candidate.url === item.url && !candidate.title.trim()
-          ? { ...candidate, title: metadata.title }
+          ? (() => {
+              if (metadata.title) autoMetadataTitles.current.set(candidate.resourceId, metadata.title);
+              return { ...candidate, title: metadata.title };
+            })()
           : candidate
       )));
     } finally {
@@ -488,8 +493,15 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
                     value={item.url}
                     disabled={busy}
                     onChange={(event) => {
-                      updateItem(index, { url: event.target.value });
+                      const nextUrl = event.target.value;
+                      const autoTitle = autoMetadataTitles.current.get(item.resourceId);
+                      updateItem(index, {
+                        url: nextUrl,
+                        ...(autoTitle !== undefined && item.title === autoTitle ? { title: '' } : {})
+                      });
                       metadataRequestUrls.current.delete(item.resourceId);
+                      autoMetadataTitles.current.delete(item.resourceId);
+                      setMetadataLoadingId((current) => current === item.resourceId ? '' : current);
                       setYoutubeMetadata((current) => {
                         const next = { ...current };
                         delete next[item.resourceId];
@@ -515,7 +527,10 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
                     value={item.title}
                     disabled={busy}
                     placeholder="What is this video about?"
-                    onChange={(event) => updateItem(index, { title: event.target.value })}
+                    onChange={(event) => {
+                      autoMetadataTitles.current.delete(item.resourceId);
+                      updateItem(index, { title: event.target.value });
+                    }}
                   />
                 </label>
                 <label className="block font-semibold">
@@ -742,20 +757,35 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
                     Close preview
                   </button>
                   <h2 className="text-xl font-bold">{title || items[0]?.title || 'Your assignment'}</h2>
+                  <p className="text-sm text-gray-700">
+                    {data.teamName || 'Team'} ·{' '}
+                    {players.length === data.players.length
+                      ? 'Whole team'
+                      : `For ${data.players.filter((player) => players.includes(player.id)).map((player) => player.name).join(', ')}`}
+                    {' · '}{due ? `Due ${new Date(due).toLocaleString()}` : 'No due date'}
+                  </p>
                   <p>{notes}</p>
                   {items.map((item) => (
                     <VideoCard key={item.resourceId} url={item.url} title={item.title} note={item.teachingPoint}>
                       <span className={primary}>Open video</span>
+                      {completionPolicy === 'practice_ack' && (
+                        <span className={`${secondary} block text-center`}>We practiced this</span>
+                      )}
                     </VideoCard>
                   ))}
-                  <span className={`${secondary} block text-center`}>We practiced this</span>
-                  <p className="text-sm">Opening and practice acknowledgment are separate. This preview records neither.</p>
+                  <p className="text-sm">
+                    {completionPolicy === 'practice_ack'
+                      ? 'Each video has its own practice acknowledgment. Opening a link and reporting practice are separate; this preview records neither.'
+                      : 'Opening each video link completes this legacy assignment. Playback is not verified; this preview records no opens.'}
+                  </p>
                 </section>
               </Modal>
             )}
             {revision > 0 && (
               <p className="text-sm text-gray-600">
-                Text changes keep prior activity. Replaced or added videos need a new practice acknowledgment; unchanged videos keep theirs.
+                {completionPolicy === 'practice_ack'
+                  ? 'Text changes keep prior activity. Replaced or added videos need a new practice acknowledgment; unchanged videos keep theirs.'
+                  : 'Text changes keep prior activity. Replaced or added videos need a new link open; unchanged videos keep theirs.'}
               </p>
             )}
           </fieldset>
@@ -824,6 +854,9 @@ function AssignmentWorkspace({ auth, teamId }: { auth: AuthState; teamId: string
                     </button>
                     <button className={secondary} onClick={() => start(row)}>
                       Edit assignment
+                    </button>
+                    <button className={secondary} onClick={() => start(row, true)}>
+                      Assign again
                     </button>
                   </div>
                 </article>
