@@ -59,7 +59,7 @@ export function buildResourcePacketAiTools() {
       domain: 'practice',
       audience: 'manager' as const,
       description:
-        'Prepare a staff resource, packet draft, or publication for explicit confirmation. Args teamId, action=saveResource|saveDraft|publish. Resources need title,url and optional teachingPoint and optional resourceId/drillId. Drafts need title,resourceIds,playerIds and optional matching resourceVersions,notes,practiceId,dueAt ISO,timeZone,assignmentId. Omit resourceVersions to preserve versions from an existing assignment and select current versions for newly added resources; pass current versions to explicitly adopt updated media. Publish needs assignmentId and explicit notify boolean. Never invent video content or report an open on behalf of someone.',
+        'Prepare a staff resource, packet draft, or publication for explicit confirmation. Args teamId, action=saveResource|saveDraft|publish. Resources need title,url and optional teachingPoint and optional resourceId/drillId. Drafts need title,resourceIds,playerIds and optional matching resourceVersions,notes,practiceId,dueAt ISO,timeZone,assignmentId. New drafts require explicit practice acknowledgment; edits preserve the assignment policy. Omit resourceVersions to preserve versions from an existing assignment and select current versions for newly added resources; pass current versions to explicitly adopt updated media. Publish needs assignmentId and explicit notify boolean. Never invent video content or report an open on behalf of someone.',
       prepare: async (_user: AuthUser, args: Record<string, unknown>) => {
         const teamId = String(args.teamId || '');
         const view = await loadPreparationView(teamId);
@@ -148,7 +148,8 @@ export function buildResourcePacketAiTools() {
               playerIds: args.playerIds,
               practiceId: args.practiceId || null,
               dueAt: args.dueAt || null,
-              timeZone: args.timeZone || null
+              timeZone: args.timeZone || null,
+              completionPolicy: existing ? (existing.completionPolicy || 'link_opened_legacy') : 'practice_ack'
             };
             previewSummary = { ...prepared, items: selectedItems, effect: 'Save a draft only; do not publish or notify.' };
           }
