@@ -83,7 +83,10 @@ describe('resource packet AI tools', () => {
     expect(explicitlyHistorical.previewSummary).toEqual(expect.objectContaining({ items: [historicalItem], resourceVersions: [1] }));
 
     const unchanged = await prepare(user, baseArgs);
-    expect(unchanged.args).toEqual(expect.objectContaining({ resourceVersions: [1] }));
+    expect(unchanged.args).toEqual(expect.objectContaining({
+      resourceVersions: [1],
+      completionPolicy: 'link_opened_legacy'
+    }));
 
     const explicitlyCurrent = await prepare(user, { ...baseArgs, resourceVersions: [2] });
     expect(explicitlyCurrent.args).toEqual(expect.objectContaining({ resourceVersions: [2] }));
@@ -93,5 +96,67 @@ describe('resource packet AI tools', () => {
         resourceVersions: [2]
       })
     );
+  });
+
+  it('uses practice acknowledgment for new AI drafts while preserving an existing policy', async () => {
+    mocks.loadResourcePacketStaff.mockResolvedValueOnce({
+      cursors: { resources: null, assignments: null, tasks: null, players: null, practices: null, deliveries: null },
+      resources: [currentResource],
+      assignments: [],
+      tasks: [],
+      players: [{ id: 'player-1', name: 'Player One' }],
+      practices: [],
+      deliveries: []
+    });
+    const tool = buildResourcePacketAiTools().find((candidate) => candidate.name === 'prepare_resource_packet');
+    if (!tool || !('prepare' in tool) || !tool.prepare) throw new Error('Expected the preparation tool.');
+
+    const prepared = await tool.prepare(user, {
+      teamId: 'team-1',
+      action: 'saveDraft',
+      title: 'New home practice',
+      resourceIds: ['resource-1'],
+      playerIds: ['player-1']
+    });
+
+    expect(prepared.args).toEqual(expect.objectContaining({ completionPolicy: 'practice_ack' }));
+    expect(prepared.previewSummary).toEqual(expect.objectContaining({ completionPolicy: 'practice_ack' }));
+  });
+
+  it('preserves practice acknowledgment when AI edits an existing assignment', async () => {
+    mocks.loadResourcePacketStaff.mockResolvedValueOnce({
+      cursors: { resources: null, assignments: null, tasks: null, players: null, practices: null, deliveries: null },
+      resources: [currentResource],
+      assignments: [{
+        assignmentId: 'packet-practice',
+        revision: 2,
+        publishedVersion: 1,
+        title: 'Existing practice',
+        notes: '',
+        items: [historicalItem],
+        playerIds: ['player-1'],
+        practiceId: null,
+        dueAt: null,
+        timeZone: 'UTC',
+        completionPolicy: 'practice_ack'
+      }],
+      tasks: [],
+      players: [{ id: 'player-1', name: 'Player One' }],
+      practices: [],
+      deliveries: []
+    });
+    const tool = buildResourcePacketAiTools().find((candidate) => candidate.name === 'prepare_resource_packet');
+    if (!tool || !('prepare' in tool) || !tool.prepare) throw new Error('Expected the preparation tool.');
+
+    const prepared = await tool.prepare(user, {
+      teamId: 'team-1',
+      action: 'saveDraft',
+      assignmentId: 'packet-practice',
+      title: 'Existing practice',
+      resourceIds: ['resource-1'],
+      playerIds: ['player-1']
+    });
+
+    expect(prepared.args).toEqual(expect.objectContaining({ completionPolicy: 'practice_ack' }));
   });
 });
