@@ -856,7 +856,8 @@ function TodaySection({
   const nextEvent = nextEvents[0] || null;
   const remainingActions = topAction ? home.actionItems.slice(1, 6) : home.actionItems.slice(0, 6);
   const remainingActionCount = Math.max(0, home.actionItems.length - (topAction ? 1 : 0));
-  const isFirstRunParent = home.players.length === 0 && home.teams.length === 0;
+  const hasPracticeAction = home.actionItems.some((action) => action.kind === 'practice');
+  const isFirstRunParent = home.players.length === 0 && home.teams.length === 0 && !hasPracticeAction;
   const multiRsvpTo = home.metrics.rsvpNeeded > 1 ? '/schedule?bulkRsvp=1' : null;
 
   if (isFirstRunParent) {

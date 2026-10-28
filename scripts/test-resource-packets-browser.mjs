@@ -71,9 +71,12 @@ export const removeDrillFavorite = addDrillFavorite;
 `);
   writeFileSync(join(dir, 'home.ts'), `
 const child = { teamId: 'web-team', teamName: 'Synthetic practice team', playerId: 'web-child', playerName: 'web-child', isLinkedParentChild: true };
-const emptyHome = () => ({ players: [{ ...child, nextEvent: null, rsvpNeeded: 0, packetsReady: 0, openAssignments: 0, unreadCount: 0 }], teams: [{ teamId: 'web-team', teamName: 'Synthetic practice team', role: 'parent', sport: 'Soccer', players: [child], nextEvent: null, eventCount: 0, upcomingEventCount: 0, unreadCount: 0, openActions: 0 }], upcomingEvents: [], feedGames: [], actionItems: [], fees: [], metrics: { players: 1, teams: 1, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 } });
-export const loadParentHomeSummaryBootstrap = async () => ({ home: emptyHome(), schedule: { children: [child], events: [], staffTeams: [] } });
-export const loadParentHomeWithSecondaryData = async () => emptyHome();
+const emptyHome = user => {
+ const playerOnly = user?.uid === 'web-player';
+ return { players: playerOnly ? [] : [{ ...child, nextEvent: null, rsvpNeeded: 0, packetsReady: 0, openAssignments: 0, unreadCount: 0 }], teams: playerOnly ? [] : [{ teamId: 'web-team', teamName: 'Synthetic practice team', role: 'parent', sport: 'Soccer', players: [child], nextEvent: null, eventCount: 0, upcomingEventCount: 0, unreadCount: 0, openActions: 0 }], upcomingEvents: [], feedGames: [], actionItems: [], fees: [], metrics: { players: playerOnly ? 0 : 1, teams: playerOnly ? 0 : 1, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 } };
+};
+export const loadParentHomeSummaryBootstrap = async user => ({ home: emptyHome(user), schedule: { children: user?.uid === 'web-player' ? [] : [child], events: [], staffTeams: [] } });
+export const loadParentHomeWithSecondaryData = async user => emptyHome(user);
 `);
   writeFileSync(join(dir, 'social.ts'), `
 const emptySocial = () => ({ feedItems: [], friends: [], suggestions: [], incomingRequests: [], outgoingRequests: [], friendshipsError: null, feedError: null, metrics: { feedItems: 0, friends: 0, incomingRequests: 0, suggestions: 0 } });
@@ -103,8 +106,9 @@ function App() {
  const [user, setUser] = useState(null); const [actor, setActor] = useState('web-staff');
  if (!user) return <form onSubmit={async event => { event.preventDefault(); const result = await signInWithEmailAndPassword(auth, actor + '@example.invalid', 'LocalBrowserFixture-123!'); setUser({ uid: result.user.uid, email: result.user.email, displayName: actor, roles: actor === 'web-staff' ? ['coach'] : ['parent'] }); }}><label>Fixture identity<select value={actor} onChange={event => setActor(event.target.value)}>{['web-staff','web-parent','web-other','web-player','web-guardian'].map(id => <option key={id}>{id}</option>)}</select></label><button>Sign in to isolated fixture</button></form>;
  const authState = { user, profile: {}, loading: false };
- const fixtureAssignment = new URLSearchParams(window.location.search).get('fixtureAssignment');
- const initialRoute = actor === 'web-player' ? '/practice-resources' : actor === 'web-parent' && fixtureAssignment ? '/players/web-team/web-child/resources?assignmentId=' + encodeURIComponent(fixtureAssignment) : actor === 'web-parent' ? '/home' : '/teams/web-team/resources';
+ const fixtureParams = new URLSearchParams(window.location.search);
+ const fixtureAssignment = fixtureParams.get('fixtureAssignment');
+ const initialRoute = actor === 'web-player' && fixtureParams.get('fixturePlayerHome') === '1' ? '/home' : actor === 'web-player' ? '/practice-resources' : actor === 'web-parent' && fixtureAssignment ? '/players/web-team/web-child/resources?assignmentId=' + encodeURIComponent(fixtureAssignment) : actor === 'web-parent' ? '/home' : '/teams/web-team/resources';
  return <><button type="button" onClick={async () => { await signOut(auth); setUser(null); }}>Switch fixture account</button><MemoryRouter key={user.uid} initialEntries={[initialRoute]}><Routes><Route path="/home" element={<Home auth={authState} />} /><Route path="/practice-resources" element={<PlayerResourcePackets auth={authState} />} /><Route path="/players/:teamId/:playerId/resources" element={<PlayerResourcePackets auth={authState} />} /><Route path="/teams/:teamId/resources" element={actor === 'web-staff' ? <ResourcePackets auth={authState} /> : <ResourcePacketQueue uid={user.uid} linkedChildren={[{teamId:'web-team',teamName:'Synthetic team',playerId:'web-child',playerName:'web-child'},{teamId:'web-team',teamName:'Synthetic team',playerId:'web-sibling',playerName:'web-sibling'}]} staffTeams={[]} />} /></Routes></MemoryRouter></>;
 }
 createRoot(document.getElementById('root')).render(<App />);
@@ -129,7 +133,7 @@ createRoot(document.getElementById('root')).render(<App />);
     ...(browserType === chromium && process.env.RESOURCE_PACKET_SYSTEM_CHROME === '1' ? { channel: 'chrome' } : {})
   });
   const errors = [];
-  async function session(actor, viewport = { width: 1280, height: 900 }) {
+  async function session(actor, viewport = { width: 1280, height: 900 }, query = '') {
     const context = await browser.newContext({ viewport, hasTouch: viewport.width < 500, timezoneId: 'America/Chicago' });
     await context.route('**/*', async route => {
       const url = new URL(route.request().url());
@@ -140,7 +144,7 @@ createRoot(document.getElementById('root')).render(<App />);
       return route.continue();
     });
     const page = await context.newPage(); lastPage = page; page.on('pageerror', error => errors.push(error.message));
-    await page.goto(`http://127.0.0.1:${appPort}`); await page.getByLabel('Fixture identity').selectOption(actor); await page.getByRole('button', { name: 'Sign in to isolated fixture' }).click();
+    await page.goto(`http://127.0.0.1:${appPort}/${query}`); await page.getByLabel('Fixture identity').selectOption(actor); await page.getByRole('button', { name: 'Sign in to isolated fixture' }).click();
     return { page, context };
   }
   const staff = await session('web-staff', { width: 390, height: 844 });
@@ -197,6 +201,16 @@ createRoot(document.getElementById('root')).render(<App />);
   await staff.page.getByRole('button', { name: 'Assign without notifying', exact: true }).click();
   await expect(staff.page.getByRole('status')).toContainText('Assignment shared');
   console.log(`MEASURED automated library-to-assignment journey: ${Date.now() - shareStarted}ms (not a human usability timing).`);
+  const playerHome = await session('web-player', { width: 390, height: 844 }, '?fixturePlayerHome=1');
+  await expect(playerHome.page.getByRole('heading', { name: 'Practice with web-child', exact: true })).toBeVisible();
+  await expect(playerHome.page.getByRole('heading', { name: 'Get linked to your player', exact: true })).toHaveCount(0);
+  if (process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR) {
+    await playerHome.page.screenshot({ path: join(process.env.RESOURCE_PACKET_QA_ARTIFACT_DIR, 'player-only-home.png'), fullPage: true });
+  }
+  await playerHome.page.getByRole('link', { name: 'Open action', exact: true }).click();
+  await expect(playerHome.page.locator('article > h3').filter({ hasText: /^Home footwork$/ })).toBeVisible();
+  await playerHome.context.close();
+  console.log('PASS: player-only Home renders and opens its exact outstanding practice task without parent/team onboarding data.');
   const parent = await session('web-parent', { width: 390, height: 844 });
   await expect(parent.page.getByRole('heading', { name: 'Your day', exact: true })).toBeVisible();
   await expect(parent.page.getByRole('heading', { name: 'Practice with web-child', exact: true })).toBeVisible();

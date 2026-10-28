@@ -692,6 +692,49 @@ describe('Home', () => {
     expect(screen.getByText(/Ball control · 1 practice item left · Bears/)).toBeInTheDocument();
   });
 
+  it('shows an outstanding practice assignment for a player-only Home account', async () => {
+    const playerOnlyAuth: AuthState = {
+      ...signedInAuth,
+      user: {
+        ...signedInAuth.user!,
+        uid: 'player-account-1',
+        email: 'player@example.com',
+        displayName: 'Pat Player',
+        roles: [],
+        parentOf: [],
+        parentTeamIds: [],
+        parentPlayerKeys: []
+      },
+      roles: [],
+      isParent: false
+    };
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: emptyHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(emptyHome);
+    resourcePacketMocks.available.mockReturnValue(true);
+    resourcePacketMocks.loadHomeTasks.mockResolvedValue([{
+      teamId: 'team-1',
+      teamName: 'Bears',
+      assignmentId: 'practice-player-only',
+      version: 1,
+      playerId: 'player-1',
+      playerName: 'Pat Player',
+      title: 'Ball control',
+      notes: 'Five minutes.',
+      completionPolicy: 'practice_ack',
+      dueAt: null,
+      timeZone: null,
+      signals: {},
+      items: [{ resourceId: 'video-1', resourceVersion: 1, title: 'Ball control', teachingPoint: '', url: 'https://youtu.be/abcdefghijk' }]
+    }]);
+
+    renderHome(playerOnlyAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Practice with Pat Player' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open action' }).getAttribute('href'))
+      .toBe('/players/team-1/player-1/resources?assignmentId=practice-player-only');
+    expect(screen.queryByRole('heading', { name: 'Get linked to your player' })).toBeNull();
+  });
+
   it('shows player-scoped Multi RSVP only for players with at least two due responses', async () => {
     const scopedHome = buildLargeHomeModel();
     scopedHome.players[0].rsvpNeeded = 2;
