@@ -6,6 +6,7 @@ for (const width of [320, 390, 1280]) {
         await assertPageBootsWithoutFatalErrors(page, { baseURL, path: '/compare.html' });
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         await expect(page.getByRole('heading', { name: 'ALL PLAYS vs. Hudl', exact: true })).toBeVisible();
+        await expect(page.getByRole('link', { name: 'Explore teams and games' })).toHaveAttribute('href', 'teams.html');
         await page.getByRole('link', { name: 'Compare the platforms' }).click();
         await expect(page).toHaveURL(/#compare-vendors$/);
         await expect(page.locator('#roku-access')).toContainText('not listed in the Roku Channel Store');
