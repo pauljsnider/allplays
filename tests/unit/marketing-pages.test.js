@@ -119,3 +119,20 @@ describe('TV marketing availability boundaries', () => {
         expect((app.match(/href="\/app\/#\/auth\?mode=signup"/g) || [])).toHaveLength(3);
     });
 });
+
+describe('Hudl and Roku comparison', () => {
+    it('keeps matrix columns aligned and qualifies availability with primary sources', () => {
+        const html = read('compare.html');
+        const rows = html.match(/<tr[^>]*>[\s\S]*?<\/tr>/g);
+        for (const row of rows) {
+            if (row.includes('colspan=')) expect(row).toContain('colspan="7"');
+            else expect(row.match(/<(?:td|th)\b/g)).toHaveLength(7);
+        }
+        expect(html).toContain('Roku replay viewing');
+        expect(html).toContain('private sideloading; not listed in the Roku Channel Store.');
+        expect(html).toContain('Most sports rely on human analysts');
+        expect(html).toContain('remain proposed capabilities');
+        expect(html).toContain('https://www.hudl.com/products/assist/faq');
+        expect(html).not.toMatch(/In development|Concept preview/);
+    });
+});
