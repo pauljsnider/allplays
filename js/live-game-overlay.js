@@ -18,7 +18,7 @@ import {
     reconcileOverlayLiveEvents,
     resolvePublicProjectionVideoOptions,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=32';
+} from './live-game-overlay-model.js?v=33';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -330,6 +330,7 @@ function captureLiveClockState() {
     return {
         displayedClockMs: getDisplayedLiveClockMs(),
         gameClockMs: Number(uiState.game?.gameClockMs) || 0,
+        clockSnapshotAt: Number(uiState.game?.clockSnapshotAt) || 0,
         clockRunning: uiState.game?.clockRunning === true,
         completed: isCompletedGame()
     };
@@ -339,6 +340,12 @@ function syncLiveClockAnchor(previous = null) {
     const gameClockMs = Math.max(0, Number(uiState.game?.gameClockMs) || 0);
     const clockRunning = uiState.game?.clockRunning === true;
     const completed = isCompletedGame();
+    const snapshotAt = Number(uiState.game?.clockSnapshotAt) || 0;
+    if (snapshotAt > 0) {
+        uiState.liveClockSnapshotMs = gameClockMs;
+        uiState.liveClockSnapshotAt = Math.min(snapshotAt, Date.now());
+        return;
+    }
     if (!previous || gameClockMs !== previous.gameClockMs) {
         uiState.liveClockSnapshotMs = gameClockMs;
         uiState.liveClockSnapshotAt = Date.now();

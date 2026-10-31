@@ -65,6 +65,7 @@ function createLiveBaseline(game = {}, fallback = {}) {
         gameClockMs: game.liveClockMs !== undefined || game.gameClockMs !== undefined
             ? Math.max(0, toFiniteNumber(game.liveClockMs ?? game.gameClockMs))
             : Math.max(0, toFiniteNumber(fallback.gameClockMs)),
+        clockSnapshotAt: getTimestampMs(game.liveClockUpdatedAt) || toFiniteNumber(fallback.clockSnapshotAt),
         clockRunning: typeof game.liveClockRunning === 'boolean'
             ? game.liveClockRunning
             : fallback.clockRunning === true,
@@ -508,6 +509,7 @@ export function createOverlayState({ team = {}, game = {}, players = [], events 
         period: toText(game.period, DEFAULT_PERIOD),
         gameClockMs: Math.max(0, toFiniteNumber(game.liveClockMs ?? game.gameClockMs)),
         clockRunning: liveBaseline.clockRunning,
+        clockSnapshotAt: liveBaseline.clockSnapshotAt,
         liveStatus: toText(game.liveStatus || game.status, 'scheduled').toLowerCase(),
         viewerCount: Math.max(0, toFiniteNumber(game.liveViewerCount ?? game.viewerCount)),
         onCourt: Array.isArray(game.liveLineup?.onCourt) ? [...game.liveLineup.onCourt] : [],
@@ -559,6 +561,7 @@ export function applyOverlayGame(state, game = {}, { preserveEventState = false 
             awayScore: previousBaseline.awayScore,
             period: previousBaseline.period,
             gameClockMs: previousBaseline.gameClockMs,
+            clockSnapshotAt: previousBaseline.clockSnapshotAt,
             clockRunning: previousBaseline.clockRunning,
             onCourt: [...(previousBaseline.onCourt || [])],
             bench: [...(previousBaseline.bench || [])],
@@ -575,6 +578,7 @@ export function applyOverlayGame(state, game = {}, { preserveEventState = false 
         if (game.period) state.period = toText(game.period, state.period);
         if (game.liveClockMs !== undefined || game.gameClockMs !== undefined) {
             state.gameClockMs = Math.max(0, toFiniteNumber(game.liveClockMs ?? game.gameClockMs, state.gameClockMs));
+            state.clockSnapshotAt = getTimestampMs(game.liveClockUpdatedAt);
         }
     }
     if (game.liveStatus || game.status) state.liveStatus = toText(game.liveStatus || game.status, state.liveStatus).toLowerCase();
@@ -730,6 +734,7 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
             awayScore: toFiniteNumber(state.awayScore),
             period: toText(state.period, baseline.period),
             gameClockMs: Math.max(0, toFiniteNumber(state.gameClockMs)),
+            clockSnapshotAt: state.clockSnapshotAt,
             clockRunning: state.clockRunning === true,
             onCourt: Array.isArray(state.onCourt) ? [...state.onCourt] : [],
             bench: Array.isArray(state.bench) ? [...state.bench] : [],
@@ -771,6 +776,7 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
         awayScore: effectiveBaseline.awayScore,
         period: effectiveBaseline.period,
         gameClockMs: effectiveBaseline.gameClockMs,
+        clockSnapshotAt: effectiveBaseline.clockSnapshotAt,
         clockRunning: effectiveBaseline.clockRunning,
         onCourt: [...effectiveBaseline.onCourt],
         bench: [...effectiveBaseline.bench],
@@ -792,6 +798,7 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
     };
 
     visibleEvents.forEach((event) => {
+        if (event.gameClockMs !== undefined) workingState.clockSnapshotAt = event.serverCreatedAtMs || event.createdAtMs || 0;
         if (event.type === 'reset') {
             const resetAt = resetBoundaryMs || event.serverCreatedAtMs || event.createdAtMs || Date.now();
             workingState.lastResetAt = Math.max(workingState.lastResetAt || 0, resetAt);
@@ -865,7 +872,10 @@ export function applyOverlayEvents(state, incomingEvents = []) {
         if (rawEvent.homeScore !== undefined) state.homeScore = toFiniteNumber(rawEvent.homeScore, state.homeScore);
         if (rawEvent.awayScore !== undefined) state.awayScore = toFiniteNumber(rawEvent.awayScore, state.awayScore);
         if (rawEvent.period) state.period = toText(rawEvent.period, state.period);
-        if (rawEvent.gameClockMs !== undefined) state.gameClockMs = Math.max(0, toFiniteNumber(rawEvent.gameClockMs, state.gameClockMs));
+        if (rawEvent.gameClockMs !== undefined) {
+            state.gameClockMs = Math.max(0, toFiniteNumber(rawEvent.gameClockMs, state.gameClockMs));
+            state.clockSnapshotAt = event.serverCreatedAtMs || event.createdAtMs || 0;
+        }
         applyEventStat(state, event);
         state.events = sortNewestFirst([event, ...state.events]).slice(0, 60);
         state.latestEvent = event;
