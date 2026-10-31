@@ -1,3 +1,7 @@
+import { createRequire } from 'node:module';
+import { getTeamScorePair } from '../../js/season-record.js';
+import { createOverlayState } from '../../js/live-game-overlay-model.js';
+const { serializePublicGame } = createRequire(import.meta.url)('../../functions/public-team-api-core.cjs');
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const firebaseMocks = vi.hoisted(() => ({
@@ -287,10 +291,28 @@ describe('team access query resilience', () => {
       }
     });
 
-    await expect(getUserTeamsWithAccess('owner-1', 'coach@example.com')).rejects.toMatchObject({
-      code: 'managed-team-discovery-partial',
-      partialTeams: [{ id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }]
-    });
+    vi.useFakeTimers();
+    const originalFetch = globalThis.fetch;
+    try {
+      // Both discovery paths must be deterministic. Otherwise this test calls
+      // the real REST endpoint after the hedge delay and can time out in CI.
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ result: {
+          items: [{ id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }],
+          isPartial: true
+        } })
+      });
+      const result = expect(getUserTeamsWithAccess('owner-1', 'coach@example.com')).rejects.toMatchObject({
+        code: 'managed-team-discovery-partial',
+        partialTeams: [{ id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }]
+      });
+      await vi.advanceTimersByTimeAsync(2000);
+      await result;
+    } finally {
+      globalThis.fetch = originalFetch;
+      vi.useRealTimers();
+    }
   });
 
   it('recognizes namespaced permission errors when loading a public team projection', async () => {
@@ -1458,4 +1480,20 @@ describe('game access query resilience', () => {
 
     await expect(getOfficiatingGames('team-1')).rejects.toBe(queryError);
   });
+});
+
+it.each([
+  { homeScore: 3, awayScore: 9, scoreOrientation: 'venue', liveHasData: true },
+  { homeScore: 9, awayScore: 3, liveHasData: true },
+  { homeScore: 9, awayScore: 3, scoreOrientation: 'team-opponent' },
+  { homeScore: 9, awayScore: 3, sharedScheduleSourceTeamId: 'source' }
+])('keeps away scores aligned through server projection, anonymous mapper and overlay: %j', async (scores) => {
+  firebaseMocks.getDoc.mockRejectedValue(Object.assign(new Error('denied'), { code: 'firestore/permission-denied' }));
+  const item = serializePublicGame({ id: 'badge-game', date: new Date('2026-10-31T12:00:00Z'), isHome: false, ...scores, opponent: 'Bears' });
+  firebaseMocks.getPublicGameProjection.mockResolvedValue({ data: { item } });
+  const mapped = await getGame('team-1', 'badge-game');
+  expect(mapped).toMatchObject({ homeScore: 3, awayScore: 9, scoreOrientation: 'venue', opponentStats: {} });
+  expect(getTeamScorePair(mapped)).toEqual({ teamScore: 9, opponentScore: 3 });
+  const overlay = createOverlayState({ team: { name: 'Tigers' }, game: mapped });
+  expect(overlay).toMatchObject({ homeName: 'Bears', awayName: 'Tigers', homeScore: 3, awayScore: 9 });
 });

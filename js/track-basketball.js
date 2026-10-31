@@ -1,8 +1,9 @@
+import { getTeamScorePair } from './season-record.js';
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getGameDayTeamContext, getGame, getPlayers, getConfigs, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './db.js?v=4433206';
+import { getGameDayTeamContext, getGame, getPlayers, getConfigs, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './db.js?v=4433207';
 import { db } from './firebase.js?v=33';
-import { getUrlParams, escapeHtml } from './utils.js?v=443382';
-import { checkAuth } from './auth.js?v=4433210';
+import { getUrlParams, escapeHtml } from './utils.js?v=443383';
+import { checkAuth } from './auth.js?v=4433211';
 import { writeBatch, doc, setDoc, addDoc } from './firebase.js?v=33';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
@@ -1486,8 +1487,9 @@ async function init() {
     state.clock = 0;
     state.running = false;
     state.lastTick = null;
-    state.home = game.homeScore || 0;
-    state.away = game.awayScore || 0;
+    const scorePair = getTeamScorePair(game);
+    state.home = scorePair.teamScore || 0;
+    state.away = scorePair.opponentScore || 0;
     state.starters = [];
     state.bench = roster.map(r => r.id);
     state.onCourt = [];

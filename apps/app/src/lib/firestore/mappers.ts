@@ -1,3 +1,4 @@
+import { getTeamScorePair } from '../adapters/legacyScoreOrientation';
 import type {
   ChatAttachmentFirestoreRecord,
   ChatConversationFirestoreRecord,
@@ -96,6 +97,10 @@ function asUniqueStringArray(value: unknown): string[] {
 }
 
 function asOptionalDate(value: unknown): Date | null {
+  if (typeof value === 'number') {
+    const date = new Date(value);
+    return Number.isFinite(value) && !Number.isNaN(date.getTime()) ? date : null;
+  }
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? null : value;
   }
@@ -358,6 +363,7 @@ export function mapGameReportOpponentStatsRecord(value: unknown): GameReportOppo
 
 export function mapGameReportGameRecord(value: unknown, fallbackGameId = ''): GameReportGameFirestoreRecord {
   const source = asLooseObject(value);
+  const scores = getTeamScorePair(source);
   const opponentStatsSource = asObject(source.opponentStats);
   const opponentStats = opponentStatsSource
     ? Object.entries(opponentStatsSource).reduce<Record<string, GameReportOpponentFirestoreRecord>>((acc, [key, entry]) => {
@@ -369,6 +375,8 @@ export function mapGameReportGameRecord(value: unknown, fallbackGameId = ''): Ga
   return {
     ...source,
     id: asTrimmedString(source.id) || fallbackGameId,
+    teamScore: source.teamScore ?? scores.teamScore,
+    opponentScore: source.opponentScore ?? scores.opponentScore,
     summary: asTrimmedString(source.summary),
     statSheetPhotoUrl: asTrimmedString(source.statSheetPhotoUrl),
     opponentStats
