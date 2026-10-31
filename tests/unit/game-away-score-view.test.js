@@ -1,3 +1,4 @@
+import { getTeamScorePair } from '../../js/season-record.js';
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
@@ -18,10 +19,11 @@ describe('game away score view regression', () => {
 
         expect(functionBody).toBeTruthy();
 
-        const resolveGameReportScoreView = new Function('game', functionBody);
+        const resolveGameReportScoreView = game => new Function('game', 'getTeamScorePair', functionBody)(game, getTeamScorePair);
 
         expect(resolveGameReportScoreView({
             isHome: false,
+            scoreOrientation: 'team-opponent',
             homeScore: 70,
             awayScore: 55,
             status: 'completed'
@@ -37,6 +39,7 @@ describe('game away score view regression', () => {
             isHome: false,
             teamScore: 61,
             opponentScore: 58,
+            scoreOrientation: 'team-opponent',
             homeScore: 70,
             awayScore: 55,
             status: 'completed'

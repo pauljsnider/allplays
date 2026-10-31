@@ -260,7 +260,7 @@ describe('track-live Simple goal-sport DOM recording', () => {
     expect(document.getElementById('live-notes-list').textContent).toContain('Home FC goal: Header off corner');
 
     await harness.runScheduledSyncs();
-    expect(harness.updateGame).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 1, awayScore: 0 });
+    expect(harness.updateGame).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 1, awayScore: 0, scoreOrientation: 'team-opponent' });
     expect(harness.setDoc).toHaveBeenCalledWith(expect.objectContaining({
       path: expect.stringContaining('aggregatedStats/p9')
     }), expect.objectContaining({
@@ -303,7 +303,7 @@ describe('track-live Simple goal-sport DOM recording', () => {
     expect(document.getElementById('gameSummary').value).toContain('Rivals goal: Power play');
 
     await harness.runScheduledSyncs();
-    expect(harness.updateGame).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 2, awayScore: 2 });
+    expect(harness.updateGame).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 2, awayScore: 2, scoreOrientation: 'team-opponent' });
     expect(harness.updateGame).toHaveBeenCalledWith('team-1', 'game-1', {
       opponentStats: {
         opp7: {

@@ -1,3 +1,4 @@
+import { getTeamScorePair } from './season-record.js';
 import {
   getGameDayTeamContext,
   getGame,
@@ -17,12 +18,12 @@ import {
   updateGame,
   uploadGameClip,
   deleteUploadedMediaObjects
-} from './db.js?v=4433206';
-import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443382';
+} from './db.js?v=4433207';
+import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443383';
 import { hasFullTeamAccess } from './team-access.js?v=44338';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
 import { computePanelVisibility } from './live-stream-utils.js?v=2';
-import { checkAuth } from './auth.js?v=4433210';
+import { checkAuth } from './auth.js?v=4433211';
 import { isViewerChatEnabled } from './live-game-chat.js?v=4';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import {
@@ -35,12 +36,12 @@ import {
   rebaseReplayStartTimeMs
 } from './live-game-replay.js?v=3';
 import { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, hasActiveLiveLifecycle, hasCompletedReplayLifecycle, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=443319';
-import { resolvePublicProjectionVideoOptions } from './live-game-overlay-model.js?v=28';
+import { resolvePublicProjectionVideoOptions, getOverlayLiveClockMs } from './live-game-overlay-model.js?v=34';
 import { buildGameReportShareUrl, buildGameWatchShareUrl } from './game-share-links.js?v=1';
 import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=53';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=55';
 import { getDefaultLivePeriod } from './live-sport-config.js?v=2';
 import { BROADCAST_STREAM_HEARTBEAT_MS, buildBroadcastRuntimeSession } from './game-day-broadcast.js?v=5';
 import { createSafeImageElement, resolveSafeProfilePhotoUrl, resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';
@@ -78,6 +79,8 @@ const state = {
   awayScore: 0,
   period: getDefaultLivePeriod(),
   gameClockMs: 0,
+  liveClockSnapshot: null,
+  liveClockTimer: null,
   sport: null,
   periods: null,
 
@@ -1746,22 +1749,19 @@ function initRecordedReplayControls() {
 }
 
 function renderGameInfo() {
-  els.homeTeamName.textContent = state.team?.name || 'Home Team';
-  els.awayTeamName.textContent = resolveOpponentDisplayName(state.game);
-  if (els.homeTeamPhoto) {
-    if (state.team?.photoUrl) {
-      els.homeTeamPhoto.src = state.team.photoUrl;
-      els.homeTeamPhoto.classList.remove('hidden');
+  const managedTeam = { name: state.team?.name || 'Home Team', photo: state.team?.photoUrl };
+  const opponent = { name: resolveOpponentDisplayName(state.game), photo: state.game?.opponentTeamPhoto };
+  const venueAway = getTeamScorePair({ ...state.game, homeScore: 0, awayScore: 1 }).teamScore === 1;
+  const [home, away] = venueAway ? [opponent, managedTeam] : [managedTeam, opponent];
+  els.homeTeamName.textContent = home.name;
+  els.awayTeamName.textContent = away.name;
+  for (const [element, team] of [[els.homeTeamPhoto, home], [els.awayTeamPhoto, away]]) {
+    if (!element) continue;
+    if (team.photo) {
+      element.src = team.photo;
+      element.classList.remove('hidden');
     } else {
-      els.homeTeamPhoto.classList.add('hidden');
-    }
-  }
-  if (els.awayTeamPhoto) {
-    if (state.game?.opponentTeamPhoto) {
-      els.awayTeamPhoto.src = state.game.opponentTeamPhoto;
-      els.awayTeamPhoto.classList.remove('hidden');
-    } else {
-      els.awayTeamPhoto.classList.add('hidden');
+      element.classList.add('hidden');
     }
   }
   if (state.game?.date) {
@@ -1771,11 +1771,37 @@ function renderGameInfo() {
   updateShareButton();
 }
 
+function syncViewerClock(snapshot = {}, receivedAt = Date.now()) {
+  const clockMs = snapshot.gameClockMs ?? snapshot.liveClockMs;
+  if (!Number.isFinite(clockMs)) return;
+  const timestamp = snapshot.liveClockUpdatedAt ?? snapshot.createdAt ?? snapshot.timestamp;
+  const snapshotAtMs = getTimestampMs(timestamp)
+    || (timestamp instanceof Date ? timestamp.getTime() : Date.parse(timestamp))
+    || receivedAt;
+  if (snapshotAtMs < (state.liveClockSnapshot?.snapshotAtMs || 0)) return;
+  const clockRunning = typeof snapshot.liveClockRunning === 'boolean'
+    ? snapshot.liveClockRunning
+    : snapshot.type === 'clock_start' ? true
+    : ['clock_pause', 'reset'].includes(snapshot.type) ? false
+    : state.liveClockSnapshot?.clockRunning === true;
+  state.liveClockSnapshot = { snapshotClockMs: clockMs, snapshotAtMs, clockRunning };
+}
+
+function renderViewerClock() {
+  if (!state.isReplay && state.liveClockSnapshot) {
+    state.gameClockMs = getOverlayLiveClockMs({
+      ...state.liveClockSnapshot,
+      isCompleted: !hasActiveLiveLifecycle(state.game)
+    });
+  }
+  if (els.clock) els.clock.textContent = formatClock(state.gameClockMs);
+}
+
 function renderScoreboard(animate = false) {
   if (els.homeScore) els.homeScore.textContent = state.homeScore;
   if (els.awayScore) els.awayScore.textContent = state.awayScore;
   if (els.period) els.period.textContent = state.period;
-  if (els.clock) els.clock.textContent = formatClock(state.gameClockMs);
+  renderViewerClock();
 
   if (animate) {
     els.homeScore?.classList.add('score-pulse');
@@ -2267,6 +2293,7 @@ function resetViewerStateFromGameDoc(gameDoc, placeholder = 'Game reset. Waiting
     bench: Array.isArray(liveLineup.bench) ? liveLineup.bench : []
   });
   Object.assign(state, next);
+  syncViewerClock({ ...gameDoc, liveClockRunning: false });
   if (els.playsFeed) {
     els.playsFeed.innerHTML = `<div data-placeholder="plays" class="text-center text-sand/40 py-8">${placeholder}</div>`;
   }
@@ -2282,6 +2309,7 @@ function processNewEvents(events, { announce = true, preserveSeededOpponentGoalS
   });
   newEvents.forEach(event => {
     state.eventIds.add(event.id);
+    syncViewerClock(event);
     if (event.type === 'reset') {
       const resetAt = getTimestampMs(event.createdAt) || Date.now();
       if (resetAt > (state.lastResetAt || 0)) {
@@ -2332,6 +2360,7 @@ function retainActiveLiveEventWindow() {
 
 function startLiveMode() {
   state.isLive = true;
+  if (!state.liveClockTimer) state.liveClockTimer = window.setInterval(renderViewerClock, 250);
   els.liveBadge?.classList.remove('hidden');
 
   startEngagements();
@@ -2453,6 +2482,8 @@ function startLiveEvents() {
 
 function stopLiveMode() {
   state.isLive = false;
+  if (state.liveClockTimer) window.clearInterval(state.liveClockTimer);
+  state.liveClockTimer = null;
   state.unsubscribers.forEach(unsub => {
     try {
       unsub();
@@ -2896,6 +2927,7 @@ function formatFirestoreError(error) {
 
 function handleGameUpdate(gameDoc) {
   if (!gameDoc) return;
+  syncViewerClock(gameDoc);
   const gameStatus = String(gameDoc.status || '').trim().toLowerCase();
   const isCancelled = gameStatus === 'cancelled' || gameStatus === 'canceled';
   state.game = isCancelled && gameDoc.liveStatus === 'live'
@@ -3075,6 +3107,7 @@ async function init() {
   state.awayScore = game.awayScore || 0;
   state.period = game.period || getDefaultLivePeriod({ game, team });
   state.lastResetAt = getTimestampMs(game.liveResetAt) || 0;
+  syncViewerClock(game);
 
   const seasonId = resolveTeamEntitlementSeasonId({ game, team });
   if (isRecordedReplayTeamPassGateEnabled({ game, team })) {

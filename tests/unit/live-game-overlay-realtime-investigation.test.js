@@ -1,5 +1,5 @@
 // Regression fixtures promoted from the read-only investigation; original red artifact is preserved in its checkout.
-// No Firebase, network, credentials, or production writes. Baseline: 1df887d4.
+// No Firebase, network, credentials, or production writes. Includes badge master integration.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
@@ -41,7 +41,7 @@ function oldViewer() {
         getTimestampMs: value => value || 0,
         renderScoreboard: noop, renderStats: noop, renderLineup: noop,
         renderPlayByPlay: noop, announcePlayEvent: noop, showScoreCelebration: noop,
-        updateMomentum: noop, showEventCelebration: noop, rerenderPlayFeed: noop
+        updateMomentum: noop, showEventCelebration: noop, rerenderPlayFeed: noop, syncViewerClock: noop
     };
     const deliver = new Function(...Object.keys(dependencies), `
         ${pageFunction(oldSource, 'processNewEvents')}
@@ -290,4 +290,39 @@ describe('overlay terminal listener/auth recovery contract (mock transport, not 
         expect(counts).toEqual({ events: 2, chat: 2 });
         controller.stop();
     });
+});
+
+it('preserves badge away-game orientation and clock anchors through retained history and deletion refresh', () => {
+    const epoch = 1800000000000;
+    const state = createOverlayState({ team: { name: 'Managed', photoUrl: 'managed.png' }, game: {
+        isHome: false, scoreOrientation: 'venue', opponent: 'Opponent', opponentTeamPhoto: 'opponent.png',
+        liveStatus: 'live', homeScore: 3, awayScore: 7, liveClockMs: 0,
+        liveClockRunning: true, liveClockUpdatedAt: epoch
+    } });
+    const history = createOverlayEventHistory();
+    const start = { id: 'badge-start', type: 'clock_start', source: 'badge-score-controller',
+        homeScore: 3, awayScore: 7, gameClockMs: 0, createdAt: epoch };
+    const early = { id: 'early-stat', type: 'stat', playerId: 'leader', statKey: 'pts', value: 10,
+        scoreOrientation: 'venue', homeScore: 3, awayScore: 7, createdAt: epoch + 1 };
+    const notes = Array.from({ length: 21 }, (_, i) => ({ id: `note-${i}`, type: 'note', createdAt: epoch + i + 2 }));
+    const rows = [start, early, ...notes];
+    for (let n = 1; n <= rows.length; n++) {
+        reconcileOverlayLiveEvents(state, history.window(rows.slice(Math.max(0, n - 20), n)), stateTools);
+    }
+    expect([state.homeName, state.awayName]).toEqual(['Opponent', 'Managed']);
+    expect([state.homePhoto, state.awayPhoto]).toEqual(['opponent.png', 'managed.png']);
+    expect([state.homeScore, state.awayScore]).toEqual([3, 7]);
+    expect(state.clockSnapshotAt).toBe(epoch);
+    expect(state.clockRunning).toBe(true);
+    expect(state.stats.leader.pts).toBe(10);
+    const pause = { id: 'badge-pause', type: 'clock_pause', source: 'badge-score-controller',
+        homeScore: 4, awayScore: 9, gameClockMs: 600000, createdAt: epoch + 600000 };
+    reconcileOverlayLiveEvents(state, history.window([...notes.slice(-19), pause]), stateTools);
+    expect([state.homeScore, state.awayScore]).toEqual([4, 9]);
+    expect(state.gameClockMs).toBe(600000);
+    expect(state.clockSnapshotAt).toBe(epoch + 600000);
+    expect(state.clockRunning).toBe(false);
+    reconcileOverlayLiveEvents(state, history.replace([start, ...notes, pause], history.revision), stateTools);
+    expect(state.stats.leader?.pts || 0).toBe(0);
+    expect([state.homeScore, state.awayScore, state.gameClockMs, state.clockRunning]).toEqual([4, 9, 600000, false]);
 });

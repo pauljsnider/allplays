@@ -994,7 +994,7 @@
             "legacyPages": [],
             "appPages": [
                 "apps/app/src/pages/ResourcePackets.tsx",
-        "apps/app/src/pages/PlayerResourcePackets.tsx"
+                "apps/app/src/pages/PlayerResourcePackets.tsx"
             ],
             "cloudFunctions": [
                 "resourcePacketsCommand",
@@ -1013,6 +1013,31 @@
             ],
             "workflowTests": [
                 "scripts/test-resource-packets-browser.mjs"
+            ]
+        },
+        {
+            "id": "games.badge-score-controller",
+            "label": "Paired badge scoreboard control",
+            "priority": "high",
+            "targetTiers": [
+                "unit",
+                "integration"
+            ],
+            "legacyPages": [
+                "badge-controller.html"
+            ],
+            "cloudFunctions": [
+                "configureBadgeScoreController",
+                "badgeScoreController"
+            ],
+            "unitTests": [
+                "tests/unit/badge-controller.test.js",
+                "tests/unit/live-tracker-resume.test.js",
+                "functions/test/badge-score.test.cjs"
+            ],
+            "integrationTests": [
+                "tests/unit/badge-score-rules.test.js",
+                "tests/smoke/badge-controller.spec.js"
             ]
         }
     ]
