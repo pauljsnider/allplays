@@ -1,3 +1,4 @@
+import { getTeamScorePair } from './season-record.js';
 import {
   getGameDayTeamContext,
   getGame,
@@ -35,7 +36,7 @@ import {
   rebaseReplayStartTimeMs
 } from './live-game-replay.js?v=3';
 import { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, hasActiveLiveLifecycle, hasCompletedReplayLifecycle, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=443319';
-import { resolvePublicProjectionVideoOptions } from './live-game-overlay-model.js?v=29';
+import { resolvePublicProjectionVideoOptions } from './live-game-overlay-model.js?v=30';
 import { buildGameReportShareUrl, buildGameWatchShareUrl } from './game-share-links.js?v=1';
 import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
@@ -1748,7 +1749,8 @@ function initRecordedReplayControls() {
 function renderGameInfo() {
   const managedTeam = { name: state.team?.name || 'Home Team', photo: state.team?.photoUrl };
   const opponent = { name: resolveOpponentDisplayName(state.game), photo: state.game?.opponentTeamPhoto };
-  const [home, away] = state.game?.isHome === false ? [opponent, managedTeam] : [managedTeam, opponent];
+  const venueAway = getTeamScorePair({ ...state.game, homeScore: 0, awayScore: 1 }).teamScore === 1;
+  const [home, away] = venueAway ? [opponent, managedTeam] : [managedTeam, opponent];
   els.homeTeamName.textContent = home.name;
   els.awayTeamName.textContent = away.name;
   for (const [element, team] of [[els.homeTeamPhoto, home], [els.awayTeamPhoto, away]]) {

@@ -1,3 +1,4 @@
+import { getTeamScorePair } from './season-record.js';
 function toMillis(value) {
     if (value == null) return null;
     if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -276,8 +277,9 @@ export function restoreBadgeScoreboard(state, game, events, persistedLocalState)
     const latestBadgeAt = Math.max(...badgeEvents.map(event =>
         toMillis(event.createdAt) || toMillis(event.timestamp) || 0));
     if (!persistedLocalState || persistedLocalState.savedAt <= latestBadgeAt) {
-        state.home = Math.max(0, Number(game.isHome === false ? game.awayScore : game.homeScore) || 0);
-        state.away = Math.max(0, Number(game.isHome === false ? game.homeScore : game.awayScore) || 0);
+        const scores = getTeamScorePair(game);
+        state.home = Math.max(0, Number(scores.teamScore) || 0);
+        state.away = Math.max(0, Number(scores.opponentScore) || 0);
         // Old local undo entries would restore scores from before badge control.
         state.history = [];
     }

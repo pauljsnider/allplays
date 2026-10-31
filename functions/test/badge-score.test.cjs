@@ -128,3 +128,44 @@ test('away-game team/opponent controls map to venue scores and undo correctly', 
     assert.equal(f.rows.get('teams/t/games/g').homeScore, 3);
     assert.equal(f.rows.get('teams/t/games/g').awayScore, 8);
 });
+
+test('claim normalizes historical away scores once and preserves season result through scoring and release', async () => {
+    const f = fixture();
+    Object.assign(f.rows.get('teams/t/games/g'), { isHome: false, liveHasData: true, homeScore: 7, awayScore: 3 });
+    const claimed = await f.send({ action: 'claim' });
+    assert.equal(claimed.data.homeScore, 7);
+    assert.equal(claimed.data.awayScore, 3);
+    assert.equal(f.rows.get('teams/t/games/g').scoreOrientation, 'venue');
+    assert.equal(f.rows.get('teams/t/games/g').homeScore, 3);
+    const again = await f.send({ action: 'claim' });
+    assert.equal(again.data.homeScore, 7);
+    const scored = await f.send({ action: 'score', side: 'homeScore', delta: 1, revision: 0, sessionId: claimed.data.sessionId, requestId: 'f'.repeat(32) });
+    assert.equal(scored.data.homeScore, 8);
+    await f.send({ action: 'release', sessionId: claimed.data.sessionId });
+    const game = f.rows.get('teams/t/games/g');
+    assert.equal(game.homeScore, 3);
+    assert.equal(game.awayScore, 8);
+    assert.equal(game.scoreOrientation, 'venue');
+});
+
+test('normalization honors explicit and historical orientation contracts', () => {
+    for (const fields of [{ liveHasData: true }, { opponentStats: {} }, { scoreOrientation: 'team-opponent', liveStartedAt: 1 }]) {
+        const state = core.snapshot({ isHome: false, homeScore: 7, awayScore: 3, ...fields }, 100, 'basketball');
+        assert.equal(state.homeScore, 3);
+        assert.equal(state.awayScore, 7);
+    }
+    for (const fields of [{ scoreOrientation: 'venue', liveHasData: true }, { liveStartedAt: 1, opponentStats: {} }, {}]) {
+        const state = core.snapshot({ isHome: false, homeScore: 3, awayScore: 7, ...fields }, 100, 'basketball');
+        assert.equal(state.homeScore, 3);
+        assert.equal(state.awayScore, 7);
+    }
+});
+
+test('public projection preserves only recognized score orientation values', () => {
+    const { serializePublicGame } = require('../public-team-api-core.cjs');
+    const game = { date: new Date('2026-10-31T12:00:00Z'), isHome: false, homeScore: 3, awayScore: 7, liveHasData: true, scoreOrientation: 'venue' };
+    const projected = serializePublicGame(game);
+    assert.equal(projected.scoreOrientation, 'venue');
+    assert.equal(projected.teamScore, 7);
+    assert.equal(Object.hasOwn(serializePublicGame({ ...game, scoreOrientation: 'private-unrecognized-value' }), 'scoreOrientation'), false);
+});

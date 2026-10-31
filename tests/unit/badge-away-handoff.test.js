@@ -1,3 +1,4 @@
+import { getTeamScorePair, calculateSeasonRecord } from '../../js/season-record.js';
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { restoreBadgeScoreboard } from '../../js/live-tracker-resume.js';
@@ -26,17 +27,18 @@ describe.each([true, false])('badge handoff with isHome=%s', isHome => {
         let pending;
         new Function('state', 'currentGame', 'liveState', 'currentTeamId', 'currentGameId', 'updateGame', 'setTimeout', `${extract(tracker, 'scheduleScoreSync', 'scheduleLiveHasData')}; scheduleScoreSync();`)(state, game, { isLive: true }, 'team', 'game', updateGame, fn => { pending = fn; return 1; });
         await pending();
-        expect(updateGame).toHaveBeenCalledWith('team', 'game', expected);
+        expect(updateGame).toHaveBeenCalledWith('team', 'game', { ...expected, scoreOrientation: 'venue' });
         const finish = buildFinishCompletionPlan({ isHome, requestedHome: state.home, requestedAway: state.away, liveHome: state.home, liveAway: state.away, scoreLogIsComplete: state.scoreLogIsComplete });
         expect(finish.gameUpdate).toMatchObject(expected);
         expect(finish.finalHome).toBe(9);
+        expect(calculateSeasonRecord([{ ...game, ...finish.gameUpdate }])).toEqual({ wins: 1, losses: 0, ties: 0 });
     });
     it('pairs venue scores with the correct names and photos in viewer and overlay', () => {
         const team = { name: 'Tigers', photoUrl: 'tigers.png' };
         const game = { isHome, opponent: 'Bears', opponentTeamPhoto: 'bears.png', homeScore: 3, awayScore: 7 };
         const element = () => ({ textContent: '', classList: { add() {}, remove() {} } });
         const els = { homeTeamName: element(), awayTeamName: element(), homeTeamPhoto: element(), awayTeamPhoto: element() };
-        new Function('state', 'els', 'resolveOpponentDisplayName', 'updateShareButton', `${extract(viewer, 'renderGameInfo', 'renderScoreboard')}; renderGameInfo();`)({team, game}, els, g => g.opponent, () => {});
+        new Function('state', 'els', 'resolveOpponentDisplayName', 'updateShareButton', 'getTeamScorePair', `${extract(viewer, 'renderGameInfo', 'renderScoreboard')}; renderGameInfo();`)({team, game}, els, g => g.opponent, () => {}, getTeamScorePair);
         expect(els.homeTeamName.textContent).toBe(isHome ? 'Tigers' : 'Bears');
         expect(els.awayTeamPhoto.src).toBe(isHome ? 'bears.png' : 'tigers.png');
         const overlay = createOverlayState({ team, game });
@@ -46,4 +48,22 @@ describe.each([true, false])('badge handoff with isHome=%s', isHome => {
         expect(overlay[isHome ? 'awayName' : 'homeName']).toBe('Wolves');
         expect(overlay[isHome ? 'homeName' : 'awayName']).toBe('Tigers');
     });
+});
+
+it('preserves historical away-game totals on a fresh tracker before normalizing the next write', () => {
+    const game = { isHome: false, liveHasData: true, homeScore: 7, awayScore: 3 };
+    const block = tracker.slice(tracker.indexOf('    const scorePair = getTeamScorePair(game);'), tracker.indexOf('    state.starters = [];', tracker.indexOf('    const scorePair = getTeamScorePair(game);')));
+    const state = {};
+    new Function('state', 'game', 'getTeamScorePair', block)(state, game, getTeamScorePair);
+    expect(state).toEqual({ home: 7, away: 3 });
+    const plan = buildFinishCompletionPlan({ isHome: false, requestedHome: state.home, requestedAway: state.away });
+    expect(plan.gameUpdate).toMatchObject({ homeScore: 3, awayScore: 7, scoreOrientation: 'venue' });
+    expect(getTeamScorePair({ ...game, ...plan.gameUpdate })).toEqual({ teamScore: 7, opponentScore: 3 });
+});
+
+it('keeps shared mirrors in their existing managed-team score order', () => {
+    const game = { isHome: false, sharedScheduleSourceTeamId: 'source', homeScore: 7, awayScore: 3 };
+    const plan = buildFinishCompletionPlan({ isHome: false, isSharedMirror: true, requestedHome: 7, requestedAway: 3 });
+    expect(plan.gameUpdate).toMatchObject({ homeScore: 7, awayScore: 3, scoreOrientation: 'team-opponent' });
+    expect(calculateSeasonRecord([{ ...game, ...plan.gameUpdate }])).toEqual({ wins: 1, losses: 0, ties: 0 });
 });

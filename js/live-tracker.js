@@ -1,3 +1,4 @@
+import { getTeamScorePair } from './season-record.js';
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
 import { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433206';
 import { db } from './firebase.js?v=33';
@@ -9,7 +10,7 @@ import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
 import { canApplySubstitution, applySubstitution } from './live-tracker-integrity.js?v=3';
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
-import { restoreBadgeScoreboard, buildPersistedResumeClockState, buildResumeLineupElapsedMs, buildResumeLogFromLiveEvents, deriveResumeClockState } from './live-tracker-resume.js?v=8';
+import { restoreBadgeScoreboard, buildPersistedResumeClockState, buildResumeLineupElapsedMs, buildResumeLogFromLiveEvents, deriveResumeClockState } from './live-tracker-resume.js?v=9';
 import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
 import { resolveFinalScore } from './live-tracker-email.js?v=2';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
@@ -18,7 +19,7 @@ import { buildVideoTimestampMetadata, hasConfiguredLiveStream } from './live-str
 import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=53';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
 import { resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';
-import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=5';
+import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=6';
 import {
   readPersistedLiveTrackerQueue,
   writePersistedLiveTrackerQueue,
@@ -27,7 +28,7 @@ import {
   readPersistedLiveTrackerState,
   writePersistedLiveTrackerState
 } from './live-tracker-queue.js?v=1';
-import { commitFinishPlan, isTransientFinalizationFailure, runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js?v=2';
+import { commitFinishPlan, isTransientFinalizationFailure, runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js?v=3';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -303,11 +304,12 @@ function scheduleScoreSync() {
   if (liveState.scoreSyncTimeout) return;
   liveState.scoreSyncTimeout = setTimeout(async () => {
     liveState.scoreSyncTimeout = null;
-    const homeScore = currentGame?.isHome === false ? state.away : state.home;
-    const awayScore = currentGame?.isHome === false ? state.home : state.away;
+    const homeScore = currentGame?.isHome === false && !currentGame?.sharedScheduleSourceTeamId ? state.away : state.home;
+    const awayScore = currentGame?.isHome === false && !currentGame?.sharedScheduleSourceTeamId ? state.home : state.away;
     if (homeScore === liveState.lastSyncedHome && awayScore === liveState.lastSyncedAway) return;
     try {
-      await updateGame(currentTeamId, currentGameId, { homeScore, awayScore });
+      await updateGame(currentTeamId, currentGameId, { homeScore, awayScore, scoreOrientation: currentGame?.sharedScheduleSourceTeamId ? 'team-opponent' : 'venue' });
+      currentGame.scoreOrientation = currentGame.sharedScheduleSourceTeamId ? 'team-opponent' : 'venue';
       liveState.lastSyncedHome = homeScore;
       liveState.lastSyncedAway = awayScore;
     } catch (error) {
@@ -1562,8 +1564,9 @@ function baseLiveEvent(extra = {}) {
   return {
     period: state.period,
     gameClockMs: state.clock,
-    homeScore: currentGame?.isHome === false ? state.away : state.home,
-    awayScore: currentGame?.isHome === false ? state.home : state.away,
+    scoreOrientation: currentGame?.sharedScheduleSourceTeamId ? 'team-opponent' : 'venue',
+    homeScore: currentGame?.isHome === false && !currentGame?.sharedScheduleSourceTeamId ? state.away : state.home,
+    awayScore: currentGame?.isHome === false && !currentGame?.sharedScheduleSourceTeamId ? state.home : state.away,
     createdBy: currentUser?.uid || null,
     ...extra
   };
@@ -2990,8 +2993,9 @@ async function init() {
     state.clock = 0;
     state.running = false;
     state.lastTick = null;
-    state.home = (game.isHome === false ? game.awayScore : game.homeScore) || 0;
-    state.away = (game.isHome === false ? game.homeScore : game.awayScore) || 0;
+    const scorePair = getTeamScorePair(game);
+    state.home = scorePair.teamScore || 0;
+    state.away = scorePair.opponentScore || 0;
     state.starters = [];
     state.bench = roster.map(r => r.id);
     state.onCourt = [];

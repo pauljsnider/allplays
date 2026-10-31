@@ -1,3 +1,4 @@
+import { getTeamScorePair } from '../../js/season-record.js';
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { DIAMOND_ENGINE, buildDiamondViewerUrl } from '../../js/diamond-scorebook-routing.js';
@@ -224,6 +225,7 @@ function createEnvironment() {
 
 function buildModuleSource() {
     return readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8')
+        .replace("import { getTeamScorePair } from './season-record.js';", `const getTeamScorePair = ${getTeamScorePair.toString()};`)
         .replace(
             /import\s+\{[\s\S]*?deleteUploadedMediaObjects\s*\}\s+from\s+'\.\/db\.js\?v=\d+';/,
             'const { getGameDayTeamContext, getGame, getPlayers, subscribeLiveEvents, subscribeLiveChat, postLiveChatMessage, subscribeReactions, sendReaction, trackViewerPresence, getLiveEvents, getLiveChatHistory, getLiveReactions, getConfigs, getMyRsvp, subscribeGame, updateGame, uploadGameClip, deleteUploadedMediaObjects } = deps.db;'

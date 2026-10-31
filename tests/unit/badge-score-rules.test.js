@@ -24,7 +24,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('badge scoreboard ownershi
     const owner = () => env.authenticatedContext('owner', { email: 'owner@example.com', email_verified: true }).firestore();
     it('blocks score, clock, lock edits and events even from the manager', async () => {
         const db = owner();
-        for (const change of [{ homeScore: 2 }, { liveClockRunning: true }, { badgeScoreControl: false }, { liveClockPeriod: 'Q2' }]) {
+        for (const change of [{ scoreOrientation: 'team-opponent' }, { homeScore: 2 }, { liveClockRunning: true }, { badgeScoreControl: false }, { liveClockPeriod: 'Q2' }]) {
             await assertFails(updateDoc(doc(db, 'teams/t/games/g'), change));
         }
         for (const collection of ['events', 'aggregatedStats', 'teamStats', 'privatePlayerStats', 'liveEvents']) {
@@ -34,7 +34,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('badge scoreboard ownershi
     });
     it('keeps unclaimed games writable and prevents clients claiming new/existing games', async () => {
         const db = owner();
-        await assertSucceeds(updateDoc(doc(db, 'teams/t/games/free'), { homeScore: 2 }));
+        await assertSucceeds(updateDoc(doc(db, 'teams/t/games/free'), { homeScore: 2, scoreOrientation: 'venue' }));
         await assertFails(updateDoc(doc(db, 'teams/t/games/free'), { badgeScoreControl: true }));
         await assertFails(setDoc(doc(db, 'teams/t/games/new'), { badgeScoreControl: true }));
     });

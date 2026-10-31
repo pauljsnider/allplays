@@ -82,6 +82,7 @@ export function buildFinishCompletionPlan({
   teamId,
   gameId,
   isHome = true,
+  isSharedMirror = false,
   teamName = '',
   opponentName = 'Unknown Opponent',
   recipientEmail = '',
@@ -198,8 +199,9 @@ export function buildFinishCompletionPlan({
   });
 
   const gameUpdate = {
-    homeScore: isHome === false ? finalAway : finalHome,
-    awayScore: isHome === false ? finalHome : finalAway,
+    scoreOrientation: isSharedMirror ? 'team-opponent' : 'venue',
+    homeScore: isHome === false && !isSharedMirror ? finalAway : finalHome,
+    awayScore: isHome === false && !isSharedMirror ? finalHome : finalAway,
     summary,
     status: 'completed',
     liveStatus: 'completed',

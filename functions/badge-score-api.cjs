@@ -80,7 +80,7 @@ function createBadgeApi({ db, auth, HttpsError, verifySensitive, timestamp }) {
                 // A bounded date query avoids scanning unrelated public teams.
                 const now = Date.now();
                 const games = await db.collection(`teams/${device.teamId}/games`).where('date', '>=', new Date(now - 86400000)).where('date', '<=', new Date(now + 14 * 86400000)).orderBy('date').limit(60).get();
-                return res.json({ team: team.name || 'Team', games: games.docs.filter(d => !['practice'].includes(d.data().type) && !unavailable(d.data()) && d.data().trackingEngine !== 'diamond-v2' && !d.data().sharedScheduleId && !d.data().sharedGameId).map(d => ({ id: d.id, opponent: String(d.data().opponent || d.data().opponentTeamName || 'Opponent').slice(0,48), date: d.data().date.toDate().toISOString(), live: d.data().liveStatus === 'live' })) });
+                return res.json({ team: team.name || 'Team', games: games.docs.filter(d => !['practice'].includes(d.data().type) && !unavailable(d.data()) && d.data().trackingEngine !== 'diamond-v2' && !d.data().sharedScheduleId && !d.data().sharedGameId && !d.data().sharedScheduleSourceTeamId).map(d => ({ id: d.id, opponent: String(d.data().opponent || d.data().opponentTeamName || 'Opponent').slice(0,48), date: d.data().date.toDate().toISOString(), live: d.data().liveStatus === 'live' })) });
             }
             check(safeId(body.gameId), 'Invalid game.', 400);
             const gameRef = db.doc(`teams/${device.teamId}/games/${body.gameId}`);
@@ -91,7 +91,7 @@ function createBadgeApi({ db, auth, HttpsError, verifySensitive, timestamp }) {
                 const currentTeam = await manager(device.uid, device.teamId, tx);
                 check(gameSnap.exists, 'Game not found.', 404);
                 const game = gameSnap.data();
-                check(game.trackingEngine !== 'diamond-v2' && !game.sharedScheduleId && !game.sharedGameId && game.type !== 'practice', 'This game uses another tracker.', 409);
+                check(game.trackingEngine !== 'diamond-v2' && !game.sharedScheduleId && !game.sharedGameId && !game.sharedScheduleSourceTeamId && game.type !== 'practice', 'This game uses another tracker.', 409);
                 check(!unavailable(game), 'Game is no longer available.', 409);
                 const now = Date.now();
                 let control = lockSnap.exists ? lockSnap.data() : null;
@@ -104,7 +104,7 @@ function createBadgeApi({ db, auth, HttpsError, verifySensitive, timestamp }) {
                         check(!game.liveClockRunning, 'Pause the existing tracker before taking control.', 409);
                         control = { deviceId: id, sessionId: crypto.randomBytes(16).toString('hex'), revision: 0, history: [] };
                         tx.set(lockRef, control);
-                        tx.update(gameRef, { badgeScoreControl: true });
+                        tx.update(gameRef, { homeScore: state.homeScore, awayScore: state.awayScore, scoreOrientation: 'venue', badgeScoreControl: true });
                     }
                 } else {
                     check(game.badgeScoreControl === true && control?.deviceId === id, 'Choose the game and take control again.', 409);

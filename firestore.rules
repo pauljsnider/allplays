@@ -794,7 +794,7 @@ service cloud.firestore {
 
     function scoreProjectionGameFields() {
       return [
-        'homeScore', 'awayScore', 'summary', 'status', 'liveStatus',
+        'homeScore', 'awayScore', 'scoreOrientation', 'summary', 'status', 'liveStatus',
         'opponentStats', 'completedAt', 'completedBy', 'completedByName',
         'scoreUpdatedAt', 'scoreUpdatedBy', 'scoreStreamSessionId'
       ];

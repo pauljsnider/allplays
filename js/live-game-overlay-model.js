@@ -1,3 +1,4 @@
+import { getTeamScorePair } from './season-record.js';
 import { getGameReplayLifecycle, normalizeYouTubeReplayUrl } from './game-replay-video.js?v=3';
 
 const DEFAULT_PERIOD = 'H1';
@@ -484,7 +485,8 @@ function normalizeChatMessage(message = {}, index = 0) {
 function scoreboardNames(team, game) {
     const managed = toText(team.name || (game.isHome === false ? game.awayTeamName : game.homeTeamName), 'Home');
     const opponent = toText(game.opponent || game.opponentTeamName || (game.isHome === false ? game.homeTeamName : game.awayTeamName), 'Opponent');
-    return game.isHome === false
+    const venueAway = getTeamScorePair({ ...game, homeScore: 0, awayScore: 1 }).teamScore === 1;
+    return venueAway
         ? { homeName: opponent, awayName: managed }
         : { homeName: managed, awayName: opponent };
 }

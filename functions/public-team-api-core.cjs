@@ -958,6 +958,7 @@ function serializePublicGame(game = {}, options = {}) {
     liveStatus,
     teamScore,
     opponentScore,
+    ...(['venue', 'team-opponent'].includes(game.scoreOrientation) ? { scoreOrientation: game.scoreOrientation } : {}),
     result,
     seasonLabel: nullableText(game?.seasonLabel, 100),
     competitionType: nullableText(game?.competitionType, 80),

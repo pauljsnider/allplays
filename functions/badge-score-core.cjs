@@ -14,11 +14,18 @@ function periods(sport) {
     }
 }
 function snapshot(game, now, sport) {
+    // Match season-record.js historical orientation fallback before normalizing.
+    const orientation = String(game.scoreOrientation || '').trim().toLowerCase();
+    const legacy = game.liveHasData === true || Object.hasOwn(game, 'opponentStats');
+    const teamOriented = orientation === 'team-opponent' ||
+        (orientation !== 'venue' && legacy && game.liveStartedAt == null);
+    const swap = game.isHome === false && teamOriented;
     const base = Math.max(0, number(game.liveClockMs));
     const running = game.liveClockRunning === true;
     return {
-        homeScore: Math.max(0, number(game.homeScore)),
-        awayScore: Math.max(0, number(game.awayScore)),
+        scoreOrientation: 'venue',
+        homeScore: Math.max(0, number(swap ? game.awayScore : game.homeScore)),
+        awayScore: Math.max(0, number(swap ? game.homeScore : game.awayScore)),
         liveClockMs: base + (running ? Math.max(0, now - number(game.liveClockUpdatedAt ?? now, now)) : 0),
         liveClockRunning: running,
         liveClockPeriod: game.liveClockPeriod || periods(sport)[0],
