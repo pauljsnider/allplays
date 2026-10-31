@@ -2347,6 +2347,8 @@ async function startRealMode(params) {
             uiState.game.playerMap = context.playerMap;
             uiState.game.homeName = context.homeName;
             uiState.game.awayName = context.awayName;
+            uiState.game.homePhoto = context.homePhoto;
+            uiState.game.awayPhoto = context.awayPhoto;
             if (!uiState.game.sport) uiState.game.sport = context.sport;
             if (!uiState.game.periods && context.periods) uiState.game.periods = context.periods;
             renderScoreboard();
