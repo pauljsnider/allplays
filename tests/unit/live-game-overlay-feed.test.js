@@ -33,11 +33,14 @@ describe('authoritative overlay history', () => {
             { id: 'correction', value: -1 }, { id: 'reset', type: 'reset' }
         ]);
     });
-    it('fails explicitly at the history bound without partially mutating state', () => {
+    it('keeps recent delivery moving at capacity and marks totals incomplete', () => {
         const history = createOverlayEventHistory({ maxEvents: 1 });
         history.window([{ id: 'a' }]);
-        expect(() => history.window([{ id: 'b' }])).toThrow('overlay/history-limit');
-        expect(history.values()).toEqual([{ id: 'a' }]);
+        expect(history.window([{ id: 'b' }])).toEqual([{ id: 'b' }]);
+        expect(history.incomplete).toBe(true);
+        expect(history.window([{ id: 'c' }])).toEqual([{ id: 'c' }]);
+        history.replace([{ id: 'c' }], history.revision);
+        expect(history.incomplete).toBe(false);
     });
 });
 
@@ -94,4 +97,39 @@ describe('overlay feed ownership', () => {
         expect(h.onEvents).toHaveBeenLastCalledWith([{ id: 'recent' }]);
         h.controller.stop();
     });
+});
+
+
+it('a fresh resume signal restores transient history recovery after exhausting automatic retries', async () => {
+    const load = vi.fn().mockRejectedValueOnce({ code: 'unavailable' })
+        .mockRejectedValueOnce({ code: 'unavailable' }).mockRejectedValueOnce({ code: 'unavailable' })
+        .mockResolvedValue([{ id: 'recovered' }]);
+    const h = harness(load); h.controller.start(); await tick();
+    await h.controller.refresh(); await h.controller.refresh(); await h.controller.refresh();
+    expect(load).toHaveBeenCalledTimes(3);
+    h.controller.resume(); await tick();
+    expect(load).toHaveBeenCalledTimes(4);
+    expect(h.onEvents).toHaveBeenLastCalledWith([{ id: 'recovered' }]);
+    h.controller.stop();
+});
+
+it('resume cannot reset a permission-denied history retry boundary', async () => {
+    const load = vi.fn().mockRejectedValue({ code: 'permission-denied' });
+    const h = harness(load); h.controller.start(); await tick();
+    h.controller.resume(); await tick();
+    expect(load).toHaveBeenCalledTimes(1);
+    h.controller.stop();
+});
+
+it('controller reports incomplete history but continues newer plays past capacity', async () => {
+    const h = harness(); h.controller.start(); await tick();
+    const rows = Array.from({ length: 2000 }, (_, n) => ({ id: `event-${n}`, createdAt: n + 1 }));
+    h.listeners.events[0].next(rows);
+    h.listeners.events[0].next([{ id: 'new-2001', createdAt: 2001 }]);
+    expect(h.onEvents.mock.calls.at(-1)[0]).toHaveLength(2000);
+    expect(h.onEvents.mock.calls.at(-1)[0].at(-1).id).toBe('new-2001');
+    expect(h.onError).toHaveBeenCalledWith('history', expect.objectContaining({ message: 'overlay/history-limit' }));
+    h.listeners.events[0].next([{ id: 'new-2002', createdAt: 2002 }]);
+    expect(h.onEvents.mock.calls.at(-1)[0].at(-1).id).toBe('new-2002');
+    h.controller.stop();
 });

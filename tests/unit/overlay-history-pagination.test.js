@@ -40,8 +40,19 @@ it('cancels between pages after identity changes', async () => {
     expect(getDocs).toHaveBeenCalledTimes(1);
 });
 
-it('fails explicitly at100 pages rather than presenting truncated history as complete', async () => {
+it('fails explicitly beyond2000 records after a bounded overflow probe', async () => {
     const getDocs = vi.fn(async () => ({ docs: Array.from({ length: 20 }, (_, n) => doc(n)), metadata: { fromCache: false } }));
     await expect(loadWith(getDocs)('team', 'game')).rejects.toThrow('overlay/history-limit');
-    expect(getDocs).toHaveBeenCalledTimes(100);
+    expect(getDocs).toHaveBeenCalledTimes(101);
+    expect(getDocs.mock.calls.at(-1)[0]).toContainEqual({ limit: 1 });
+});
+
+it('accepts exactly2000 records when the single-record overflow probe is empty', async () => {
+    let page = 0;
+    const getDocs = vi.fn(async () => ({
+        docs: page++ < 100 ? Array.from({ length: 20 }, (_, n) => doc(page * 20 + n)) : [],
+        metadata: { fromCache: false }
+    }));
+    expect(await loadWith(getDocs)('team', 'game')).toHaveLength(2000);
+    expect(getDocs).toHaveBeenCalledTimes(101);
 });

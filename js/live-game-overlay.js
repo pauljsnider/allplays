@@ -2452,8 +2452,7 @@ async function startRealMode(params) {
         uiState.liveFeeds.start();
         const resumeFeeds = () => {
             if (document.visibilityState === 'hidden') return;
-            uiState.liveFeeds.recover();
-            void uiState.liveFeeds.refresh();
+            uiState.liveFeeds.resume();
         };
         window.addEventListener('online', resumeFeeds);
         document.addEventListener('visibilitychange', resumeFeeds);

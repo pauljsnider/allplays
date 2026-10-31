@@ -3,14 +3,24 @@
 export function createOverlayEventHistory({ maxEvents = 2000 } = {}) {
     let rows = new Map();
     let revision = 0;
+    let incomplete = false;
+    const timestamp = row => typeof row.createdAt?.toMillis === 'function'
+        ? row.createdAt.toMillis() : Number(row.createdAt) || Date.parse(row.createdAt) || 0;
     return {
         get revision() { return revision; },
+        get incomplete() { return incomplete; },
         values() { return [...rows.values()].map(entry => entry.row); },
         window(incoming) {
-            const next = new Map(rows);
+            let next = new Map(rows);
             const nextRevision = revision + 1;
             for (const row of incoming) next.set(row.id, { row, revision: nextRevision });
-            if (next.size > maxEvents) throw new Error('overlay/history-limit');
+            if (next.size > maxEvents) {
+                // Keep live delivery moving even when full historical totals no
+                // longer fit. The controller must expose the incomplete status.
+                next = new Map([...next].sort(([, a], [, b]) => timestamp(a.row) - timestamp(b.row))
+                    .slice(-maxEvents));
+                incomplete = true;
+            }
             rows = next;
             revision = nextRevision;
             return this.values();
@@ -23,6 +33,7 @@ export function createOverlayEventHistory({ maxEvents = 2000 } = {}) {
             }
             if (next.size > maxEvents) throw new Error('overlay/history-limit');
             rows = next;
+            incomplete = false;
             return this.values();
         }
     };
@@ -55,7 +66,10 @@ export function createOverlayFeedController({ subscribeEvents, subscribeChat, lo
             try {
                 // The shared adapter omits cache metadata. Even a short initial
                 // window can be cache-only; only a server history read removes rows.
-                if (kind === 'events') onEvents(history.window(rows));
+                if (kind === 'events') {
+                    onEvents(history.window(rows));
+                    if (history.incomplete) onError('history', new Error('overlay/history-limit'));
+                }
                 else onChat(rows);
                 retryCounts[kind] = 0;
                 onReady(kind);
@@ -86,7 +100,7 @@ export function createOverlayFeedController({ subscribeEvents, subscribeChat, lo
         } catch (error) {
             if (!stopped && epoch === generation) {
                 historyFailures += 1;
-                if (deny(error) || error?.message === 'overlay/history-limit') terminal.add('history');
+                if (deny(error)) terminal.add('history');
                 onError('history', error);
             }
         } finally {
@@ -133,6 +147,17 @@ export function createOverlayFeedController({ subscribeEvents, subscribeChat, lo
 
     return {
         start, stop, refresh, recover,
+        resume() {
+            if (stopped) return;
+            // A fresh online/visible signal begins a new bounded transient
+            // recovery attempt; never reset permanent authorization failures.
+            if (!terminal.has('history')) historyFailures = 0;
+            for (const kind of failed) {
+                if (!terminal.has(kind)) retryCounts[kind] = 0;
+            }
+            recover();
+            void refresh();
+        },
         authChanged(uid) {
             const next = uid || '';
             if (principal === next) return;

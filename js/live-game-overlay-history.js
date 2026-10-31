@@ -19,5 +19,11 @@ export async function getOverlayLiveEventHistory(teamId, gameId, cancelled = () 
         if (snapshot.docs.length < 20) return events;
         cursor = snapshot.docs.at(-1);
     }
+    if (cancelled()) return [];
+    // Distinguish exactly 2,000 records from a truncated larger game without
+    // fetching another full page. This read also remains below the20/read rule.
+    const remainder = await getDocs(query(ref, orderBy('createdAt', 'asc'), startAfter(cursor), limit(1)));
+    if (remainder.metadata.fromCache) throw new Error('overlay/history-offline');
+    if (!remainder.docs.length) return events;
     throw new Error('overlay/history-limit');
 }

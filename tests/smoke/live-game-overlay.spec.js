@@ -734,6 +734,15 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('#home-team-name')).toHaveText('Current Academy');
     expect(pageErrors).toEqual([]);
+    await page.evaluate(() => {
+        window.__OVERLAY_COMPLETE_EVENT_SNAPSHOT__ = rows => {
+            window.__OVERLAY_HISTORY__ = rows;
+            window.__OVERLAY_EVENT_CALLBACK__(rows);
+            // This older fixture explicitly replaces the entire backing collection.
+            // Confirm removals through the server-history path, not window absence.
+            document.dispatchEvent(new Event('visibilitychange'));
+        };
+    });
     await expect(page.locator('#home-score')).toHaveText('3');
     await expect(page.locator('#viewer-count')).toHaveText('19 watching');
     await expect(page.locator('#on-field-list')).toContainText('Avery Lane');
@@ -767,7 +776,7 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
         { id: 'lineup-1', type: 'lineup', onCourt: ['p4'], bench: ['p9'], createdAt: 1000 },
         { id: 'clock-1', type: 'clock_sync', homeScore: 3, awayScore: 2, period: 'H2', gameClockMs: 700000, createdAt: 1100 }
     ];
-    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), stateOnlySnapshot);
+    await page.evaluate((events) => window.__OVERLAY_COMPLETE_EVENT_SNAPSHOT__(events), stateOnlySnapshot);
     await expect(page.locator('#home-score')).toHaveText('3');
     await expect(page.locator('#game-clock')).toHaveText('11:40');
     await expect(page.locator('#on-field-list')).toContainText('Sam Gray');
@@ -795,7 +804,7 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
             homeScore: 4, awayScore: 2, period: 'H2', gameClockMs: 690000, createdAt: 1200
         }
     ];
-    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), liveSnapshot);
+    await page.evaluate((events) => window.__OVERLAY_COMPLETE_EVENT_SNAPSHOT__(events), liveSnapshot);
     await expect(page.locator('#home-score')).toHaveText('4');
     await expect(page.locator('#game-clock')).toHaveText('11:30');
     await expect(page.locator('#on-field-list')).toContainText('Sam Gray');
@@ -804,7 +813,7 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     await expect(page.locator('#event-list')).toContainText('Lane scores in transition');
     await page.locator('#leaders-tab').click();
     await expect(page.locator('#leader-list')).toContainText('1 GOALS');
-    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), liveSnapshot);
+    await page.evaluate((events) => window.__OVERLAY_COMPLETE_EVENT_SNAPSHOT__(events), liveSnapshot);
     await expect(page.locator('#event-list .event-card')).toHaveCount(1);
 
     const opponentStatSnapshot = [
@@ -816,11 +825,11 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
             createdAt: 1210
         }
     ];
-    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), opponentStatSnapshot);
+    await page.evaluate((events) => window.__OVERLAY_COMPLETE_EVENT_SNAPSHOT__(events), opponentStatSnapshot);
     await page.locator('#opponent-tab').click();
     await expect(page.locator('#opponent-list')).toContainText('1 SHOTS');
 
-    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__([
+    await page.evaluate((events) => window.__OVERLAY_COMPLETE_EVENT_SNAPSHOT__([
         ...events,
         {
             id: 'away-shot-undo', type: 'stat', description: 'Vale shot reversed',
@@ -834,7 +843,7 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
 
     // A queued offline event can arrive after newer events. Reprocessing the
     // complete ordered snapshot must keep the newest score and clock authoritative.
-    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__([
+    await page.evaluate((events) => window.__OVERLAY_COMPLETE_EVENT_SNAPSHOT__([
         { id: 'late-offline', type: 'score_update', description: 'Earlier queued score', homeScore: 2, awayScore: 1, period: 'H2', gameClockMs: 600000, clientCreatedAt: new Date(900).toISOString(), createdAt: 1250 },
         ...events
     ]), liveSnapshot);
@@ -848,7 +857,7 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
         ...liveSnapshot,
         { id: 'clock-start', type: 'clock_start', description: 'Clock started', homeScore: 4, awayScore: 2, period: 'H2', gameClockMs: 690000, createdAt: 1300 }
     ];
-    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), runningSnapshot);
+    await page.evaluate((events) => window.__OVERLAY_COMPLETE_EVENT_SNAPSHOT__(events), runningSnapshot);
     await expect(page.locator('#game-clock')).toHaveText('11:30');
     await page.waitForTimeout(1100);
     await expect(page.locator('#game-clock')).toHaveText('11:31');
@@ -859,7 +868,7 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
         ...runningSnapshot,
         { id: 'clock-sync-2', type: 'clock_sync', homeScore: 4, awayScore: 2, period: 'H2', gameClockMs: 691000, createdAt: 1350 }
     ];
-    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), syncedRunningSnapshot);
+    await page.evaluate((events) => window.__OVERLAY_COMPLETE_EVENT_SNAPSHOT__(events), syncedRunningSnapshot);
     await expect(page.locator('#game-clock')).toHaveText('11:31');
 
     // A stale public projection must not overwrite the event-authoritative
@@ -874,7 +883,7 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
         ...syncedRunningSnapshot,
         { id: 'clock-pause', type: 'clock_pause', description: 'Clock paused', homeScore: 4, awayScore: 2, period: 'H2', gameClockMs: 692000, createdAt: 1400 }
     ];
-    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), pausedSnapshot);
+    await page.evaluate((events) => window.__OVERLAY_COMPLETE_EVENT_SNAPSHOT__(events), pausedSnapshot);
     await expect(page.locator('#game-clock')).toHaveText('11:32');
     await page.waitForTimeout(650);
     await expect(page.locator('#game-clock')).toHaveText('11:32');
@@ -973,7 +982,7 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     await expect(page.locator('#chat-list')).toContainText('👏');
 
     await page.evaluate(() => window.dispatchEvent(new Event('online')));
-    await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([{
+    await page.evaluate(() => window.__OVERLAY_COMPLETE_EVENT_SNAPSHOT__([{
         id: 'reset-1', type: 'reset', description: 'Game reset', homeScore: 0, awayScore: 0,
         period: 'H1', gameClockMs: 0, onCourt: ['p9'], bench: ['p4'], createdAt: 2000
     }]));
@@ -981,7 +990,7 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     await expect(page.locator('#away-score')).toHaveText('0');
     await expect(page.locator('#event-list .event-card')).toHaveCount(0);
 
-    await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([{
+    await page.evaluate(() => window.__OVERLAY_COMPLETE_EVENT_SNAPSHOT__([{
         id: 'stale-goal', type: 'goal', description: 'Old goal must stay hidden', homeScore: 9, awayScore: 0,
         period: 'H1', gameClockMs: 1000,
         clientCreatedAt: new Date(2500).toISOString(), createdAt: 1500
@@ -998,7 +1007,7 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     await expect(page.locator('#event-list')).not.toContainText('Old goal must stay hidden');
     await expect(page.locator('#event-list')).toContainText('Fresh goal survives tracker clock skew');
 
-    await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([{
+    await page.evaluate(() => window.__OVERLAY_COMPLETE_EVENT_SNAPSHOT__([{
         id: 'reset-1', type: 'reset', description: 'First game reset', homeScore: 0, awayScore: 0,
         period: 'H1', gameClockMs: 0, clientCreatedAt: new Date(2500).toISOString(), createdAt: 2200
     }, {
@@ -1027,7 +1036,7 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
         id: 'post-marker-goal', type: 'goal', description: 'Goal after marker before game update',
         homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 1000, createdAt: 4100
     }];
-    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), markerFirstSnapshot);
+    await page.evaluate((events) => window.__OVERLAY_COMPLETE_EVENT_SNAPSHOT__(events), markerFirstSnapshot);
     await expect(page.locator('#event-list')).toContainText('Goal after marker before game update');
 
     await page.evaluate(() => window.__OVERLAY_GAME_CALLBACK__({
@@ -1052,7 +1061,7 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
             homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 1000, createdAt: 5100
         }
     ];
-    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), nextMarkerSnapshot);
+    await page.evaluate((events) => window.__OVERLAY_COMPLETE_EVENT_SNAPSHOT__(events), nextMarkerSnapshot);
     await expect(page.locator('#event-list')).toContainText('Goal before markerless fifth reset');
 
     await page.evaluate(() => window.__OVERLAY_GAME_CALLBACK__({
