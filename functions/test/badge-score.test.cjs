@@ -113,3 +113,18 @@ test('period changes publish paused state for event-owned live viewers', async (
     assert.equal(event.liveClockRunning, false);
     assert.equal(event.source, 'badge-score-controller');
 });
+
+test('away-game team/opponent controls map to venue scores and undo correctly', async () => {
+    const f = fixture(); Object.assign(f.rows.get('teams/t/games/g'), { isHome: false, homeScore: 3, awayScore: 7 });
+    const claim = await f.send({ action: 'claim' });
+    assert.equal(claim.data.homeScore, 7); assert.equal(claim.data.awayScore, 3);
+    const us = await f.send({ action: 'score', side: 'homeScore', delta: 1, revision: 0, sessionId: claim.data.sessionId, requestId: '3'.repeat(32) });
+    assert.equal(us.data.homeScore, 8); assert.equal(us.data.awayScore, 3);
+    assert.equal(f.rows.get('teams/t/games/g').awayScore, 8);
+    assert.equal(f.rows.get('teams/t/games/g').homeScore, 3);
+    const them = await f.send({ action: 'score', side: 'awayScore', delta: 1, revision: 1, sessionId: claim.data.sessionId, requestId: '4'.repeat(32) });
+    assert.equal(them.data.awayScore, 4); assert.equal(f.rows.get('teams/t/games/g').homeScore, 4);
+    await f.send({ action: 'undo', revision: 2, sessionId: claim.data.sessionId, requestId: '5'.repeat(32) });
+    assert.equal(f.rows.get('teams/t/games/g').homeScore, 3);
+    assert.equal(f.rows.get('teams/t/games/g').awayScore, 8);
+});

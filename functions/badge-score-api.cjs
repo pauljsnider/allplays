@@ -123,7 +123,11 @@ function createBadgeApi({ db, auth, HttpsError, verifySensitive, timestamp }) {
                             check(receipt.data().fingerprint === fingerprint, 'Request ID was reused.', 409);
                         } else {
                             check(body.sessionId === control.sessionId, 'Control session changed. Choose the game again.', 409);
-                            const applied = core.apply(game, control, body, now, sport);
+                            // Badge sides are team/opponent; stored scores use venue home/away.
+                            const command = game.isHome === false && body.action === 'score'
+                                ? { ...body, side: body.side === 'homeScore' ? 'awayScore' : body.side === 'awayScore' ? 'homeScore' : body.side }
+                                : body;
+                            const applied = core.apply(game, control, command, now, sport);
                             state = applied.next; control = applied.control;
                             tx.update(gameRef, { ...state, liveHasData: true, scoreUpdatedAt: timestamp(), scoreUpdatedBy: device.uid });
                             tx.set(lockRef, control);
@@ -132,7 +136,7 @@ function createBadgeApi({ db, auth, HttpsError, verifySensitive, timestamp }) {
                         }
                     }
                 }
-                return { ...state, sessionId: control?.sessionId, revision: control?.revision || 0, canUndo: !!control?.history?.length, serverTime: now, periods: core.periods(sport), team: String(currentTeam.name || 'Team').slice(0,48), opponent: String(game.opponent || game.opponentTeamName || 'Opponent').slice(0,48) };
+                return { ...state, homeScore: game.isHome === false ? state.awayScore : state.homeScore, awayScore: game.isHome === false ? state.homeScore : state.awayScore, sessionId: control?.sessionId, revision: control?.revision || 0, canUndo: !!control?.history?.length, serverTime: now, periods: core.periods(sport), team: String(currentTeam.name || 'Team').slice(0,48), opponent: String(game.opponent || game.opponentTeamName || 'Opponent').slice(0,48) };
             });
             return res.json(result);
         } catch (error) {
