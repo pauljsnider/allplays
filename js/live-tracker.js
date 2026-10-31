@@ -9,7 +9,7 @@ import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
 import { canApplySubstitution, applySubstitution } from './live-tracker-integrity.js?v=3';
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
-import { buildPersistedResumeClockState, buildResumeLineupElapsedMs, buildResumeLogFromLiveEvents, deriveResumeClockState } from './live-tracker-resume.js?v=6';
+import { restoreBadgeScoreboard, buildPersistedResumeClockState, buildResumeLineupElapsedMs, buildResumeLogFromLiveEvents, deriveResumeClockState } from './live-tracker-resume.js?v=7';
 import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
 import { resolveFinalScore } from './live-tracker-email.js?v=2';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
@@ -3013,6 +3013,7 @@ async function init() {
 
     const persistedLocalTrackerState = readPersistedLiveTrackerState(window.localStorage, teamId, gameId);
     let resumedLiveEventLog = [];
+    let resumedLiveEvents = [];
     let resumeClockState = null;
     let shouldResume = true;
     const hasOpponentStats = !!(game.opponentStats && Object.keys(game.opponentStats).length > 0);
@@ -3100,6 +3101,7 @@ async function init() {
         const hasAggregatedStats = statsSnapshot.size > 0;
         const liveEventsSnapshot = await safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/liveEvents`), 'liveEvents');
         const liveEvents = liveEventsSnapshot.docs.map(d => d.data());
+        resumedLiveEvents = liveEvents;
         resumedLiveEventLog = buildResumeLogFromLiveEvents(liveEvents);
         const resumedFromPersistedData = hasScores || hasLiveFlag || hasOpponentStats || hasAggregatedStats || liveEvents.length > 0;
         state.scoreLogIsComplete = !resumedFromPersistedData;
@@ -3214,6 +3216,12 @@ async function init() {
       state.log = resumedLiveEventLog;
       state.scoreLogIsComplete = true;
       persistLocalTrackerState();
+    }
+
+    if (shouldResume) {
+      if (restoreBadgeScoreboard(state, game, resumedLiveEvents, persistedLocalTrackerState)) {
+        persistLocalTrackerState();
+      }
     }
 
     if (!state.opp.length) {

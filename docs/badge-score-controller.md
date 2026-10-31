@@ -41,3 +41,7 @@ While claimed, rules deny score/clock and stat-event writes from legacy web, Rea
 Physical badge, production end-to-end, actual Wi-Fi/TLS and live-viewer testing remain required after deployment. Validate score/clock on both legacy and React viewers, multiple game selection, disconnect after commit before response, reboot retry, revoke, and release/reclaim. Do not describe this source-only delivery as already deployed or hardware-tested.
 
 ![AllPlays setup page with mocked teams](screenshots/badge-controller.png)
+
+### Handoff corrections
+
+Badge events carry their source and resulting clock-running state. Legacy tracker resume restores the authoritative game scores after stat reconstruction and stale local-state restoration, preserves newer local edits, and marks the scoring log incomplete so finalization cannot discard unattributed badge points. Events before an explicit reset are ignored. Period-change events explicitly pause event-driven overlays.

@@ -103,3 +103,13 @@ test('clock snapshots accept legacy milliseconds and Firestore timestamps', () =
         assert.equal(core.snapshot({ liveClockMs: 500, liveClockRunning: true, liveClockUpdatedAt: updatedAt }, 3000, 'soccer').liveClockMs, 2500);
     }
 });
+
+test('period changes publish paused state for event-owned live viewers', async () => {
+    const f = fixture(); const claim = await f.send({ action: 'claim' });
+    await f.send({ action: 'clock', running: true, revision: 0, sessionId: claim.data.sessionId, requestId: '1'.repeat(32) });
+    await f.send({ action: 'period', period: 'Q2', revision: 1, sessionId: claim.data.sessionId, requestId: '2'.repeat(32) });
+    const event = [...f.rows.entries()].filter(([key]) => key.includes('/liveEvents/')).at(-1)[1];
+    assert.equal(event.type, 'period_change');
+    assert.equal(event.liveClockRunning, false);
+    assert.equal(event.source, 'badge-score-controller');
+});
