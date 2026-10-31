@@ -1,4 +1,4 @@
-import { createOverlayFeedController } from './live-game-overlay-feed.js?v=2';
+import { createOverlayFeedController } from './live-game-overlay-feed.js?v=3';
 import {
     applyOverlayEvents,
     applyOverlayGame,
@@ -81,6 +81,10 @@ const elements = {
     period: document.querySelector('#period'),
     gameClock: document.querySelector('#game-clock'),
     eventList: document.querySelector('#event-list'),
+    olderPlays: document.querySelector('#older-plays'),
+    newerPlays: document.querySelector('#newer-plays'),
+    playPage: document.querySelector('#play-page'),
+    historyStatus: document.querySelector('#history-status'),
     heroEvent: document.querySelector('#hero-event'),
     heroEventLabel: document.querySelector('#hero-event-label'),
     heroEventDescription: document.querySelector('#hero-event-description'),
@@ -594,6 +598,13 @@ function renderEvents() {
         latestId !== uiState.latestRenderedEventId &&
         (uiState.latestRenderedEventId || uiState.hasLiveEventSnapshot || uiState.isReplay)
     );
+    const pageSize = 60;
+    uiState.playPage = Math.min(uiState.playPage || 0, Math.max(0, Math.ceil(state.events.length / pageSize) - 1));
+    const pageStart = uiState.playPage * pageSize;
+    if (elements.olderPlays) elements.olderPlays.disabled = pageStart + pageSize >= state.events.length;
+    if (elements.newerPlays) elements.newerPlays.disabled = pageStart === 0;
+    if (elements.playPage) elements.playPage.textContent = state.events.length
+        ? `Plays ${pageStart + 1}–${Math.min(pageStart + pageSize, state.events.length)} of ${state.events.length}` : 'No plays yet';
     elements.eventList.replaceChildren();
     if (!state.events.length) {
         const emptyCopy = uiState.isReplay && uiState.replayHistoryStatus === 'failed'
@@ -603,8 +614,8 @@ function renderEvents() {
             : 'Connected. Waiting for the first play…';
         elements.eventList.appendChild(createTextElement('li', 'empty-state', emptyCopy));
     } else {
-        state.events.forEach((event, index) => {
-            elements.eventList.appendChild(renderEventCard(event, isNewLatest && index === 0));
+        state.events.slice(pageStart, pageStart + pageSize).forEach((event, index) => {
+            elements.eventList.appendChild(renderEventCard(event, isNewLatest && pageStart === 0 && index === 0));
         });
     }
 
@@ -1972,6 +1983,8 @@ async function startDemoReplayMode(params) {
 }
 
 function bindInteractions() {
+    elements.olderPlays?.addEventListener('click', () => { uiState.playPage = (uiState.playPage || 0) + 1; renderEvents(); });
+    elements.newerPlays?.addEventListener('click', () => { uiState.playPage = Math.max(0, (uiState.playPage || 0) - 1); renderEvents(); });
     elements.panelToggles.forEach((button) => button.addEventListener('click', () => togglePanel(button.dataset.panel)));
     elements.insightTabs.forEach((tab) => tab.addEventListener('click', () => selectInsight(tab.id.replace('-tab', ''))));
     elements.focusToggle.addEventListener('click', toggleFocusMode);
@@ -2113,6 +2126,7 @@ async function startRealMode(params) {
     uiState.teamId = teamId;
     uiState.gameId = gameId;
     uiState.isReplay = isReplay;
+    if (elements.historyStatus) elements.historyStatus.hidden = isReplay;
     elements.body.dataset.replay = String(isReplay);
     configureGameActions();
 
@@ -2122,7 +2136,7 @@ async function startRealMode(params) {
             loadOverlayDatabase(),
             import('./live-game-video.js?v=443319'),
             import('./live-game-state.js?v=53'),
-            import('./live-game-overlay-history.js?v=2')
+            import('./live-game-overlay-history.js?v=3')
         ]);
         uiState.optionalTeamStatus = 'pending';
         const teamPromise = loadWithBoundedRetry(
@@ -2423,6 +2437,17 @@ async function startRealMode(params) {
             subscribeEvents: (next, error) => database.subscribeLiveEvents(teamId, gameId, next, error),
             subscribeChat: (next, error) => database.subscribeLiveChat(teamId, gameId, { limit: 100 }, next, error),
             loadHistory: (cancelled) => historyTools.getOverlayLiveEventHistory(teamId, gameId, cancelled),
+            readEvents: (ids, cancelled) => historyTools.readOverlayLiveEvents(teamId, gameId, ids, cancelled),
+            isVisible: () => document.visibilityState !== 'hidden',
+            onFreshness: ({ lastConfirmedAt, loading, verifying, visible, failed }) => {
+                if (!elements.historyStatus) return;
+                elements.historyStatus.textContent = !visible ? 'History refresh paused while hidden.'
+                    : verifying ? 'Confirming removed plays; totals may be stale.'
+                    : loading ? 'Checking full history; totals may be incomplete.'
+                    : failed ? 'History refresh unavailable; older plays and totals may be stale.'
+                    : lastConfirmedAt ? `History checked ${Math.max(0, Math.floor((Date.now() - lastConfirmedAt) / 60000))} min ago. Older removals are rechecked every 5 minutes while visible.`
+                    : 'Full history has not been checked; totals may be incomplete.';
+            },
             onEvents: (events) => {
                 uiState.lastLiveEvents = events;
                 uiState.hasLiveEventSnapshot = true;
@@ -2439,7 +2464,8 @@ async function startRealMode(params) {
                     ? 'Full play history and player totals are incomplete or awaiting refresh. Recent plays and score remain available.'
                     : kind === 'events'
                         ? 'Play-by-play is temporarily unavailable. Other feeds continue independently.'
-                        : 'Live chat is temporarily unavailable. Other feeds continue independently.');
+                        : kind === 'chat' ? 'Live chat is temporarily unavailable. Other feeds continue independently.'
+                            : 'Some removed plays are awaiting confirmation; totals may be stale.');
             },
             onInvalidate: () => {
                 uiState.lastLiveEvents = [];
@@ -2451,7 +2477,6 @@ async function startRealMode(params) {
         });
         uiState.liveFeeds.start();
         const resumeFeeds = () => {
-            if (document.visibilityState === 'hidden') return;
             uiState.liveFeeds.resume();
         };
         window.addEventListener('online', resumeFeeds);

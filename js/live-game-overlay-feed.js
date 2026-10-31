@@ -4,16 +4,38 @@ export function createOverlayEventHistory({ maxEvents = 2000 } = {}) {
     let rows = new Map();
     let revision = 0;
     let incomplete = false;
-    const timestamp = row => typeof row.createdAt?.toMillis === 'function'
-        ? row.createdAt.toMillis() : Number(row.createdAt) || Date.parse(row.createdAt) || 0;
+    const tombstones = new Map();
+    const timestamp = row => {
+        if (typeof row.createdAt?.toMillis === 'function') return row.createdAt.toMillis();
+        const numeric = Number(row.createdAt);
+        return Number.isFinite(numeric) ? numeric : Date.parse(row.createdAt) || 0;
+    };
     return {
         get revision() { return revision; },
         get incomplete() { return incomplete; },
+        version(id) { return rows.get(id)?.revision; },
+        uncertain(incoming, startedAtRevision) {
+            const ids = new Set(incoming.map(row => row.id));
+            return [...rows].filter(([id, entry]) => entry.revision > startedAtRevision && !ids.has(id))
+                .map(([id]) => id);
+        },
+        confirm(id, row, expectedRevision) {
+            // Capacity-evicted rows are deliberately untracked. A delayed
+            // positive point read must not reinsert them beyond the history cap.
+            if (expectedRevision === undefined || rows.get(id)?.revision !== expectedRevision) return;
+            revision += 1;
+            if (row) { rows.set(id, { row, revision }); tombstones.delete(id); }
+            else { rows.delete(id); tombstones.set(id, revision); }
+            if (tombstones.size > maxEvents) tombstones.delete(tombstones.keys().next().value);
+        },
         values() { return [...rows.values()].map(entry => entry.row); },
         window(incoming) {
             let next = new Map(rows);
             const nextRevision = revision + 1;
-            for (const row of incoming) next.set(row.id, { row, revision: nextRevision });
+            for (const row of incoming) {
+                next.set(row.id, { row, revision: nextRevision });
+                tombstones.delete(row.id);
+            }
             if (next.size > maxEvents) {
                 // Keep live delivery moving even when full historical totals no
                 // longer fit. The controller must expose the incomplete status.
@@ -31,6 +53,10 @@ export function createOverlayEventHistory({ maxEvents = 2000 } = {}) {
             for (const [id, entry] of rows) {
                 if (entry.revision > startedAtRevision) next.set(id, entry);
             }
+            for (const [id, removedAt] of tombstones) {
+                if (removedAt > startedAtRevision) next.delete(id);
+                else tombstones.delete(id);
+            }
             if (next.size > maxEvents) throw new Error('overlay/history-limit');
             rows = next;
             incomplete = false;
@@ -39,9 +65,9 @@ export function createOverlayEventHistory({ maxEvents = 2000 } = {}) {
     };
 }
 
-export function createOverlayFeedController({ subscribeEvents, subscribeChat, loadHistory,
-    onEvents, onChat, onError, onReady, onInvalidate, refreshMs = 60000,
-    schedule = setInterval, unschedule = clearInterval }) {
+export function createOverlayFeedController({ subscribeEvents, subscribeChat, loadHistory, readEvents,
+    onEvents, onChat, onError, onReady, onInvalidate, onFreshness = () => {}, refreshMs = 300000,
+    now = Date.now, isVisible = () => true, schedule = setInterval, unschedule = clearInterval }) {
     let generation = 0;
     let stopped = true;
     let principal;
@@ -49,12 +75,59 @@ export function createOverlayFeedController({ subscribeEvents, subscribeChat, lo
     let loading = false;
     let historyFailures = 0;
     let timer;
+    let lastAttempt = -Infinity;
+    let lastConfirmedAt = 0;
+    let previousWindow = new Set();
+    const pendingChecks = new Map();
+    let checking = false;
+    let verificationFailed = false;
+    let readFlight = Promise.resolve();
+    // Full scans and selective checks share one lane: a scan cannot revise row
+    // versions underneath an in-flight deletion check. Listener delivery stays live.
+    const serialRead = operation => {
+        const task = readFlight.then(operation);
+        readFlight = task.catch(() => {});
+        return task;
+    };
     const streams = { events: null, chat: null };
     const tokens = { events: 0, chat: 0 };
     const failed = new Set();
     const terminal = new Set();
     const retryCounts = { events: 0, chat: 0 };
     const deny = error => /permission-denied|unauthenticated/.test(String(error?.code || ''));
+    const status = () => onFreshness({ lastConfirmedAt, loading, verifying: !verificationFailed && (checking || pendingChecks.size > 0),
+        visible: isVisible(), failed: historyFailures > 0 || verificationFailed });
+
+    async function verifyPending() {
+        if (!readEvents || stopped || checking || !isVisible() || terminal.has('verification') || !pendingChecks.size) return;
+        checking = true;
+        status();
+        const epoch = generation;
+        const checks = [...pendingChecks].slice(0, 20);
+        checks.forEach(([id]) => pendingChecks.delete(id));
+        try {
+            const { results, versions } = await serialRead(async () => {
+                const versions = new Map(checks.map(([id]) => [id, history.version(id)]));
+                const cancelled = () => stopped || generation !== epoch || !isVisible();
+                return { versions, results: cancelled() ? [] : await readEvents(checks.map(([id]) => id), cancelled) };
+            });
+            if (stopped || generation !== epoch) return;
+            if (!isVisible()) { checks.forEach(([id, version]) => pendingChecks.set(id, version)); return; }
+            for (const result of results) history.confirm(result.id, result.row, versions.get(result.id));
+            onEvents(history.values());
+            if (!verificationFailed) onReady('verification');
+        } catch (error) {
+            if (!stopped && generation === epoch) {
+                verificationFailed = true;
+                if (deny(error)) terminal.add('verification');
+                onError('verification', error);
+            }
+        } finally {
+            checking = false;
+            status();
+            if (!stopped && pendingChecks.size) void verifyPending();
+        }
+    }
 
     function attach(kind) {
         const epoch = generation;
@@ -68,6 +141,19 @@ export function createOverlayFeedController({ subscribeEvents, subscribeChat, lo
                 // window can be cache-only; only a server history read removes rows.
                 if (kind === 'events') {
                     onEvents(history.window(rows));
+                    const nextWindow = new Set(rows.map(row => row.id));
+                    for (const id of previousWindow) {
+                        if (!nextWindow.has(id)) pendingChecks.set(id, history.version(id));
+                    }
+                    previousWindow = nextWindow;
+                    // A bounded selective point-read lane distinguishes eviction
+                    // from deletion; it never runs more than one batch at a time.
+                    if (pendingChecks.size > 2000) {
+                        pendingChecks.clear();
+                        verificationFailed = true;
+                        onError('verification', new Error('overlay/verification-limit'));
+                    }
+                    void verifyPending();
                     if (history.incomplete) onError('history', new Error('overlay/history-limit'));
                 }
                 else onChat(rows);
@@ -86,17 +172,38 @@ export function createOverlayFeedController({ subscribeEvents, subscribeChat, lo
         } catch (reason) { error(reason); }
     }
 
-    async function refresh() {
-        if (stopped || loading || terminal.has('history') || historyFailures >= 3) return;
+    async function refresh({ force = true } = {}) {
+        status();
+        if (stopped || loading || !isVisible() || terminal.has('history') || historyFailures >= 3 ||
+            (!force && now() - lastAttempt < refreshMs)) return;
         const epoch = generation;
-        const startedAtRevision = history.revision;
         loading = true;
+        status();
         try {
-            const rows = await loadHistory(() => stopped || generation !== epoch);
-            if (stopped || epoch !== generation) return;
-            onEvents(history.replace(rows, startedAtRevision));
-            historyFailures = 0;
-            onReady('history');
+            await serialRead(async () => {
+                if (stopped || generation !== epoch || !isVisible()) return;
+                lastAttempt = now();
+                const startedAtRevision = history.revision;
+                const rows = await loadHistory(() => stopped || generation !== epoch || !isVisible());
+                if (stopped || epoch !== generation) return;
+                if (!isVisible()) { lastAttempt = -Infinity; return; }
+                // A newer row omitted by this scan may be an insert or a deletion.
+                // Confirm a bounded overlap set instead of preserving it indefinitely.
+                const uncertain = history.uncertain(rows, startedAtRevision);
+                if (readEvents && uncertain.length) {
+                    if (uncertain.length > 20) throw new Error('overlay/history-busy');
+                    const versions = new Map(uncertain.map(id => [id, history.version(id)]));
+                    const results = await readEvents(uncertain, () => stopped || generation !== epoch || !isVisible());
+                    if (stopped || epoch !== generation || !isVisible()) return;
+                    for (const result of results) history.confirm(result.id, result.row, versions.get(result.id));
+                }
+                onEvents(history.replace(rows, startedAtRevision));
+                historyFailures = 0;
+                lastConfirmedAt = now();
+                verificationFailed = false;
+                onReady('history');
+                onReady('verification');
+            });
         } catch (error) {
             if (!stopped && epoch === generation) {
                 historyFailures += 1;
@@ -104,7 +211,9 @@ export function createOverlayFeedController({ subscribeEvents, subscribeChat, lo
                 onError('history', error);
             }
         } finally {
-            if (epoch === generation) loading = false;
+            loading = false;
+            status();
+            if (!stopped && epoch !== generation) void refresh({ force: false });
         }
     }
 
@@ -116,7 +225,6 @@ export function createOverlayFeedController({ subscribeEvents, subscribeChat, lo
             streams[kind]?.();
             streams[kind] = null;
         }
-        loading = false;
     }
 
     function start() {
@@ -125,16 +233,24 @@ export function createOverlayFeedController({ subscribeEvents, subscribeChat, lo
         generation += 1;
         history = createOverlayEventHistory();
         historyFailures = 0;
+        lastAttempt = -Infinity;
+        lastConfirmedAt = 0;
+        previousWindow = new Set();
+        pendingChecks.clear();
+        verificationFailed = false;
         failed.clear();
         terminal.clear();
         attach('events');
         attach('chat');
         void refresh();
-        timer = schedule(() => { recover(); void refresh(); }, refreshMs);
+        timer = schedule(() => {
+            status();
+            if (isVisible()) { recover(); void refresh({ force: false }); }
+        }, 10000);
     }
 
     function recover() {
-        if (stopped) return;
+        if (stopped || !isVisible()) return;
         for (const kind of [...failed]) {
             // No permanent-permission retry loop. Retry transient failures at
             // most three times, only from the bounded timer/explicit resume.
@@ -148,7 +264,8 @@ export function createOverlayFeedController({ subscribeEvents, subscribeChat, lo
     return {
         start, stop, refresh, recover,
         resume() {
-            if (stopped) return;
+            status();
+            if (stopped || !isVisible()) return;
             // A fresh online/visible signal begins a new bounded transient
             // recovery attempt; never reset permanent authorization failures.
             if (!terminal.has('history')) historyFailures = 0;
@@ -156,7 +273,8 @@ export function createOverlayFeedController({ subscribeEvents, subscribeChat, lo
                 if (!terminal.has(kind)) retryCounts[kind] = 0;
             }
             recover();
-            void refresh();
+            void verifyPending();
+            void refresh({ force: false });
         },
         authChanged(uid) {
             const next = uid || '';

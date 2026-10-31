@@ -350,7 +350,14 @@ test('local replay fires the recorded game timeline in order without manual seek
 async function stubRealOverlayModules(page) {
     await page.route(/\/js\/live-game-overlay-history\.js(?:\?.*)?$/, route => route.fulfill({
         contentType: 'application/javascript',
-        body: 'export async function getOverlayLiveEventHistory() { return window.__OVERLAY_HISTORY__ || []; }'
+        body: `export async function getOverlayLiveEventHistory() {
+            window.__HISTORY_READS__ = (window.__HISTORY_READS__ || 0) + 1;
+            return window.__OVERLAY_HISTORY__ || [];
+        }
+        export async function readOverlayLiveEvents(_team, _game, ids) {
+            window.__POINT_READS__ = (window.__POINT_READS__ || 0) + ids.length;
+            return ids.map(id => ({ id, row: window.__OVERLAY_HISTORY__?.find(row => row.id === id) || null }));
+        }`
     }));
     await page.route(/\/js\/firebase\.js(?:\?.*)?$/, route => route.fulfill({
         contentType: 'application/javascript', body: RAW_REPLAY_AUTH_FIXTURE
@@ -1097,10 +1104,14 @@ test('live event feed exposes bounded full history with explicit team context', 
     await page.evaluate((snapshot) => window.__OVERLAY_EVENT_CALLBACK__(snapshot), events);
 
     const cards = page.locator('#event-list .event-card');
-    await expect(cards).toHaveCount(70);
+    await expect(cards).toHaveCount(60);
     await expect(cards.first()).toContainText('Event 69');
     await expect(cards.first().locator('.event-side-tag')).toHaveText('Away');
+    await expect(cards.last()).toContainText('Event 10');
+    await page.getByRole('button', { name: 'Older plays', exact: true }).click();
+    await expect(cards).toHaveCount(10);
     await expect(cards.last()).toContainText('Event 0');
+    await page.getByRole('button', { name: 'Newer plays', exact: true }).click();
 
     await page.evaluate((snapshot) => window.__OVERLAY_EVENT_CALLBACK__([
         ...snapshot,
@@ -1109,7 +1120,7 @@ test('live event feed exposes bounded full history with explicit team context', 
             homeScore: 3, awayScore: 2, period: 'H2', gameClockMs: 71_000, createdAt: 71
         }
     ]), events);
-    await expect(cards).toHaveCount(71);
+    await expect(cards).toHaveCount(60);
     await expect(cards.first()).toContainText('Removed play');
     await expect(cards.first()).toHaveAttribute('data-tone', 'system');
     await expect(cards.first().locator('.event-side-tag')).toHaveCount(0);
@@ -2463,7 +2474,8 @@ test('real overlay boot retains rolling player totals and reconciles pending cha
         window.__OVERLAY_CHAT_CALLBACK__(window.__CHAT_ROWS__);
     });
     await expect(page.locator('#home-score')).toHaveText('171');
-    await expect(page.locator('#event-list .event-card')).toHaveCount(81);
+    await expect(page.locator('#event-list .event-card')).toHaveCount(60);
+    await expect(page.locator('#play-page')).toContainText('of 81');
     await expect(page.locator('#event-list .event-card').first()).toContainText('Rolling 80');
     await expect(page.locator('#leader-list .player-row').first()).toContainText('100 PTS');
     await expect(page.locator('#chat-list')).toContainText('My pending fixture');
@@ -2483,5 +2495,71 @@ test('real overlay boot retains rolling player totals and reconciles pending cha
     await expect(page.locator('#chat-list')).not.toContainText('STALE PRIVATE');
     await page.evaluate(() => window.__OVERLAY_CHAT_CALLBACK__([{ id: 'current-user', text: 'Current fixture', createdAt: 6000 }]));
     await expect(page.locator('#chat-list')).toContainText('Current fixture');
+    expect(errors).toEqual([]);
+});
+
+test('cap-sized real overlay bounds DOM work and throttles visible history reads', async ({ page, baseURL }) => {
+    const errors = collectPageErrors(page);
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+    await page.addInitScript(() => {
+        window.__NOW__ = Date.now();
+        Date.now = () => window.__NOW__;
+        window.__VISIBLE__ = true;
+        Object.defineProperty(document, 'visibilityState', { get: () => window.__VISIBLE__ ? 'visible' : 'hidden' });
+        const interval = window.setInterval;
+        window.setInterval = (fn, ms, ...args) => {
+            if (ms === 10000) window.__HISTORY_TICK__ = fn;
+            return interval(fn, ms, ...args);
+        };
+        window.__OVERLAY_HISTORY__ = Array.from({ length: 2000 }, (_, i) => ({
+            id: `cap-${i}`, type: 'stat', playerId: 'p9', statKey: 'pts', value: 1,
+            description: `Cap play ${i}`, createdAt: 1000 + i, homeScore: i + 1, awayScore: 0
+        }));
+    });
+    const started = Date.now();
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`);
+    await expect(page.locator('#play-page')).toContainText('of 2000');
+    await expect(page.locator('#event-list .event-card')).toHaveCount(60);
+    await expect(page.locator('#history-status')).toContainText('History checked');
+    const coldReadyMs = Date.now() - started;
+    const reads = await page.evaluate(() => window.__HISTORY_READS__);
+    const updateMs = await page.evaluate(() => {
+        const start = performance.now();
+        window.__OVERLAY_EVENT_CALLBACK__(window.__OVERLAY_HISTORY__.slice(-20));
+        return performance.now() - start;
+    });
+    await expect(page.locator('#event-list .event-card').first()).toContainText('Cap play 1999');
+    await page.locator('#older-plays').click();
+    await expect(page.locator('#event-list .event-card')).toHaveCount(60);
+    await expect(page.locator('#event-list .event-card').first()).toContainText('Cap play 1939');
+    await page.evaluate(() => {
+        for (let i = 0; i < 29; i++) {
+            window.__NOW__ += 10000;
+            window.__HISTORY_TICK__();
+            document.dispatchEvent(new Event('visibilitychange'));
+        }
+    });
+    expect(await page.evaluate(() => window.__HISTORY_READS__)).toBe(reads);
+    await page.evaluate(() => {
+        window.__VISIBLE__ = false;
+        document.dispatchEvent(new Event('visibilitychange'));
+        window.__NOW__ += 900000;
+        window.__HISTORY_TICK__();
+    });
+    await expect(page.locator('#history-status')).toContainText('paused while hidden');
+    expect(await page.evaluate(() => window.__HISTORY_READS__)).toBe(reads);
+    await page.evaluate(() => {
+        window.__VISIBLE__ = true;
+        for (let i = 0; i < 10; i++) document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await expect.poll(() => page.evaluate(() => window.__HISTORY_READS__)).toBe(reads + 1);
+    await expect(page.locator('#history-status')).toContainText('History checked');
+    expect(await page.evaluate(() => window.__POINT_READS__ || 0)).toBe(0);
+    // Broad local regression guard, not a production/network latency claim.
+    expect(updateMs).toBeLessThan(1000);
+    console.log(JSON.stringify({ overlayCapMeasurement: { coldReadyMs, updateMs, rows: 2000,
+        renderedRows: 60, coldScanInvocations: reads, active290sExtraScans: 0,
+        hidden900sExtraScans: 0, repeatedStaleResumeExtraScans: 1 } }));
     expect(errors).toEqual([]);
 });

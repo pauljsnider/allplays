@@ -1,4 +1,4 @@
-import { db, collection, getDocs, query, orderBy, limit, startAfter } from './firebase.js?v=33';
+import { db, collection, doc, getDoc, getDocs, query, orderBy, limit, startAfter } from './firebase.js?v=33';
 import { decodeSharedGameSyntheticId } from './shared-games.js?v=2';
 
 // Overlay live history is bounded and cancellable between pages. Every list
@@ -26,4 +26,20 @@ export async function getOverlayLiveEventHistory(teamId, gameId, cancelled = () 
     if (remainder.metadata.fromCache) throw new Error('overlay/history-offline');
     if (!remainder.docs.length) return events;
     throw new Error('overlay/history-limit');
+}
+
+export async function readOverlayLiveEvents(teamId, gameId, ids, cancelled = () => false) {
+    if (ids.length > 20) throw new Error('overlay/verification-limit');
+    const path = decodeSharedGameSyntheticId(gameId) || `teams/${teamId}/games/${gameId}`;
+    const results = [];
+    for (const id of ids) {
+        if (cancelled()) return results;
+        if (typeof id !== 'string' || !id || id.includes('/') || id === '.' || id === '..') {
+            throw new Error('overlay/invalid-event-id');
+        }
+        const snapshot = await getDoc(doc(db, `${path}/liveEvents`, id));
+        if (snapshot.metadata.fromCache) throw new Error('overlay/history-offline');
+        results.push({ id, row: snapshot.exists() ? { ...snapshot.data(), id: snapshot.id } : null });
+    }
+    return results;
 }

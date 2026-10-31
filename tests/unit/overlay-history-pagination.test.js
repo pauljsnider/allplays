@@ -56,3 +56,38 @@ it('accepts exactly2000 records when the single-record overflow probe is empty',
     expect(await loadWith(getDocs)('team', 'game')).toHaveLength(2000);
     expect(getDocs).toHaveBeenCalledTimes(101);
 });
+
+const pointStart = source.indexOf('export async function readOverlayLiveEvents(');
+if (pointStart < 0 || !source.slice(pointStart).trimEnd().endsWith('}')) throw new Error('Missing point-read helper');
+function pointReader(getDoc) {
+    return new Function('db', 'doc', 'decodeSharedGameSyntheticId', 'getDoc',
+        `${source.slice(pointStart).replace('export ', '')}; return readOverlayLiveEvents;`)(
+        {}, (_db, path, id) => `${path}/${id}`, () => null, getDoc);
+}
+it('selectively distinguishes eviction from deletion using server-confirmed point reads', async () => {
+    const getDoc = vi.fn(async path => ({ metadata: { fromCache: false }, id: path.split('/').at(-1),
+        exists: () => path.endsWith('/retained'), data: () => ({ id: 'spoofed', value: 2 }) }));
+    expect(await pointReader(getDoc)('team', 'game', ['retained', 'deleted'])).toEqual([
+        { id: 'retained', row: { id: 'retained', value: 2 } }, { id: 'deleted', row: null }
+    ]);
+    expect(getDoc).toHaveBeenCalledTimes(2);
+});
+it('rejects cache absence and invalid or oversized point verification batches', async () => {
+    const getDoc = vi.fn(async () => ({ metadata: { fromCache: true } }));
+    const read = pointReader(getDoc);
+    await expect(read('team', 'game', ['old'])).rejects.toThrow('overlay/history-offline');
+    getDoc.mockClear();
+    await expect(read('team', 'game', ['../other'])).rejects.toThrow('overlay/invalid-event-id');
+    await expect(read('team', 'game', Array(21).fill('old'))).rejects.toThrow('overlay/verification-limit');
+    expect(getDoc).not.toHaveBeenCalled();
+});
+it('cancels selective reads between documents without interpreting unread IDs as deleted', async () => {
+    let cancelled = false;
+    const getDoc = vi.fn(async () => {
+        cancelled = true;
+        return { metadata: { fromCache: false }, exists: () => false };
+    });
+    expect(await pointReader(getDoc)('team', 'game', ['one', 'two'], () => cancelled))
+        .toEqual([{ id: 'one', row: null }]);
+    expect(getDoc).toHaveBeenCalledTimes(1);
+});

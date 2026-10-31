@@ -2084,6 +2084,12 @@
         <p id="announcer-status" class="announcer-status">Opt in to hear new plays during live games and replay.</p>
       </div>
       <div class="panel-scroll">
+        <p id="history-status" class="announcer-status" role="status">Full history has not been checked; totals may be incomplete.</p>
+        <nav aria-label="Play history pages" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+          <button id="newer-plays" type="button" class="panel-tab" disabled>Newer plays</button>
+          <span id="play-page" class="announcer-status">No plays yet</span>
+          <button id="older-plays" type="button" class="panel-tab" disabled>Older plays</button>
+        </nav>
         <ol id="event-list" class="event-list" aria-live="polite" aria-relevant="additions">
           <li class="empty-state">Connecting to the live event feed…</li>
         </ol>
@@ -2262,6 +2268,6 @@
   </main>
 
   <span id="screen-reader-update" class="visually-hidden" aria-live="polite"></span>
-  <script type="module" src="js/live-game-overlay.js?v=59"></script>
+  <script type="module" src="js/live-game-overlay.js?v=60"></script>
 </body>
 </html>
