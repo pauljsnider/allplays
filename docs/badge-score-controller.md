@@ -55,3 +55,5 @@ The anonymous client mapper marks the venue score fields it reconstructs from th
 Clock display is client-reconciled between commands: the legacy viewer advances from timestamped snapshots and stops on Pause/period changes; replay retains its own time. React maps numeric badge epochs to dates and keeps actively live clocks advancing through periods longer than ten minutes.
 
 Replays spanning a legacy-to-badge handoff normalize each event to the viewer’s score order. Unmarked legacy events retain team/opponent semantics; historical React `app-live-*` IDs and badge-source events retain venue semantics; explicit event orientation takes precedence. Conversion is idempotent and leaves Diamond ledger events untouched.
+
+Badge and public server projections share the same historical score-orientation resolver, with parity tests against the browser season-record contract. Anonymous views therefore preserve legacy and shared-mirror results as well as newly venue-oriented badge scores.

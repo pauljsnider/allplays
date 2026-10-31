@@ -1,4 +1,5 @@
 'use strict';
+const { getTeamScorePair } = require('./score-orientation-core.cjs');
 function number(value, fallback = 0) {
     const result = value && typeof value.toMillis === 'function' ? value.toMillis() : Number(value);
     return Number.isFinite(result) ? result : fallback;
@@ -14,18 +15,13 @@ function periods(sport) {
     }
 }
 function snapshot(game, now, sport) {
-    // Match season-record.js historical orientation fallback before normalizing.
-    const orientation = String(game.scoreOrientation || '').trim().toLowerCase();
-    const legacy = game.liveHasData === true || Object.hasOwn(game, 'opponentStats');
-    const teamOriented = orientation === 'team-opponent' ||
-        (orientation !== 'venue' && legacy && game.liveStartedAt == null);
-    const swap = game.isHome === false && teamOriented;
+    const scores = getTeamScorePair(game);
     const base = Math.max(0, number(game.liveClockMs));
     const running = game.liveClockRunning === true;
     return {
         scoreOrientation: 'venue',
-        homeScore: Math.max(0, number(swap ? game.awayScore : game.homeScore)),
-        awayScore: Math.max(0, number(swap ? game.homeScore : game.awayScore)),
+        homeScore: Math.max(0, number(game.isHome === false ? scores.opponentScore : scores.teamScore)),
+        awayScore: Math.max(0, number(game.isHome === false ? scores.teamScore : scores.opponentScore)),
         liveClockMs: base + (running ? Math.max(0, now - number(game.liveClockUpdatedAt ?? now, now)) : 0),
         liveClockRunning: running,
         liveClockPeriod: game.liveClockPeriod || periods(sport)[0],

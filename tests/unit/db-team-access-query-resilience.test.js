@@ -1482,9 +1482,14 @@ describe('game access query resilience', () => {
   });
 });
 
-it('keeps away badge scores aligned through server projection, anonymous mapper and overlay', async () => {
+it.each([
+  { homeScore: 3, awayScore: 9, scoreOrientation: 'venue', liveHasData: true },
+  { homeScore: 9, awayScore: 3, liveHasData: true },
+  { homeScore: 9, awayScore: 3, scoreOrientation: 'team-opponent' },
+  { homeScore: 9, awayScore: 3, sharedScheduleSourceTeamId: 'source' }
+])('keeps away scores aligned through server projection, anonymous mapper and overlay: %j', async (scores) => {
   firebaseMocks.getDoc.mockRejectedValue(Object.assign(new Error('denied'), { code: 'firestore/permission-denied' }));
-  const item = serializePublicGame({ id: 'badge-game', date: new Date('2026-10-31T12:00:00Z'), isHome: false, homeScore: 3, awayScore: 9, scoreOrientation: 'venue', liveHasData: true, opponent: 'Bears' });
+  const item = serializePublicGame({ id: 'badge-game', date: new Date('2026-10-31T12:00:00Z'), isHome: false, ...scores, opponent: 'Bears' });
   firebaseMocks.getPublicGameProjection.mockResolvedValue({ data: { item } });
   const mapped = await getGame('team-1', 'badge-game');
   expect(mapped).toMatchObject({ homeScore: 3, awayScore: 9, scoreOrientation: 'venue', opponentStats: {} });

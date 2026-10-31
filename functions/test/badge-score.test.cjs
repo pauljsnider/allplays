@@ -169,3 +169,21 @@ test('public projection preserves only recognized score orientation values', () 
     assert.equal(projected.teamScore, 7);
     assert.equal(Object.hasOwn(serializePublicGame({ ...game, scoreOrientation: 'private-unrecognized-value' }), 'scoreOrientation'), false);
 });
+
+test('server score orientation remains equivalent to the shared client contract', async () => {
+    const server = require('../score-orientation-core.cjs');
+    const client = await import('../../js/season-record.js');
+    for (const isHome of [true, false, undefined]) {
+        for (const fields of [{}, { liveHasData: true }, { opponentStats: {} }, { liveStartedAt: 1, liveHasData: true }, { scoreOrientation: 'venue', liveHasData: true }, { scoreOrientation: 'team-opponent' }, { sharedScheduleSourceTeamId: 'source', scoreOrientation: 'venue' }]) {
+            const game = { isHome, homeScore: 9, awayScore: 3, ...fields };
+            assert.deepEqual(server.getTeamScorePair(game), client.getTeamScorePair(game));
+        }
+    }
+});
+
+test('public score normalization preserves Diamond venue projections', () => {
+    const { serializePublicGame } = require('../public-team-api-core.cjs');
+    const projected = serializePublicGame({ date: new Date('2026-10-31T12:00:00Z'), trackingEngine: 'diamond-v2', isHome: false, homeScore: 3, awayScore: 9, opponentStats: {} });
+    assert.equal(projected.teamScore, 9);
+    assert.equal(projected.opponentScore, 3);
+});
