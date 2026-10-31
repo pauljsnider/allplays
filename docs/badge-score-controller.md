@@ -51,3 +51,5 @@ Persisted game scores and live-event snapshots use actual venue home/away sides.
 Historical game reads reuse the season-record orientation contract. Badge claim normalizes old team/opponent scores atomically and persists `scoreOrientation: venue`; score, undo and release retain it. Legacy live sync and completion persist that marker with converted scores, while shared mirrors keep their team/opponent contract. The public projection forwards only the two recognized orientation values. Rules protect this marker while a badge owns the game.
 
 The anonymous client mapper marks the venue score fields it reconstructs from the public API totals, so viewer labels cannot fall back to historical team/opponent ordering. Linked-team schedule mirrors normalize source scores before reversing team perspective, preserving opposite win/loss results.
+
+Clock display is client-reconciled between commands: the legacy viewer advances from timestamped snapshots and stops on Pause/period changes; replay retains its own time. React maps numeric badge epochs to dates and keeps actively live clocks advancing through periods longer than ten minutes.

@@ -96,6 +96,10 @@ function asUniqueStringArray(value: unknown): string[] {
 }
 
 function asOptionalDate(value: unknown): Date | null {
+  if (typeof value === 'number') {
+    const date = new Date(value);
+    return Number.isFinite(value) && !Number.isNaN(date.getTime()) ? date : null;
+  }
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? null : value;
   }

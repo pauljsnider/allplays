@@ -37,6 +37,7 @@ function processLiveEventSnapshots(snapshots) {
             const state = { events: [], eventIds: new Set(), lastResetAt: 0 };
             const ACTIVE_LIVE_EVENTS_LIMIT = 20;
             const rerenderPlayFeed = () => {};
+            const syncViewerClock = () => {};
             ${processNewEventsSource}
             ${retainActiveLiveEventWindowSource}
             snapshots.forEach((events) => {
