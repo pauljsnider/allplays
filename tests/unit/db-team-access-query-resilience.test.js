@@ -1,3 +1,7 @@
+import { createRequire } from 'node:module';
+import { getTeamScorePair } from '../../js/season-record.js';
+import { createOverlayState } from '../../js/live-game-overlay-model.js';
+const { serializePublicGame } = createRequire(import.meta.url)('../../functions/public-team-api-core.cjs');
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const firebaseMocks = vi.hoisted(() => ({
@@ -1476,4 +1480,15 @@ describe('game access query resilience', () => {
 
     await expect(getOfficiatingGames('team-1')).rejects.toBe(queryError);
   });
+});
+
+it('keeps away badge scores aligned through server projection, anonymous mapper and overlay', async () => {
+  firebaseMocks.getDoc.mockRejectedValue(Object.assign(new Error('denied'), { code: 'firestore/permission-denied' }));
+  const item = serializePublicGame({ id: 'badge-game', date: new Date('2026-10-31T12:00:00Z'), isHome: false, homeScore: 3, awayScore: 9, scoreOrientation: 'venue', liveHasData: true, opponent: 'Bears' });
+  firebaseMocks.getPublicGameProjection.mockResolvedValue({ data: { item } });
+  const mapped = await getGame('team-1', 'badge-game');
+  expect(mapped).toMatchObject({ homeScore: 3, awayScore: 9, scoreOrientation: 'venue', opponentStats: {} });
+  expect(getTeamScorePair(mapped)).toEqual({ teamScore: 9, opponentScore: 3 });
+  const overlay = createOverlayState({ team: { name: 'Tigers' }, game: mapped });
+  expect(overlay).toMatchObject({ homeName: 'Bears', awayName: 'Tigers', homeScore: 3, awayScore: 9 });
 });

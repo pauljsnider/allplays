@@ -1,3 +1,4 @@
+import { getTeamScorePair, calculateSeasonRecord } from '../../js/season-record.js';
 import { describe, expect, it } from 'vitest';
 import {
   shouldMirrorSharedGame,
@@ -12,7 +13,7 @@ describe('shared schedule sync helpers', () => {
   it('cache-busts the shared schedule helper from the deployed db module', () => {
     const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
 
-    expect(dbSource).toContain("from './shared-schedule-sync.js?v=2';");
+    expect(dbSource).toContain("from './shared-schedule-sync.js?v=3';");
   });
 
   it('keeps placeholder tournament fixtures local until a real opponent team is linked', () => {
@@ -205,5 +206,19 @@ describe('shared schedule sync helpers', () => {
       sharedScheduleOpponentTeamId: null,
       sharedScheduleOpponentGameId: null
     });
+  });
+});
+
+describe('score orientation at shared-game mirroring', () => {
+  it.each([
+    { isHome: false, scoreOrientation: 'venue', homeScore: 3, awayScore: 9 },
+    { isHome: false, liveHasData: true, homeScore: 9, awayScore: 3 },
+    { isHome: true, scoreOrientation: 'venue', homeScore: 9, awayScore: 3 }
+  ])('gives the counterpart the opposite result for %j', source => {
+    const sourceGame = { ...source, status: 'completed' };
+    const mirror = buildMirroredGamePayload({ sourceTeamId: 'tigers', sourceTeam: { name: 'Tigers' }, sourceGameId: 'game', sourceGame, sharedScheduleId: 'shared' });
+    expect(getTeamScorePair(sourceGame)).toEqual({ teamScore: 9, opponentScore: 3 });
+    expect(getTeamScorePair(mirror)).toEqual({ teamScore: 3, opponentScore: 9 });
+    expect(calculateSeasonRecord([mirror])).toEqual({ wins: 0, losses: 1, ties: 0 });
   });
 });

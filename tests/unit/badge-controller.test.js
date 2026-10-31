@@ -2,8 +2,8 @@
 import { readFileSync } from 'node:fs';
 import { beforeEach, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ checkAuth: vi.fn(), getUserTeamsWithAccess: vi.fn(), getGames: vi.fn(), configure: vi.fn() }));
-vi.mock('../../js/auth.js?v=4433210', () => ({ checkAuth: mocks.checkAuth }));
-vi.mock('../../js/db.js?v=4433206', () => ({ getUserTeamsWithAccess: mocks.getUserTeamsWithAccess, getGames: mocks.getGames }));
+vi.mock('../../js/auth.js?v=4433211', () => ({ checkAuth: mocks.checkAuth }));
+vi.mock('../../js/db.js?v=4433207', () => ({ getUserTeamsWithAccess: mocks.getUserTeamsWithAccess, getGames: mocks.getGames }));
 vi.mock('../../js/firebase.js?v=4433195', () => ({ functions: {}, httpsCallable: () => mocks.configure }));
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 beforeEach(async () => {

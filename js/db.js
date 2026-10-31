@@ -96,7 +96,7 @@ import {
     buildMirroredGamePayload,
     buildSharedScheduleSourceUpdate,
     buildSharedScheduleDetachUpdate
-} from './shared-schedule-sync.js?v=2';
+} from './shared-schedule-sync.js?v=3';
 import { normalizeTeamNotificationPreferences } from './notification-preferences.js?v=1';
 import { normalizeAdSpaceSponsors, normalizeLocalAttractionSponsors } from './local-attractions.js?v=2';
 import { generateJoinCode, normalizeJoinCode } from './join-code.js?v=1';
@@ -824,7 +824,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443382'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443383'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -4347,6 +4347,8 @@ function mapPublicGameProjection(game = {}, teamId = '') {
         liveStatus: Object.prototype.hasOwnProperty.call(game, 'liveStatus')
             ? String(game?.liveStatus || '')
             : String(game?.status || 'scheduled'),
+        // This mapper reconstructs venue fields from explicit team/opponent totals.
+        scoreOrientation: 'venue',
         homeScore: isHome ? teamScore : opponentScore,
         awayScore: isHome ? opponentScore : teamScore,
         summary: game?.summary || null,
