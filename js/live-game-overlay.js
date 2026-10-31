@@ -1,4 +1,4 @@
-import { createOverlayFeedController } from './live-game-overlay-feed.js?v=1';
+import { createOverlayFeedController } from './live-game-overlay-feed.js?v=2';
 import {
     applyOverlayEvents,
     applyOverlayGame,
@@ -2122,7 +2122,7 @@ async function startRealMode(params) {
             loadOverlayDatabase(),
             import('./live-game-video.js?v=443319'),
             import('./live-game-state.js?v=53'),
-            import('./live-game-overlay-history.js?v=1')
+            import('./live-game-overlay-history.js?v=2')
         ]);
         uiState.optionalTeamStatus = 'pending';
         const teamPromise = loadWithBoundedRetry(
