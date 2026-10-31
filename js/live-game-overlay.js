@@ -18,7 +18,7 @@ import {
     reconcileOverlayLiveEvents,
     resolvePublicProjectionVideoOptions,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=28';
+} from './live-game-overlay-model.js?v=33';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -34,7 +34,7 @@ import {
     resolveSafeProfilePhotoWriteUrl
 } from './safe-image-url.js?v=1';
 import { buildGameWatchShareUrl } from './game-share-links.js?v=1';
-import { shareOrCopy } from './utils.js?v=443382';
+import { shareOrCopy } from './utils.js?v=443383';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import { DIAMOND_ENGINE, buildDiamondViewerUrl } from './diamond-scorebook-routing.js?v=2';
 
@@ -235,7 +235,7 @@ function usesCompactPanelLayout() {
 }
 
 function loadOverlayDatabase() {
-    return import('./db.js?v=4433206');
+    return import('./db.js?v=4433207');
 }
 
 function getTimestampMs(value) {
@@ -330,6 +330,7 @@ function captureLiveClockState() {
     return {
         displayedClockMs: getDisplayedLiveClockMs(),
         gameClockMs: Number(uiState.game?.gameClockMs) || 0,
+        clockSnapshotAt: Number(uiState.game?.clockSnapshotAt) || 0,
         clockRunning: uiState.game?.clockRunning === true,
         completed: isCompletedGame()
     };
@@ -339,6 +340,12 @@ function syncLiveClockAnchor(previous = null) {
     const gameClockMs = Math.max(0, Number(uiState.game?.gameClockMs) || 0);
     const clockRunning = uiState.game?.clockRunning === true;
     const completed = isCompletedGame();
+    const snapshotAt = Number(uiState.game?.clockSnapshotAt) || 0;
+    if (snapshotAt > 0) {
+        uiState.liveClockSnapshotMs = gameClockMs;
+        uiState.liveClockSnapshotAt = Math.min(snapshotAt, Date.now());
+        return;
+    }
     if (!previous || gameClockMs !== previous.gameClockMs) {
         uiState.liveClockSnapshotMs = gameClockMs;
         uiState.liveClockSnapshotAt = Date.now();
@@ -539,8 +546,8 @@ function renderScoreboard() {
         : uiState.isDemo ? state.gameClockMs : getDisplayedLiveClockMs();
     elements.homeName.textContent = state.homeName;
     elements.awayName.textContent = state.awayName;
-    renderTeamPhoto(elements.homeTeamPhoto, state.team?.photoUrl, `${state.homeName} team photo`);
-    renderTeamPhoto(elements.awayTeamPhoto, state.game?.opponentTeamPhoto, `${state.awayName} team photo`);
+    renderTeamPhoto(elements.homeTeamPhoto, state.homePhoto, `${state.homeName} team photo`);
+    renderTeamPhoto(elements.awayTeamPhoto, state.awayPhoto, `${state.awayName} team photo`);
     elements.homeScore.textContent = String(state.homeScore);
     elements.awayScore.textContent = String(state.awayScore);
     elements.period.textContent = state.period;
@@ -1131,7 +1138,7 @@ async function initializeChatComposer(database, teamId, gameId) {
 
     try {
         const [authTools, chatTools] = await Promise.all([
-            import('./auth.js?v=4433210'),
+            import('./auth.js?v=4433211'),
             import('./live-game-chat.js?v=4')
         ]);
         uiState.chatServices = {
@@ -1961,7 +1968,7 @@ async function startDemoReplayMode(params) {
         { controllableReplay: true }
     );
     uiState.videoDurationMs = 15_000;
-    const stateTools = await import('./live-game-state.js?v=53');
+    const stateTools = await import('./live-game-state.js?v=55');
     await loadReplaySnapshot({
         getLiveEvents: async () => replayEvents,
         getLiveChatHistory: async () => replayChat,
@@ -2116,7 +2123,7 @@ async function startRealMode(params) {
         const [database, videoTools, stateTools] = await Promise.all([
             loadOverlayDatabase(),
             import('./live-game-video.js?v=443319'),
-            import('./live-game-state.js?v=53')
+            import('./live-game-state.js?v=55')
         ]);
         uiState.optionalTeamStatus = 'pending';
         const teamPromise = loadWithBoundedRetry(
@@ -2340,6 +2347,8 @@ async function startRealMode(params) {
             uiState.game.playerMap = context.playerMap;
             uiState.game.homeName = context.homeName;
             uiState.game.awayName = context.awayName;
+            uiState.game.homePhoto = context.homePhoto;
+            uiState.game.awayPhoto = context.awayPhoto;
             if (!uiState.game.sport) uiState.game.sport = context.sport;
             if (!uiState.game.periods && context.periods) uiState.game.periods = context.periods;
             renderScoreboard();

@@ -1,3 +1,4 @@
+import { getTeamScorePair } from '../../js/season-record.js';
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { hydrateOpponentStats } from '../../js/live-tracker-opponent-stats.js';
@@ -140,7 +141,7 @@ function replaceNamedImportByModulePath(source, modulePath, replacement) {
 function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8')) {
   const authHook = `checkAuth(async (user) => {\n  if (!user) {\n    window.location.href = 'login.html';\n    return;\n  }\n  currentUser = user;\n  await init();\n});`;
 
-  let rewritten = source;
+  let rewritten = source.replace("import { getTeamScorePair } from './season-record.js';", `const getTeamScorePair = ${getTeamScorePair.toString()};`);
   rewritten = replaceNamedImportByModulePath(
     rewritten,
     './db.js',
@@ -485,8 +486,8 @@ describe('live tracker opponent stats harness', () => {
         "import {\n  getTeam,\n  getTeams,\n  getGame,\n  getPlayers,\n  getConfigs,\n  updateGame,\n  collection,\n  getDocs,\n  deleteDoc,\n  query,\n  broadcastLiveEvent,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  setGameLiveStatus\n} from './db.js?v=4433203';"
       )
       .replace('./firebase.js?v=33', './firebase.js?v=33')
-      .replace('./utils.js?v=443382', './utils.js?v=443382')
-      .replace('./auth.js?v=4433207', './auth.js?v=4433207');
+      .replace('./utils.js?v=443383', './utils.js?v=443383')
+      .replace('./auth.js?v=4433211', './auth.js?v=4433211');
 
     const rewritten = buildModuleSource(source);
 

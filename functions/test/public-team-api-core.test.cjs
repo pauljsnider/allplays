@@ -361,6 +361,7 @@ test('games omit private/deleted/non-game events and remove imported assignment 
     games: [
       {
         id: 'later',
+        scoreOrientation: 'venue',
         type: 'game',
         date: '2026-08-02T20:00:00Z',
         opponent: 'Tigers',

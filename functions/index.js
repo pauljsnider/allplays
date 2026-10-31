@@ -22949,3 +22949,14 @@ exports.processDiamondScorebookEffect = functions
   .firestore
   .document('teams/{teamId}/games/{gameId}/diamondScorebooks/v2/effects/{effectId}')
   .onWrite(diamondScorebookEffectHandlers.onDiamondEffectWrite);
+
+// Dedicated, revocable, team-scoped physical scoreboard controllers.
+const badgeScoreApi = require('./badge-score-api.cjs').createBadgeApi({
+  db: firestore,
+  auth: admin.auth(),
+  HttpsError: functions.https.HttpsError,
+  verifySensitive: assertSensitiveEmailVerified,
+  timestamp: () => FirestoreFieldValue.serverTimestamp()
+});
+exports.configureBadgeScoreController = functions.https.onCall(badgeScoreApi.configure);
+exports.badgeScoreController = functions.runWith({ timeoutSeconds: 30, memory: '256MB' }).https.onRequest(badgeScoreApi.handler);

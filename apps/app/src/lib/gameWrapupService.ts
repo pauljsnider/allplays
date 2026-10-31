@@ -90,6 +90,7 @@ export function buildAppWrapupCompletionPayload({
   postGameNotes: string;
 }) {
   return buildFinishGamePayload({
+    scoreOrientation: 'venue',
     homeScoreValue: String(homeScore),
     awayScoreValue: String(awayScore),
     postGameNotesValue: postGameNotes

@@ -515,6 +515,7 @@
     <div id="footer-container" class="mt-16"></div>
 
     <script type="module">
+        import { getTeamScorePair } from './js/season-record.js';
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { db } from './js/firebase.js?v=27';
@@ -525,10 +526,10 @@
             getConfigs, updateGame, logStatEvent, updatePlayerStats,
             broadcastLiveEvent, subscribeLiveEvents, getLiveEvents, subscribeAggregatedStats,
             setGameLiveStatus, submitRsvpForPlayer, postChatMessage
-        } from './js/db.js?v=4433206';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime } from './js/utils.js?v=443382';
-        import { checkAuth } from './js/auth.js?v=4433210';
-        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443357';
+        } from './js/db.js?v=4433207';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime } from './js/utils.js?v=443383';
+        import { checkAuth } from './js/auth.js?v=4433211';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443358';
         import { buildRotationPlanFromGamePlan } from './js/game-plan-interop.js?v=2';
         import { getPeriodsForFormation, normalizeActivePeriod, sortSubstitutionPeriods } from './js/game-day-periods.js?v=2';
         import {
@@ -545,7 +546,7 @@
             buildMatchReportUrl,
             buildPracticeFeedPrompt,
             buildGameSummaryPrompt
-        } from './js/game-day-wrapup.js?v=2';
+        } from './js/game-day-wrapup.js?v=4';
         import { pickBestGameId, normalizeGameDayUrl } from './js/game-day-entry.js?v=1';
         import { buildGameDayBroadcastSetupUrl, resolveGameDayBroadcastStatus } from './js/game-day-broadcast.js?v=5';
         import { createGameDayRsvpController } from './js/game-day-rsvp-controls.js?v=3';
@@ -1167,10 +1168,8 @@
                     }
                 }
 
-                state.score = {
-                    home: game.homeScore || 0,
-                    away: game.awayScore || 0
-                };
+                const scores = getTeamScorePair(game);
+                state.score = { home: scores.teamScore || 0, away: scores.opponentScore || 0 };
 
                 if (game.coachingNotes) state.coachingNotes = game.coachingNotes;
                 if (game.rotationActual) state.rotationActual = game.rotationActual;
@@ -1218,7 +1217,8 @@
                 state.rotationPlan = liveStateUpdate.rotationPlan;
                 state.rotationActual = liveStateUpdate.rotationActual;
                 state.formationId = liveStateUpdate.formationId;
-                state.score = { home: updatedGame.homeScore || 0, away: updatedGame.awayScore || 0 };
+                const scores = getTeamScorePair(updatedGame);
+                state.score = { home: scores.teamScore || 0, away: scores.opponentScore || 0 };
                 const remoteChat = extractChatStateFromGameDoc(updatedGame);
                 if (remoteChat && !state.chatPersistInFlight && !state.chatPersistTimer) {
                     const changed = applyChatState(remoteChat);
@@ -2630,6 +2630,7 @@ Respond ONLY with valid JSON.`;
             try {
                 const scoreUpdatedAt = new Date().toISOString();
                 await updateGame(state.teamId, state.gameId, {
+                    scoreOrientation: 'team-opponent',
                     homeScore: state.score.home,
                     awayScore: state.score.away,
                     scoreUpdatedAt,

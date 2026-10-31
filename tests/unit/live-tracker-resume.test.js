@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPersistedResumeClockState, buildResumeLogFromLiveEvents, deriveResumeClockState } from '../../js/live-tracker-resume.js';
+import { restoreBadgeScoreboard, buildPersistedResumeClockState, buildResumeLogFromLiveEvents, deriveResumeClockState } from '../../js/live-tracker-resume.js';
 
 describe('live tracker resume clock state', () => {
   it('restores period and clock from latest persisted live event by createdAt', () => {
@@ -289,5 +289,26 @@ describe('live tracker resume game log', () => {
     ]);
 
     expect(result).toEqual([]);
+  });
+});
+
+
+describe('badge-to-tracker scoreboard handoff', () => {
+  const events = [{ source: 'badge-score-controller', createdAt: { toMillis: () => 2000 } }];
+  it('restores both scoreboard-only totals after stat reconstruction and stale local state', () => {
+    const state = { home: 0, away: 2, history: [{ home: 0 }], scoreLogIsComplete: true };
+    expect(restoreBadgeScoreboard(state, { homeScore: 7, awayScore: 5 }, events, { savedAt: 1000 })).toBe(true);
+    expect(state).toMatchObject({ home: 7, away: 5, history: [], scoreLogIsComplete: false });
+  });
+  it('preserves newer local changes after badge handoff but keeps the log incomplete', () => {
+    const state = { home: 9, away: 6, scoreLogIsComplete: true };
+    restoreBadgeScoreboard(state, { homeScore: 7, awayScore: 5 }, events, { savedAt: 3000 });
+    expect(state).toMatchObject({ home: 9, away: 6, scoreLogIsComplete: false });
+  });
+  it('preserves explicit resets and ordinary tracker reconstruction', () => {
+    const state = { home: 0, away: 0, scoreLogIsComplete: true };
+    expect(restoreBadgeScoreboard(state, { liveResetAt: 3000 }, events, null)).toBe(false);
+    expect(restoreBadgeScoreboard(state, {}, [{ type: 'stat', createdAt: 4000 }], null)).toBe(false);
+    expect(state.scoreLogIsComplete).toBe(true);
   });
 });

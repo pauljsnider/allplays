@@ -143,6 +143,7 @@ describe('live tracker save-and-complete workflow', () => {
       {
         ref: { kind: 'doc', path: 'teams/team-1/games/game-9' },
         data: {
+          scoreOrientation: 'venue',
           homeScore: 44,
           awayScore: 41,
           summary: 'Closed well in the final minute.',

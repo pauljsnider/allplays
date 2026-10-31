@@ -1,3 +1,5 @@
+import { getTeamScorePair } from './season-record.js';
+
 function cloneAssignments(assignments) {
   if (!Array.isArray(assignments)) return [];
   return assignments.map((entry) => ({ ...entry }));
@@ -41,6 +43,7 @@ export function buildMirroredGamePayload({
     || sourceLiveStatus === 'cancelled'
     || sourceLiveStatus === 'canceled';
 
+  const scores = getTeamScorePair(sourceGame);
   const payload = {
     type: 'game',
     date: sourceGame.date || null,
@@ -50,8 +53,9 @@ export function buildMirroredGamePayload({
     opponentTeamName: sourceTeam.name || sourceGame.opponent || null,
     opponentTeamPhoto: sourceTeam.photoUrl || null,
     isHome: typeof sourceGame.isHome === 'boolean' ? !sourceGame.isHome : null,
-    homeScore: Number(sourceGame.awayScore) || 0,
-    awayScore: Number(sourceGame.homeScore) || 0,
+    homeScore: Number(scores.opponentScore) || 0,
+    awayScore: Number(scores.teamScore) || 0,
+    scoreOrientation: 'team-opponent',
     status: sourceGame.status || 'scheduled',
     competitionType: sourceGame.competitionType || 'league',
     seasonLabel: sourceGame.seasonLabel || null,

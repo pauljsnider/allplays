@@ -158,6 +158,12 @@ export function getPreviewBootPages(context) {
 
     return [
         {
+            name: 'badge controller boot',
+            path: '/badge-controller.html',
+            titlePatterns: [/ALL PLAYS.*Badge Controller/i],
+            readySelectors: ['#status', '#team'],
+        },
+        {
             name: 'dashboard boot',
             path: '/dashboard.html',
             titlePatterns: [/ALL PLAYS APP/i],

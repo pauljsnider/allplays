@@ -92,6 +92,7 @@ describe('track statsheet apply helpers', () => {
                 }
             ],
             gameUpdate: {
+                scoreOrientation: 'team-opponent',
                 homeScore: 4,
                 awayScore: 3,
                 opponentStats: {
@@ -147,6 +148,7 @@ describe('track statsheet apply helpers', () => {
                 }
             ],
             gameUpdate: {
+                scoreOrientation: 'team-opponent',
                 homeScore: 0,
                 awayScore: 0,
                 opponentStats: {

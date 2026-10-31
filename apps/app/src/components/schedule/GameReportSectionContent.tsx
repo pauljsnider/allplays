@@ -607,12 +607,12 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 
 function getReportScoreLabel(game: Record<string, any>) {
   if (game.homeScore === null || game.homeScore === undefined || game.awayScore === null || game.awayScore === undefined) return '';
-  return `${game.homeScore}-${game.awayScore}`;
+  return `${game.teamScore ?? game.homeScore}-${game.opponentScore ?? game.awayScore}`;
 }
 
 function getReportResultLabel(game: Record<string, any>) {
-  const homeScore = Number(game.homeScore || 0);
-  const awayScore = Number(game.awayScore || 0);
+  const homeScore = Number(game.teamScore ?? game.homeScore ?? 0);
+  const awayScore = Number(game.opponentScore ?? game.awayScore ?? 0);
   const completed = String(game.status || '').toLowerCase() === 'completed' || String(game.liveStatus || '').toLowerCase() === 'completed';
   if (homeScore > awayScore) return 'Victory';
   if (homeScore < awayScore) return 'Defeat';
