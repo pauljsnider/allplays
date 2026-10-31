@@ -287,10 +287,28 @@ describe('team access query resilience', () => {
       }
     });
 
-    await expect(getUserTeamsWithAccess('owner-1', 'coach@example.com')).rejects.toMatchObject({
-      code: 'managed-team-discovery-partial',
-      partialTeams: [{ id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }]
-    });
+    vi.useFakeTimers();
+    const originalFetch = globalThis.fetch;
+    try {
+      // Both discovery paths must be deterministic. Otherwise this test calls
+      // the real REST endpoint after the hedge delay and can time out in CI.
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ result: {
+          items: [{ id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }],
+          isPartial: true
+        } })
+      });
+      const result = expect(getUserTeamsWithAccess('owner-1', 'coach@example.com')).rejects.toMatchObject({
+        code: 'managed-team-discovery-partial',
+        partialTeams: [{ id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }]
+      });
+      await vi.advanceTimersByTimeAsync(2000);
+      await result;
+    } finally {
+      globalThis.fetch = originalFetch;
+      vi.useRealTimers();
+    }
   });
 
   it('recognizes namespaced permission errors when loading a public team projection', async () => {
