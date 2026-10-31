@@ -477,7 +477,7 @@ function normalizeChatMessage(message = {}, index = 0) {
         // identity or styling.
         ai: false,
         text: toText(message.text || message.message, ''),
-        createdAtMs: getTimestampMs(message.createdAt)
+        createdAtMs: message.createdAt == null ? Number.MAX_SAFE_INTEGER : getTimestampMs(message.createdAt)
     };
 }
 

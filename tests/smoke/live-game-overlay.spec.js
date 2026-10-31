@@ -348,6 +348,10 @@ test('local replay fires the recorded game timeline in order without manual seek
 });
 
 async function stubRealOverlayModules(page) {
+    await page.route(/\/js\/live-game-overlay-history\.js(?:\?.*)?$/, route => route.fulfill({
+        contentType: 'application/javascript',
+        body: 'export async function getOverlayLiveEventHistory() { return window.__OVERLAY_HISTORY__ || []; }'
+    }));
     await page.route(/\/js\/firebase\.js(?:\?.*)?$/, route => route.fulfill({
         contentType: 'application/javascript', body: RAW_REPLAY_AUTH_FIXTURE
     }));
@@ -442,6 +446,7 @@ async function stubRealOverlayModules(page) {
                 window.__OVERLAY_GAME_OPTIONS__ = options;
                 return () => {};
             }
+            export async function getOverlayLiveEventHistory() { return window.__OVERLAY_HISTORY__ || []; }
             export function subscribeLiveEvents(_teamId, _gameId, callback, onError) {
                 window.__OVERLAY_LIVE_SUBSCRIPTIONS__ = (window.__OVERLAY_LIVE_SUBSCRIPTIONS__ || 0) + 1;
                 window.__OVERLAY_EVENT_CALLBACK__ = callback;
@@ -661,7 +666,7 @@ test('live subscriptions start before signed-in team and roster enrichment finis
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('#home-team-name')).toHaveText('Current Academy');
     await expect(page.locator('#home-score')).toHaveText('3');
-    await expect.poll(() => page.evaluate(() => window.__OVERLAY_LIVE_SUBSCRIPTIONS__ || 0)).toBe(4);
+    await expect.poll(() => page.evaluate(() => window.__OVERLAY_LIVE_SUBSCRIPTIONS__ || 0)).toBe(6);
 
     await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([{
         id: 'early-live-goal', type: 'goal', description: 'Realtime before roster hydration',
@@ -705,9 +710,14 @@ test('event corrections rebuild from a stable baseline after a stale public proj
 
     // Removing/correcting the scoring event must return to the original game
     // baseline, not the older score from the intervening projection poll.
-    await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([{
-        id: 'lineup-after-correction', type: 'lineup', onCourt: ['p4'], bench: ['p9'], createdAt: 2_000
-    }]));
+    await page.evaluate(() => {
+        window.__OVERLAY_HISTORY__ = [{
+            id: 'lineup-after-correction', type: 'lineup', onCourt: ['p4'], bench: ['p9'], createdAt: 2_000
+        }];
+        window.__OVERLAY_EVENT_CALLBACK__(window.__OVERLAY_HISTORY__);
+        // A limited listener cannot prove deletion. A fresh server history read can.
+        document.dispatchEvent(new Event('visibilitychange'));
+    });
     await expect(page.locator('#home-score')).toHaveText('3');
     await expect(page.locator('#away-score')).toHaveText('2');
     await expect(page.locator('#period')).toHaveText('H2');
@@ -962,6 +972,7 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     }]);
     await expect(page.locator('#chat-list')).toContainText('👏');
 
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
     await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([{
         id: 'reset-1', type: 'reset', description: 'Game reset', homeScore: 0, awayScore: 0,
         period: 'H1', gameClockMs: 0, onCourt: ['p9'], bench: ['p4'], createdAt: 2000
@@ -1055,7 +1066,7 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     expect(pageErrors).toEqual([]);
 });
 
-test('live event feed keeps the current 60-play history with explicit team context', async ({ page, baseURL }) => {
+test('live event feed exposes bounded full history with explicit team context', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
     await stubRealOverlayModules(page);
     await stubYouTubeEmbed(page);
@@ -1077,10 +1088,10 @@ test('live event feed keeps the current 60-play history with explicit team conte
     await page.evaluate((snapshot) => window.__OVERLAY_EVENT_CALLBACK__(snapshot), events);
 
     const cards = page.locator('#event-list .event-card');
-    await expect(cards).toHaveCount(60);
+    await expect(cards).toHaveCount(70);
     await expect(cards.first()).toContainText('Event 69');
     await expect(cards.first().locator('.event-side-tag')).toHaveText('Away');
-    await expect(cards.last()).toContainText('Event 10');
+    await expect(cards.last()).toContainText('Event 0');
 
     await page.evaluate((snapshot) => window.__OVERLAY_EVENT_CALLBACK__([
         ...snapshot,
@@ -1089,7 +1100,7 @@ test('live event feed keeps the current 60-play history with explicit team conte
             homeScore: 3, awayScore: 2, period: 'H2', gameClockMs: 71_000, createdAt: 71
         }
     ]), events);
-    await expect(cards).toHaveCount(60);
+    await expect(cards).toHaveCount(71);
     await expect(cards.first()).toContainText('Removed play');
     await expect(cards.first()).toHaveAttribute('data-tone', 'system');
     await expect(cards.first().locator('.event-side-tag')).toHaveCount(0);
@@ -1110,8 +1121,10 @@ test('subscription warnings remain isolated until the matching feed recovers', a
     });
     await expect(page.locator('#connection-message')).toContainText('Live chat is temporarily unavailable');
 
+    // Retired callbacks cannot clear failures. Explicit resume creates new listeners.
     await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([]));
     await expect(page.locator('#connection-message')).toContainText('Live chat is temporarily unavailable');
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
 
     await page.evaluate(() => window.__OVERLAY_CHAT_CALLBACK__([]));
     await expect(page.locator('#connection-message')).toBeHidden();
@@ -2419,3 +2432,47 @@ for (const replay of [true, false]) {
         expect(errors).toEqual([]);
     });
 }
+
+
+test('real overlay boot retains rolling player totals and reconciles pending chat on the same page', async ({ page, baseURL }) => {
+    const errors = collectPageErrors(page);
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`);
+    await expect(page.locator('#chat-input')).toBeEnabled();
+    await page.evaluate(() => {
+        const rows = Array.from({ length: 81 }, (_, i) => ({
+            id: `rolling-${i}`, type: 'stat', playerId: i < 10 ? 'p9' : 'p4',
+            statKey: 'pts', value: i < 10 ? 10 : 1,
+            description: `Rolling ${i}`, createdAt: 1000 + i,
+            homeScore: i < 10 ? (i + 1) * 10 : 100 + i - 9, awayScore: 0
+        }));
+        window.__OVERLAY_HISTORY__ = rows;
+        for (let n = 1; n <= rows.length; n++) window.__OVERLAY_EVENT_CALLBACK__(rows.slice(Math.max(0, n - 20), n));
+        const older = Array.from({ length: 24 }, (_, i) => ({ id: `older-${i}`, text: `Older ${i}`, createdAt: i + 1 }));
+        window.__CHAT_ROWS__ = [{ id: 'pending-own', text: 'My pending fixture', createdAt: null }, ...older];
+        window.__OVERLAY_CHAT_CALLBACK__(window.__CHAT_ROWS__);
+    });
+    await expect(page.locator('#home-score')).toHaveText('171');
+    await expect(page.locator('#event-list .event-card')).toHaveCount(81);
+    await expect(page.locator('#event-list .event-card').first()).toContainText('Rolling 80');
+    await expect(page.locator('#leader-list .player-row').first()).toContainText('100 PTS');
+    await expect(page.locator('#chat-list')).toContainText('My pending fixture');
+    await page.evaluate(() => {
+        window.__CHAT_ROWS__[0].createdAt = 2000;
+        window.__OVERLAY_CHAT_CALLBACK__(window.__CHAT_ROWS__);
+        window.__OVERLAY_CHAT_CALLBACK__(window.__CHAT_ROWS__);
+    });
+    await expect(page.locator('#chat-list .chat-message').filter({ hasText: 'My pending fixture' })).toHaveCount(1);
+    // A permission failure is terminal; only an actual principal change reconnects.
+    await page.evaluate(() => {
+        window.__OLD_CHAT_CALLBACK__ = window.__OVERLAY_CHAT_CALLBACK__;
+        window.__OVERLAY_CHAT_ERROR__({ code: 'permission-denied' });
+        window.__OVERLAY_AUTH_CALLBACK__({ uid: 'fixture-new-user', displayName: 'New fixture' });
+        window.__OLD_CHAT_CALLBACK__([{ id: 'stale-private', text: 'STALE PRIVATE', createdAt: 5000 }]);
+    });
+    await expect(page.locator('#chat-list')).not.toContainText('STALE PRIVATE');
+    await page.evaluate(() => window.__OVERLAY_CHAT_CALLBACK__([{ id: 'current-user', text: 'Current fixture', createdAt: 6000 }]));
+    await expect(page.locator('#chat-list')).toContainText('Current fixture');
+    expect(errors).toEqual([]);
+});
