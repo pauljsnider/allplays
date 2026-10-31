@@ -1,3 +1,4 @@
+const { getTeamScorePair } = require('./score-orientation-core.cjs');
 const PUBLIC_TEAM_API_VERSION = 1;
 const PUBLIC_TEAM_API_MAX_GAMES = 500;
 const PUBLIC_TEAM_API_DEFAULT_GAMES = 100;
@@ -873,10 +874,12 @@ function serializePublicGame(game = {}, options = {}) {
   if (!startsAt) return null;
 
   const isHome = game?.isHome !== false;
-  const homeScore = finiteScore(game?.homeScore);
-  const awayScore = finiteScore(game?.awayScore);
-  const teamScore = isHome ? homeScore : awayScore;
-  const opponentScore = isHome ? awayScore : homeScore;
+  // Diamond projections already use ledger-owned venue sides.
+  const scores = game?.trackingEngine === 'diamond-v2'
+    ? { teamScore: isHome ? game.homeScore : game.awayScore, opponentScore: isHome ? game.awayScore : game.homeScore }
+    : getTeamScorePair(game);
+  const teamScore = finiteScore(scores.teamScore);
+  const opponentScore = finiteScore(scores.opponentScore);
   const status = normalizeGameStatus(game);
   const videoLifecycle = getPublicVideoLifecycle(game);
   let sourceStatus = game?.isCancelled === true
@@ -958,6 +961,7 @@ function serializePublicGame(game = {}, options = {}) {
     liveStatus,
     teamScore,
     opponentScore,
+    ...(['venue', 'team-opponent'].includes(game.scoreOrientation) ? { scoreOrientation: game.scoreOrientation } : {}),
     result,
     seasonLabel: nullableText(game?.seasonLabel, 100),
     competitionType: nullableText(game?.competitionType, 80),

@@ -1,3 +1,5 @@
+import { getOverlayLiveClockMs } from '../../js/live-game-overlay-model.js';
+import { getTeamScorePair } from '../../js/season-record.js';
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { DIAMOND_ENGINE, buildDiamondViewerUrl } from '../../js/diamond-scorebook-routing.js';
@@ -224,6 +226,7 @@ function createEnvironment() {
 
 function buildModuleSource() {
     return readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8')
+        .replace("import { getTeamScorePair } from './season-record.js';", `const getTeamScorePair = ${getTeamScorePair.toString()};`)
         .replace(
             /import\s+\{[\s\S]*?deleteUploadedMediaObjects\s*\}\s+from\s+'\.\/db\.js\?v=\d+';/,
             'const { getGameDayTeamContext, getGame, getPlayers, subscribeLiveEvents, subscribeLiveChat, postLiveChatMessage, subscribeReactions, sendReaction, trackViewerPresence, getLiveEvents, getLiveChatHistory, getLiveReactions, getConfigs, getMyRsvp, subscribeGame, updateGame, uploadGameClip, deleteUploadedMediaObjects } = deps.db;'
@@ -281,8 +284,8 @@ function buildModuleSource() {
             'Promise.resolve(deps.replayPlayback)'
         )
         .replace(
-            /import \{ resolvePublicProjectionVideoOptions \} from '\.\/live-game-overlay-model\.js\?v=\d+';/,
-            'const { resolvePublicProjectionVideoOptions } = deps.liveGameOverlayModel;'
+            /import \{ resolvePublicProjectionVideoOptions, getOverlayLiveClockMs \} from '\.\/live-game-overlay-model\.js\?v=\d+';/,
+            'const { resolvePublicProjectionVideoOptions, getOverlayLiveClockMs } = deps.liveGameOverlayModel;'
         )
         .replace(
             /import \{ buildGameReportShareUrl, buildGameWatchShareUrl \} from '\.\/game-share-links\.js\?v=\d+';/,
@@ -368,6 +371,8 @@ async function bootReplayPage({
     const location = new URL(`https://allplays.example/live-game.html?teamId=T1&gameId=G1&replay=${replay}${configQuery}`);
     const window = {
         document,
+        setInterval: vi.fn(() => 1),
+        clearInterval: vi.fn(),
         location,
         history: { replaceState() {} },
         navigator: { share: undefined, clipboard: { writeText: async () => {} } },
@@ -589,6 +594,7 @@ async function bootReplayPage({
             resolveAuthorizedReplayPlayback: async () => videoOptions
         },
         liveGameOverlayModel: {
+            getOverlayLiveClockMs,
             resolvePublicProjectionVideoOptions: () => publicProjectionVideoOptions
         },
         gameShareLinks: {

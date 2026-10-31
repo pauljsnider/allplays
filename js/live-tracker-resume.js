@@ -1,3 +1,4 @@
+import { getTeamScorePair } from './season-record.js';
 function toMillis(value) {
     if (value == null) return null;
     if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -265,4 +266,23 @@ export function deriveResumeClockState(liveEvents, defaults = { period: 'Q1', cl
         candidates[0]
     );
     return { period: latestByOrder.period, clock: latestByOrder.clock, restored: true };
+}
+
+// Badge points have no player attribution. Never reconstruct them from stat totals.
+export function restoreBadgeScoreboard(state, game, events, persistedLocalState) {
+    const resetAt = toMillis(game?.liveResetAt) || 0;
+    const badgeEvents = events.filter(event => event.source === 'badge-score-controller' &&
+        (toMillis(event.createdAt) || toMillis(event.timestamp) || 0) > resetAt);
+    if (!badgeEvents.length) return false;
+    const latestBadgeAt = Math.max(...badgeEvents.map(event =>
+        toMillis(event.createdAt) || toMillis(event.timestamp) || 0));
+    if (!persistedLocalState || persistedLocalState.savedAt <= latestBadgeAt) {
+        const scores = getTeamScorePair(game);
+        state.home = Math.max(0, Number(scores.teamScore) || 0);
+        state.away = Math.max(0, Number(scores.opponentScore) || 0);
+        // Old local undo entries would restore scores from before badge control.
+        state.history = [];
+    }
+    state.scoreLogIsComplete = false;
+    return true;
 }

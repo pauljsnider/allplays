@@ -274,11 +274,12 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getGameDayTeamContext, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './js/db.js?v=4433206';
+        import { getTeamScorePair } from './js/season-record.js';
+        import { getGameDayTeamContext, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './js/db.js?v=4433207';
         import { db } from './js/firebase.js?v=33';
         import { writeBatch, doc, setDoc, addDoc } from './js/firebase.js?v=33';
-        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443382';
-        import { checkAuth } from './js/auth.js?v=4433210';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443383';
+        import { checkAuth } from './js/auth.js?v=4433211';
         import { isAISummaryEnabled, applyAISummaryAvailability } from './js/track-ai-summary.js';
         import { resolveSummaryRecipient } from './js/live-tracker-email.js?v=1';
         import { hasScorekeepingTeamAccess } from './js/team-access.js?v=44338';
@@ -430,8 +431,9 @@
 
                 document.getElementById('game-title').textContent = `vs. ${escapeHtml(game.opponent)}`;
                 document.getElementById('game-meta').textContent = escapeHtml(team.name);
-                homeScore = game.homeScore || 0;
-                awayScore = game.awayScore || 0;
+                const scores = getTeamScorePair(game);
+                homeScore = scores.teamScore || 0;
+                awayScore = scores.opponentScore || 0;
                 updateScoreDisplay();
 
                 // Load Config
