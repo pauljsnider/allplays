@@ -81,6 +81,7 @@ export function buildFinishCompletionPlan({
   sendEmail = false,
   teamId,
   gameId,
+  isHome = true,
   teamName = '',
   opponentName = 'Unknown Opponent',
   recipientEmail = '',
@@ -197,8 +198,8 @@ export function buildFinishCompletionPlan({
   });
 
   const gameUpdate = {
-    homeScore: finalHome,
-    awayScore: finalAway,
+    homeScore: isHome === false ? finalAway : finalHome,
+    awayScore: isHome === false ? finalHome : finalAway,
     summary,
     status: 'completed',
     liveStatus: 'completed',

@@ -35,7 +35,7 @@ import {
   rebaseReplayStartTimeMs
 } from './live-game-replay.js?v=3';
 import { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, hasActiveLiveLifecycle, hasCompletedReplayLifecycle, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=443319';
-import { resolvePublicProjectionVideoOptions } from './live-game-overlay-model.js?v=28';
+import { resolvePublicProjectionVideoOptions } from './live-game-overlay-model.js?v=29';
 import { buildGameReportShareUrl, buildGameWatchShareUrl } from './game-share-links.js?v=1';
 import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
@@ -1746,22 +1746,18 @@ function initRecordedReplayControls() {
 }
 
 function renderGameInfo() {
-  els.homeTeamName.textContent = state.team?.name || 'Home Team';
-  els.awayTeamName.textContent = resolveOpponentDisplayName(state.game);
-  if (els.homeTeamPhoto) {
-    if (state.team?.photoUrl) {
-      els.homeTeamPhoto.src = state.team.photoUrl;
-      els.homeTeamPhoto.classList.remove('hidden');
+  const managedTeam = { name: state.team?.name || 'Home Team', photo: state.team?.photoUrl };
+  const opponent = { name: resolveOpponentDisplayName(state.game), photo: state.game?.opponentTeamPhoto };
+  const [home, away] = state.game?.isHome === false ? [opponent, managedTeam] : [managedTeam, opponent];
+  els.homeTeamName.textContent = home.name;
+  els.awayTeamName.textContent = away.name;
+  for (const [element, team] of [[els.homeTeamPhoto, home], [els.awayTeamPhoto, away]]) {
+    if (!element) continue;
+    if (team.photo) {
+      element.src = team.photo;
+      element.classList.remove('hidden');
     } else {
-      els.homeTeamPhoto.classList.add('hidden');
-    }
-  }
-  if (els.awayTeamPhoto) {
-    if (state.game?.opponentTeamPhoto) {
-      els.awayTeamPhoto.src = state.game.opponentTeamPhoto;
-      els.awayTeamPhoto.classList.remove('hidden');
-    } else {
-      els.awayTeamPhoto.classList.add('hidden');
+      element.classList.add('hidden');
     }
   }
   if (state.game?.date) {

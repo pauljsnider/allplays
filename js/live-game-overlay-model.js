@@ -481,6 +481,14 @@ function normalizeChatMessage(message = {}, index = 0) {
     };
 }
 
+function scoreboardNames(team, game) {
+    const managed = toText(team.name || (game.isHome === false ? game.awayTeamName : game.homeTeamName), 'Home');
+    const opponent = toText(game.opponent || game.opponentTeamName || (game.isHome === false ? game.homeTeamName : game.awayTeamName), 'Opponent');
+    return game.isHome === false
+        ? { homeName: opponent, awayName: managed }
+        : { homeName: managed, awayName: opponent };
+}
+
 export function createOverlayState({ team = {}, game = {}, players = [], events = [], chatMessages = [] } = {}) {
     const normalizedPlayers = players.map(normalizePlayer);
     const normalizedEvents = sortNewestFirst(events.map(normalizeOverlayEvent));
@@ -491,8 +499,7 @@ export function createOverlayState({ team = {}, game = {}, players = [], events 
         game,
         players: normalizedPlayers,
         playerMap: new Map(normalizedPlayers.map((player) => [player.id, player])),
-        homeName: toText(team.name || game.homeTeamName, 'Home'),
-        awayName: toText(game.opponent || game.opponentTeamName || game.awayTeamName, 'Opponent'),
+        ...scoreboardNames(team, game),
         homeScore: toFiniteNumber(game.homeScore),
         awayScore: toFiniteNumber(game.awayScore),
         period: toText(game.period, DEFAULT_PERIOD),
@@ -558,7 +565,7 @@ export function applyOverlayGame(state, game = {}, { preserveEventState = false 
             )
         }
         : refreshedBaseline;
-    state.awayName = toText(game.opponent || game.opponentTeamName || game.awayTeamName, state.awayName);
+    Object.assign(state, scoreboardNames(state.team || {}, state.game));
     if (!preserveEventState) {
         if (game.homeScore !== undefined) state.homeScore = toFiniteNumber(game.homeScore, state.homeScore);
         if (game.awayScore !== undefined) state.awayScore = toFiniteNumber(game.awayScore, state.awayScore);
