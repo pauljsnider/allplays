@@ -274,6 +274,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
+        import { getTeamScorePair } from './js/season-record.js';
         import { getGameDayTeamContext, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './js/db.js?v=4433207';
         import { db } from './js/firebase.js?v=33';
         import { writeBatch, doc, setDoc, addDoc } from './js/firebase.js?v=33';
@@ -430,8 +431,9 @@
 
                 document.getElementById('game-title').textContent = `vs. ${escapeHtml(game.opponent)}`;
                 document.getElementById('game-meta').textContent = escapeHtml(team.name);
-                homeScore = game.homeScore || 0;
-                awayScore = game.awayScore || 0;
+                const scores = getTeamScorePair(game);
+                homeScore = scores.teamScore || 0;
+                awayScore = scores.opponentScore || 0;
                 updateScoreDisplay();
 
                 // Load Config

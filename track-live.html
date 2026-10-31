@@ -671,6 +671,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
+        import { getTeamScorePair } from './js/season-record.js';
         import { getGameDayTeamContext, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, setGameLiveStatus, subscribeLiveChat, postLiveChatMessage, getLiveEvents } from './js/db.js?v=4433207';
         import { db } from './js/firebase.js?v=33';
         import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './js/firebase.js?v=33';
@@ -902,8 +903,9 @@
 
                 document.getElementById('game-title').textContent = `vs. ${escapeHtml(resolveOpponentDisplayName(game))}`;
                 document.getElementById('game-meta').textContent = escapeHtml(team.name);
-                homeScore = game.homeScore || 0;
-                awayScore = game.awayScore || 0;
+                const scores = getTeamScorePair(game);
+                homeScore = scores.teamScore || 0;
+                awayScore = scores.opponentScore || 0;
                 gameState.servingTeam = game.servingTeam === 'away' ? 'away' : 'home';
                 updateScoreDisplay();
                 gameState.playerFieldStatus = createFieldState(players);
@@ -1604,7 +1606,7 @@
                 const servingTeamChanged = isVolleyballGame() && gameState.servingTeam !== liveSync.lastSyncedServingTeam;
                 if (homeScore === liveSync.lastSyncedHome && awayScore === liveSync.lastSyncedAway && !servingTeamChanged) return;
                 try {
-                    const update = { homeScore, awayScore };
+                    const update = { homeScore, awayScore, scoreOrientation: 'team-opponent' };
                     if (isVolleyballGame()) update.servingTeam = gameState.servingTeam;
                     await updateGame(currentTeamId, currentGameId, update);
                     liveSync.lastSyncedHome = homeScore;

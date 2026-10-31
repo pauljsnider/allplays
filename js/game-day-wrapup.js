@@ -26,6 +26,7 @@ export function buildFinishGamePayload({ homeScoreValue, awayScoreValue, postGam
 
     return {
         homeScore: score.home,
+        scoreOrientation: 'team-opponent',
         awayScore: score.away,
         postGameNotes: (postGameNotesValue || '').trim(),
         status: 'completed',
