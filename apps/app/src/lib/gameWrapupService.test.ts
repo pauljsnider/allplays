@@ -1,3 +1,4 @@
+import { getTeamScorePair } from './adapters/legacyScoreOrientation';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
@@ -61,7 +62,7 @@ describe('gameWrapupService', () => {
     gameReportMocks.loadGameReportPlays.mockReset();
   });
 
-  it('matches the legacy finish payload shape', () => {
+  it('uses the shared finish payload with explicit venue orientation', () => {
     expect(
       buildAppWrapupCompletionPayload({
         homeScore: 5,
@@ -70,6 +71,7 @@ describe('gameWrapupService', () => {
       })
     ).toEqual(
       buildFinishGamePayload({
+        scoreOrientation: 'venue',
         homeScoreValue: '5',
         awayScoreValue: '3',
         postGameNotesValue: '  Great defensive shape.  '
@@ -337,4 +339,10 @@ describe('gameWrapupService', () => {
     expect(gameReportMocks.loadGameReportPlays).toHaveBeenCalledTimes(1);
     expect(aiMocks.generateContent.mock.calls[0]?.[0]).toContain('Key events: None');
   });
+});
+
+it('preserves a managed-team away win through React wrap-up', () => {
+  const payload = buildAppWrapupCompletionPayload({ homeScore: 3, awayScore: 9, postGameNotes: '' });
+  expect(payload.scoreOrientation).toBe('venue');
+  expect(getTeamScorePair({ isHome: false, ...payload })).toEqual({ teamScore: 9, opponentScore: 3 });
 });

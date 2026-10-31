@@ -242,7 +242,7 @@ describe('game-day wrap-up page wiring', () => {
   it('routes the completion transition, wrap-up prefill, and finish flow through the helper module', () => {
     const source = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
 
-    expect(source).toContain("from './js/game-day-wrapup.js?v=3'");
+    expect(source).toContain("from './js/game-day-wrapup.js?v=4'");
     expect(source).toContain('shouldPromptWrapupOnCompletion({');
     expect(source).toContain('const wrapupFormState = getWrapupFormState({');
     const wrapupActions = source.slice(

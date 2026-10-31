@@ -21,12 +21,12 @@ export function getWrapupScore({ homeScoreValue, awayScoreValue }) {
     };
 }
 
-export function buildFinishGamePayload({ homeScoreValue, awayScoreValue, postGameNotesValue }) {
+export function buildFinishGamePayload({ homeScoreValue, awayScoreValue, postGameNotesValue, scoreOrientation = 'team-opponent' }) {
     const score = getWrapupScore({ homeScoreValue, awayScoreValue });
 
     return {
         homeScore: score.home,
-        scoreOrientation: 'team-opponent',
+        scoreOrientation: scoreOrientation === 'venue' ? 'venue' : 'team-opponent',
         awayScore: score.away,
         postGameNotes: (postGameNotesValue || '').trim(),
         status: 'completed',
