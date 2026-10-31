@@ -59,21 +59,21 @@ describe('scorekeeping access wiring', () => {
 
         expect(rules).toContain('function canScorekeepGame(teamId, gameId)');
         expect(rules).toContain('allow update: if isScorekeepingGameUpdate(teamId, gameId);');
-        expect(rules).toMatch(/allow update: if !isDiamondProtectedGameMutation\(\) &&\s+!isBroadcastSessionOnlyUpdate\(\) &&\s+!isReplayArchiveMutation\(\) &&\s+\(isTeamOwnerOrAdmin\(teamId\) \|\|\s+\(isOfficialForGame\(\) && isOfficialGameUpdate\(\)\) \|\|\s+isVideographyGameUpdate\(teamId, gameId\)\);/);
+        expect(rules).toMatch(/allow update: if !isDiamondProtectedGameMutation\(\) &&\s+!isBroadcastSessionOnlyUpdate\(\) &&\s+!isReplayArchiveMutation\(\) &&\s+\(isTeamOwnerOrAdmin\(teamId\) \|\|\s+\(isOfficialForGame\(\) && isOfficialGameUpdate\(\)\) \|\|\s+isVideographyGameUpdate\(teamId, gameId\)\) && !isBadgeScoreMutation\(\);/);
         expect(rules).toContain('allow update: if isReplayArchiveOnlyUpdate() &&');
         expect(rules).toContain('allow update: if isStreamingGameUpdate(teamId, gameId);');
         for (const legacyProjectionRule of [eventsRule, aggregatedStatsRule, teamStatsRule]) {
-            expect(legacyProjectionRule).toContain('allow create, update: if !gameUsesDiamondScorebook(teamId, gameId) &&');
+            expect(legacyProjectionRule).toContain('allow create, update: if !badgeControlsGame(teamId, gameId) && !gameUsesDiamondScorebook(teamId, gameId) &&');
             expect(legacyProjectionRule).toContain('(isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId));');
         }
-        expect(privatePlayerStatsRule).toContain('allow create, update, delete: if !gameUsesDiamondScorebook(teamId, gameId) &&');
+        expect(privatePlayerStatsRule).toContain('allow create, update, delete: if !badgeControlsGame(teamId, gameId) && !gameUsesDiamondScorebook(teamId, gameId) &&');
         expect(privatePlayerStatsRule).toContain('(isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId));');
-        expect(eventsRule).toContain('allow delete: if !gameUsesDiamondScorebook(teamId, gameId) && isTeamOwnerOrAdmin(teamId);');
-        expect(aggregatedStatsRule).toMatch(/allow delete: if !gameUsesDiamondScorebook\(teamId, gameId\) &&\s+isTeamOwnerOrAdmin\(teamId\);/);
-        expect(teamStatsRule).toMatch(/allow delete: if !gameUsesDiamondScorebook\(teamId, gameId\) &&\s+isTeamOwnerOrAdmin\(teamId\);/);
+        expect(eventsRule).toContain('allow delete: if !badgeControlsGame(teamId, gameId) && !gameUsesDiamondScorebook(teamId, gameId) && isTeamOwnerOrAdmin(teamId);');
+        expect(aggregatedStatsRule).toMatch(/allow delete: if !badgeControlsGame\(teamId, gameId\) && !gameUsesDiamondScorebook\(teamId, gameId\) &&\s+isTeamOwnerOrAdmin\(teamId\);/);
+        expect(teamStatsRule).toMatch(/allow delete: if !badgeControlsGame\(teamId, gameId\) && !gameUsesDiamondScorebook\(teamId, gameId\) &&\s+isTeamOwnerOrAdmin\(teamId\);/);
         expect(teamStatsRule).toContain('allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&');
         expect(privatePlayerStatsRule).toContain('allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&');
-        expect(liveEventsRule).toContain('allow create: if !gameUsesDiamondScorebook(teamId, gameId) &&');
+        expect(liveEventsRule).toContain('allow create: if !badgeControlsGame(teamId, gameId) && !gameUsesDiamondScorebook(teamId, gameId) &&');
         expect(liveEventsRule).toContain('hasValidLiveEventAttribution(request.resource.data)');
         expect(liveEventsRule).toContain("data.createdBy == request.auth.uid");
         expect(liveEventsRule).toContain("data.actorUid == request.auth.uid");

@@ -388,7 +388,7 @@ export function getLiveClockViewModel(event: Pick<ParentScheduleEvent, 'type' | 
   const updatedAtMs = event.liveClockUpdatedAt instanceof Date ? event.liveClockUpdatedAt.getTime() : NaN;
   const nowMs = now.getTime();
   const elapsedMs = nowMs - updatedAtMs;
-  if (event.liveClockRunning === true && Number.isFinite(elapsedMs) && elapsedMs >= 0 && elapsedMs <= LIVE_CLOCK_RECENT_MS) {
+  if (event.liveClockRunning === true && Number.isFinite(elapsedMs) && elapsedMs >= 0 && (isLive || elapsedMs <= LIVE_CLOCK_RECENT_MS)) {
     displayClockMs += elapsedMs;
   }
 

@@ -833,6 +833,8 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     await expect(page.locator('#game-clock')).toHaveText('11:30');
     await expect(page.locator('#event-list .event-card').first()).toContainText('Lane scores in transition');
 
+    // Use the same clock domain as this test's synthetic event timestamps.
+    await page.clock.install({ time: 1300 });
     const runningSnapshot = [
         { id: 'late-offline', type: 'score_update', description: 'Earlier queued score', homeScore: 2, awayScore: 1, period: 'H2', gameClockMs: 600000, clientCreatedAt: new Date(900).toISOString(), createdAt: 1250 },
         ...liveSnapshot,
@@ -840,11 +842,12 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     ];
     await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), runningSnapshot);
     await expect(page.locator('#game-clock')).toHaveText('11:30');
-    await page.waitForTimeout(1100);
+    await page.clock.fastForward(1100);
     await expect(page.locator('#game-clock')).toHaveText('11:31');
 
     // Firebase remains authoritative. Each clock_sync re-anchors the passive
     // browser display so drift is corrected without writing anything back.
+    await page.clock.setSystemTime(1350);
     const syncedRunningSnapshot = [
         ...runningSnapshot,
         { id: 'clock-sync-2', type: 'clock_sync', homeScore: 4, awayScore: 2, period: 'H2', gameClockMs: 691000, createdAt: 1350 }
@@ -868,6 +871,7 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     await expect(page.locator('#game-clock')).toHaveText('11:32');
     await page.waitForTimeout(650);
     await expect(page.locator('#game-clock')).toHaveText('11:32');
+    await page.clock.setSystemTime(Date.now());
 
     await page.evaluate(() => window.__OVERLAY_EVENT_ERROR__(new Error('events unavailable')));
     await expect(page.locator('#home-score')).toHaveText('4');
