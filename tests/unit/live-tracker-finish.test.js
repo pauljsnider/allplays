@@ -48,6 +48,7 @@ describe('live tracker finish completion plan', () => {
     });
     expect(plan.reconciliationNote).toBe('');
     expect(plan.gameUpdate).toEqual({
+      scoreOrientation: 'venue',
       homeScore: 44,
       awayScore: 41,
       summary: 'Closed well in the final minute.',

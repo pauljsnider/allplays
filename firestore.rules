@@ -794,10 +794,23 @@ service cloud.firestore {
 
     function scoreProjectionGameFields() {
       return [
-        'homeScore', 'awayScore', 'summary', 'status', 'liveStatus',
+        'homeScore', 'awayScore', 'scoreOrientation', 'summary', 'status', 'liveStatus',
         'opponentStats', 'completedAt', 'completedBy', 'completedByName',
         'scoreUpdatedAt', 'scoreUpdatedBy', 'scoreStreamSessionId'
       ];
+    }
+
+    // Server-created badge ownership blocks stale tracker writes across all clients.
+    function isBadgeScoreMutation() {
+      let affected = request.resource.data.diff(resource.data).affectedKeys();
+      return affected.hasAny(['badgeScoreControl']) ||
+             (resource.data.get('badgeScoreControl', false) == true &&
+              affected.hasAny(diamondProtectedGameFields()));
+    }
+
+    function badgeControlsGame(teamId, gameId) {
+      return get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId))
+               .data.get('badgeScoreControl', false) == true;
     }
 
     function isScorekeepingGameUpdate(teamId, gameId) {
@@ -807,7 +820,8 @@ service cloud.firestore {
                .hasOnly(scoreProjectionGameFields().concat(['updatedAt'])) &&
              isScoreMetadataAttributionValid() &&
              isDelegatedScorekeeperLifecycleTransitionAllowed() &&
-             isDelegatedScorekeeperCompletionAttributionValid();
+             isDelegatedScorekeeperCompletionAttributionValid() &&
+             !isBadgeScoreMutation();
     }
 
     function isVideographyGameUpdate(teamId, gameId) {
@@ -4016,7 +4030,7 @@ service cloud.firestore {
       match /games/{gameId} {
         allow read: if canReadGameDocument(teamId, gameId, resource.data);
         allow create: if isTeamOwnerOrAdmin(teamId) &&
-                         !request.resource.data.keys().hasAny(diamondServerOwnedGameFields()) &&
+                         !request.resource.data.keys().hasAny(diamondServerOwnedGameFields().concat(['badgeScoreControl'])) &&
                          !request.resource.data.keys().hasAny(replayArchiveFields());
         allow delete: if isTeamOwnerOrAdmin(teamId);
         // Keep the delegated scorekeeping path independent from the broader
@@ -4030,7 +4044,7 @@ service cloud.firestore {
                         !isReplayArchiveMutation() &&
                         (isTeamOwnerOrAdmin(teamId) ||
                          (isOfficialForGame() && isOfficialGameUpdate()) ||
-                         isVideographyGameUpdate(teamId, gameId));
+                         isVideographyGameUpdate(teamId, gameId)) && !isBadgeScoreMutation();
         // Replay links use a separate, bounded schema path so their provider
         // validation does not consume the expression budget of other roles.
         allow update: if isReplayArchiveOnlyUpdate() &&
@@ -4058,18 +4072,18 @@ service cloud.firestore {
         match /events/{eventId} {
           allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&
                          canReadGameSubcollectionDocument(teamId, gameId);
-          allow create, update: if !gameUsesDiamondScorebook(teamId, gameId) &&
+          allow create, update: if !badgeControlsGame(teamId, gameId) && !gameUsesDiamondScorebook(teamId, gameId) &&
                                   (isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId));
-          allow delete: if !gameUsesDiamondScorebook(teamId, gameId) && isTeamOwnerOrAdmin(teamId);
+          allow delete: if !badgeControlsGame(teamId, gameId) && !gameUsesDiamondScorebook(teamId, gameId) && isTeamOwnerOrAdmin(teamId);
         }
 
         // Aggregated stats subcollection
         match /aggregatedStats/{statId} {
           allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&
                          canReadGameSubcollectionDocument(teamId, gameId);
-          allow create, update: if !gameUsesDiamondScorebook(teamId, gameId) &&
+          allow create, update: if !badgeControlsGame(teamId, gameId) && !gameUsesDiamondScorebook(teamId, gameId) &&
                                   (isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId));
-          allow delete: if !gameUsesDiamondScorebook(teamId, gameId) &&
+          allow delete: if !badgeControlsGame(teamId, gameId) && !gameUsesDiamondScorebook(teamId, gameId) &&
                            isTeamOwnerOrAdmin(teamId);
         }
 
@@ -4077,9 +4091,9 @@ service cloud.firestore {
         match /teamStats/{statId} {
           allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&
                          (isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId));
-          allow create, update: if !gameUsesDiamondScorebook(teamId, gameId) &&
+          allow create, update: if !badgeControlsGame(teamId, gameId) && !gameUsesDiamondScorebook(teamId, gameId) &&
                                   (isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId));
-          allow delete: if !gameUsesDiamondScorebook(teamId, gameId) &&
+          allow delete: if !badgeControlsGame(teamId, gameId) && !gameUsesDiamondScorebook(teamId, gameId) &&
                            isTeamOwnerOrAdmin(teamId);
         }
 
@@ -4087,7 +4101,7 @@ service cloud.firestore {
         match /privatePlayerStats/{statId} {
           allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&
                          (isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId));
-          allow create, update, delete: if !gameUsesDiamondScorebook(teamId, gameId) &&
+          allow create, update, delete: if !badgeControlsGame(teamId, gameId) && !gameUsesDiamondScorebook(teamId, gameId) &&
                                           (isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId));
         }
 
@@ -4112,7 +4126,7 @@ service cloud.firestore {
           allow list: if !gameUsesDiamondScorebook(teamId, gameId) &&
                          canReadGameSubcollectionDocument(teamId, gameId) &&
                          canListLiveEvents(teamId, gameId);
-          allow create: if !gameUsesDiamondScorebook(teamId, gameId) &&
+          allow create: if !badgeControlsGame(teamId, gameId) && !gameUsesDiamondScorebook(teamId, gameId) &&
                            (isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId)) &&
                            hasValidLiveEventAttribution(request.resource.data);  // Stat tracker writes
           allow update, delete: if false;  // Events are immutable

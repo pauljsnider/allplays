@@ -1,6 +1,6 @@
 import { acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker-integrity.js?v=3';
 import { resolveSummaryRecipient } from './live-tracker-email.js?v=2';
-import { buildFinishCompletionPlan, executeFinishNavigationPlan } from './live-tracker-finish.js?v=4';
+import { buildFinishCompletionPlan, executeFinishNavigationPlan } from './live-tracker-finish.js?v=6';
 
 
 const TRANSIENT_FINALIZATION_ERROR_CODES = new Set([
@@ -279,6 +279,8 @@ export async function runSaveAndCompleteWorkflow({
     sendEmail,
     teamId: currentTeamId,
     gameId: currentGameId,
+    isHome: currentGame?.isHome !== false,
+    isSharedMirror: !!currentGame?.sharedScheduleSourceTeamId,
     teamName: currentTeam?.name || '',
     opponentName: currentGame?.opponent || 'Unknown Opponent',
     recipientEmail,

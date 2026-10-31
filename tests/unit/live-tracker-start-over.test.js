@@ -1,3 +1,4 @@
+import { getTeamScorePair } from '../../js/season-record.js';
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { hydrateOpponentStats } from '../../js/live-tracker-opponent-stats.js';
@@ -181,7 +182,7 @@ function replaceNamedImportByModulePath(source, modulePath, replacement) {
 function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8')) {
   const authHook = `checkAuth(async (user) => {\n  if (!user) {\n    window.location.href = 'login.html';\n    return;\n  }\n  currentUser = user;\n  await init();\n});`;
 
-  let rewritten = source;
+  let rewritten = source.replace("import { getTeamScorePair } from './season-record.js';", `const getTeamScorePair = ${getTeamScorePair.toString()};`);
   rewritten = replaceNamedImportByModulePath(
     rewritten,
     './db.js',

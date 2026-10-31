@@ -94,6 +94,7 @@ export function buildTrackStatsheetApplyPlan({
         aggregatedStatsWrites,
         gameUpdate: {
             homeScore: Number(homeScore || 0) || 0,
+            scoreOrientation: 'team-opponent',
             awayScore: Number(awayScore || 0) || 0,
             opponentStats,
             status: 'completed',

@@ -671,11 +671,12 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getGameDayTeamContext, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, setGameLiveStatus, subscribeLiveChat, postLiveChatMessage, getLiveEvents } from './js/db.js?v=4433206';
+        import { getTeamScorePair } from './js/season-record.js';
+        import { getGameDayTeamContext, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, setGameLiveStatus, subscribeLiveChat, postLiveChatMessage, getLiveEvents } from './js/db.js?v=4433207';
         import { db } from './js/firebase.js?v=33';
         import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './js/firebase.js?v=33';
-        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443382';
-        import { resolveOpponentDisplayName, resolveLiveStatConfig, resolveLiveStatColumns, resolveGoalSportTrackerProfile } from './js/live-game-state.js?v=53';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443383';
+        import { resolveOpponentDisplayName, resolveLiveStatConfig, resolveLiveStatColumns, resolveGoalSportTrackerProfile } from './js/live-game-state.js?v=55';
         import { createFieldState, setPlayerFieldStatus, startFieldClock, pauseFieldClock, getPlayerFieldElapsedMs, getLiveLineup } from './js/live-tracker-field-status.js?v=1';
         import { persistThenPublishLiveLineup } from './js/live-tracker-lineup-publish.js?v=1';
         import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, resolveTrackLiveClockResume, buildTrackLiveResumeState, runTrackLiveResetPersistence } from './js/track-live-state.js?v=5';
@@ -686,7 +687,7 @@
         import { applyVolleyballServeOutcome, createVolleyballUndoState, restoreVolleyballUndoState, isVolleyballSport } from './js/live-scorekeeping-volleyball.js?v=2';
 
         import { applyBaseballScorekeepingAction, createBaseballLiveState, getBaseballPeriodLabel, getBaseballSituationSummary, isBaseballScorekeepingSport, parseBaseballPeriodLabel } from './js/live-scorekeeping-baseball.js?v=1';
-        import { checkAuth } from './js/auth.js?v=4433210';
+        import { checkAuth } from './js/auth.js?v=4433211';
         import { getApp } from './js/vendor/firebase-app.js';
         import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, removeGameSummaryLine, buildGameNoteLogText, buildGoalSportNoteText } from './js/live-tracker-notes.js?v=3';
         import { collectTournamentAdvancementPatches } from './js/tournament-brackets.js?v=1';
@@ -902,8 +903,9 @@
 
                 document.getElementById('game-title').textContent = `vs. ${escapeHtml(resolveOpponentDisplayName(game))}`;
                 document.getElementById('game-meta').textContent = escapeHtml(team.name);
-                homeScore = game.homeScore || 0;
-                awayScore = game.awayScore || 0;
+                const scores = getTeamScorePair(game);
+                homeScore = scores.teamScore || 0;
+                awayScore = scores.opponentScore || 0;
                 gameState.servingTeam = game.servingTeam === 'away' ? 'away' : 'home';
                 updateScoreDisplay();
                 gameState.playerFieldStatus = createFieldState(players);
@@ -1604,7 +1606,7 @@
                 const servingTeamChanged = isVolleyballGame() && gameState.servingTeam !== liveSync.lastSyncedServingTeam;
                 if (homeScore === liveSync.lastSyncedHome && awayScore === liveSync.lastSyncedAway && !servingTeamChanged) return;
                 try {
-                    const update = { homeScore, awayScore };
+                    const update = { homeScore, awayScore, scoreOrientation: 'team-opponent' };
                     if (isVolleyballGame()) update.servingTeam = gameState.servingTeam;
                     await updateGame(currentTeamId, currentGameId, update);
                     liveSync.lastSyncedHome = homeScore;
