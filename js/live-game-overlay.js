@@ -18,7 +18,7 @@ import {
     reconcileOverlayLiveEvents,
     resolvePublicProjectionVideoOptions,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=31';
+} from './live-game-overlay-model.js?v=32';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -539,8 +539,8 @@ function renderScoreboard() {
         : uiState.isDemo ? state.gameClockMs : getDisplayedLiveClockMs();
     elements.homeName.textContent = state.homeName;
     elements.awayName.textContent = state.awayName;
-    renderTeamPhoto(elements.homeTeamPhoto, state.team?.photoUrl, `${state.homeName} team photo`);
-    renderTeamPhoto(elements.awayTeamPhoto, state.game?.opponentTeamPhoto, `${state.awayName} team photo`);
+    renderTeamPhoto(elements.homeTeamPhoto, state.homePhoto, `${state.homeName} team photo`);
+    renderTeamPhoto(elements.awayTeamPhoto, state.awayPhoto, `${state.awayName} team photo`);
     elements.homeScore.textContent = String(state.homeScore);
     elements.awayScore.textContent = String(state.awayScore);
     elements.period.textContent = state.period;

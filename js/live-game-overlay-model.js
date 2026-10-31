@@ -488,8 +488,8 @@ function scoreboardNames(team, game) {
     const opponent = toText(game.opponent || game.opponentTeamName || (game.isHome === false ? game.homeTeamName : game.awayTeamName), 'Opponent');
     const venueAway = getTeamScorePair({ ...game, homeScore: 0, awayScore: 1 }).teamScore === 1;
     return venueAway
-        ? { homeName: opponent, awayName: managed }
-        : { homeName: managed, awayName: opponent };
+        ? { homeName: opponent, awayName: managed, homePhoto: game.opponentTeamPhoto, awayPhoto: team.photoUrl }
+        : { homeName: managed, awayName: opponent, homePhoto: team.photoUrl, awayPhoto: game.opponentTeamPhoto };
 }
 
 export function createOverlayState({ team = {}, game = {}, players = [], events = [], chatMessages = [] } = {}) {

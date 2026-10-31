@@ -36,7 +36,7 @@ import {
   rebaseReplayStartTimeMs
 } from './live-game-replay.js?v=3';
 import { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, hasActiveLiveLifecycle, hasCompletedReplayLifecycle, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=443319';
-import { resolvePublicProjectionVideoOptions, getOverlayLiveClockMs } from './live-game-overlay-model.js?v=31';
+import { resolvePublicProjectionVideoOptions, getOverlayLiveClockMs } from './live-game-overlay-model.js?v=32';
 import { buildGameReportShareUrl, buildGameWatchShareUrl } from './game-share-links.js?v=1';
 import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
