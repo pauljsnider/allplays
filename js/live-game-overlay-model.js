@@ -1,3 +1,4 @@
+import { normalizeLiveEventScores } from './live-event-score-orientation.js?v=1';
 import { getTeamScorePair } from './season-record.js';
 import { getGameReplayLifecycle, normalizeYouTubeReplayUrl } from './game-replay-video.js?v=3';
 
@@ -493,7 +494,7 @@ function scoreboardNames(team, game) {
 
 export function createOverlayState({ team = {}, game = {}, players = [], events = [], chatMessages = [] } = {}) {
     const normalizedPlayers = players.map(normalizePlayer);
-    const normalizedEvents = sortNewestFirst(events.map(normalizeOverlayEvent));
+    const normalizedEvents = sortNewestFirst(events.map((event, index) => normalizeOverlayEvent(normalizeLiveEventScores(game, event), index)));
     const normalizedChat = sortNewestFirst(chatMessages.map(normalizeChatMessage));
     const liveBaseline = createLiveBaseline(game);
     return {
@@ -851,6 +852,7 @@ function applyEventStat(state, event) {
 export function applyOverlayEvents(state, incomingEvents = []) {
     if (!state) return state;
     incomingEvents.forEach((rawEvent, index) => {
+        rawEvent = normalizeLiveEventScores(state.game, rawEvent);
         const event = normalizeOverlayEvent(rawEvent, index);
         if (state.eventIds.has(event.id)) return;
 

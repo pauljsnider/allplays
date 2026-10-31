@@ -133,7 +133,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
         expect(html).toMatch(/\.panel-tab\s*\{[^}]*min-width:\s*44px;/);
-        expect(html).toContain('js/live-game-overlay.js?v=60');
+        expect(html).toContain('js/live-game-overlay.js?v=61');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
@@ -141,10 +141,10 @@ describe('live game overlay page', () => {
         expect(source).toContain("params.replay === 'true'");
         expect(source).toContain('startDemoReplayMode');
         expect(source).toContain("return import('./db.js?v=4433207')");
-        expect(source).toContain("import('./live-game-state.js?v=54')");
+        expect(source).toContain("import('./live-game-state.js?v=55')");
         expect(source).toContain('stateTools.applyResetEventState');
         expect(source).toContain('reconcileOverlayLiveEvents');
-        expect(source).toContain("from './live-game-overlay-model.js?v=30'");
+        expect(source).toContain("from './live-game-overlay-model.js?v=31'");
         expect(source).toContain("import('./live-game-video.js?v=443319')");
         expect(source).not.toContain('loadPublicGameResetIdentity');
         expect(source).toContain('resolvePublicProjectionVideoOptions');
@@ -160,7 +160,7 @@ describe('live game overlay page', () => {
         expect(source).toContain('syncLiveClockAnchor');
         expect(source).toContain("import('./auth.js?v=4433211')");
         expect(source).toContain("import('./live-game-chat.js?v=4')");
-        expect(currentLiveGameSource).toContain("from './live-game-overlay-model.js?v=30'");
+        expect(currentLiveGameSource).toContain("from './live-game-overlay-model.js?v=31'");
         expect(currentLiveGameSource).toContain("from './live-game-video.js?v=443319'");
         expect(currentLiveGameSource).toContain("from './live-game-chat.js?v=4'");
         expect(modelSource).toContain("from './game-replay-video.js?v=3'");

@@ -53,3 +53,5 @@ Historical game reads reuse the season-record orientation contract. Badge claim 
 The anonymous client mapper marks the venue score fields it reconstructs from the public API totals, so viewer labels cannot fall back to historical team/opponent ordering. Linked-team schedule mirrors normalize source scores before reversing team perspective, preserving opposite win/loss results.
 
 Clock display is client-reconciled between commands: the legacy viewer advances from timestamped snapshots and stops on Pause/period changes; replay retains its own time. React maps numeric badge epochs to dates and keeps actively live clocks advancing through periods longer than ten minutes.
+
+Replays spanning a legacy-to-badge handoff normalize each event to the viewer’s score order. Unmarked legacy events retain team/opponent semantics; historical React `app-live-*` IDs and badge-source events retain venue semantics; explicit event orientation takes precedence. Conversion is idempotent and leaves Diamond ledger events untouched.

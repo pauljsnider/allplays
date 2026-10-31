@@ -56,8 +56,8 @@ describe('RSVP precedence cache delivery', () => {
         const consumerVersions = {
             'admin.html': 'js/admin.js?v=443368',
             'certificates.html': 'js/certificates/studio.js?v=443377',
-            'live-game.html': 'js/live-game.js?v=443373',
-            'live-tracker.html': 'js/live-tracker.js?v=443337',
+            'live-game.html': 'js/live-game.js?v=443374',
+            'live-tracker.html': 'js/live-tracker.js?v=443338',
             'team-fees.html': 'js/team-fees-admin.js?v=443373',
             'team-media.html': 'js/team-media.js?v=44550',
             'track-basketball.html': 'js/track-basketball.js?v=443332',
@@ -73,7 +73,7 @@ describe('RSVP precedence cache delivery', () => {
         expect(readRepoFile('js/utils.js')).toContain("import('./global-search.js?v=443364')");
         expect(readRepoFile('js/db.js')).toContain("from './utils.js?v=443383';");
         expect(readRepoFile('parent-dashboard.html')).toContain('js/utils.js?v=443383');
-        expect(readRepoFile('js/live-game.js')).toContain("from './live-game-state.js?v=54';");
+        expect(readRepoFile('js/live-game.js')).toContain("from './live-game-state.js?v=55';");
     });
 
     it('guards the shared utils cache key and all of its production consumers', () => {

@@ -34,7 +34,7 @@ function createBadgeApi({ db, auth, HttpsError, verifySensitive, timestamp }) {
                     next.liveClockRunning = false;
                     tx.update(ref, { ...next, badgeScoreControl: false });
                     tx.delete(db.doc(`badgeScoreLocks/${hash(data.teamId + '/' + data.gameId)}`));
-                    tx.set(ref.collection('liveEvents').doc(), { type: 'clock_pause', description: 'Badge control released', homeScore: next.homeScore, awayScore: next.awayScore, gameClockMs: next.liveClockMs, period: next.liveClockPeriod, source: 'badge-score-controller', liveClockRunning: next.liveClockRunning, timestamp: timestamp(), createdAt: timestamp() });
+                    tx.set(ref.collection('liveEvents').doc(), { type: 'clock_pause', description: 'Badge control released', homeScore: next.homeScore, awayScore: next.awayScore, gameClockMs: next.liveClockMs, period: next.liveClockPeriod, source: 'badge-score-controller', scoreOrientation: 'venue', liveClockRunning: next.liveClockRunning, timestamp: timestamp(), createdAt: timestamp() });
                 });
                 return { released: true };
             }
@@ -113,7 +113,7 @@ function createBadgeApi({ db, auth, HttpsError, verifySensitive, timestamp }) {
                         state.liveClockRunning = false;
                         tx.update(gameRef, { ...state, badgeScoreControl: false });
                         tx.delete(lockRef);
-                        tx.set(gameRef.collection('liveEvents').doc(), { type: 'clock_pause', description: 'Badge control released', homeScore: state.homeScore, awayScore: state.awayScore, gameClockMs: state.liveClockMs, period: state.liveClockPeriod, source: 'badge-score-controller', liveClockRunning: state.liveClockRunning, timestamp: timestamp(), createdAt: timestamp() });
+                        tx.set(gameRef.collection('liveEvents').doc(), { type: 'clock_pause', description: 'Badge control released', homeScore: state.homeScore, awayScore: state.awayScore, gameClockMs: state.liveClockMs, period: state.liveClockPeriod, source: 'badge-score-controller', scoreOrientation: 'venue', liveClockRunning: state.liveClockRunning, timestamp: timestamp(), createdAt: timestamp() });
                     } else if (body.action !== 'state') {
                         check(typeof body.requestId === 'string' && /^[a-f0-9]{32}$/.test(body.requestId), 'Invalid request ID.', 400);
                         const receiptRef = lockRef.collection('receipts').doc(body.requestId);
@@ -132,7 +132,7 @@ function createBadgeApi({ db, auth, HttpsError, verifySensitive, timestamp }) {
                             tx.update(gameRef, { ...state, liveHasData: true, scoreUpdatedAt: timestamp(), scoreUpdatedBy: device.uid });
                             tx.set(lockRef, control);
                             tx.create(receiptRef, { fingerprint, at: now });
-                            tx.set(gameRef.collection('liveEvents').doc(), { type: applied.type, description: `Badge: ${body.action}`, homeScore: state.homeScore, awayScore: state.awayScore, gameClockMs: state.liveClockMs, period: state.liveClockPeriod, source: 'badge-score-controller', liveClockRunning: state.liveClockRunning, timestamp: timestamp(), createdAt: timestamp() });
+                            tx.set(gameRef.collection('liveEvents').doc(), { type: applied.type, description: `Badge: ${body.action}`, homeScore: state.homeScore, awayScore: state.awayScore, gameClockMs: state.liveClockMs, period: state.liveClockPeriod, source: 'badge-score-controller', scoreOrientation: 'venue', liveClockRunning: state.liveClockRunning, timestamp: timestamp(), createdAt: timestamp() });
                         }
                     }
                 }

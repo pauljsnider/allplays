@@ -77,6 +77,6 @@ describe('basketball tracker event log HTML safety', () => {
         const livePage = readFileSync(new URL('../../live-tracker.html', import.meta.url), 'utf8');
 
         expect(betaPage).toContain('src="js/track-basketball.js?v=443332"');
-        expect(livePage).toContain('src="js/live-tracker.js?v=443337"');
+        expect(livePage).toContain('src="js/live-tracker.js?v=443338"');
     });
 });

@@ -1,3 +1,4 @@
+import { normalizeLiveEventScores } from './live-event-score-orientation.js?v=1';
 import { escapeHtml } from './utils.js?v=443383';
 import { getDefaultLivePeriod, getGoalSportProfile } from './live-sport-config.js';
 
@@ -271,6 +272,7 @@ export function renderOpponentStatsCards({
 }
 
 export function applyResetEventState(currentState, event) {
+  event = normalizeLiveEventScores(currentState?.game, event);
   const period = event?.period || currentState?.period || getDefaultLivePeriod({
     sport: event?.sport || currentState?.sport,
     periods: event?.periods || currentState?.periods
@@ -302,6 +304,7 @@ export function applyResetEventState(currentState, event) {
 }
 
 export function applyViewerEventToState(currentState = {}, event = {}, options = {}) {
+  event = normalizeLiveEventScores(currentState.game, event);
   const nextState = {
     ...currentState,
     events: Array.isArray(currentState?.events) ? currentState.events : [],
