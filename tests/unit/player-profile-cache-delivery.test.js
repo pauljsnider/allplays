@@ -15,7 +15,7 @@ describe('player profile cache delivery', () => {
             'live-tracker.html': 'js/live-tracker.js?v=443338',
             'team-fees.html': 'js/team-fees-admin.js?v=443373',
             'team-media.html': 'js/team-media.js?v=44550',
-            'track-basketball.html': 'js/track-basketball.js?v=443332',
+            'track-basketball.html': 'js/track-basketball.js?v=443333',
             'tracking-items.html': 'js/tracking-items-admin.js?v=443371'
         };
 
