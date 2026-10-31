@@ -105,6 +105,7 @@ function createBadgeApi({ db, auth, HttpsError, verifySensitive, timestamp }) {
                         control = { deviceId: id, sessionId: crypto.randomBytes(16).toString('hex'), revision: 0, history: [] };
                         tx.set(lockRef, control);
                         tx.update(gameRef, { homeScore: state.homeScore, awayScore: state.awayScore, scoreOrientation: 'venue', badgeScoreControl: true });
+                        tx.set(gameRef.collection('liveEvents').doc(), { type: 'clock_sync', description: 'Badge control acquired', homeScore: state.homeScore, awayScore: state.awayScore, gameClockMs: state.liveClockMs, period: state.liveClockPeriod, source: 'badge-score-controller', scoreOrientation: 'venue', liveClockRunning: state.liveClockRunning, timestamp: timestamp(), createdAt: timestamp() });
                     }
                 } else {
                     check(game.badgeScoreControl === true && control?.deviceId === id, 'Choose the game and take control again.', 409);

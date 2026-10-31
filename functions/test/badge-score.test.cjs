@@ -137,8 +137,16 @@ test('claim normalizes historical away scores once and preserves season result t
     assert.equal(claimed.data.awayScore, 3);
     assert.equal(f.rows.get('teams/t/games/g').scoreOrientation, 'venue');
     assert.equal(f.rows.get('teams/t/games/g').homeScore, 3);
+    const claimEvents = () => [...f.rows.entries()].filter(([key]) => key.includes('/liveEvents/'));
+    assert.equal(claimEvents().length, 1);
+    const event = claimEvents()[0][1];
+    assert.deepEqual([event.homeScore, event.awayScore, event.scoreOrientation, event.liveClockRunning], [3, 7, 'venue', false]);
+    const { applyViewerEventToState } = await import('../../js/live-game-state.js');
+    const viewer = applyViewerEventToState({ game: f.rows.get('teams/t/games/g'), homeScore: 7, awayScore: 3, stats: {}, opponentStats: {}, events: [] }, { id: 'claim', ...event }).state;
+    assert.deepEqual([viewer.homeScore, viewer.awayScore], [3, 7]);
     const again = await f.send({ action: 'claim' });
     assert.equal(again.data.homeScore, 7);
+    assert.equal(claimEvents().length, 1);
     const scored = await f.send({ action: 'score', side: 'homeScore', delta: 1, revision: 0, sessionId: claimed.data.sessionId, requestId: 'f'.repeat(32) });
     assert.equal(scored.data.homeScore, 8);
     await f.send({ action: 'release', sessionId: claimed.data.sessionId });
