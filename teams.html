@@ -178,7 +178,21 @@
           Retry loading teams
         </button>
       `;
-      wrapper.querySelector('button')?.addEventListener('click', onRetry);
+      const retryButton = wrapper.querySelector('button');
+      let retryPending = false;
+      retryButton?.addEventListener('click', async () => {
+        if (retryPending) return;
+        retryPending = true;
+        retryButton.disabled = true;
+        try {
+          await onRetry();
+        } finally {
+          if (wrapper.isConnected) {
+            retryPending = false;
+            retryButton.disabled = false;
+          }
+        }
+      });
       const loadMore = document.getElementById('load-more-public-teams');
       if (loadMore) {
         loadMore.before(wrapper);
@@ -318,6 +332,7 @@
           `;
         }).join('');
 
+        document.getElementById('teams-pagination-error')?.remove();
         container.innerHTML = markup;
 
         renderLoadMoreButton(container, {
