@@ -1,5 +1,6 @@
 const crypto = require('node:crypto');
 const {
+  CALENDAR_FEED_RECURRING_MASTER_MAX_DOCUMENTS,
   getCalendarFeedDateWindow
 } = require('./calendar-feed-window-core.cjs');
 
@@ -650,6 +651,84 @@ function buildTeamCalendarIcs({ teamId, team = {}, events = [], now = new Date()
   return lines.map(foldIcsLine).join('\r\n');
 }
 
+function createTeamCalendarFeedRequestHandler(
+  {
+    resolveCredential,
+    getGamesQuery,
+    getRecurringMastersQuery,
+    buildIcs = buildTeamCalendarIcs,
+    logger = console,
+    recurringMasterMaxDocuments = CALENDAR_FEED_RECURRING_MASTER_MAX_DOCUMENTS
+  } = {}
+) {
+  if (
+    typeof resolveCredential !== 'function'
+    || typeof getGamesQuery !== 'function'
+    || typeof getRecurringMastersQuery !== 'function'
+  ) {
+    throw new TypeError('Calendar feed handler requires credential and query dependencies');
+  }
+  if (
+    !Number.isSafeInteger(recurringMasterMaxDocuments)
+    || recurringMasterMaxDocuments < 1
+    || recurringMasterMaxDocuments >= Number.MAX_SAFE_INTEGER
+  ) {
+    throw new TypeError('Calendar feed recurring-master maximum must be a positive safe integer');
+  }
+
+  return async (req, res) => {
+    if (req.method !== 'GET') {
+      res.status(405).send('Method not allowed');
+      return;
+    }
+
+    try {
+      const authorization = await resolveCredential(req.query || {});
+      if (!authorization.allowed) {
+        res.status(authorization.status).send(authorization.message);
+        return;
+      }
+      const { teamId } = authorization.request;
+      const { team } = authorization;
+
+      const [eventsSnap, recurringMastersSnap] = await Promise.all([
+        getGamesQuery(teamId).get(),
+        getRecurringMastersQuery(teamId).get()
+      ]);
+      if (recurringMastersSnap.docs.length > recurringMasterMaxDocuments) {
+        logger.error('Calendar feed recurring-master limit exceeded', {
+          teamId,
+          recurringMasterDocumentBudget: recurringMasterMaxDocuments
+        });
+        res.set('Cache-Control', 'no-store');
+        res.status(503).send('Calendar feed temporarily unavailable');
+        return;
+      }
+
+      const recurringPracticeDocs = recurringMastersSnap.docs.filter((docSnap) => {
+        const event = docSnap.data() || {};
+        return event.type === 'practice' && event.isSeriesMaster === true && Boolean(event.recurrence);
+      });
+      const eventDocs = new Map(
+        [...eventsSnap.docs, ...recurringPracticeDocs].map((docSnap) => [docSnap.id, docSnap])
+      );
+      const events = [...eventDocs.values()].map((docSnap) => {
+        const game = { id: docSnap.id, ...(docSnap.data() || {}) };
+        game.officiating = Array.isArray(game.officiating) ? game.officiating : (Array.isArray(game.officials) ? game.officials : []);
+        return game;
+      });
+      const icsText = buildIcs({ teamId, team, events });
+
+      res.set('Content-Type', 'text/calendar; charset=utf-8');
+      res.set('Content-Disposition', 'inline; filename="allplays-team-schedule.ics"');
+      res.set('Cache-Control', 'private, max-age=300');
+      res.status(200).send(icsText);
+    } catch (error) {
+      logger.error('Failed to build team calendar feed:', error);
+      res.status(500).send('Calendar feed failed');
+    }
+  };
+}
 module.exports = {
   CALENDAR_FEED_ID_MAX_LENGTH,
   CALENDAR_FEED_TOKEN_PATTERN,
@@ -657,6 +736,7 @@ module.exports = {
   calendarTokenLookupMatchesRequest,
   calendarTokenHasTeamAccess,
   createTeamCalendarFeedCredentialResolver,
+  createTeamCalendarFeedRequestHandler,
   expandRecurringCalendarEvent,
   escapeIcsText,
   formatIcsDate,

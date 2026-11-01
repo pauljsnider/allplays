@@ -1,4 +1,5 @@
 const MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
+const CALENDAR_FEED_RECURRING_MASTER_MAX_DOCUMENTS = 500;
 const CALENDAR_FEED_LOOKBACK_DAYS = 90;
 const CALENDAR_FEED_LOOKAHEAD_DAYS = 365;
 
@@ -26,15 +27,26 @@ function buildCalendarFeedGamesQuery(gamesCollection, { now = new Date() } = {})
     .orderBy('date');
 }
 
-function buildCalendarFeedRecurringMastersQuery(gamesCollection) {
+function buildCalendarFeedRecurringMastersQuery(
+  gamesCollection,
+  { maxDocuments = CALENDAR_FEED_RECURRING_MASTER_MAX_DOCUMENTS } = {}
+) {
   if (!gamesCollection || typeof gamesCollection.where !== 'function') {
     throw new TypeError('Calendar feed games collection must support recurring-master queries');
   }
+  if (!Number.isSafeInteger(maxDocuments) || maxDocuments < 1 || maxDocuments >= Number.MAX_SAFE_INTEGER) {
+    throw new TypeError('Calendar feed recurring-master maximum must be a positive safe integer');
+  }
 
-  return gamesCollection.where('isSeriesMaster', '==', true);
+  const query = gamesCollection.where('isSeriesMaster', '==', true);
+  if (!query || typeof query.limit !== 'function') {
+    throw new TypeError('Calendar feed recurring-master query must support limits');
+  }
+  return query.limit(maxDocuments + 1);
 }
 
 module.exports = {
+  CALENDAR_FEED_RECURRING_MASTER_MAX_DOCUMENTS,
   CALENDAR_FEED_LOOKAHEAD_DAYS,
   CALENDAR_FEED_LOOKBACK_DAYS,
   buildCalendarFeedGamesQuery,

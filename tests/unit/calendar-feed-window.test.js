@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const {
+    CALENDAR_FEED_RECURRING_MASTER_MAX_DOCUMENTS,
     CALENDAR_FEED_LOOKAHEAD_DAYS,
     CALENDAR_FEED_LOOKBACK_DAYS,
     buildCalendarFeedGamesQuery,
@@ -40,15 +41,44 @@ describe('calendar feed game query window', () => {
 
     it('loads recurring masters independently of their original start date', () => {
         const query = {
-            where: vi.fn()
+            where: vi.fn(),
+            limit: vi.fn()
         };
         query.where.mockReturnValue(query);
+        query.limit.mockReturnValue(query);
 
         const result = buildCalendarFeedRecurringMastersQuery(query);
 
         expect(query.where).toHaveBeenCalledWith('isSeriesMaster', '==', true);
+        expect(query.limit).toHaveBeenCalledWith(CALENDAR_FEED_RECURRING_MASTER_MAX_DOCUMENTS + 1);
         expect(result).toBe(query);
     });
+
+    it('uses the configured recurring-master maximum plus one as an overflow probe', () => {
+        const query = {
+            where: vi.fn(),
+            limit: vi.fn()
+        };
+        query.where.mockReturnValue(query);
+        query.limit.mockReturnValue(query);
+
+        buildCalendarFeedRecurringMastersQuery(query, { maxDocuments: 12 });
+
+        expect(query.limit).toHaveBeenCalledWith(13);
+    });
+
+    it.each([0, -1, 1.5, '12', Number.MAX_SAFE_INTEGER])(
+        'rejects an invalid recurring-master document maximum (%j)',
+        (maxDocuments) => {
+            const query = {
+                where: vi.fn().mockReturnThis(),
+                limit: vi.fn().mockReturnThis()
+            };
+
+            expect(() => buildCalendarFeedRecurringMastersQuery(query, { maxDocuments }))
+                .toThrow('positive safe integer');
+        }
+    );
 
     it('rejects invalid anchors and unqueryable collections', () => {
         expect(() => getCalendarFeedDateWindow('not-a-date')).toThrow('requires a valid date');
