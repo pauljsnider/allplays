@@ -1471,7 +1471,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
             />
           ) : view === 'packets' ? (
             <>
-            {resourcePacketsAvailable() && auth.user && <ResourcePacketQueue uid={auth.user.uid} children={children} staffTeams={staffTeams} />}
+            {resourcePacketsAvailable() && auth.user && <ResourcePacketQueue uid={auth.user.uid} linkedChildren={children} staffTeams={staffTeams} />}
             <PracticePacketsPanel
               rows={packetRows}
               totalCount={packetWindow.totalCount}

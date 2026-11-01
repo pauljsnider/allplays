@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PlayerResourcePackets } from './PlayerResourcePackets';
 import type { AuthState } from '../lib/types';
@@ -10,7 +10,9 @@ vi.mock('../lib/resourcePacketsService', () => ({
   loadResourcePacketFamily: mocks.family
 }));
 vi.mock('../components/schedule/ResourcePacketQueue', () => ({
-  ResourcePacketQueue: ({ children }: { children: { playerId: string }[] }) => <div>Assignment for {children[0].playerId}</div>
+  ResourcePacketQueue: ({ linkedChildren }: { linkedChildren: { playerId: string; playerName: string; teamName: string }[] }) => (
+    <div>Assignment for {linkedChildren[0].playerId} · {linkedChildren[0].playerName} · {linkedChildren[0].teamName}</div>
+  )
 }));
 const auth = { user: { uid: 'parent' }, loading: false } as AuthState;
 describe('assignment notification destination', () => {
@@ -30,7 +32,7 @@ describe('assignment notification destination', () => {
         <PlayerResourcePackets auth={auth} />
       </MemoryRouter>
     );
-    await screen.findByText('Assignment for one');
+    await screen.findByText('Assignment for one · One · Team');
     expect(screen.queryByRole('link', { name: /Two/ })).not.toBeInTheDocument();
     expect(mocks.family).toHaveBeenCalledWith('team', 'one', undefined, 'packet');
   });
@@ -55,6 +57,19 @@ describe('assignment notification destination', () => {
       </MemoryRouter>
     );
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Access removed'));
-    expect(screen.queryByText('Assignment for one')).not.toBeInTheDocument();
+    expect(screen.queryByText('Assignment for one · One · Team')).not.toBeInTheDocument();
+  });
+  it('resolves real child and team context on a direct task route', async () => {
+    render(
+      <MemoryRouter initialEntries={['/players/team/one/resources?assignmentId=packet']}>
+        <Routes>
+          <Route path="/players/:teamId/:playerId/resources" element={<PlayerResourcePackets auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+    expect(await screen.findByText('Assignment for one · One · Team')).toBeInTheDocument();
+    expect(screen.queryByText(/Selected (team|player)/)).not.toBeInTheDocument();
+    expect(mocks.players).toHaveBeenCalledTimes(1);
+    expect(mocks.family).not.toHaveBeenCalled();
   });
 });
