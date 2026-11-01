@@ -3,6 +3,7 @@ import {
     addCalendarLoadedRange,
     createLatestCalendarRangeLoader,
     getMissingCalendarLoadRanges,
+    mapWithConcurrency,
     normalizeCalendarLoadRange
 } from '../../js/calendar-load-window.js';
 
@@ -60,5 +61,31 @@ describe('calendar load window', () => {
         finishFirstLoad();
         await Promise.all([firstPromise, overlappingPromise]);
         expect(loaded).toEqual([january, february]);
+    });
+
+    it('maps deferred items with a fixed concurrency limit and preserves order', async () => {
+        const items = Array.from({ length: 30 }, (_, index) => index);
+        let active = 0;
+        let peak = 0;
+        const mapped = mapWithConcurrency(items, async (item) => {
+            active += 1;
+            peak = Math.max(peak, active);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            active -= 1;
+            return item * 2;
+        }, 4);
+
+        await expect(mapped).resolves.toEqual(items.map((item) => item * 2));
+        expect(peak).toBe(4);
+    });
+
+    it('continues queued work after a mapper rejection and rejects with that error', async () => {
+        const loaded = [];
+        await expect(mapWithConcurrency([1, 2, 3, 4], async (item) => {
+            loaded.push(item);
+            if (item === 2) throw new Error('team failed');
+            return item;
+        }, 2)).rejects.toThrow('team failed');
+        expect(loaded).toEqual([1, 2, 3, 4]);
     });
 });
