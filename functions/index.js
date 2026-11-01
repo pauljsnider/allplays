@@ -204,8 +204,8 @@ const {
   normalizePublicRsvpResponse
 } = require('./public-rsvp-idempotency-core.cjs');
 const {
-  buildTeamCalendarIcs,
   createTeamCalendarFeedCredentialResolver,
+  createTeamCalendarFeedRequestHandler,
   getCalendarTokenHolderId
 } = require('./team-calendar-feed-core.cjs');
 const {
@@ -10236,48 +10236,13 @@ const getPrivateTeamCalendarFeedTokenHandler = createGetOrCreatePrivateTeamCalen
 
 exports.getPrivateTeamCalendarFeedToken = functions.https.onCall(getPrivateTeamCalendarFeedTokenHandler);
 
-exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
-  if (req.method !== 'GET') {
-    res.status(405).send('Method not allowed');
-    return;
-  }
-
-  try {
-    const authorization = await resolveTeamCalendarFeedCredential(req.query || {});
-    if (!authorization.allowed) {
-      res.status(authorization.status).send(authorization.message);
-      return;
-    }
-    const { teamId } = authorization.request;
-    const { team } = authorization;
-
-    const [eventsSnap, recurringMastersSnap] = await Promise.all([
-      getCalendarFeedGamesQuery(teamId).get(),
-      getCalendarFeedRecurringMastersQuery(teamId).get()
-    ]);
-    const recurringPracticeDocs = recurringMastersSnap.docs.filter((docSnap) => {
-      const event = docSnap.data() || {};
-      return event.type === 'practice' && event.isSeriesMaster === true && Boolean(event.recurrence);
-    });
-    const eventDocs = new Map(
-      [...eventsSnap.docs, ...recurringPracticeDocs].map((docSnap) => [docSnap.id, docSnap])
-    );
-    const events = [...eventDocs.values()].map((docSnap) => {
-      const game = { id: docSnap.id, ...(docSnap.data() || {}) };
-      game.officiating = Array.isArray(game.officiating) ? game.officiating : (Array.isArray(game.officials) ? game.officials : []);
-      return game;
-    });
-    const icsText = buildTeamCalendarIcs({ teamId, team, events });
-
-    res.set('Content-Type', 'text/calendar; charset=utf-8');
-    res.set('Content-Disposition', 'inline; filename="allplays-team-schedule.ics"');
-    res.set('Cache-Control', 'private, max-age=300');
-    res.status(200).send(icsText);
-  } catch (error) {
-    console.error('Failed to build team calendar feed:', error);
-    res.status(500).send('Calendar feed failed');
-  }
+const teamCalendarFeedHandler = createTeamCalendarFeedRequestHandler({
+  resolveCredential: resolveTeamCalendarFeedCredential,
+  getGamesQuery: getCalendarFeedGamesQuery,
+  getRecurringMastersQuery: getCalendarFeedRecurringMastersQuery
 });
+
+exports.teamCalendarFeed = functions.https.onRequest(teamCalendarFeedHandler);
 
 const FAMILY_SHARE_GAME_PROJECTION_FIELDS = [
   'type',

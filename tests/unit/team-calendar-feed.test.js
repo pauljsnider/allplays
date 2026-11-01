@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 
@@ -8,6 +8,7 @@ const {
   calendarTokenLookupMatchesRequest,
   calendarTokenHasTeamAccess,
   createTeamCalendarFeedCredentialResolver,
+  createTeamCalendarFeedRequestHandler,
   expandRecurringCalendarEvent,
   formatRsvpSummary,
   getCalendarTokenHolderId,
@@ -18,7 +19,92 @@ const {
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const feedCoreSource = readFileSync(new URL('../../functions/team-calendar-feed-core.cjs', import.meta.url), 'utf8');
 
+function createResponseRecorder() {
+    const headers = new Map();
+    return {
+        headers,
+        statusCode: null,
+        body: null,
+        set(name, value) {
+            headers.set(name, value);
+            return this;
+        },
+        status(value) {
+            this.statusCode = value;
+            return this;
+        },
+        send(value) {
+            this.body = value;
+            return this;
+        }
+    };
+}
+
 describe('team calendar subscription feed', () => {
+    it('builds a complete feed when recurring masters are exactly at the configured limit', async () => {
+        const recurringDocs = [
+            { id: 'series-1', data: () => ({ type: 'practice', isSeriesMaster: true, recurrence: { freq: 'weekly' } }) },
+            { id: 'series-2', data: () => ({ type: 'practice', isSeriesMaster: true, recurrence: { freq: 'weekly' } }) }
+        ];
+        const buildIcs = vi.fn().mockReturnValue('BEGIN:VCALENDAR\r\nEND:VCALENDAR');
+        const handler = createTeamCalendarFeedRequestHandler({
+            resolveCredential: async () => ({
+                allowed: true,
+                request: { teamId: 'team-1' },
+                team: { name: 'Sharks' }
+            }),
+            getGamesQuery: () => ({ get: async () => ({ docs: [] }) }),
+            getRecurringMastersQuery: () => ({ get: async () => ({ docs: recurringDocs }) }),
+            buildIcs,
+            recurringMasterMaxDocuments: 2
+        });
+        const response = createResponseRecorder();
+
+        await handler({ method: 'GET', query: { teamId: 'team-1', token: 'private-token' } }, response);
+
+        expect(response.statusCode).toBe(200);
+        expect(response.body).toBe('BEGIN:VCALENDAR\r\nEND:VCALENDAR');
+        expect(buildIcs).toHaveBeenCalledOnce();
+        expect(buildIcs.mock.calls[0][0].events.map((event) => event.id)).toEqual(['series-1', 'series-2']);
+    });
+
+    it('returns a non-cacheable 503 before building partial ICS when recurring masters overflow', async () => {
+        const recurringDocs = Array.from({ length: 3 }, (_, index) => ({
+            id: `series-${index + 1}`,
+            data: () => ({ type: 'practice', isSeriesMaster: true, recurrence: { freq: 'weekly' } })
+        }));
+        const buildIcs = vi.fn();
+        const logger = { error: vi.fn() };
+        const handler = createTeamCalendarFeedRequestHandler({
+            resolveCredential: async () => ({
+                allowed: true,
+                request: { teamId: 'team-1' },
+                team: { name: 'Sharks' }
+            }),
+            getGamesQuery: () => ({ get: async () => ({
+                docs: [{ id: 'game-1', data: () => ({ type: 'game', date: new Date() }) }]
+            }) }),
+            getRecurringMastersQuery: () => ({ get: async () => ({ docs: recurringDocs }) }),
+            buildIcs,
+            logger,
+            recurringMasterMaxDocuments: 2
+        });
+        const response = createResponseRecorder();
+
+        await handler({ method: 'GET', query: { teamId: 'team-1', token: 'private-token' } }, response);
+
+        expect(response.statusCode).toBe(503);
+        expect(response.headers.get('Cache-Control')).toBe('no-store');
+        expect(response.body).toBe('Calendar feed temporarily unavailable');
+        expect(response.body).not.toContain('VEVENT');
+        expect(buildIcs).not.toHaveBeenCalled();
+        expect(logger.error).toHaveBeenCalledWith('Calendar feed recurring-master limit exceeded', {
+            teamId: 'team-1',
+            recurringMasterDocumentBudget: 2
+        });
+        expect(JSON.stringify(logger.error.mock.calls)).not.toContain('private-token');
+    });
+
     it('builds valid ICS for visible games and practices with stable UIDs', () => {
         const ics = buildTeamCalendarIcs({
             teamId: 'team-1',
@@ -744,8 +830,8 @@ describe('team calendar subscription feed', () => {
 
     it('registers an HTTPS endpoint that rejects missing, invalid, and revoked tokens', () => {
         expect(functionsSource).toContain('exports.teamCalendarFeed = functions.https.onRequest');
-        expect(functionsSource).toContain('resolveTeamCalendarFeedCredential(req.query || {})');
-        expect(functionsSource).toContain('res.status(authorization.status).send(authorization.message)');
+        expect(functionsSource).toContain('resolveCredential: resolveTeamCalendarFeedCredential');
+        expect(feedCoreSource).toContain('res.status(authorization.status).send(authorization.message)');
         expect(feedCoreSource).toContain("message: 'Missing or invalid calendar token'");
         expect(feedCoreSource).toContain("message: 'Invalid calendar token'");
         expect(feedCoreSource).toContain("message: 'Revoked calendar token'");
@@ -753,24 +839,24 @@ describe('team calendar subscription feed', () => {
         expect(functionsSource).toContain('firestore.doc(`accountDeletionRequests/${uid}`).get()');
         expect(functionsSource).toContain('accountDeletionRequested: deletionRequestSnap.exists');
         expect(functionsSource).not.toContain('user?.email || tokenData.email || tokenData.userEmail');
-        expect(functionsSource).toContain("res.set('Content-Type', 'text/calendar; charset=utf-8')");
-        expect(functionsSource).toContain("res.set('Content-Disposition', 'inline; filename=\"allplays-team-schedule.ics\"')");
+        expect(feedCoreSource).toContain("res.set('Content-Type', 'text/calendar; charset=utf-8')");
+        expect(feedCoreSource).toContain("res.set('Content-Disposition', 'inline; filename=\"allplays-team-schedule.ics\"')");
         expect(functionsSource).not.toContain('filename="${teamId}-schedule.ics"');
-        expect(functionsSource).toContain('buildTeamCalendarIcs({ teamId, team, events })');
+        expect(feedCoreSource).toContain('buildIcs({ teamId, team, events })');
     });
 
     it('builds private feeds from stored game summaries without fallback RSVP scans', () => {
-        const feedStart = functionsSource.indexOf('exports.teamCalendarFeed = functions.https.onRequest');
-        const feedEnd = functionsSource.indexOf('\n});', feedStart) + '\n});'.length;
-        const teamCalendarFeedSource = functionsSource.slice(feedStart, feedEnd);
+        const feedStart = feedCoreSource.indexOf('function createTeamCalendarFeedRequestHandler');
+        const feedEnd = feedCoreSource.indexOf('\nmodule.exports', feedStart);
+        const teamCalendarFeedSource = feedCoreSource.slice(feedStart, feedEnd);
 
-        expect(teamCalendarFeedSource).toContain('getCalendarFeedGamesQuery(teamId).get()');
-        expect(teamCalendarFeedSource).toContain('getCalendarFeedRecurringMastersQuery(teamId).get()');
+        expect(teamCalendarFeedSource).toContain('getGamesQuery(teamId).get()');
+        expect(teamCalendarFeedSource).toContain('getRecurringMastersQuery(teamId).get()');
         expect(teamCalendarFeedSource).toContain('[...eventsSnap.docs, ...recurringPracticeDocs]');
         expect(teamCalendarFeedSource).not.toContain("firestore.collection(`teams/${teamId}/games`).get()");
         expect(teamCalendarFeedSource).not.toContain("firestore.collection(`teams/${teamId}/games`).orderBy('date').get()");
         expect(teamCalendarFeedSource).toContain('const game = { id: docSnap.id, ...(docSnap.data() || {}) }');
-        expect(teamCalendarFeedSource).toContain('buildTeamCalendarIcs({ teamId, team, events })');
+        expect(teamCalendarFeedSource).toContain('buildIcs({ teamId, team, events })');
         expect(teamCalendarFeedSource).not.toContain('loadMissingTeamCalendarRsvpSummaries');
         expect(teamCalendarFeedSource).not.toContain('loadTeamCalendarRsvpSummaries');
         expect(teamCalendarFeedSource).not.toContain("firestore.collection(`teams/${teamId}/players`).get()");
