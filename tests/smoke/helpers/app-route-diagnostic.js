@@ -2,7 +2,25 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 export const routeTimings = new WeakMap();
-const callableEndpoints = new Set(["getDelegatedTeamContext", "getDiamondAccess", "getDiamondManagerStats", "getDiamondRecapSource", "getDiamondState", "getFamilyShareSchedule", "getFamilyShareView", "getGameReplayPlayback", "getOpportunityInquiry", "getPrivateTeamCalendarFeedToken", "getPublicDiamondGame", "getPublicGameProjection", "getPublicOpportunity", "getPublicRsvp", "getPublicTeamCalendarProjection", "getPublicTeamGamesProjection", "getPublicTeamPassStatus", "getPublicTeamProfile", "getReplayPrivacyMigrationStatus", "listAuthorizedChatConversations", "listDiamondEvents", "listDiamondScorerCandidates", "listManagedPublicOpportunityTeams", "listManagedTeams", "listMyPublicOpportunities", "listOfficialLinkedTeamIds", "listOpportunityInquiries", "listParentTeamFeeRecipients", "listPublicOpportunities", "listPublicOpportunityReports", "listPublicTeams", "markAllNotificationInboxRead", "markNotificationInboxItemRead", "syncAdminUserSearchIndexOnUserWrite", "syncApprovedParentMembershipRequestUserLink", "syncLegacyTeamOwnershipOnAuthCreate", "syncPublicUserProfileOnUserWrite", "syncPublicUserProfileProjection", "syncPublicUserProfilesOnTeamWrite", "syncRegistrationProvider", "syncTeamNotificationRecipientsOnDeviceWrite", "syncTeamNotificationRecipientsOnPreferenceWrite", "syncTeamNotificationRecipientsOnTeamWrite", "syncTeamNotificationRecipientsOnUserWrite", "syncTeamNotificationTargetsOnDeviceWrite", "syncTeamNotificationTargetsOnPreferenceWrite", "syncTeamOwnerAccessOnCreate"]);
+// Public export names only. Unknown endpoint paths remain fully redacted.
+const callableEndpoints = new Set([
+    'getDelegatedTeamContext', 'getDiamondAccess', 'getDiamondManagerStats',
+    'getDiamondRecapSource', 'getDiamondState', 'getFamilyShareSchedule',
+    'getFamilyShareView', 'getGameReplayPlayback', 'getOpportunityInquiry',
+    'getPrivateTeamCalendarFeedToken', 'getPublicDiamondGame', 'getPublicGameProjection',
+    'getPublicOpportunity', 'getPublicRsvp', 'getPublicTeamCalendarProjection',
+    'getPublicTeamGamesProjection', 'getPublicTeamPassStatus', 'getPublicTeamProfile',
+    'getReplayPrivacyMigrationStatus', 'listAuthorizedChatConversations', 'listDiamondEvents',
+    'listDiamondScorerCandidates', 'listManagedPublicOpportunityTeams', 'listManagedTeams',
+    'listMyPublicOpportunities', 'listOfficialLinkedTeamIds', 'listOpportunityInquiries',
+    'listParentTeamFeeRecipients', 'listPublicOpportunities', 'listPublicOpportunityReports',
+    'listPublicTeams', 'markAllNotificationInboxRead', 'markNotificationInboxItemRead',
+    'syncAdminUserSearchIndexOnUserWrite', 'syncApprovedParentMembershipRequestUserLink', 'syncLegacyTeamOwnershipOnAuthCreate',
+    'syncPublicUserProfileOnUserWrite', 'syncPublicUserProfileProjection', 'syncPublicUserProfilesOnTeamWrite',
+    'syncRegistrationProvider', 'syncTeamNotificationRecipientsOnDeviceWrite', 'syncTeamNotificationRecipientsOnPreferenceWrite',
+    'syncTeamNotificationRecipientsOnTeamWrite', 'syncTeamNotificationRecipientsOnUserWrite', 'syncTeamNotificationTargetsOnDeviceWrite',
+    'syncTeamNotificationTargetsOnPreferenceWrite', 'syncTeamOwnerAccessOnCreate',
+]);
 
 const tools = ['access', 'household', 'fees', 'calendar', 'share', 'registrations', 'certificates'];
 
@@ -43,7 +61,7 @@ function assetPath(url) {
 }
 
 // Fixed categories identify which service failed without serializing hosts,
-// endpoint paths, project/document IDs, query strings or credentials.
+// arbitrary endpoint paths, project/document IDs, query strings or credentials.
 function requestService(url) {
     try {
         const host = new URL(url).hostname;
