@@ -1,3 +1,4 @@
+import { createOverlayFeedController } from './live-game-overlay-feed.js?v=3';
 import {
     applyOverlayEvents,
     applyOverlayGame,
@@ -18,7 +19,7 @@ import {
     reconcileOverlayLiveEvents,
     resolvePublicProjectionVideoOptions,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=33';
+} from './live-game-overlay-model.js?v=34';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -80,6 +81,10 @@ const elements = {
     period: document.querySelector('#period'),
     gameClock: document.querySelector('#game-clock'),
     eventList: document.querySelector('#event-list'),
+    olderPlays: document.querySelector('#older-plays'),
+    newerPlays: document.querySelector('#newer-plays'),
+    playPage: document.querySelector('#play-page'),
+    historyStatus: document.querySelector('#history-status'),
     heroEvent: document.querySelector('#hero-event'),
     heroEventLabel: document.querySelector('#hero-event-label'),
     heroEventDescription: document.querySelector('#hero-event-description'),
@@ -600,6 +605,13 @@ function renderEvents() {
         latestId !== uiState.latestRenderedEventId &&
         (uiState.latestRenderedEventId || uiState.hasLiveEventSnapshot || uiState.isReplay)
     );
+    const pageSize = 60;
+    uiState.playPage = Math.min(uiState.playPage || 0, Math.max(0, Math.ceil(state.events.length / pageSize) - 1));
+    const pageStart = uiState.playPage * pageSize;
+    if (elements.olderPlays) elements.olderPlays.disabled = pageStart + pageSize >= state.events.length;
+    if (elements.newerPlays) elements.newerPlays.disabled = pageStart === 0;
+    if (elements.playPage) elements.playPage.textContent = state.events.length
+        ? `Plays ${pageStart + 1}–${Math.min(pageStart + pageSize, state.events.length)} of ${state.events.length}` : 'No plays yet';
     elements.eventList.replaceChildren();
     if (!state.events.length) {
         const emptyCopy = uiState.isReplay && uiState.replayHistoryStatus === 'failed'
@@ -609,8 +621,8 @@ function renderEvents() {
             : 'Connected. Waiting for the first play…';
         elements.eventList.appendChild(createTextElement('li', 'empty-state', emptyCopy));
     } else {
-        state.events.slice(0, 60).forEach((event, index) => {
-            elements.eventList.appendChild(renderEventCard(event, isNewLatest && index === 0));
+        state.events.slice(pageStart, pageStart + pageSize).forEach((event, index) => {
+            elements.eventList.appendChild(renderEventCard(event, isNewLatest && pageStart === 0 && index === 0));
         });
     }
 
@@ -1179,6 +1191,7 @@ async function initializeChatComposer(database, teamId, gameId) {
             const previousUid = uiState.chatUser?.uid || '';
             const nextUid = user?.uid || '';
             uiState.chatUser = user;
+            uiState.liveFeeds?.authChanged(nextUid);
             if (previousUid !== nextUid) uiState.anonName = '';
             if (user) ensureChatDisplayName();
             refreshChatAvailability();
@@ -1977,6 +1990,8 @@ async function startDemoReplayMode(params) {
 }
 
 function bindInteractions() {
+    elements.olderPlays?.addEventListener('click', () => { uiState.playPage = (uiState.playPage || 0) + 1; renderEvents(); });
+    elements.newerPlays?.addEventListener('click', () => { uiState.playPage = Math.max(0, (uiState.playPage || 0) - 1); renderEvents(); });
     elements.panelToggles.forEach((button) => button.addEventListener('click', () => togglePanel(button.dataset.panel)));
     elements.insightTabs.forEach((tab) => tab.addEventListener('click', () => selectInsight(tab.id.replace('-tab', ''))));
     elements.focusToggle.addEventListener('click', toggleFocusMode);
@@ -2075,7 +2090,10 @@ function bindInteractions() {
         if (event.key.toLowerCase() === 'f' && event.shiftKey) void toggleFullscreen();
         else if (event.key.toLowerCase() === 'f') toggleFocusMode();
     });
-    window.addEventListener('beforeunload', () => {
+    window.addEventListener('pageshow', (event) => {
+        if (event.persisted && !uiState.isReplay) window.location.reload();
+    });
+    window.addEventListener('pagehide', () => {
         window.clearInterval(uiState.clockTimer);
         if (uiState.replayFrame !== null) cancelAnimationFrame(uiState.replayFrame);
         uiState.unsubscribers.forEach((unsubscribe) => {
@@ -2115,15 +2133,17 @@ async function startRealMode(params) {
     uiState.teamId = teamId;
     uiState.gameId = gameId;
     uiState.isReplay = isReplay;
+    if (elements.historyStatus) elements.historyStatus.hidden = isReplay;
     elements.body.dataset.replay = String(isReplay);
     configureGameActions();
 
     setConnectionMessage('Connecting to the game, event feed, and chat…', 'info');
     try {
-        const [database, videoTools, stateTools] = await Promise.all([
+        const [database, videoTools, stateTools, historyTools] = await Promise.all([
             loadOverlayDatabase(),
             import('./live-game-video.js?v=443319'),
-            import('./live-game-state.js?v=55')
+            import('./live-game-state.js?v=55'),
+            import('./live-game-overlay-history.js?v=3')
         ]);
         uiState.optionalTeamStatus = 'pending';
         const teamPromise = loadWithBoundedRetry(
@@ -2422,29 +2442,59 @@ async function startRealMode(params) {
             setConnectionIssue('game', 'Live score refresh is delayed. The video remains available; try refreshing if it does not recover.');
         }, { publicProjection: game.isPublicProjection === true }));
 
-        uiState.unsubscribers.push(database.subscribeLiveEvents(teamId, gameId, (events) => {
-            try {
-                uiState.lastLiveEvents = Array.isArray(events) ? [...events] : [];
+        uiState.liveFeeds = createOverlayFeedController({
+            subscribeEvents: (next, error) => database.subscribeLiveEvents(teamId, gameId, next, error),
+            subscribeChat: (next, error) => database.subscribeLiveChat(teamId, gameId, { limit: 100 }, next, error),
+            loadHistory: (cancelled) => historyTools.getOverlayLiveEventHistory(teamId, gameId, cancelled),
+            readEvents: (ids, cancelled) => historyTools.readOverlayLiveEvents(teamId, gameId, ids, cancelled),
+            isVisible: () => document.visibilityState !== 'hidden',
+            onFreshness: ({ lastConfirmedAt, loading, verifying, visible, failed }) => {
+                if (!elements.historyStatus) return;
+                elements.historyStatus.textContent = !visible ? 'History refresh paused while hidden.'
+                    : verifying ? 'Confirming removed plays; totals may be stale.'
+                    : loading ? 'Checking full history; totals may be incomplete.'
+                    : failed ? 'History refresh unavailable; older plays and totals may be stale.'
+                    : lastConfirmedAt ? `History checked ${Math.max(0, Math.floor((Date.now() - lastConfirmedAt) / 60000))} min ago. Older removals are rechecked every 5 minutes while visible.`
+                    : 'Full history has not been checked; totals may be incomplete.';
+            },
+            onEvents: (events) => {
+                uiState.lastLiveEvents = events;
                 uiState.hasLiveEventSnapshot = true;
-                processLiveEventSnapshot(uiState.lastLiveEvents, stateTools);
-                setConnectionIssue('events');
-            } catch (error) {
-                console.warn('Overlay event update could not be applied:', error);
-                setConnectionIssue('events', 'One play update was skipped. Video, scoreboard refresh, and chat continue independently.');
+                processLiveEventSnapshot(events, stateTools);
+            },
+            onChat: (messages) => {
+                replaceOverlayChat(uiState.game, messages);
+                renderChat();
+            },
+            onReady: (kind) => setConnectionIssue(kind),
+            onError: (kind, error) => {
+                console.warn(`Overlay ${kind} feed unavailable:`, error);
+                setConnectionIssue(kind, kind === 'history'
+                    ? 'Full play history and player totals are incomplete or awaiting refresh. Recent plays and score remain available.'
+                    : kind === 'events'
+                        ? 'Play-by-play is temporarily unavailable. Other feeds continue independently.'
+                        : kind === 'chat' ? 'Live chat is temporarily unavailable. Other feeds continue independently.'
+                            : 'Some removed plays are awaiting confirmation; totals may be stale.');
+            },
+            onInvalidate: () => {
+                uiState.lastLiveEvents = [];
+                uiState.hasLiveEventSnapshot = false;
+                processLiveEventSnapshot([], stateTools);
+                replaceOverlayChat(uiState.game, []);
+                renderChat();
             }
-        }, (error) => {
-            console.warn('Overlay event subscription failed:', error);
-            setConnectionIssue('events', 'Play-by-play is temporarily unavailable. Video and scoreboard updates continue independently.');
-        }));
-
-        uiState.unsubscribers.push(database.subscribeLiveChat(teamId, gameId, { limit: 100 }, (messages) => {
-            replaceOverlayChat(uiState.game, messages);
-            renderChat();
-            setConnectionIssue('chat');
-        }, (error) => {
-            console.warn('Overlay chat subscription failed:', error);
-            setConnectionIssue('chat', 'Live chat is temporarily unavailable. Video, score, and play updates continue independently.');
-        }));
+        });
+        uiState.liveFeeds.start();
+        const resumeFeeds = () => {
+            uiState.liveFeeds.resume();
+        };
+        window.addEventListener('online', resumeFeeds);
+        document.addEventListener('visibilitychange', resumeFeeds);
+        uiState.unsubscribers.push(() => {
+            uiState.liveFeeds.stop();
+            window.removeEventListener('online', resumeFeeds);
+            document.removeEventListener('visibilitychange', resumeFeeds);
+        });
 
         uiState.unsubscribers.push(database.subscribeReactions(teamId, gameId, (reaction) => {
             showFloatingReaction(reaction);
