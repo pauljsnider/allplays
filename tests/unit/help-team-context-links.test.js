@@ -160,7 +160,7 @@ describe('help team-context deep links', () => {
         htmlPages.forEach((file) => {
             const html = readRepoFile(file);
             expect(html).toContain('data-help-back-link');
-            expect(html).toContain('./js/help-context.js?v=1');
+            expect(html).toContain('./js/help-context.js?v=2');
         });
     });
 });
