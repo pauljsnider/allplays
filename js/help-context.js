@@ -17,13 +17,30 @@ export function preserveHelpBackLinkContext(doc = document, locationSearch = win
         return;
     }
 
-    doc.querySelectorAll('a[data-help-back-link]').forEach((link) => {
+    const contextualLinks = new Set(doc.querySelectorAll('a[data-help-back-link]'));
+    const relatedWorkflowsHeading = doc.getElementById('related-workflows');
+    let relatedContent = relatedWorkflowsHeading?.nextElementSibling;
+
+    while (relatedContent && relatedContent.tagName !== 'H2') {
+        if (relatedContent.matches('a[href]')) {
+            contextualLinks.add(relatedContent);
+        }
+        relatedContent.querySelectorAll('a[href]').forEach((link) => contextualLinks.add(link));
+        relatedContent = relatedContent.nextElementSibling;
+    }
+
+    const baseUrl = new URL(doc.baseURI);
+    contextualLinks.forEach((link) => {
         const href = link.getAttribute('href');
         if (!href) {
             return;
         }
 
-        const url = new URL(href, window.location.href);
+        const url = new URL(href, baseUrl);
+        if (url.origin !== baseUrl.origin) {
+            return;
+        }
+
         url.search = query;
         link.href = url.toString();
     });
