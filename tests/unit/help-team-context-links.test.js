@@ -126,6 +126,18 @@ describe('help team-context deep links', () => {
         expect(link.searchParams.get('role')).toBe('coach');
     });
 
+    it('preserves team context on related workflow links', () => {
+        const { document } = bootStaticPage('workflow-team-media.html', '?context=team&teamId=TEAM123&role=coach');
+
+        preserveHelpBackLinkContext(document, '?context=team&teamId=TEAM123&role=coach');
+
+        const link = new URL(document.getElementById('related-workflows').nextElementSibling.querySelector('a').href);
+        expect(link.pathname).toBe('/workflow-communication.html');
+        expect(link.searchParams.get('context')).toBe('team');
+        expect(link.searchParams.get('teamId')).toBe('TEAM123');
+        expect(link.searchParams.get('role')).toBe('coach');
+    });
+
     it('preserves team context on the page-reference back link', () => {
         const { document } = bootStaticPage('help-page-reference.html', '?context=team&teamId=TEAM123&role=coach');
 
@@ -148,7 +160,7 @@ describe('help team-context deep links', () => {
         htmlPages.forEach((file) => {
             const html = readRepoFile(file);
             expect(html).toContain('data-help-back-link');
-            expect(html).toContain('./js/help-context.js?v=1');
+            expect(html).toContain('./js/help-context.js?v=2');
         });
     });
 });
