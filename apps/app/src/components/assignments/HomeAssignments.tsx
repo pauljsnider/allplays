@@ -16,14 +16,17 @@ function FamilyAssignments({ onCount }: { onCount?: (count: number | null) => vo
     onCount?.(null);
     void (async () => {
       const { players } = await loadResourcePacketLinkedPlayers();
+      if (cancelled) return;
       const result: PacketTask[] = [];
       // Bounded concurrency keeps a household refresh from fanning out requests.
       for (const player of players) {
         let cursor: string | undefined;
         let pages = 0;
         do {
+          if (cancelled) return;
           if (++pages > 100) throw new Error('Unable to load the complete assignment list.');
           const page = await loadResourcePacketFamily(player.teamId, player.playerId, cursor);
+          if (cancelled) return;
           result.push(...page.tasks);
           cursor = page.cursors.tasks || undefined;
         } while (cursor);
