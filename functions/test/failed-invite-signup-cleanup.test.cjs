@@ -363,7 +363,8 @@ function redemptionSeed(type, { uid = 'invited-parent', email = 'invited@example
       playerId: 'player-1',
       relation: type === 'coparent_invite' ? 'Co-parent' : 'Parent',
       organizerUserId: 'organizer-1',
-      familyMembershipId: 'membership-1'
+      familyMembershipId: 'membership-1',
+      generatedBy: 'organizer-1'
     },
     [`users/${uid}`]: {
       email,
@@ -372,7 +373,7 @@ function redemptionSeed(type, { uid = 'invited-parent', email = 'invited@example
       parentTeamIds: [],
       parentPlayerKeys: []
     },
-    'teams/team-1': { name: 'Bears' },
+    'teams/team-1': { name: 'Bears', ownerId: 'organizer-1' },
     'teams/team-1/players/player-1': { name: 'Avery', number: '7' },
     'users/organizer-1/familyMemberships/membership-1': {
       status: 'pending',
@@ -578,7 +579,15 @@ for (const [label, type, callableName, code] of familyInviteCases) {
 
   test(`${label} redemption accepts a matching authoritative email`, async () => {
     const uid = 'invited-parent';
-    const { firestore, mod } = loadFunctions(redemptionSeed(type, { uid }));
+    const { firestore, mod } = loadFunctions(redemptionSeed(type, { uid }), {
+      authUsers: {
+        'organizer-1': {
+          uid: 'organizer-1',
+          email: 'organizer@example.com',
+          disabled: false
+        }
+      }
+    });
 
     const result = await mod[callableName](
       { userId: uid, code, authEmail: 'spoofed@example.com' },
