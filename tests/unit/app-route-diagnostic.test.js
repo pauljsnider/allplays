@@ -89,6 +89,14 @@ describe('authenticated smoke failure diagnostics', () => {
         }
     });
 
+    it('identifies resource packet failures without recording private request data', async () => {
+        const { data, text } = await captureResponses([mockResponse({
+            url: 'https://us-central1-game-flow-c6311.cloudfunctions.net/resourcePacketsQuery?player=PRIVATE', status: 401, type: 'fetch'
+        })], { baseline: false, includeApiFailures: true });
+        expect(data.events[0]).toMatchObject({ service: 'firebase-functions', endpoint: 'resourcePacketsQuery', status: 401 });
+        expect(text).not.toContain('PRIVATE');
+    });
+
     it('classifies production callable failures without exposing unknown paths or credentials', async () => {
         const urls = [
             'https://us-central1-game-flow-c6311.cloudfunctions.net/listManagedTeams?token=PRIVATE',

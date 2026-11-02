@@ -4,6 +4,7 @@ import path from 'node:path';
 export const routeTimings = new WeakMap();
 // Public export names only. Unknown endpoint paths remain fully redacted.
 const callableEndpoints = new Set([
+    'resourcePacketsQuery',
     'getDelegatedTeamContext', 'getDiamondAccess', 'getDiamondManagerStats',
     'getDiamondRecapSource', 'getDiamondState', 'getFamilyShareSchedule',
     'getFamilyShareView', 'getGameReplayPlayback', 'getOpportunityInquiry',
