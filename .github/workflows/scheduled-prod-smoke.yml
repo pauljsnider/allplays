@@ -31,7 +31,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
-          ref: master
+          # Operator diagnostic branch: scheduled runs still use master.
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || 'master' }}
           persist-credentials: false
 
       - name: Setup Node
@@ -49,14 +50,7 @@ jobs:
       - name: Run scheduled production smoke
         run: >-
           npx playwright test
-          tests/smoke/app-production-bootstrap.spec.js
-          tests/smoke/static-hosting-bootstrap.spec.js
-          tests/smoke/legacy-auth-redirects.spec.js
-          tests/smoke/app-admin-core.spec.js
           tests/smoke/app-authenticated-core.spec.js
-          tests/smoke/legacy-authenticated-core.spec.js
-          tests/smoke/app-authenticated-image-writes.spec.js
-          tests/smoke/app-authenticated-extended.spec.js
           --config=playwright.smoke.config.js
           --project=smoke
           --workers=1

@@ -2,6 +2,8 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 export const routeTimings = new WeakMap();
+const callableEndpoints = new Set(["getDelegatedTeamContext", "getDiamondAccess", "getDiamondManagerStats", "getDiamondRecapSource", "getDiamondState", "getFamilyShareSchedule", "getFamilyShareView", "getGameReplayPlayback", "getOpportunityInquiry", "getPrivateTeamCalendarFeedToken", "getPublicDiamondGame", "getPublicGameProjection", "getPublicOpportunity", "getPublicRsvp", "getPublicTeamCalendarProjection", "getPublicTeamGamesProjection", "getPublicTeamPassStatus", "getPublicTeamProfile", "getReplayPrivacyMigrationStatus", "listAuthorizedChatConversations", "listDiamondEvents", "listDiamondScorerCandidates", "listManagedPublicOpportunityTeams", "listManagedTeams", "listMyPublicOpportunities", "listOfficialLinkedTeamIds", "listOpportunityInquiries", "listParentTeamFeeRecipients", "listPublicOpportunities", "listPublicOpportunityReports", "listPublicTeams", "markAllNotificationInboxRead", "markNotificationInboxItemRead", "syncAdminUserSearchIndexOnUserWrite", "syncApprovedParentMembershipRequestUserLink", "syncLegacyTeamOwnershipOnAuthCreate", "syncPublicUserProfileOnUserWrite", "syncPublicUserProfileProjection", "syncPublicUserProfilesOnTeamWrite", "syncRegistrationProvider", "syncTeamNotificationRecipientsOnDeviceWrite", "syncTeamNotificationRecipientsOnPreferenceWrite", "syncTeamNotificationRecipientsOnTeamWrite", "syncTeamNotificationRecipientsOnUserWrite", "syncTeamNotificationTargetsOnDeviceWrite", "syncTeamNotificationTargetsOnPreferenceWrite", "syncTeamOwnerAccessOnCreate"]);
+
 const tools = ['access', 'household', 'fees', 'calendar', 'share', 'registrations', 'certificates'];
 
 function routeTemplate(url, baseline = false) {
@@ -50,8 +52,20 @@ function requestService(url) {
         if (host === 'securetoken.googleapis.com') return 'firebase-token';
         if (host === 'firestore.googleapis.com') return 'firestore';
         if (host === 'firebasestorage.googleapis.com') return 'firebase-storage';
+        if (host === 'firebaseappcheck.googleapis.com') return 'firebase-app-check';
+        if (host === 'us-central1-game-flow-c6311.cloudfunctions.net') return 'firebase-functions';
+        if (['www.google.com', 'www.recaptcha.net', 'recaptchaenterprise.googleapis.com'].includes(host)) return 'recaptcha';
     } catch { /* Unknown requests retain only resource type and status. */ }
     return '[other-service]';
+}
+
+function requestEndpoint(url) {
+    try {
+        const parsed = new URL(url);
+        if (parsed.hostname === 'us-central1-game-flow-c6311.cloudfunctions.net'
+            && callableEndpoints.has(parsed.pathname.slice(1))) return parsed.pathname.slice(1);
+    } catch { /* Unknown paths never leave the browser. */ }
+    return '[other-endpoint]';
 }
 
 function responseHeader(name, value) {
@@ -136,7 +150,7 @@ export function createAppFailureRecorder(page, { baseline = false, includeApiFai
         if (!includeApiFailures) return {};
         let route = '[other-route]';
         try { route = routeTemplate(page.url()); } catch { /* The page may have closed. */ }
-        return { resourceType: request.resourceType(), service: requestService(request.url()), responseTimeRoute: route };
+        return { resourceType: request.resourceType(), service: requestService(request.url()), endpoint: requestEndpoint(request.url()), responseTimeRoute: route };
     };
     const listeners = {
         console: (message) => {
