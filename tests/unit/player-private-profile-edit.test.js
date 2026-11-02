@@ -18,6 +18,10 @@ function readFunctionsSource() {
     return readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 }
 
+function readParentInviteRedemptionSource() {
+    return readFileSync(new URL('../../functions/parent-invite-redemption-core.cjs', import.meta.url), 'utf8');
+}
+
 function extractExportBlock(source, startMarker, endMarker) {
     const start = source.indexOf(startMarker);
     expect(start, `Expected export marker to exist: ${startMarker}`).toBeGreaterThanOrEqual(0);
@@ -435,8 +439,8 @@ describe('player profile private doc writes', () => {
     it('keeps validated parent invite contact writes in server-authoritative transactions', () => {
         const dbSource = readDbSource();
         const functionsSource = readFunctionsSource();
+        const parentInviteCallableSource = readParentInviteRedemptionSource();
         const parentInviteClientSource = extractFunction(dbSource, 'export async function redeemParentInvite(');
-        const parentInviteCallableSource = extractExportBlock(functionsSource, 'exports.redeemParentInvite', 'exports.redeemHouseholdInvite');
         const householdInviteCallableSource = extractExportBlock(functionsSource, 'exports.redeemHouseholdInvite', 'exports.redeemCoParentInvite');
         const coParentInviteCallableSource = extractExportBlock(functionsSource, 'exports.redeemCoParentInvite', 'exports.redeemAdminInvite');
 
@@ -446,7 +450,7 @@ describe('player profile private doc writes', () => {
         expect(parentInviteCallableSource).toContain('const privateProfileRef = firestore.doc(`teams/${teamId}/players/${playerId}/private/profile`);');
         expect(parentInviteCallableSource).toContain('firestore.runTransaction(async (transaction) =>');
         expect(parentInviteCallableSource).toContain('transaction.set(privateProfileRef, {');
-        expect(parentInviteCallableSource).toContain('parents: admin.firestore.FieldValue.arrayUnion({');
+        expect(parentInviteCallableSource).toContain('parents: arrayUnion({');
         expect(parentInviteCallableSource).toContain('email: codeData.email || signedInEmail ||');
 
         expect(householdInviteCallableSource).toContain('const privateProfileRef = firestore.doc(`teams/${teamId}/players/${playerId}/private/profile`);');
@@ -464,9 +468,8 @@ describe('player profile private doc writes', () => {
 
     it('keeps resolved parent invite team and player in scope for the success return', () => {
         const dbSource = readDbSource();
-        const functionsSource = readFunctionsSource();
         const parentInviteClientSource = extractFunction(dbSource, 'export async function redeemParentInvite(');
-        const parentInviteCallableSource = extractExportBlock(functionsSource, 'exports.redeemParentInvite', 'exports.redeemHouseholdInvite');
+        const parentInviteCallableSource = readParentInviteRedemptionSource();
 
         expect(parentInviteCallableSource).toContain('const team = { id: teamSnap.id, ...(teamSnap.data() || {}) };');
         expect(parentInviteCallableSource).toContain('const player = { id: playerSnap.id, ...(playerSnap.data() || {}) };');
