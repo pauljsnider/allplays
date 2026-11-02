@@ -89,6 +89,20 @@ describe('authenticated smoke failure diagnostics', () => {
         }
     });
 
+    it('classifies production callable failures without exposing unknown paths or credentials', async () => {
+        const urls = [
+            'https://us-central1-game-flow-c6311.cloudfunctions.net/listManagedTeams?token=PRIVATE',
+            'https://us-central1-game-flow-c6311.cloudfunctions.net/PRIVATE',
+            'https://us-central1-game-flow-c6311.cloudfunctions.net/listManagedTeams/PRIVATE',
+            'https://private-project.cloudfunctions.net/listManagedTeams',
+            'https://firebaseappcheck.googleapis.com/PRIVATE'
+        ];
+        const { data, text } = await captureResponses(urls.map((url) => mockResponse({ url, status: 401, type: 'fetch' })), { baseline: false, includeApiFailures: true });
+        expect(data.events.map((event) => event.service)).toEqual(['firebase-functions', 'firebase-functions', 'firebase-functions', '[other-service]', 'firebase-app-check']);
+        expect(data.events.map((event) => event.endpoint)).toEqual(['listManagedTeams', '[other-endpoint]', '[other-endpoint]', '[other-endpoint]', '[other-endpoint]']);
+        expect(text).not.toMatch(/PRIVATE|private-project|token=|cloudfunctions\.net|https:/);
+    });
+
     it('records opt-in API/media failure categories without private request data', async () => {
         const targets = [
             ['identitytoolkit.googleapis.com', 'firebase-auth', 'fetch'],
