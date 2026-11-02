@@ -53,31 +53,29 @@ describe('access code atomic redemption guard', () => {
     });
 
     it('claims parent invite codes and membership grants atomically in the privileged callable', () => {
-        const functionsSourcePath = resolve(process.cwd(), 'functions/index.js');
-        const source = readFileSync(functionsSourcePath, 'utf8');
+        const functionsSource = readFileSync(resolve(process.cwd(), 'functions/index.js'), 'utf8');
+        const source = readFileSync(resolve(process.cwd(), 'functions/parent-invite-redemption-core.cjs'), 'utf8');
 
-        const fnAnchor = 'exports.redeemParentInvite';
-        const fnIndex = source.indexOf(fnAnchor);
-        expect(fnIndex).toBeGreaterThanOrEqual(0);
-
-        const afterFunction = source.slice(fnIndex, fnIndex + 6800);
-        expect(afterFunction).toContain('firestore.runTransaction(async (transaction) =>');
-        expect(afterFunction).toContain("codeData.type !== 'parent_invite'");
-        expect(afterFunction).toContain('codeData.used || codeData.revoked === true || codeData.status ===');
-        expect(afterFunction).toContain('isParentInviteExpired(codeData.expiresAt)');
-        expect(afterFunction).toContain('resolveAuthenticatedFamilyInviteEmail({');
-        expect(afterFunction).toContain('assertFamilyInviteRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail)');
-        expect(afterFunction).toContain('assertFamilyInviteRecipientEmail(codeData, signedInEmail)');
-        expect(afterFunction).not.toContain('data?.authEmail');
-        expect(afterFunction.indexOf('assertFamilyInviteRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail)'))
-            .toBeLessThan(afterFunction.indexOf('firestore.runTransaction(async (transaction) =>'));
-        expect(afterFunction.indexOf('assertFamilyInviteRecipientEmail(codeData, signedInEmail)'))
-            .toBeLessThan(afterFunction.indexOf('transaction.set(userRef'));
-        expect(afterFunction).toContain('parentOf: nextUserData.parentOf');
-        expect(afterFunction).toContain('parentTeamIds: nextUserData.parentTeamIds');
-        expect(afterFunction).toContain('parentPlayerKeys: nextUserData.parentPlayerKeys');
-        expect(afterFunction).toContain('admin.firestore.FieldValue.arrayUnion');
-        expect(afterFunction).toContain("status: 'accepted'");
+        expect(functionsSource).toContain('functions.https.onCall(redeemParentInviteHandler)');
+        expect(source).toContain('firestore.runTransaction(async (transaction) =>');
+        expect(source).toContain("codeData.type !== 'parent_invite'");
+        expect(source).toContain('codeData.used || codeData.revoked === true || codeData.status ===');
+        expect(source).toContain('isInviteExpired(codeData.expiresAt, nowMillis())');
+        expect(source).toContain('resolveAuthenticatedFamilyInviteEmail({');
+        expect(source).toContain('assertRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail, HttpsError)');
+        expect(source).toContain('assertRecipientEmail(codeData, signedInEmail, HttpsError)');
+        expect(source).not.toContain('data?.authEmail');
+        expect(source.indexOf('assertRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail, HttpsError)'))
+            .toBeLessThan(source.indexOf('firestore.runTransaction(async (transaction) =>'));
+        expect(source.indexOf('assertRecipientEmail(codeData, signedInEmail, HttpsError)'))
+            .toBeLessThan(source.indexOf('transaction.set(userRef'));
+        expect(source.indexOf('hasAdminInviteIssuerAccess({'))
+            .toBeLessThan(source.indexOf('transaction.set(userRef'));
+        expect(source).toContain('parentOf: nextUserData.parentOf');
+        expect(source).toContain('parentTeamIds: nextUserData.parentTeamIds');
+        expect(source).toContain('parentPlayerKeys: nextUserData.parentPlayerKeys');
+        expect(source).toContain('parents: arrayUnion({');
+        expect(source).toContain("status: 'accepted'");
     });
 
     it('recovers recent failed invite signups through a privileged callable and auth-delete trigger', () => {

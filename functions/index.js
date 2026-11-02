@@ -380,6 +380,7 @@ const {
 } = require('./friend-invite-redemption-core.cjs');
 const { hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
 const { createRedeemAdminInviteHandler } = require('./admin-invite-redemption-core.cjs');
+const { createRedeemParentInviteHandler } = require('./parent-invite-redemption-core.cjs');
 const {
   serializeManagedTeamDocument,
   serializeManagedTeamProfile,
@@ -5288,129 +5289,17 @@ function assertFamilyInviteRecipientEmail(codeData, signedInEmail) {
   }
 }
 
-exports.redeemParentInvite = functions.https.onCall(async (data, context) => {
-  if (!context.auth?.uid) {
-    throw new functions.https.HttpsError('unauthenticated', 'Sign in before accepting a parent invite.');
-  }
-
-  const userId = normalizeFirestoreId(data?.userId || context.auth.uid, 'userId');
-  if (userId !== context.auth.uid) {
-    throw new functions.https.HttpsError('permission-denied', 'You can only accept an invite for your own account.');
-  }
-
-  const code = String(data?.code || '').trim().toUpperCase();
-  if (!code) {
-    throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
-  }
-
-  const signedInEmail = await resolveAuthenticatedFamilyInviteEmail({
-    auth: context.auth,
-    getUser: (uid) => admin.auth().getUser(uid)
-  });
-
-  const codeQuerySnap = await firestore.collection('accessCodes').where('code', '==', code).limit(1).get();
-  if (codeQuerySnap.empty) {
-    throw new functions.https.HttpsError('not-found', 'Parent invite could not be found.');
-  }
-
-  const codeRef = codeQuerySnap.docs[0].ref;
-  assertFamilyInviteRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail);
-  let responsePayload = null;
-
-  await firestore.runTransaction(async (transaction) => {
-    const latestCodeSnap = await transaction.get(codeRef);
-    if (!latestCodeSnap.exists) {
-      throw new functions.https.HttpsError('not-found', 'Parent invite could not be found.');
-    }
-
-    const codeData = latestCodeSnap.data() || {};
-    if (codeData.type !== 'parent_invite') {
-      throw new functions.https.HttpsError('failed-precondition', 'Not a parent invite code.');
-    }
-    if (codeData.used || codeData.revoked === true || codeData.status === 'removed') {
-      throw new functions.https.HttpsError('failed-precondition', 'Parent invite is no longer available.');
-    }
-    if (isParentInviteExpired(codeData.expiresAt)) {
-      throw new functions.https.HttpsError('failed-precondition', 'Parent invite has expired.');
-    }
-
-    assertFamilyInviteRecipientEmail(codeData, signedInEmail);
-
-    const teamId = normalizeFirestoreId(codeData.teamId, 'teamId');
-    const playerId = normalizeFirestoreId(codeData.playerId, 'playerId');
-    const userRef = firestore.doc(`users/${userId}`);
-    const teamRef = firestore.doc(`teams/${teamId}`);
-    const playerRef = firestore.doc(`teams/${teamId}/players/${playerId}`);
-    const privateProfileRef = firestore.doc(`teams/${teamId}/players/${playerId}/private/profile`);
-    const publicProfileRef = firestore.doc(`publicUserProfiles/${userId}`);
-
-    const [teamSnap, playerSnap, userSnap] = await Promise.all([
-      transaction.get(teamRef),
-      transaction.get(playerRef),
-      transaction.get(userRef)
-    ]);
-
-    if (!teamSnap.exists) {
-      throw new functions.https.HttpsError('not-found', 'Team not found.');
-    }
-    if (!playerSnap.exists) {
-      throw new functions.https.HttpsError('not-found', 'Player not found.');
-    }
-
-    const team = { id: teamSnap.id, ...(teamSnap.data() || {}) };
-    const player = { id: playerSnap.id, ...(playerSnap.data() || {}) };
-    const userData = userSnap.exists ? userSnap.data() || {} : {};
-    const parentLink = buildAutoAcceptedParentLink({ codeData: { ...codeData, teamId, playerId }, team, player });
-    const playerKey = `${teamId}::${playerId}`;
-    const now = admin.firestore.Timestamp.now();
-    const nextUserData = {
-      ...userData,
-      parentOf: appendUniqueParentLink(userData.parentOf, parentLink),
-      parentTeamIds: appendUniqueValue(userData.parentTeamIds, teamId),
-      parentPlayerKeys: appendUniqueValue(userData.parentPlayerKeys, playerKey),
-      roles: appendUniqueValue(userData.roles, 'parent')
-    };
-
-    transaction.set(userRef, {
-      parentOf: nextUserData.parentOf,
-      parentTeamIds: nextUserData.parentTeamIds,
-      parentPlayerKeys: nextUserData.parentPlayerKeys,
-      roles: nextUserData.roles
-    }, { merge: true });
-
-    transaction.set(publicProfileRef, buildTrustedPublicUserProfileProjectionPayload(nextUserData, {
-      trustedEmail: signedInEmail || null
-    }), { merge: true });
-
-    transaction.set(privateProfileRef, {
-      parents: admin.firestore.FieldValue.arrayUnion({
-        userId,
-        email: codeData.email || signedInEmail || 'pending',
-        relation: codeData.relation || null,
-        addedAt: now
-      })
-    }, { merge: true });
-
-    transaction.update(codeRef, {
-      used: true,
-      usedBy: userId,
-      usedAt: now,
-      status: 'accepted'
-    });
-
-    responsePayload = {
-      success: true,
-      codeId: latestCodeSnap.id,
-      teamId,
-      teamName: parentLink.teamName,
-      playerId,
-      playerName: parentLink.playerName,
-      playerNum: parentLink.playerNumber
-    };
-  });
-
-  return responsePayload;
+const redeemParentInviteHandler = createRedeemParentInviteHandler({
+  firestore,
+  getAuthUser: (uid) => admin.auth().getUser(uid),
+  getTimestamp: () => admin.firestore.Timestamp.now(),
+  arrayUnion: (value) => admin.firestore.FieldValue.arrayUnion(value),
+  HttpsError: functions.https.HttpsError,
+  normalizeFirestoreId,
+  buildPublicProfilePayload: buildTrustedPublicUserProfileProjectionPayload
 });
+
+exports.redeemParentInvite = functions.https.onCall(redeemParentInviteHandler);
 
 exports.redeemHouseholdInvite = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
