@@ -60,7 +60,7 @@ const {
     getLiveEvents,
     getLiveChatHistory,
     getLiveReactions
-} = await import('../../js/db.js?v=4433209-live-events');
+} = await import('../../js/db.js?v=4433210-live-events');
 
 function createEventDocs(count) {
     return Array.from({ length: count }, (_, index) => ({
