@@ -123,6 +123,17 @@ describe('VerifyPending verification return flow', () => {
         await act(async () => root.unmount());
     });
 
+    it.each([false, true])('resumes the pending invite before an explicit next destination (native=%s)', async (native) => {
+        nativeRuntimeMocks.native = native;
+        const auth = createAuth();
+        auth.refresh.mockResolvedValueOnce({ ...auth.user, emailVerified: true });
+        readPendingInvite.mockReturnValueOnce({ code: 'FRIEND12', type: 'friend' });
+        const { container, root } = await renderVerifyPending(auth, '/verify-pending?next=%2Fteams');
+        await act(async () => buttonByText(container, "I've verified, continue").click());
+        expect(container.querySelector('[data-testid="location"]').textContent).toBe('/accept-invite?code=FRIEND12&type=friend&next=%2Fteams');
+        await act(async () => root.unmount());
+    });
+
     it('checks refreshed verification status before routing an unverified user away', async () => {
         const auth = createAuth();
         auth.refresh.mockResolvedValueOnce({

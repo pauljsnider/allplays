@@ -101,11 +101,11 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { login, signup, checkAuth, loginWithGoogle, handleGoogleRedirectResult, resetPassword, getRedirectUrl } from './js/auth.js?v=4433211';
-        import { getUserProfile } from './js/db.js?v=4433207';
-        import { renderHeader, renderFooter } from './js/utils.js?v=443383';
-        import { getPostAuthRedirectUrl } from './js/invite-redirect.js?v=3';
-        import * as loginPageModule from './js/login-page.js?v=12';
+        import { login, signup, checkAuth, loginWithGoogle, handleGoogleRedirectResult, resetPassword, getRedirectUrl } from './js/auth.js?v=4433214';
+        import { getUserProfile } from './js/db.js?v=4433209';
+        import { renderHeader, renderFooter } from './js/utils.js?v=443385';
+        import { getPostAuthRedirectUrl } from './js/invite-redirect.js?v=4';
+        import * as loginPageModule from './js/login-page.js?v=13';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -167,7 +167,10 @@
                     const profile = await getUserProfile(result.user.uid);
                     console.log('[Login Page] Profile fetched:', profile);
                     const userWithRoles = { ...result.user, ...profile };
-                    const redirectUrl = redirectCoordinator.getGoogleRedirectUrl(userWithRoles);
+                    const redirectUrl = loginPageModule.getGoogleResultRedirectUrl(
+                        result,
+                        redirectCoordinator.getGoogleRedirectUrl(userWithRoles)
+                    );
                     console.log('[Login Page] Redirecting to:', redirectUrl);
                     window.location.href = redirectUrl;
                     return; // Prevent further initialization
@@ -437,10 +440,13 @@
                     const shouldRedeemInvite = (shouldRedeemInviteFromLogin &&
                         (googleAuthMode === 'login' || googleAuthMode === 'invite')) ||
                         Boolean(pendingLoginInviteCode);
-                    const redirectUrl = redirectCoordinator.getPostAuthRedirect(
-                        userWithRoles,
-                        shouldRedeemInvite,
-                        pendingLoginInviteCode
+                    const redirectUrl = loginPageModule.getGoogleResultRedirectUrl(
+                        result,
+                        redirectCoordinator.getPostAuthRedirect(
+                            userWithRoles,
+                            shouldRedeemInvite,
+                            pendingLoginInviteCode
+                        )
                     );
                     window.sessionStorage.removeItem(pendingLoginInviteCodeStorageKey);
                     pendingLoginInviteCode = null;

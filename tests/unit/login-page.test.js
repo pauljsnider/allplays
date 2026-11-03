@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { createLoginRedirectCoordinator, createLoginAuthStateManager, shouldInitializeSignupMode, getGoogleAuthModeForLoginPage, PENDING_LOGIN_INVITE_CODE_STORAGE_KEY } from '../../js/login-page.js';
+import { createLoginRedirectCoordinator, createLoginAuthStateManager, shouldInitializeSignupMode, getGoogleAuthModeForLoginPage, getGoogleResultRedirectUrl, PENDING_LOGIN_INVITE_CODE_STORAGE_KEY } from '../../js/login-page.js';
 
 function createCoordinator({
     search = '?code=ab12cd34&type=parent',
@@ -79,11 +79,26 @@ describe('login page Google mode selection', () => {
     });
 });
 
+describe('login page Google result routing', () => {
+    it('routes deferred invites through verification for popup and redirect completions', () => {
+        const result = { pendingFamilyInvite: { code: 'FRIEND12', type: 'friend' } };
+
+        expect(getGoogleResultRedirectUrl(result, 'dashboard.html')).toBe('/app/#/verify-pending');
+        const html = readFileSync(new URL('../../login.html', import.meta.url), 'utf8');
+        expect(html.match(/getGoogleResultRedirectUrl\(/g)).toHaveLength(2);
+    });
+
+    it('preserves the normal role redirect when no invite is pending', () => {
+        expect(getGoogleResultRedirectUrl({ user: { uid: 'user-1' } }, 'parent-dashboard.html'))
+            .toBe('parent-dashboard.html');
+    });
+});
+
 describe('login page redirect coordination', () => {
     it('loads the cache-busted login page module that knows friend invite redirects', () => {
         const html = readFileSync(new URL('../../login.html', import.meta.url), 'utf8');
 
-        expect(html).toContain("import * as loginPageModule from './js/login-page.js?v=12';");
+        expect(html).toContain("import * as loginPageModule from './js/login-page.js?v=13';");
         expect(html).not.toContain("import * as loginPageModule from './js/login-page.js?v=7';");
     });
 

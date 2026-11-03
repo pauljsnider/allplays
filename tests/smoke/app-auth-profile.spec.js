@@ -24,18 +24,18 @@ async function waitForAuthRoute(page, readyLocator) {
     }).toPass({ timeout: 30000 });
 }
 
-async function mockAppModules(page, { user = null, signInUser = null, emailLink = false, friendInviteReplay = false } = {}) {
+async function mockAppModules(page, { user = null, signInUser = null, emailLink = false, friendInviteReplay = false, friendInviteVerification = false } = {}) {
     let friendInviteRedemptionAttempts = 0;
     if (friendInviteReplay) {
         await page.exposeFunction('mockFriendInviteRedemption', () => {
             friendInviteRedemptionAttempts += 1;
             return friendInviteRedemptionAttempts > 1
-                ? { error: 'Unable to redeem friend invite.' }
-                : { error: '' };
+                ? { alreadyRedeemed: true }
+                : { alreadyRedeemed: false };
         });
     }
 
-    await page.addInitScript(({ mockUser, mockSignInUser, mockEmailLink, mockFriendInviteReplay }) => {
+    await page.addInitScript(({ mockUser, mockSignInUser, mockEmailLink, mockFriendInviteReplay, mockFriendInviteVerification }) => {
         window.__mockAuthState = {
             user: mockUser,
             profile: mockUser ? { fullName: mockUser.displayName || 'Pat Parent' } : null
@@ -43,6 +43,7 @@ async function mockAppModules(page, { user = null, signInUser = null, emailLink 
         window.__mockEmailLink = mockEmailLink;
         window.__mockSignInUser = mockSignInUser;
         window.__mockFriendInviteReplay = mockFriendInviteReplay;
+        window.__mockFriendInviteVerification = mockFriendInviteVerification;
         window.__mockGoogleRedirectSettled = false;
         window.__appAuthCalls = {
             signInWithEmail: [],
@@ -89,7 +90,8 @@ async function mockAppModules(page, { user = null, signInUser = null, emailLink 
         mockUser: user,
         mockSignInUser: signInUser,
         mockEmailLink: emailLink,
-        mockFriendInviteReplay: friendInviteReplay
+        mockFriendInviteReplay: friendInviteReplay,
+        mockFriendInviteVerification: friendInviteVerification
     });
 
     // The app startup timer lazily initializes Firebase Performance. Keep this
@@ -126,7 +128,7 @@ async function mockAppModules(page, { user = null, signInUser = null, emailLink 
             status: 200,
             contentType: 'application/javascript',
             body: `
-                const refresh = async () => { window.__appAuthCalls.refresh += 1; };
+                const refresh = async () => { window.__appAuthCalls.refresh += 1; return window.__mockAuthState?.user; };
 
                 export function useAuth() {
                     const state = window.__mockAuthState || { user: null, profile: null };
@@ -258,10 +260,13 @@ async function mockAppModules(page, { user = null, signInUser = null, emailLink 
 
                 export async function redeemInviteForUser(userId, code, authEmail) {
                     window.__appAuthCalls.redeemInviteForUser.push({ userId, code, authEmail });
+                    if (window.__mockFriendInviteVerification && !window.__mockAuthState?.user?.emailVerified) {
+                        throw Object.assign(new Error('Verify your email before accepting this invite.'), { details: { reason: 'email-verification-required', inviteType: 'friend' } });
+                    }
                     if (window.__mockFriendInviteReplay) {
                         const replayResult = await window.mockFriendInviteRedemption();
-                        if (replayResult?.error) {
-                            throw new Error(replayResult.error);
+                        if (replayResult?.alreadyRedeemed) {
+                            return { alreadyRedeemed: true, message: 'This code is already connected to your account.', redirectUrl: '/app/#/home?section=friends' };
                         }
                     }
                     return { message: 'Invite accepted.', redirectUrl: 'parent-dashboard.html' };
@@ -884,7 +889,7 @@ test('signed-in invite and account action routes process existing site flows', a
     }))).toEqual({ resend: 1, refresh: 1 });
 });
 
-test('friend invite acceptance uses the signed-in route and rejects replay generically', async ({ page, baseURL }) => {
+test('friend invite acceptance resumes a same-account replay successfully', async ({ page, baseURL }) => {
     const pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
     const user = {
@@ -907,10 +912,22 @@ test('friend invite acceptance uses the signed-in route and rejects replay gener
 
     await page.reload({ waitUntil: 'domcontentloaded' });
     expect(pageErrors).toEqual([]);
-    await expect(page.getByText('Unable to redeem friend invite.')).toBeVisible();
+    await expect(page.getByText('This code is already connected to your account.')).toBeVisible();
     expect(await page.evaluate(() => window.__appAuthCalls.redeemInviteForUser)).toEqual([
         { userId: 'user-1', code: 'FRIEND12', authEmail: 'friend@example.com' }
     ]);
+});
+
+test('an unverified friend recipient verifies and resumes the original invitation', async ({ page, baseURL }) => {
+    await mockAppModules(page, { user: { uid: 'recipient', email: 'friend@example.com', emailVerified: false, roles: [] }, friendInviteVerification: true });
+    await page.goto(appUrl(baseURL, '/accept-invite?code=FRIEND12&type=friend'), { waitUntil: 'domcontentloaded' });
+    await expect(page.getByRole('heading', { name: 'Verify your email' })).toBeVisible();
+    expect(await page.evaluate(() => window.localStorage.getItem('allplays-app-pending-invite-code'))).toBe('FRIEND12');
+    await page.evaluate(() => { window.__mockAuthState.user.emailVerified = true; });
+    await page.getByRole('button', { name: "I've verified, continue" }).click();
+    await expect(page.getByText('Invite accepted.')).toBeVisible();
+    expect(await page.evaluate(() => window.__appAuthCalls.redeemInviteForUser.map(({ code }) => code))).toEqual(['FRIEND12', 'FRIEND12']);
+    expect(await page.evaluate(() => window.localStorage.getItem('allplays-app-pending-invite-code'))).toBeNull();
 });
 
 test('profile exposes account, notification, invite, verification, password, upload, and logout capabilities', async ({ page, baseURL }) => {
@@ -973,12 +990,12 @@ test('profile exposes account, notification, invite, verification, password, upl
     await expect(page.getByRole('button', { name: 'Copy code' })).toBeVisible();
 
     const sharedInviteUrl = await page.evaluate(() => window.__appShareCalls[0]?.url || '');
-    expect(sharedInviteUrl).toContain('/app/#/accept-invite?code=NEWMVP42');
+    expect(sharedInviteUrl).toBe('https://allplays.ai/app/#/accept-invite?code=NEWMVP42&type=friend');
     expect(sharedInviteUrl).not.toContain('/login.html?code=');
 
     const recipientPage = await page.context().newPage();
     await mockAppModules(recipientPage);
-    await recipientPage.goto(sharedInviteUrl, { waitUntil: 'domcontentloaded' });
+    await recipientPage.goto(appUrl(baseURL, new URL(sharedInviteUrl).hash.slice(1)), { waitUntil: 'domcontentloaded' });
     await expect(recipientPage.getByRole('heading', { name: 'Join ALL PLAYS' })).toBeVisible();
     await expect(recipientPage.getByText('Join code entered')).toBeVisible();
     await expect(recipientPage.getByText('We’ll verify this code after you sign in or create your account.')).toBeVisible();

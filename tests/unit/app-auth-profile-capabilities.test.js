@@ -162,7 +162,7 @@ describe('React app auth/profile capability parity', () => {
             'mapLegacyRedirectToAppRoute',
             'Sign in to accept',
             'Create account with code',
-            'buildInviteAuthUrl(normalizedCode, inviteType)'
+            'buildInviteAuthUrl(normalizedCode, inviteType, nextRoute)'
         ]);
         expectContains(authService, [
             'createInviteProcessor',

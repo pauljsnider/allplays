@@ -65,7 +65,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
 
   const postAuthRoute = useMemo(() => {
     if (inviteCode) {
-      return `/accept-invite?code=${encodeURIComponent(inviteCode)}&type=${encodeURIComponent(inviteType)}`;
+      return `/accept-invite?code=${encodeURIComponent(inviteCode)}&type=${encodeURIComponent(inviteType)}${requestedNextRoute ? `&next=${encodeURIComponent(requestedNextRoute)}` : ''}`;
     }
     return requestedNextRoute || getRouteForUser(auth.user);
   }, [auth.user, inviteCode, inviteType, requestedNextRoute]);
@@ -149,13 +149,14 @@ export function AuthPage({ auth }: { auth: AuthState }) {
           return;
         }
         await authRef.current.refresh();
-        const redirectRoute = result.wasNewUser
-          ? requestedNextRoute
-            ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}`
-            : '/verify-pending'
-          : inviteCode || requestedNextRoute
-            ? postAuthRouteRef.current
-            : '/home';
+        const redirectRoute =
+          result.wasNewUser || result.pendingFamilyInvite
+            ? requestedNextRoute
+              ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}`
+              : '/verify-pending'
+            : inviteCode || requestedNextRoute
+              ? postAuthRouteRef.current
+              : '/home';
         if (cancelled || !authPageActiveRef.current || !isBrowserAuthRouteActive()) {
           return;
         }
@@ -261,7 +262,21 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       }
       await completePostAuthNavigation(postLoginRoute, credential.nativeRest === true);
     } catch (submitError: any) {
-      setError(describeAuthError(submitError));
+      if (mode === 'signup' && submitError?.code === 'auth/email-already-in-use') {
+        if (activationCode.trim()) {
+          const pendingCode = activationCode.trim().toUpperCase();
+          rememberPendingInvite(pendingCode, inviteType);
+          const params = new URLSearchParams(searchParams);
+          params.set('code', pendingCode);
+          params.set('type', inviteType);
+          params.set('mode', 'login');
+          navigate(`/auth?${params.toString()}`, { replace: true });
+        }
+        setMode('login');
+        setMessage('An account already exists for this email. Sign in to continue with your invitation, or reset your password.');
+      } else {
+        setError(describeAuthError(submitError));
+      }
     } finally {
       setBusy(false);
     }
@@ -287,7 +302,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       if (result) {
         const hydrated = mode === 'signup' || inviteCode ? null : await hydrateFirebaseUser(result.user).catch(() => null);
         const postGoogleRoute =
-          mode === 'signup' && result.wasNewUser
+          (mode === 'signup' && result.wasNewUser) || result.pendingFamilyInvite
             ? requestedNextRoute
               ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}`
               : '/verify-pending'
@@ -327,7 +342,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       if (result) {
         const hydrated = mode === 'signup' || inviteCode ? null : await hydrateFirebaseUser(result.user).catch(() => null);
         const destination =
-          mode === 'signup' && result.wasNewUser
+          (mode === 'signup' && result.wasNewUser) || result.pendingFamilyInvite
             ? requestedNextRoute
               ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}`
               : '/verify-pending'

@@ -105,6 +105,8 @@ export async function executeEmailPasswordSignup({
         try {
             globalThis.localStorage?.setItem('inviteCode', pendingCode);
             globalThis.localStorage?.setItem('inviteType', type);
+            globalThis.localStorage?.setItem('allplays-app-pending-invite-code', pendingCode);
+            globalThis.localStorage?.setItem('allplays-app-pending-invite-type', type);
         } catch (_storageError) {
             // The returned credential still carries the pending invite for callers
             // when browser storage is unavailable.
@@ -134,7 +136,13 @@ export async function executeEmailPasswordSignup({
             if (typeof redeemFriendInvite !== 'function') {
                 throw new Error('Missing friend invite redemption handler');
             }
-            await redeemFriendInvite(userId, validation.data?.code || activationCode, email);
+            // A newly created password account cannot satisfy the callable's
+            // verified-recipient requirement yet. Keep it pending until verification.
+            if (userCredential.user.emailVerified !== true) {
+                preservePendingInvite('friend', validation.data?.code || activationCode);
+            } else {
+                await redeemFriendInvite(userId, validation.data?.code || activationCode, email);
+            }
             await writeSignupProfile({ email });
         } catch (e) {
             console.error('Error linking friend invite:', e);

@@ -140,8 +140,8 @@ describe('live game overlay page', () => {
         expect(source).toContain("params.demo === '1'");
         expect(source).toContain("params.replay === 'true'");
         expect(source).toContain('startDemoReplayMode');
-        expect(source).toContain("return import('./db.js?v=4433207')");
-        expect(source).toContain("import('./live-game-state.js?v=55')");
+        expect(source).toContain("return import('./db.js?v=4433209')");
+        expect(source).toContain("import('./live-game-state.js?v=57')");
         expect(source).toContain('stateTools.applyResetEventState');
         expect(source).toContain('reconcileOverlayLiveEvents');
         expect(source).toContain("from './live-game-overlay-model.js?v=33'");
@@ -158,7 +158,7 @@ describe('live game overlay page', () => {
         expect(source).toContain('database.subscribeReactions');
         expect(source).toContain('getOverlayLiveClockMs');
         expect(source).toContain('syncLiveClockAnchor');
-        expect(source).toContain("import('./auth.js?v=4433211')");
+        expect(source).toContain("import('./auth.js?v=4433214')");
         expect(source).toContain("import('./live-game-chat.js?v=4')");
         expect(currentLiveGameSource).toContain("from './live-game-overlay-model.js?v=33'");
         expect(currentLiveGameSource).toContain("from './live-game-video.js?v=443319'");
@@ -197,7 +197,7 @@ describe('live game overlay page', () => {
         expect(source).not.toContain('trackViewerPresence(');
         expect(source).toContain('sendChatReaction');
         expect(source).toContain("from './game-share-links.js?v=1'");
-        expect(source).toContain("from './utils.js?v=443383'");
+        expect(source).toContain("from './utils.js?v=443385'");
         expect(source).toContain("from './live-game-announcer.js?v=1'");
         expect(source).toContain("import('./team-entitlements.js?v=9')");
         expect(source).toContain('isRecordedReplayTeamPassGateEnabled');

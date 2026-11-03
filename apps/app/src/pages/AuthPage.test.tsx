@@ -46,10 +46,30 @@ const publicActionsMocks = vi.hoisted(() => ({
 vi.mock('../lib/useAuth', () => ({ useAuth: () => auth }));
 vi.mock('../components/AppShell', () => ({ AppShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock('./DiamondScorebookRoute', () => ({ DiamondScorebookRoute: () => null }));
-vi.mock('./PlayerResourcePackets', () => ({ PlayerResourcePackets: () => { const location = useLocation(); return <div>Assignment destination: {location.pathname}{location.search}</div>; } }));
+vi.mock('./PlayerResourcePackets', () => ({
+  PlayerResourcePackets: () => {
+    const location = useLocation();
+    return (
+      <div>
+        Assignment destination: {location.pathname}
+        {location.search}
+      </div>
+    );
+  }
+}));
 vi.mock('../lib/nativeDeepLinkRouting', () => ({ addNativeDeepLinkListener: async () => () => {} }));
-vi.mock('../lib/nativeBackButton', () => ({ addNativeBackButtonListener: async () => () => {}, dispatchNativeBackDismissEvent: () => false, exitNativeApp: vi.fn(), getNativeBackTarget: () => null, isNativeExitRoute: () => false, nativeBackExitPressWindowMs: 2000 }));
-vi.mock('../lib/pushService', () => ({ addPushNotificationOpenListener: async () => () => {}, ensureAndroidNotificationChannels: async () => {} }));
+vi.mock('../lib/nativeBackButton', () => ({
+  addNativeBackButtonListener: async () => () => {},
+  dispatchNativeBackDismissEvent: () => false,
+  exitNativeApp: vi.fn(),
+  getNativeBackTarget: () => null,
+  isNativeExitRoute: () => false,
+  nativeBackExitPressWindowMs: 2000
+}));
+vi.mock('../lib/pushService', () => ({
+  addPushNotificationOpenListener: async () => () => {},
+  ensureAndroidNotificationChannels: async () => {}
+}));
 vi.mock('../lib/authService', () => authServiceMocks);
 vi.mock('../lib/nativeRuntime', () => ({
   isNativeRuntime: () => nativeRuntimeMocks.native
@@ -155,23 +175,34 @@ describe('AuthPage native post-login routing', () => {
     cleanup();
   });
 
-  it.each(['/practice-resources?teamId=team-1&assignmentId=assignment-1', '/players/team-1/child-1/resources?assignmentId=assignment-1'])('preserves a logged-out native assignment through the real login route and reload (%s)', async (destination) => {
-    nativeRuntimeMocks.native = true;
-    const user = { uid: 'parent-1', email: 'parent@example.invalid', displayName: 'Synthetic parent', roles: ['parent'] as ['parent'] };
-    authServiceMocks.signInWithEmail.mockResolvedValue({ user, nativeRest: true });
-    authServiceMocks.hydrateFirebaseUser.mockResolvedValue({ user, profile: {} });
-    const view = render(<MemoryRouter initialEntries={[destination]}><App /></MemoryRouter>);
-    await screen.findByRole('button', { name: 'Sign in' }, { timeout: 5000 });
-    fireEvent.change(screen.getByLabelText('Email'), { target: { value: user.email } });
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'local-test-password' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-    await waitFor(() => expect(window.location.hash).toBe('#' + destination));
-    expect(window.location.reload).toHaveBeenCalledOnce();
-    view.unmount();
-    auth.user = user;
-    render(<MemoryRouter initialEntries={[window.location.hash.slice(1)]}><App /></MemoryRouter>);
-    expect(await screen.findByText('Assignment destination: ' + destination)).toBeVisible();
-  });
+  it.each(['/practice-resources?teamId=team-1&assignmentId=assignment-1', '/players/team-1/child-1/resources?assignmentId=assignment-1'])(
+    'preserves a logged-out native assignment through the real login route and reload (%s)',
+    async (destination) => {
+      nativeRuntimeMocks.native = true;
+      const user = { uid: 'parent-1', email: 'parent@example.invalid', displayName: 'Synthetic parent', roles: ['parent'] as ['parent'] };
+      authServiceMocks.signInWithEmail.mockResolvedValue({ user, nativeRest: true });
+      authServiceMocks.hydrateFirebaseUser.mockResolvedValue({ user, profile: {} });
+      const view = render(
+        <MemoryRouter initialEntries={[destination]}>
+          <App />
+        </MemoryRouter>
+      );
+      await screen.findByRole('button', { name: 'Sign in' }, { timeout: 5000 });
+      fireEvent.change(screen.getByLabelText('Email'), { target: { value: user.email } });
+      fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'local-test-password' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+      await waitFor(() => expect(window.location.hash).toBe('#' + destination));
+      expect(window.location.reload).toHaveBeenCalledOnce();
+      view.unmount();
+      auth.user = user;
+      render(
+        <MemoryRouter initialEntries={[window.location.hash.slice(1)]}>
+          <App />
+        </MemoryRouter>
+      );
+      expect(await screen.findByText('Assignment destination: ' + destination)).toBeVisible();
+    }
+  );
 
   it('reloads native email sign-in to the home page', async () => {
     authServiceMocks.signInWithEmail.mockResolvedValue({
@@ -546,6 +577,24 @@ describe('AuthPage native post-login routing', () => {
     expect(authServiceMocks.signInWithAppleAccount).not.toHaveBeenCalled();
     expect(window.location.replace).not.toHaveBeenCalled();
     expect(window.location.reload).not.toHaveBeenCalled();
+  });
+
+  it('offers sign-in recovery for an existing account while retaining the invitation', async () => {
+    authServiceMocks.signUpWithEmail.mockRejectedValueOnce(
+      Object.assign(new Error('Email already used'), { code: 'auth/email-already-in-use' })
+    );
+    const router = renderNavigableAuthPage('/auth?mode=signup&code=FRIEND12&type=friend');
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'friend@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password123' } });
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'password123' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: /I agree/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+    expect(await screen.findByText(/An account already exists for this email/)).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Sign in' }).getAttribute('aria-selected')).toBe('true');
+    expect(authServiceMocks.rememberPendingInvite).toHaveBeenCalledWith('FRIEND12', 'friend');
+    expect(new URLSearchParams(router.state.location.search).get('code')).toBe('FRIEND12');
+    expect(screen.getByLabelText('Email')).toHaveValue('friend@example.com');
+    expect(authServiceMocks.signInWithEmail).not.toHaveBeenCalled();
   });
 
   it('preserves the static Diamond viewer through a new email user verification handoff', async () => {

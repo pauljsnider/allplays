@@ -143,7 +143,7 @@ describe('public user profile sync', () => {
     it('converges legacy and app signup paths on the same server-owned projection', () => {
         expect(legacyAuthSource).toContain('return executeEmailPasswordSignup({');
         expect(legacyAuthSource).toContain('updateUserProfile,');
-        expect(appAuthSource).toContain('return executeEmailPasswordSignup({');
+        expect(appAuthSource).toContain('await executeEmailPasswordSignup({');
         expect(appAuthSource).toContain('updateUserProfile: dbModule.updateUserProfile');
         expect(functionsSource).toMatch(
             /exports\.syncPublicUserProfileOnUserWrite = functions\s+\.runWith\(\{ failurePolicy: true \}\)\s+\.firestore/

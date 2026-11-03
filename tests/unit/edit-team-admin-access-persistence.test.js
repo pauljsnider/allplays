@@ -416,7 +416,7 @@ function extractEditTeamModule() {
             'const { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } = deps.teamAccess;'
         )
         .replace(
-            "import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin, loadPendingAdminInviteEmails } from './js/edit-team-admin-invites.js?v=5';",
+            "import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin, loadPendingAdminInviteEmails } from './js/edit-team-admin-invites.js?v=6';",
             'const { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin, loadPendingAdminInviteEmails } = deps.editTeamAdminInvites;'
         )
         .replace(
@@ -428,7 +428,7 @@ function extractEditTeamModule() {
             'const { buildRosterRolloverPreviewRows } = deps.rosterRolloverPreview;'
         )
         .replace(
-            "import { buildAppJoinUrl } from './js/join-code.js?v=2';",
+            "import { buildAppJoinUrl } from './js/join-code.js?v=3';",
             'const buildAppJoinUrl = deps.buildAppJoinUrl || (() => "");'
         );
 }

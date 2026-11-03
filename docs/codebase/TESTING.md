@@ -26,6 +26,7 @@ npx vitest run tests/unit/my-feature.test.js --reporter=verbose
 npm --prefix apps/app exec -- vitest run src/lib/my-feature.test.ts --reporter=verbose
 
 # Browser suites
+npm run test:invitations:browser
 npm run test:smoke
 npm run test:smoke:team-fallback
 npm run test:smoke:visual
@@ -54,6 +55,12 @@ npm run test:coverage-map
 Root file-contract tests should prefer `readFileSync` when no browser is needed.
 App component/service tests use jsdom and module mocks. Rules tests start clean
 emulators and must never target a real Firebase project.
+
+`npm run test:invitations:browser` runs the two-user invitation flow in
+Playwright against isolated Firebase emulators, covering invitation generation,
+recipient signup, email verification, and acceptance with synthetic identities.
+It requires Java and Playwright Chromium; it does not use production accounts
+or deliver real email.
 
 ## 3) Test Scope Matrix
 
@@ -98,7 +105,9 @@ must not regain competing pull-request or master-push triggers.
 - `cache-bust-guard`: verifies selected legacy asset query-version updates.
 - `unit-tests`: installs root, Functions, and app packages; validates optional
   performance evidence; runs root/rules tests and notification/auth/team-email
-  coverage.
+  coverage. The isolated invitation browser flow runs in this job for code
+  changes, skips the spec-only lane, and has a ten-minute step timeout. A failure
+  fails the job; this does not change branch protection or repository rulesets.
 - `app-quality`: audits app production dependencies, typechecks, performs
   diff-aware lint, and runs app tests.
 

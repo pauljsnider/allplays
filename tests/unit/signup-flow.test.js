@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { executeEmailPasswordSignup } from '../../js/signup-flow.js';
 
 function createDependencies(overrides = {}) {
@@ -32,6 +32,9 @@ function createDependencies(overrides = {}) {
 }
 
 describe('executeEmailPasswordSignup', () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
 
     it.each([
         ['parent_invite', 'redeemParentInvite', 'parent'],
@@ -471,8 +474,39 @@ describe('executeEmailPasswordSignup', () => {
         expect(dependencies.sendVerificationEmail).toHaveBeenCalledTimes(1);
     });
 
+    it('retains a new unverified friend recipient, synchronizes app storage, and queues verification', async () => {
+        const storage = new Map([
+            ['allplays-app-pending-invite-code', 'STALE123'],
+            ['allplays-app-pending-invite-type', 'admin']
+        ]);
+        vi.stubGlobal('localStorage', {
+            setItem: (key, value) => storage.set(key, String(value)),
+            getItem: (key) => storage.get(key) ?? null
+        });
+        const deleteAuthUser = vi.fn();
+        const user = { uid: 'new-friend', email: 'friend@example.com', emailVerified: false, delete: deleteAuthUser, reload: vi.fn() };
+        const dependencies = createDependencies({
+            validateAccessCode: vi.fn()
+                .mockResolvedValueOnce({ valid: false, message: 'Invalid or expired access code' })
+                .mockResolvedValueOnce({ valid: true, type: 'friend_invite', data: { code: 'FRIEND12' } }),
+            createUserWithEmailAndPassword: vi.fn().mockResolvedValue({ user }),
+            redeemFriendInvite: vi.fn().mockRejectedValue(new Error('Unable to redeem friend invite.'))
+        });
+        const result = await executeEmailPasswordSignup({ email: user.email, password: 'synthetic-password', activationCode: 'FRIEND12', auth: { currentUser: user }, dependencies });
+        expect(result.pendingFamilyInvite).toEqual({ code: 'FRIEND12', type: 'friend' });
+        expect(localStorage.getItem('allplays-app-pending-invite-code')).toBe('FRIEND12');
+        expect(localStorage.getItem('allplays-app-pending-invite-type')).toBe('friend');
+        expect(dependencies.redeemFriendInvite).not.toHaveBeenCalled();
+        expect(deleteAuthUser).not.toHaveBeenCalled();
+        expect(dependencies.signOut).not.toHaveBeenCalled();
+        expect(dependencies.markAccessCodeAsUsed).not.toHaveBeenCalled();
+        expect(dependencies.sendVerificationEmail).toHaveBeenCalledOnce();
+        expect(dependencies.updateUserProfile).toHaveBeenCalledWith('new-friend', expect.objectContaining({ emailVerificationRequired: true }));
+    });
+
     it('routes friend invite signup through friend redemption and not generic code consumption', async () => {
         const dependencies = createDependencies({
+            createUserWithEmailAndPassword: vi.fn().mockResolvedValue({ user: { uid: 'user-123', emailVerified: true } }),
             validateAccessCode: vi.fn().mockResolvedValue({
                 valid: true,
                 type: 'friend_invite',
@@ -518,6 +552,7 @@ describe('executeEmailPasswordSignup', () => {
             createUserWithEmailAndPassword: vi.fn().mockResolvedValue({
                 user: {
                     uid: 'user-123',
+                    emailVerified: true,
                     delete: deleteAuthUser
                 }
             }),
