@@ -973,12 +973,12 @@ test('profile exposes account, notification, invite, verification, password, upl
     await expect(page.getByRole('button', { name: 'Copy code' })).toBeVisible();
 
     const sharedInviteUrl = await page.evaluate(() => window.__appShareCalls[0]?.url || '');
-    expect(sharedInviteUrl).toContain('/app/#/accept-invite?code=NEWMVP42');
+    expect(sharedInviteUrl).toBe('https://allplays.ai/app/#/accept-invite?code=NEWMVP42&type=friend');
     expect(sharedInviteUrl).not.toContain('/login.html?code=');
 
     const recipientPage = await page.context().newPage();
     await mockAppModules(recipientPage);
-    await recipientPage.goto(sharedInviteUrl, { waitUntil: 'domcontentloaded' });
+    await recipientPage.goto(appUrl(baseURL, new URL(sharedInviteUrl).hash.slice(1)), { waitUntil: 'domcontentloaded' });
     await expect(recipientPage.getByRole('heading', { name: 'Join ALL PLAYS' })).toBeVisible();
     await expect(recipientPage.getByText('Join code entered')).toBeVisible();
     await expect(recipientPage.getByText('We’ll verify this code after you sign in or create your account.')).toBeVisible();

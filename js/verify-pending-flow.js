@@ -1,4 +1,4 @@
-import { buildLegacyJoinUrl } from './join-code.js?v=2';
+import { buildLegacyJoinUrl } from './join-code.js?v=3';
 
 export function getPendingVerificationRedirectUrl(user, getFallbackRedirectUrl, storage = globalThis.localStorage) {
     const fallbackRedirectUrl = getFallbackRedirectUrl(user);

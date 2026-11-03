@@ -99,7 +99,7 @@ import {
 } from './shared-schedule-sync.js?v=3';
 import { normalizeTeamNotificationPreferences } from './notification-preferences.js?v=1';
 import { normalizeAdSpaceSponsors, normalizeLocalAttractionSponsors } from './local-attractions.js?v=2';
-import { generateJoinCode, normalizeJoinCode } from './join-code.js?v=1';
+import { generateJoinCode, normalizeJoinCode } from './join-code.js?v=3';
 import { buildRosterFieldDefinitionPayload } from './roster-profile-fields.js?v=2';
 import { commitFamilyRsvpWrite } from './rsvp-family-write.js?v=1';
 import {
@@ -824,7 +824,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443383'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443384'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -5583,7 +5583,14 @@ export async function createAccessCode(userId, email, phone, code, options = {})
             phone,
             inviterProfile: {
                 ...friendInviteInviterProfile,
-                discoveryTeamIds: derivePublicProfileTeamIds(friendInviteInviterProfile)
+                discoveryTeamIds: uniqueNonEmptyIds([
+                    ...(Array.isArray(friendInviteInviterProfile.parentOf)
+                        ? friendInviteInviterProfile.parentOf.map((link) => link?.teamId)
+                        : []),
+                    ...(Array.isArray(friendInviteInviterProfile.parentTeamIds)
+                        ? friendInviteInviterProfile.parentTeamIds
+                        : [])
+                ])
             },
             now,
             expiresAt: options.expiresAt || Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000)

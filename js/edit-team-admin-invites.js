@@ -1,4 +1,4 @@
-import { buildAppJoinUrl } from './join-code.js?v=2';
+import { buildAppJoinUrl } from './join-code.js?v=3';
 
 export async function inviteExistingTeamAdmin({
     teamId,

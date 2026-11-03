@@ -1,4 +1,5 @@
 import { buildAppUrl, getPublicAppOrigin } from './appLinks';
+import { resolvePublicOrigin } from './adapters/legacyPublicOrigin';
 
 export const getPublicBaseUrl = getPublicAppOrigin;
 
@@ -43,13 +44,14 @@ export function canonicalizeAppAcceptInviteUrl(
     fallbackType = '',
     baseUrl = getPublicBaseUrl()
 ) {
+    const publicBaseUrl = resolvePublicOrigin(baseUrl);
     const rawUrl = String(value || '').trim();
     let code = String(fallbackCode || '').trim();
     let inviteType = String(fallbackType || '').trim();
 
     if (rawUrl) {
         try {
-            const parsed = new URL(rawUrl, new URL(baseUrl).origin);
+            const parsed = new URL(rawUrl, publicBaseUrl);
             const hashRoute = parsed.hash.replace(/^#/, '');
             const [, hashQuery = ''] = hashRoute.split('?', 2);
             const hashParams = new URLSearchParams(hashQuery);
@@ -60,5 +62,5 @@ export function canonicalizeAppAcceptInviteUrl(
         }
     }
 
-    return buildAppAcceptInviteUrl(code, inviteType, baseUrl);
+    return buildAppAcceptInviteUrl(code, inviteType, publicBaseUrl);
 }

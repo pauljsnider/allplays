@@ -7,7 +7,7 @@ describe('login page cache busting', () => {
         const source = readFileSync(resolve(process.cwd(), 'login.html'), 'utf8');
 
         expect(source).toContain(
-            "import { getPostAuthRedirectUrl } from './js/invite-redirect.js?v=3';"
+            "import { getPostAuthRedirectUrl } from './js/invite-redirect.js?v=4';"
         );
         expect(source).toContain(
             "import * as loginPageModule from './js/login-page.js?v=12';"
