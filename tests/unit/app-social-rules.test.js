@@ -67,6 +67,22 @@ const ownerPublicProfilePresentationFields = [
     'updatedAt'
 ];
 
+const socialPostContactFields = [
+    'authorEmail',
+    'authorEmailAddress',
+    'email',
+    'emailAddress',
+    'contactEmail',
+    'authorPhone',
+    'authorPhoneNumber',
+    'phone',
+    'phoneNumber',
+    'mobile',
+    'mobilePhone',
+    'contactPhone',
+    'contactPhoneNumber'
+];
+
 function hasOnly(values, allowed) {
     return values.every((value) => allowed.includes(value));
 }
@@ -115,7 +131,7 @@ describe('React app social Firestore rules', () => {
 
         expect(source).toContain('function canReadSocialPost(data)');
         expect(source).toContain('function isSocialPostCreatePayloadValid(data)');
-        expect(source).toContain('function hasSocialPostContactFields(keys)');
+        expect(source).toContain('function hasContact(k)');
         expect(source).toContain("!data.authorName.matches('.*@.*')");
         expect(source).toContain('function isCanonicalSocialPostRoute(value)');
         expect(source).toContain('function isSocialPostNavigationValid(data)');
@@ -150,8 +166,8 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("snapshot.get('route', null) == route");
         expect(source).toContain("snapshot.get('href', null) == null");
         expect(source).toContain('isSocialPostNavigationValid(data)');
-        expect(source).toContain('!hasSocialPostContactFields(data.keys())');
-        expect(source).toContain('!hasSocialPostContactFields(request.resource.data.diff(resource.data).affectedKeys())');
+        expect(source).toContain('!hasContact(data.keys())');
+        expect(source).toContain('!hasContact(request.resource.data.diff(resource.data).affectedKeys())');
     });
 
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('social post navigation rules engine coverage', () => {
@@ -295,7 +311,7 @@ describe('React app social Firestore rules', () => {
             ));
         });
 
-        it.each(['authorEmail', 'email', 'phone', 'phoneNumber', 'contactEmail'])(
+        it.each(socialPostContactFields)(
             'denies social post creates containing the prohibited contact field %s',
             async (fieldName) => {
                 const db = testEnv.authenticatedContext('owner-1', {
@@ -311,7 +327,7 @@ describe('React app social Firestore rules', () => {
             }
         );
 
-        it.each(['authorEmail', 'email', 'phone', 'phoneNumber', 'contactEmail'])(
+        it.each(socialPostContactFields)(
             'denies social post updates containing the prohibited contact field %s',
             async (fieldName) => {
                 const db = testEnv.authenticatedContext('owner-1', {

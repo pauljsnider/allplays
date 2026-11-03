@@ -1908,23 +1908,23 @@ service cloud.firestore {
              snapshot.get('href', null) == null;
     }
 
-    function hasSocialPostContactFields(keys) {
-      return keys.hasAny([
-        'authorEmail', 'email', 'contactEmail', 'phone', 'phoneNumber'
+    function hasContact(k) {
+      return k.hasAny([
+        'authorEmail', 'authorEmailAddress', 'email', 'emailAddress', 'contactEmail',
+        'authorPhone', 'authorPhoneNumber', 'phone', 'phoneNumber', 'mobile',
+        'mobilePhone', 'contactPhone', 'contactPhoneNumber'
       ]);
     }
 
     function isSocialPostCreatePayloadValid(data) {
       return isSignedIn() &&
-             !hasSocialPostContactFields(data.keys()) &&
-             data.get('authorId', '') == request.auth.uid &&
+             !hasContact(data.keys()) &&
+             data.authorId == request.auth.uid &&
              !data.authorName.matches('.*@.*') &&
-             data.get('type', '') is string &&
-             isSocialPostType(data.get('type', '')) &&
-             data.get('visibility', '') is string &&
-             isSocialVisibility(data.get('visibility', '')) &&
-             data.get('title', '') is string &&
-             data.get('title', '').size() > 0 &&
+             isSocialPostType(data.type) &&
+             isSocialVisibility(data.visibility) &&
+             data.title is string &&
+             data.title.size() > 0 &&
              data.get('visibleUserIds', []) is list &&
              request.auth.uid in data.get('visibleUserIds', []) &&
              data.get('teamIds', []) is list &&
@@ -1934,7 +1934,7 @@ service cloud.firestore {
              isSocialPostNavigationValid(data) &&
              data.get('hidden', false) == false &&
              (
-               !(data.get('visibility', '') in ['team', 'friends_and_team']) ||
+               !(data.visibility in ['team', 'friends_and_team']) ||
                canReadSocialTeamPost(data)
              );
     }
@@ -3160,7 +3160,7 @@ service cloud.firestore {
       allow create: if isVerifiedForSensitiveWrite() &&
                        isSocialPostCreatePayloadValid(request.resource.data);
       allow update: if isVerifiedForSensitiveWrite() &&
-                    !hasSocialPostContactFields(request.resource.data.diff(resource.data).affectedKeys()) &&
+                    !hasContact(request.resource.data.diff(resource.data).affectedKeys()) &&
                     (
                       isSocialPostAuthorContentUpdateValid() ||
                       isSocialPostAuthorHideUpdateValid() ||
