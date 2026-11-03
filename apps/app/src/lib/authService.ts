@@ -815,6 +815,9 @@ async function postNativeFriendInviteRedemption(userId: string, code: string) {
 
 async function redeemFriendInviteForCurrentSession(dbModule: FriendInviteRedeemer, userId: string, code: string, email?: string | null) {
   const normalizedCode = normalizeCode(code);
+  if (isNativeRuntime()) {
+    await FirebaseAuthentication.reload();
+  }
   const currentUser = isNativeRuntime()
     ? (await FirebaseAuthentication.getCurrentUser().catch(() => ({ user: null }))).user
     : getCurrentFirebaseUser();

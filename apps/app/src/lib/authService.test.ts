@@ -1336,6 +1336,8 @@ describe('signInWithGoogleAccount invite redemption', () => {
     legacyAuthMocks.updateUserProfile.mockReset();
     legacyAuthMocks.updateUserProfile.mockResolvedValue(undefined);
     legacyAdminInviteMocks.redeemAdminInviteAcceptance.mockReset();
+    nativeAuthenticationMocks.reload.mockReset();
+    nativeAuthenticationMocks.reload.mockResolvedValue(undefined);
     legacyInviteFlowMocks.processInvite.mockReset();
     legacyInviteFlowMocks.processInvite.mockResolvedValue({ success: true, redirectUrl: 'dashboard.html' });
     legacyInviteFlowMocks.createInviteProcessor.mockReset();
@@ -1485,7 +1487,9 @@ describe('signInWithGoogleAccount invite redemption', () => {
       'allplays-native-auth-session',
       JSON.stringify({ uid: 'native-recipient', email: 'recipient@example.com', provider: 'native-plugin' })
     );
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ result: { success: true } }) } as Response);
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue({ ok: true, json: async () => ({ result: { success: true } }) } as Response);
     legacyInviteFlowMocks.createInviteProcessor.mockImplementation(
       (dependencies: any) => (uid: string, code: string, email: string) => dependencies.redeemFriendInvite(uid, code, email)
     );
@@ -1496,6 +1500,41 @@ describe('signInWithGoogleAccount invite redemption', () => {
       await expect(redemption).rejects.toMatchObject({ details: { reason: 'email-verification-required' } });
       expect(fetchSpy).not.toHaveBeenCalled();
     }
+    fetchSpy.mockRestore();
+  });
+
+  it('reloads the native account before checking friend recipient verification', async () => {
+    vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
+    let reloaded = false;
+    nativeAuthenticationMocks.reload.mockImplementation(async () => {
+      reloaded = true;
+    });
+    nativeAuthenticationMocks.getCurrentUser.mockImplementation(async () => ({
+      user: {
+        uid: 'native-recipient',
+        email: 'recipient@example.com',
+        emailVerified: reloaded
+      }
+    }));
+    nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'native-recipient-token' });
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({ uid: 'native-recipient', email: 'recipient@example.com', provider: 'native-plugin' })
+    );
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue({ ok: true, json: async () => ({ result: { success: true } }) } as Response);
+    legacyInviteFlowMocks.createInviteProcessor.mockImplementation(
+      (dependencies: any) => (uid: string, code: string, email: string) => dependencies.redeemFriendInvite(uid, code, email)
+    );
+
+    await expect(redeemInviteForUser('native-recipient', 'FRIEND12', 'recipient@example.com')).resolves.toEqual({ success: true });
+
+    expect(nativeAuthenticationMocks.reload).toHaveBeenCalledTimes(1);
+    expect(nativeAuthenticationMocks.getCurrentUser).toHaveBeenCalled();
+    const lastCurrentUserCall = nativeAuthenticationMocks.getCurrentUser.mock.invocationCallOrder.at(-1) as number;
+    expect(nativeAuthenticationMocks.reload.mock.invocationCallOrder[0]).toBeLessThan(lastCurrentUserCall);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
     fetchSpy.mockRestore();
   });
 
