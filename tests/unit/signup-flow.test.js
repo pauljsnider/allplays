@@ -471,8 +471,29 @@ describe('executeEmailPasswordSignup', () => {
         expect(dependencies.sendVerificationEmail).toHaveBeenCalledTimes(1);
     });
 
+    it('retains a new unverified friend recipient and queues verification before redemption', async () => {
+        const deleteAuthUser = vi.fn();
+        const user = { uid: 'new-friend', email: 'friend@example.com', emailVerified: false, delete: deleteAuthUser, reload: vi.fn() };
+        const dependencies = createDependencies({
+            validateAccessCode: vi.fn()
+                .mockResolvedValueOnce({ valid: false, message: 'Invalid or expired access code' })
+                .mockResolvedValueOnce({ valid: true, type: 'friend_invite', data: { code: 'FRIEND12' } }),
+            createUserWithEmailAndPassword: vi.fn().mockResolvedValue({ user }),
+            redeemFriendInvite: vi.fn().mockRejectedValue(new Error('Unable to redeem friend invite.'))
+        });
+        const result = await executeEmailPasswordSignup({ email: user.email, password: 'synthetic-password', activationCode: 'FRIEND12', auth: { currentUser: user }, dependencies });
+        expect(result.pendingFamilyInvite).toEqual({ code: 'FRIEND12', type: 'friend' });
+        expect(dependencies.redeemFriendInvite).not.toHaveBeenCalled();
+        expect(deleteAuthUser).not.toHaveBeenCalled();
+        expect(dependencies.signOut).not.toHaveBeenCalled();
+        expect(dependencies.markAccessCodeAsUsed).not.toHaveBeenCalled();
+        expect(dependencies.sendVerificationEmail).toHaveBeenCalledOnce();
+        expect(dependencies.updateUserProfile).toHaveBeenCalledWith('new-friend', expect.objectContaining({ emailVerificationRequired: true }));
+    });
+
     it('routes friend invite signup through friend redemption and not generic code consumption', async () => {
         const dependencies = createDependencies({
+            createUserWithEmailAndPassword: vi.fn().mockResolvedValue({ user: { uid: 'user-123', emailVerified: true } }),
             validateAccessCode: vi.fn().mockResolvedValue({
                 valid: true,
                 type: 'friend_invite',
@@ -518,6 +539,7 @@ describe('executeEmailPasswordSignup', () => {
             createUserWithEmailAndPassword: vi.fn().mockResolvedValue({
                 user: {
                     uid: 'user-123',
+                    emailVerified: true,
                     delete: deleteAuthUser
                 }
             }),

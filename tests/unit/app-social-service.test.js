@@ -194,9 +194,9 @@ describe('React app social service', () => {
         expect(profile.publicChildren).toEqual([expect.objectContaining({
             id: 'athlete-1',
             name: 'Jamie Jr.',
-            shareUrl: `${window.location.origin}/athlete-profile.html?profileId=athlete-1`
+            shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=athlete-1'
         })]);
-        expect(athleteProfileMocks.buildAthleteProfileShareUrl).toHaveBeenCalledWith(window.location.origin, 'athlete-1');
+        expect(athleteProfileMocks.buildAthleteProfileShareUrl).toHaveBeenCalledWith('https://allplays.ai', 'athlete-1');
         expect(profile.messageRoute).toBe('/messages/team-1?compose=user%3Afriend-2&recipientName=Jamie+Friend');
         const athleteQuery = firebaseMocks.getDocs.mock.calls.map(([queryRef]) => queryRef).find((queryRef) => queryRef.collectionRef?.path?.join('/') === 'athleteProfiles');
         expect(athleteQuery.clauses).toEqual(expect.arrayContaining([

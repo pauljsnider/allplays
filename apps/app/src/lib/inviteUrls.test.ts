@@ -19,6 +19,12 @@ describe('public invite links', () => {
     expect(buildAppAcceptInviteUrl('friend12', 'friend_invite', origin)).toBe(expected);
   });
 
+  it.each(['friend', 'admin', 'parent', 'household', 'coparent'])('normalizes an explicit native origin for %s links', (type) => {
+    expect(buildAppAcceptInviteUrl('INVITE12', type, 'https://localhost')).toBe(
+      `https://allplays.ai/app/#/accept-invite?code=INVITE12&type=${type}`
+    );
+  });
+
   it.each([
     'https://allplays.ai',
     'https://game-flow-c6311.web.app',

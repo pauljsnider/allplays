@@ -45,9 +45,9 @@ describe('accept invite flow', () => {
         });
     });
 
-    it('returns success without mutating when this account already redeemed the code', async () => {
+    it.each(['friend', 'parent', 'household', 'coparent', 'admin'])('returns success without mutating when this account already redeemed a %s code', async (type) => {
         const deps = {
-            validateAccessCode: vi.fn(async () => ({ valid: true, alreadyRedeemed: true, codeId: 'used-1', type: 'admin_invite' })),
+            validateAccessCode: vi.fn(async () => ({ valid: true, alreadyRedeemed: true, codeId: 'used-1', type: `${type}_invite` })),
             markAccessCodeAsUsed: vi.fn()
         };
 
@@ -55,7 +55,7 @@ describe('accept invite flow', () => {
             success: true,
             alreadyRedeemed: true,
             message: 'This code is already connected to your account.',
-            redirectUrl: 'dashboard.html'
+            redirectUrl: getInviteDashboardUrl(type)
         });
         expect(deps.markAccessCodeAsUsed).not.toHaveBeenCalled();
     });

@@ -143,6 +143,7 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
         try {
             redeemResult = await redeemHouseholdInvite(userId, code);
         } catch (error) {
+            if (error?.details?.reason === 'email-verification-required') throw error;
             console.error('Failed to redeem household invite', error);
             throw new Error(getHouseholdInviteRedemptionMessage(error));
         }

@@ -10,7 +10,7 @@ function readSource(relativePath) {
 
 describe('app form mobile input hints', () => {
   test('invite acceptance fields expose email and one-time-code hints', () => {
-    const source = readSource('apps/app/src/pages/AcceptInvite.tsx');
+    const source = readSource('apps/app/src/pages/AcceptInvite.tsx').replace(/\s+/g, ' ');
 
     expect(source).toContain('type="email" inputMode="email" autoComplete="email" enterKeyHint="next"');
     expect(source).toContain('inputMode="text" autoCapitalize="characters" autoComplete="one-time-code" enterKeyHint="go"');

@@ -12,11 +12,11 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=33';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433208';
-import { executeEmailPasswordSignup } from './signup-flow.js?v=14';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433209';
+import { executeEmailPasswordSignup } from './signup-flow.js?v=15';
 import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=12';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=3';
-import { createInviteProcessor } from './accept-invite-flow.js?v=443314';
+import { createInviteProcessor } from './accept-invite-flow.js?v=443315';
 import {
     queueCurrentUserVerificationEmail,
     queueInviteSignInEmail,
@@ -103,10 +103,47 @@ async function cleanupFailedNewUser(user, context, options = {}) {
     }
 }
 
+function canDeferInviteForEmailVerification(user, error) {
+    return error?.details?.reason === 'email-verification-required' && Boolean(user?.email);
+}
+
+async function preservePendingGoogleInvite(user, type, code) {
+    const pendingInvite = { code: String(code).trim().toUpperCase(), type };
+    clearPendingActivationCode();
+    try {
+        // Keep legacy signup and the app auth redirect on the same pending invite.
+        window.localStorage.setItem('inviteCode', pendingInvite.code);
+        window.localStorage.setItem('inviteType', type);
+        window.localStorage.setItem('allplays-app-pending-invite-code', pendingInvite.code);
+        window.localStorage.setItem('allplays-app-pending-invite-type', type);
+    } catch (_storageError) {
+        // Callers also receive the pending invite when storage is unavailable.
+    }
+    try {
+        await updateUserProfile(user.uid, {
+            email: user.email,
+            createdAt: new Date(),
+            emailVerificationRequired: true
+        });
+    } catch (_profileError) {
+        console.warn('[Google Auth] Unable to save pending invite profile.');
+    }
+    try {
+        await user.reload?.();
+        await queueCurrentUserVerificationEmail();
+    } catch (_verificationError) {
+        console.warn('[Google Auth] Unable to queue verification; retry from the verification screen.');
+    }
+    return pendingInvite;
+}
+
 async function linkParentInviteOrRollback(user, parentInviteCode) {
     try {
         await redeemParentInvite(user.uid, parentInviteCode, user.email);
     } catch (inviteLinkError) {
+        if (canDeferInviteForEmailVerification(user, inviteLinkError)) {
+            return preservePendingGoogleInvite(user, 'parent', parentInviteCode);
+        }
         console.error('Error linking parent:', inviteLinkError);
         clearPendingActivationCode();
         await cleanupFailedNewUser(user, 'parent invite link failure', { activationCode: parentInviteCode });
@@ -119,6 +156,9 @@ async function redeemHouseholdInviteOrRollback(user, code) {
     try {
         await redeemHouseholdInvite(user.uid, code);
     } catch (inviteLinkError) {
+        if (canDeferInviteForEmailVerification(user, inviteLinkError)) {
+            return preservePendingGoogleInvite(user, 'household', code);
+        }
         console.error('Error linking household invite:', inviteLinkError);
         clearPendingActivationCode();
         await cleanupFailedNewUser(user, 'household invite link failure', { activationCode: code });
@@ -130,6 +170,9 @@ async function redeemCoParentInviteOrRollback(user, code) {
     try {
         await redeemCoParentInvite(user.uid, code, user.email);
     } catch (inviteLinkError) {
+        if (canDeferInviteForEmailVerification(user, inviteLinkError)) {
+            return preservePendingGoogleInvite(user, 'coparent', code);
+        }
         console.error('Error linking co-parent invite:', inviteLinkError);
         clearPendingActivationCode();
         await cleanupFailedNewUser(user, 'co-parent invite link failure', { activationCode: code });
@@ -139,8 +182,16 @@ async function redeemCoParentInviteOrRollback(user, code) {
 
 async function linkFriendInviteOrRollback(user, friendInviteCode) {
     try {
+        if (user.emailVerified === false && !user.phoneNumber && user.email) {
+            throw Object.assign(new Error('Verify your email before accepting this friend invite.'), {
+                details: { reason: 'email-verification-required' }
+            });
+        }
         await redeemFriendInvite(user.uid, friendInviteCode, user.email);
     } catch (inviteLinkError) {
+        if (canDeferInviteForEmailVerification(user, inviteLinkError)) {
+            return preservePendingGoogleInvite(user, 'friend', friendInviteCode);
+        }
         console.error('Error linking friend invite:', inviteLinkError);
         clearPendingActivationCode();
         await cleanupFailedNewUser(user, 'friend invite link failure');
@@ -277,7 +328,10 @@ async function processGoogleAuthResult(result, activationCode = null) {
         const userId = result.user.uid;
 
         if (validation.type === 'parent_invite') {
-            await linkParentInviteOrRollback(result.user, validation.data?.code || code);
+            const pendingInvite = await linkParentInviteOrRollback(result.user, validation.data?.code || code);
+            if (pendingInvite) {
+                return Object.assign(result, { pendingFamilyInvite: pendingInvite, wasNewUser: true });
+            }
 
             // Best-effort profile write after invite redemption.
             try {
@@ -291,7 +345,10 @@ async function processGoogleAuthResult(result, activationCode = null) {
                 console.error('Error creating user profile after parent invite redeem:', e);
             }
         } else if (validation.type === 'household_invite') {
-            await redeemHouseholdInviteOrRollback(result.user, validation.data?.code || code);
+            const pendingInvite = await redeemHouseholdInviteOrRollback(result.user, validation.data?.code || code);
+            if (pendingInvite) {
+                return Object.assign(result, { pendingFamilyInvite: pendingInvite, wasNewUser: true });
+            }
 
             try {
                 await updateUserProfile(userId, {
@@ -304,7 +361,10 @@ async function processGoogleAuthResult(result, activationCode = null) {
                 console.error('Error creating user profile after household invite redeem:', e);
             }
         } else if (validation.type === 'coparent_invite') {
-            await redeemCoParentInviteOrRollback(result.user, validation.data?.code || code);
+            const pendingInvite = await redeemCoParentInviteOrRollback(result.user, validation.data?.code || code);
+            if (pendingInvite) {
+                return Object.assign(result, { pendingFamilyInvite: pendingInvite, wasNewUser: true });
+            }
 
             try {
                 await updateUserProfile(userId, {
@@ -317,7 +377,10 @@ async function processGoogleAuthResult(result, activationCode = null) {
                 console.error('Error creating user profile after co-parent invite redeem:', e);
             }
         } else if (validation.type === 'friend_invite') {
-            await linkFriendInviteOrRollback(result.user, validation.data?.code || code);
+            const pendingInvite = await linkFriendInviteOrRollback(result.user, validation.data?.code || code);
+            if (pendingInvite) {
+                return Object.assign(result, { pendingFamilyInvite: pendingInvite, wasNewUser: true });
+            }
 
             try {
                 await updateUserProfile(userId, {
@@ -339,6 +402,10 @@ async function processGoogleAuthResult(result, activationCode = null) {
                     getUserProfile
                 });
             } catch (e) {
+                if (canDeferInviteForEmailVerification(result.user, e)) {
+                    const pendingInvite = await preservePendingGoogleInvite(result.user, 'admin', validation.data?.code || code);
+                    return Object.assign(result, { pendingFamilyInvite: pendingInvite, wasNewUser: true });
+                }
                 console.error('Error linking admin invite:', e);
                 clearPendingActivationCode();
                 await cleanupFailedNewUser(result.user, 'admin invite link failure');

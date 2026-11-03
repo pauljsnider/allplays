@@ -134,7 +134,13 @@ export async function executeEmailPasswordSignup({
             if (typeof redeemFriendInvite !== 'function') {
                 throw new Error('Missing friend invite redemption handler');
             }
-            await redeemFriendInvite(userId, validation.data?.code || activationCode, email);
+            // A newly created password account cannot satisfy the callable's
+            // verified-recipient requirement yet. Keep it pending until verification.
+            if (userCredential.user.emailVerified !== true) {
+                preservePendingInvite('friend', validation.data?.code || activationCode);
+            } else {
+                await redeemFriendInvite(userId, validation.data?.code || activationCode, email);
+            }
             await writeSignupProfile({ email });
         } catch (e) {
             console.error('Error linking friend invite:', e);
