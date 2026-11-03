@@ -252,6 +252,18 @@ describe('React app social Firestore rules', () => {
             })));
         });
 
+        it('denies a cross-team caller when the payload includes author contact metadata', async () => {
+            const db = testEnv.authenticatedContext('outsider-1', {
+                email: 'outsider@example.com',
+                email_verified: true
+            }).firestore();
+
+            await assertFails(setDoc(doc(db, 'socialPosts', 'cross-team-contact-post'), {
+                ...socialPostPayload({ authorId: 'outsider-1' }),
+                authorEmail: 'outsider@example.com'
+            }));
+        });
+
         it.each([
             ['external route', { route: 'https://example.invalid/source', snapshotRoute: 'https://example.invalid/source' }],
             ['protocol-relative route', { route: '//example.invalid/source', snapshotRoute: '//example.invalid/source' }],
