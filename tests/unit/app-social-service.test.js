@@ -258,6 +258,30 @@ describe('React app social service', () => {
         );
     });
 
+    it('omits account contact fields and uses a non-email author label when no display name exists', async () => {
+        const { createSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
+        const userWithoutDisplayName = {
+            ...user,
+            displayName: ''
+        };
+
+        await createSocialPost(userWithoutDisplayName, {
+            type: 'team_media',
+            visibility: 'team',
+            title: 'Team update',
+            teamId: 'team-1'
+        });
+
+        const persistedPayload = firebaseMocks.addDoc.mock.calls[0][1];
+        expect(persistedPayload).toEqual(expect.objectContaining({
+            authorId: 'user-1',
+            authorName: 'ALL PLAYS user'
+        }));
+        expect(persistedPayload.authorName).not.toBe(userWithoutDisplayName.email);
+        expect(persistedPayload).not.toHaveProperty('authorEmail');
+        expect(persistedPayload).not.toHaveProperty('email');
+    });
+
     it.each([
         ['an external route', { route: 'https://example.invalid/source' }],
         ['a protocol-relative route', { route: '//example.invalid/source' }],
