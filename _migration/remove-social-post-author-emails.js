@@ -76,7 +76,7 @@ export function planSocialPostContactSanitization(data = {}) {
             .filter(Boolean)
     );
     const authorName = normalizedString(data.authorName);
-    const replaceAuthorName = authorName !== '' && storedEmails.has(authorName);
+    const replaceAuthorName = authorName.includes('@') || storedEmails.has(authorName);
 
     return {
         needsUpdate: deleteFields.length > 0 || replaceAuthorName,
