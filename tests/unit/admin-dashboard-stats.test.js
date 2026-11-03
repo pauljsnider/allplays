@@ -1,7 +1,45 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
+import { JSDOM } from 'jsdom';
+
+function renderRecentTeamAnchor(teamId) {
+    const adminJs = fs.readFileSync('js/admin.js', 'utf8');
+    const updateDashboardBody = adminJs.match(/function updateDashboard\(\)[\s\S]*?function renderRecentGameResults/)?.[0] || '';
+    const anchorTemplate = updateDashboardBody.match(/<a href="edit-team\.html\?teamId=\$\{[^}]+\}"[^>]*>View →<\/a>/)?.[0];
+
+    expect(anchorTemplate).toBeTruthy();
+    return Function('team', `return \`${anchorTemplate}\`;`)({ id: teamId });
+}
 
 describe('admin dashboard statistics scope', () => {
+    it('preserves complete team document IDs in recent-team navigation', () => {
+        const teamId = 'normal team/id?season=fall&division=a';
+        const dom = new JSDOM(`<div id="recent-team">${renderRecentTeamAnchor(teamId)}</div>`, {
+            url: 'https://allplays.example/admin.html'
+        });
+        const anchor = dom.window.document.querySelector('#recent-team > a');
+
+        expect(anchor).not.toBeNull();
+        expect(anchor.getAttribute('href')).toBe(`edit-team.html?teamId=${encodeURIComponent(teamId)}`);
+        expect(new URL(anchor.href).searchParams.get('teamId')).toBe(teamId);
+    });
+
+    it('keeps a cross-tenant creator-controlled document ID inert in recent-team markup', () => {
+        const teamId = 'other-team\"><img src=x onerror="window.__unexpected=true"><a data-extra="';
+        const dom = new JSDOM(`<div id="recent-team">${renderRecentTeamAnchor(teamId)}</div>`, {
+            url: 'https://allplays.example/admin.html'
+        });
+        const container = dom.window.document.getElementById('recent-team');
+        const anchor = container.querySelector('a');
+
+        expect(container.querySelectorAll('a')).toHaveLength(1);
+        expect(container.querySelectorAll('img')).toHaveLength(0);
+        expect(anchor.getAttributeNames()).toEqual(['href', 'class']);
+        expect(anchor.getAttribute('href')).not.toContain(teamId);
+        expect(anchor.getAttribute('href')).toBe(`edit-team.html?teamId=${encodeURIComponent(teamId)}`);
+        expect(new URL(anchor.href).searchParams.get('teamId')).toBe(teamId);
+    });
+
     it('builds the initial dashboard from bounded first pages instead of full collections', () => {
         const adminJs = fs.readFileSync('js/admin.js', 'utf8');
         const loadDataBody = adminJs.match(/async function loadData\(\)[\s\S]*?let allGames = \[\];/)?.[0] || '';

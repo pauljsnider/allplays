@@ -647,7 +647,7 @@ function updateDashboard() {
                     <p class="text-xs text-gray-500">${escapeHtml(team.sport || 'Unknown')} • ${team.createdAt?.toDate ? team.createdAt.toDate().toLocaleDateString() : 'Unknown date'}</p>
                 </div>
             </div>
-            <a href="edit-team.html?teamId=${team.id}" class="text-xs text-indigo-600 hover:text-indigo-800">View →</a>
+            <a href="edit-team.html?teamId=${encodeURIComponent(team.id)}" class="text-xs text-indigo-600 hover:text-indigo-800">View →</a>
         </div>
     `).join('');
 
