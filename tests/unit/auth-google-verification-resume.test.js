@@ -141,6 +141,28 @@ for (const flow of ['popup', 'redirect']) {
 }
 
 describe('legacy Google verification boundaries', () => {
+    it.each(['popup', 'redirect'])('preserves an invite for an existing unverified Google account in the %s flow', async (flow) => {
+        const user = newUser({
+            metadata: { creationTime: 'created-earlier', lastSignInTime: 'signed-in-now' }
+        });
+        prepareInvite('friend', user);
+        mocks.redeemFriendInvite.mockRejectedValue(Object.assign(new Error('Verify your email first.'), {
+            details: { reason: 'email-verification-required' }
+        }));
+        window.sessionStorage.setItem('pendingActivationCode', 'ALIAS123');
+
+        const result = flow === 'popup' ? await loginWithGoogle('ALIAS123') : await handleGoogleRedirectResult();
+
+        expect(result.pendingFamilyInvite).toEqual({ code: 'CANON123', type: 'friend' });
+        expect(result.wasNewUser).toBe(false);
+        expect(result.activationCodeRedeemed).not.toBe(true);
+        expect(window.localStorage.getItem('allplays-app-pending-invite-code')).toBe('CANON123');
+        expect(window.localStorage.getItem('allplays-app-pending-invite-type')).toBe('friend');
+        expect(user.delete).not.toHaveBeenCalled();
+        expect(mocks.signOut).not.toHaveBeenCalled();
+        expect(mocks.queueCurrentUserVerificationEmail).toHaveBeenCalledTimes(1);
+    });
+
     it.each(invitationTypes)('still fails closed for a generic %s redemption rejection', async (type, redeem) => {
         const user = newUser({ emailVerified: true });
         prepareInvite(type, user);

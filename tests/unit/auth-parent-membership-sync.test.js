@@ -43,7 +43,7 @@ const profileRestMocks = vi.hoisted(() => ({
 vi.mock('../../js/firebase.js?v=33', () => firebaseMocks);
 vi.mock('../../js/db.js?v=4433209', () => dbMocks);
 vi.mock('../../js/auth-profile-rest.js?v=1', () => profileRestMocks);
-vi.mock('../../js/signup-flow.js?v=15', () => ({
+vi.mock('../../js/signup-flow.js?v=16', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
 vi.mock('../../js/admin-invite.js?v=12', () => ({

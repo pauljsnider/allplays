@@ -70,6 +70,10 @@ export function getGoogleAuthModeForLoginPage({ isLogin = true, urlCodeParam = n
     return 'signup';
 }
 
+export function getGoogleResultRedirectUrl(result, defaultRedirectUrl) {
+    return result?.pendingFamilyInvite ? '/app/#/verify-pending' : defaultRedirectUrl;
+}
+
 const REDEEMABLE_INVITE_TYPES = new Set([
     '',
     'standard',

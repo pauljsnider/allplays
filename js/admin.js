@@ -31,7 +31,7 @@ import {
     serverTimestamp
 } from './firebase.js?v=33';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443385';
-import { checkAuth } from './auth.js?v=4433213';
+import { checkAuth } from './auth.js?v=4433214';
 import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=3';
 import { loadTelemetryOnTabActivation, reloadTelemetryDashboard } from './admin-telemetry-lazy-load.js?v=1';
 import {

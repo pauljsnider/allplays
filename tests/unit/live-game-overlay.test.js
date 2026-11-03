@@ -158,7 +158,7 @@ describe('live game overlay page', () => {
         expect(source).toContain('database.subscribeReactions');
         expect(source).toContain('getOverlayLiveClockMs');
         expect(source).toContain('syncLiveClockAnchor');
-        expect(source).toContain("import('./auth.js?v=4433213')");
+        expect(source).toContain("import('./auth.js?v=4433214')");
         expect(source).toContain("import('./live-game-chat.js?v=4')");
         expect(currentLiveGameSource).toContain("from './live-game-overlay-model.js?v=33'");
         expect(currentLiveGameSource).toContain("from './live-game-video.js?v=443319'");

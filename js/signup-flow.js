@@ -105,6 +105,8 @@ export async function executeEmailPasswordSignup({
         try {
             globalThis.localStorage?.setItem('inviteCode', pendingCode);
             globalThis.localStorage?.setItem('inviteType', type);
+            globalThis.localStorage?.setItem('allplays-app-pending-invite-code', pendingCode);
+            globalThis.localStorage?.setItem('allplays-app-pending-invite-type', type);
         } catch (_storageError) {
             // The returned credential still carries the pending invite for callers
             // when browser storage is unavailable.

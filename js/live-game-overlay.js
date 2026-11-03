@@ -1138,7 +1138,7 @@ async function initializeChatComposer(database, teamId, gameId) {
 
     try {
         const [authTools, chatTools] = await Promise.all([
-            import('./auth.js?v=4433213'),
+            import('./auth.js?v=4433214'),
             import('./live-game-chat.js?v=4')
         ]);
         uiState.chatServices = {

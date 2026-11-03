@@ -13,7 +13,7 @@ import {
     updatePassword
 } from './firebase.js?v=33';
 import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433209';
-import { executeEmailPasswordSignup } from './signup-flow.js?v=15';
+import { executeEmailPasswordSignup } from './signup-flow.js?v=16';
 import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=12';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=3';
 import { createInviteProcessor } from './accept-invite-flow.js?v=443315';
@@ -461,7 +461,23 @@ async function processGoogleAuthResult(result, activationCode = null) {
                 getUserProfile,
                 markAccessCodeAsUsed
             });
-            await processInvite(result.user.uid, code, result.user.email);
+            try {
+                await processInvite(result.user.uid, code, result.user.email);
+            } catch (error) {
+                if (canDeferInviteForEmailVerification(result.user, error)) {
+                    const validation = await validateAccessCode(code);
+                    const pendingType = String(validation.type || '').replace(/_invite$/, '');
+                    if (validation.valid && ['parent', 'household', 'coparent', 'friend', 'admin'].includes(pendingType)) {
+                        const pendingInvite = await preservePendingGoogleInvite(
+                            result.user,
+                            pendingType,
+                            validation.data?.code || code
+                        );
+                        return Object.assign(result, { pendingFamilyInvite: pendingInvite, wasNewUser: false });
+                    }
+                }
+                throw error;
+            }
             result.activationCodeRedeemed = true;
         }
         clearPendingActivationCode();

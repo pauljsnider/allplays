@@ -3,7 +3,7 @@ import { getTeamScorePair } from './season-record.js';
 import { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433209';
 import { db } from './firebase.js?v=33';
 import { getUrlParams, escapeHtml } from './utils.js?v=443385';
-import { checkAuth } from './auth.js?v=4433213';
+import { checkAuth } from './auth.js?v=4433214';
 import { writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp } from './firebase.js?v=33';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';

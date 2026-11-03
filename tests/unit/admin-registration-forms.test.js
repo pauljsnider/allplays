@@ -49,7 +49,7 @@ vi.mock('../../js/utils.js?v=443385', () => ({
     renderFooter: vi.fn(),
     escapeHtml: (value) => String(value || '')
 }));
-vi.mock('../../js/auth.js?v=4433213', () => adminAuthMocks);
+vi.mock('../../js/auth.js?v=4433214', () => adminAuthMocks);
 vi.mock('../../js/admin-premium-access-control.js?v=7', () => ({
     createAdminPremiumAccessControl: () => ({ load: vi.fn() })
 }));
