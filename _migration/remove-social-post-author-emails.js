@@ -29,6 +29,11 @@ const SOCIAL_POST_EMAIL_FIELDS = Object.freeze([
     'contactEmail'
 ]);
 
+const SOCIAL_POST_PHONE_FIELDS = Object.freeze([
+    'authorPhone', 'authorPhoneNumber', 'phone', 'phoneNumber',
+    'mobile', 'mobilePhone', 'contactPhone', 'contactPhoneNumber'
+]);
+
 export function parsePositiveBound(value, fallback, max) {
     const parsed = Number.parseInt(String(value || ''), 10);
     return Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, max) : fallback;
@@ -75,8 +80,13 @@ export function planSocialPostContactSanitization(data = {}) {
             .map((fieldName) => normalizedString(data[fieldName]))
             .filter(Boolean)
     );
+    const storedPhones = new Set(
+        SOCIAL_POST_PHONE_FIELDS.map((fieldName) => normalizedString(data[fieldName])).filter(Boolean)
+    );
     const authorName = normalizedString(data.authorName);
-    const replaceAuthorName = authorName.includes('@') || storedEmails.has(authorName);
+    const phoneLikeAuthorName = /^[\s+().-]*(?:\d[\s+().-]*){7,}$/.test(authorName);
+    const replaceAuthorName = authorName.includes('@') || phoneLikeAuthorName ||
+        storedEmails.has(authorName) || storedPhones.has(authorName);
 
     return {
         needsUpdate: deleteFields.length > 0 || replaceAuthorName,

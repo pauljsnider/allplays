@@ -1908,19 +1908,13 @@ service cloud.firestore {
              snapshot.get('href', null) == null;
     }
 
-    function hasContact(k) {
-      return k.hasAny([
-        'authorEmail', 'authorEmailAddress', 'email', 'emailAddress', 'contactEmail',
-        'authorPhone', 'authorPhoneNumber', 'phone', 'phoneNumber', 'mobile',
-        'mobilePhone', 'contactPhone', 'contactPhoneNumber'
-      ]);
-    }
+    function pii(k) { return k.hasAny(['authorEmail','authorEmailAddress','email','emailAddress','contactEmail','authorPhone','authorPhoneNumber','phone','phoneNumber','mobile','mobilePhone','contactPhone','contactPhoneNumber']); }
 
     function isSocialPostCreatePayloadValid(data) {
       return isSignedIn() &&
-             !hasContact(data.keys()) &&
+             !pii(data.keys()) &&
              data.authorId == request.auth.uid &&
-             data.authorName.matches('[^@]*') &&
+             data.authorName.matches('[^@]*[A-z][^@]*') &&
              isSocialPostType(data.type) &&
              isSocialVisibility(data.visibility) &&
              data.title is string &&
@@ -3160,7 +3154,7 @@ service cloud.firestore {
       allow create: if isVerifiedForSensitiveWrite() &&
                        isSocialPostCreatePayloadValid(request.resource.data);
       allow update: if isVerifiedForSensitiveWrite() &&
-                    !hasContact(request.resource.data.diff(resource.data).affectedKeys()) &&
+                    !pii(request.resource.data.diff(resource.data).affectedKeys()) &&
                     (
                       isSocialPostAuthorContentUpdateValid() ||
                       isSocialPostAuthorHideUpdateValid() ||

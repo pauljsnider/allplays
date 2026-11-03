@@ -131,8 +131,8 @@ describe('React app social Firestore rules', () => {
 
         expect(source).toContain('function canReadSocialPost(data)');
         expect(source).toContain('function isSocialPostCreatePayloadValid(data)');
-        expect(source).toContain('function hasContact(k)');
-        expect(source).toContain("data.authorName.matches('[^@]*')");
+        expect(source).toContain('function pii(k)');
+        expect(source).toContain("data.authorName.matches('[^@]*[A-z][^@]*')");
         expect(source).toContain('function isCanonicalSocialPostRoute(value)');
         expect(source).toContain('function isSocialPostNavigationValid(data)');
         expect(source).toContain('function canModerateSocialPost(data)');
@@ -166,8 +166,8 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("snapshot.get('route', null) == route");
         expect(source).toContain("snapshot.get('href', null) == null");
         expect(source).toContain('isSocialPostNavigationValid(data)');
-        expect(source).toContain('!hasContact(data.keys())');
-        expect(source).toContain('!hasContact(request.resource.data.diff(resource.data).affectedKeys())');
+        expect(source).toContain('!pii(data.keys())');
+        expect(source).toContain('!pii(request.resource.data.diff(resource.data).affectedKeys())');
     });
 
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('social post navigation rules engine coverage', () => {
@@ -311,6 +311,22 @@ describe('React app social Firestore rules', () => {
 
             await assertFails(setDoc(
                 doc(db, 'socialPosts', `email-author-name-${label.replaceAll(' ', '-')}`),
+                socialPostPayload({ authorName })
+            ));
+        });
+
+        it.each([
+            ['compact', '+15555550100'],
+            ['formatted', '+1 (555) 555-0100'],
+            ['newline-separated', '+1 555\n555 0100']
+        ])('denies a %s phone-derived author name', async (label, authorName) => {
+            const db = testEnv.authenticatedContext('owner-1', {
+                email: 'owner@example.com',
+                email_verified: true
+            }).firestore();
+
+            await assertFails(setDoc(
+                doc(db, 'socialPosts', `phone-author-name-${label}`),
                 socialPostPayload({ authorName })
             ));
         });

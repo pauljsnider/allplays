@@ -262,7 +262,9 @@ describe('React app social service', () => {
     it.each([
         ['no display name', null],
         ['an email display name', 'parent@example.test'],
-        ['a newline-containing email display name', 'Parent\nparent@example.test']
+        ['a newline-containing email display name', 'Parent\nparent@example.test'],
+        ['an international phone display name', '+1 (555) 555-0100'],
+        ['a newline-containing phone display name', '+1 555\n555 0100']
     ])('uses a public-safe author name when the account has %s', async (_label, displayName) => {
         const { createSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
 

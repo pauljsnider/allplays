@@ -104,6 +104,18 @@ describe('social post contact-data migration', () => {
         });
     });
 
+    it.each([
+        { authorPhone: '+15555550100', authorName: '+15555550100' },
+        { authorName: '+1 (555) 555-0100' },
+        { authorName: '+1 555\n555 0100' }
+    ])('replaces a phone-derived author name: %j', (data) => {
+        expect(planSocialPostContactSanitization(data)).toEqual({
+            needsUpdate: true,
+            deleteFields: data.authorPhone ? ['authorPhone'] : [],
+            authorName: 'ALL PLAYS user'
+        });
+    });
+
     it('keeps already-safe documents unchanged for idempotent reruns', () => {
         expect(planSocialPostContactSanitization({
             authorName: 'Pat Parent',

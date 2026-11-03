@@ -414,7 +414,8 @@ function uniqueStrings(values: unknown[] = []) {
 
 function getUserDisplayName(user: AuthUser | null, fallback = 'ALL PLAYS user') {
   const displayName = compactString(user?.displayName);
-  return displayName && !displayName.includes('@') ? displayName : fallback;
+  const phoneLike = displayName && /^[\s+().-]*(?:\d[\s+().-]*){7,}$/.test(displayName);
+  return displayName && !displayName.includes('@') && !phoneLike ? displayName : fallback;
 }
 
 function mapSocialPost(docData: FirestoreDoc): SocialFeedItem {
