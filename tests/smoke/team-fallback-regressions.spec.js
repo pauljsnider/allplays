@@ -574,6 +574,11 @@ const MEDIA_UTILS_STUB = `
 export function canManageTeamMedia() {
     return false;
 }
+export function mergeFilteredMediaOrder(items = [], reorderedIds = []) {
+    const reordered = new Map(reorderedIds.map((id) => [id, items.find((item) => item.id === id)]));
+    let index = 0;
+    return items.map((item) => reordered.has(item.id) ? reordered.get(reorderedIds[index++]) : item);
+}
 export function canContributeTeamMedia() {
     return false;
 }
@@ -627,6 +632,11 @@ export function sortByMediaOrder(items = []) {
 const MEDIA_UTILS_ADMIN_STUB = `
 export function canManageTeamMedia() {
     return true;
+}
+export function mergeFilteredMediaOrder(items = [], reorderedIds = []) {
+    const reordered = new Map(reorderedIds.map((id) => [id, items.find((item) => item.id === id)]));
+    let index = 0;
+    return items.map((item) => reordered.has(item.id) ? reordered.get(reorderedIds[index++]) : item);
 }
 export function canContributeTeamMedia() {
     return true;

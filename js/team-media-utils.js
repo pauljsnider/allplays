@@ -251,6 +251,20 @@ export function buildReorderUpdates(ids = []) {
     return normalizeMediaOrderIds(ids).map((id, index) => ({ id, order: index }));
 }
 
+export function mergeFilteredMediaOrder(items = [], reorderedFilteredIds = []) {
+    const reorderedIds = normalizeMediaOrderIds(reorderedFilteredIds);
+    const reorderedItems = new Map(items
+        .filter((item) => reorderedIds.includes(item?.id))
+        .map((item) => [item.id, item]));
+    let reorderedIndex = 0;
+
+    return items.map((item) => {
+        if (!reorderedItems.has(item?.id)) return item;
+        const nextId = reorderedIds[reorderedIndex++];
+        return reorderedItems.get(nextId);
+    });
+}
+
 export function normalizeSelectedMediaIds(ids = []) {
     return normalizeMediaOrderIds(ids);
 }
