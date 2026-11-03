@@ -1,4 +1,4 @@
-import { checkAuth } from '../auth.js?v=4433214';
+import { checkAuth } from '../auth.js?v=4433215';
 import {
     getTeam,
     getUserProfile,
@@ -22,10 +22,10 @@ import {
     archiveCertificate,
     canAccessCertificates,
     canViewSavedCertificate
-} from '../db.js?v=4433209';
+} from '../db.js?v=4433210';
 import { loadCompleteCertificateNarrativeStats } from '../diamond-legacy-game-context.js?v=1';
-import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443385';
-import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=443360';
+import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443386';
+import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=443361';
 import { TEMPLATES } from './templates.js?v=2';
 import { CERTIFICATE_FONT_OPTIONS, renderCertificate, createPreviewDraft, resolveColors, getContrastWarning } from './renderer.js?v=2';
 import { buildDefaultSigners, normalizeSigners } from './signers.js?v=2';

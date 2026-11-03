@@ -1,4 +1,4 @@
-import { checkAuth } from './auth.js?v=4433214';
+import { checkAuth } from './auth.js?v=4433215';
 import {
     getDelegatedTeamContext,
     getTeamMediaFolders,
@@ -17,7 +17,7 @@ import {
     bulkDeleteTeamMediaItems,
     setTeamMediaAlbumCover,
     updateTeamMediaItem
-} from './db.js?v=4433209';
+} from './db.js?v=4433210';
 import {
     canContributeTeamMedia,
     canDeleteTeamMediaItem,
@@ -30,9 +30,10 @@ import {
     isSupportedTeamMediaDocument,
     isSupportedTeamMediaImage,
     isTeamMediaDocument,
+    mergeFilteredMediaOrder,
     normalizeTeamMediaVideoDraft,
     sortByMediaOrder
-} from './team-media-utils.js?v=44339';
+} from './team-media-utils.js?v=44340';
 import { validateTeamMediaUploadBatch } from './team-media-upload-limits.js?v=44531';
 
 const state = {
@@ -694,7 +695,9 @@ els.albumDetail.addEventListener('click', async (event) => {
     const itemButton = event.target.closest('[data-item-move]');
     if (itemButton) {
         const items = getItemsForFolder(itemButton.dataset.folderId);
-        const reordered = moveInArray(items, itemButton.dataset.itemId, itemButton.dataset.itemMove);
+        const filteredItems = getFilteredItems(items);
+        const reorderedFilteredItems = moveInArray(filteredItems, itemButton.dataset.itemId, itemButton.dataset.itemMove);
+        const reordered = mergeFilteredMediaOrder(items, reorderedFilteredItems.map((item) => item.id));
         persistAndReload(() => reorderTeamMediaItems(state.teamId, reordered.map((item) => item.id)), 'Item order saved.');
     }
 });

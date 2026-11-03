@@ -12,6 +12,7 @@ import {
     buildBulkDeleteUpdates,
     buildMoveUpdates,
     buildReorderUpdates,
+    mergeFilteredMediaOrder,
     getTeamMediaItemUrl,
     getTeamMediaUploaderName,
     isSafeTeamMediaPhoto,
@@ -238,6 +239,18 @@ describe('team media bulk actions', () => {
             { id: 'folder-c', order: 0 },
             { id: 'folder-a', order: 1 },
             { id: 'folder-b', order: 2 }
+        ]);
+    });
+
+    it('merges a filtered reorder into the complete album order', () => {
+        const items = [
+            { id: 'photo-a', type: 'photo' },
+            { id: 'video-b', type: 'video_link' },
+            { id: 'photo-c', type: 'photo' }
+        ];
+
+        expect(mergeFilteredMediaOrder(items, ['photo-c', 'photo-a']).map((item) => item.id)).toEqual([
+            'photo-c', 'video-b', 'photo-a'
         ]);
     });
 
