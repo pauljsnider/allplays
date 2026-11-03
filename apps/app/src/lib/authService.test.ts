@@ -1532,7 +1532,8 @@ describe('signInWithGoogleAccount invite redemption', () => {
 
     expect(nativeAuthenticationMocks.reload).toHaveBeenCalledTimes(1);
     expect(nativeAuthenticationMocks.getCurrentUser).toHaveBeenCalled();
-    const lastCurrentUserCall = nativeAuthenticationMocks.getCurrentUser.mock.invocationCallOrder.at(-1) as number;
+    const currentUserCalls = nativeAuthenticationMocks.getCurrentUser.mock.invocationCallOrder;
+    const lastCurrentUserCall = currentUserCalls[currentUserCalls.length - 1];
     expect(nativeAuthenticationMocks.reload.mock.invocationCallOrder[0]).toBeLessThan(lastCurrentUserCall);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     fetchSpy.mockRestore();

@@ -35,7 +35,15 @@ const profile = {
   photoUrl: null,
   sharedTeamNames: [],
   publicTeams: [{ id: 'team-1', name: 'Bears', sport: 'Basketball', photoUrl: null }],
-  publicChildren: [{ id: 'athlete-1', name: 'Pat Star', headline: 'Point guard', photoUrl: null, shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=athlete-1' }],
+  publicChildren: [
+    {
+      id: 'athlete-1',
+      name: 'Pat Star',
+      headline: 'Point guard',
+      photoUrl: null,
+      shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=athlete-1'
+    }
+  ],
   messageRoute: null,
   isSelf: true,
   posts: [],
@@ -80,7 +88,7 @@ describe('FriendProfile', () => {
     expect(document.querySelector('main')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy profile link' }));
-    await waitFor(() => expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith(`${window.location.origin}/app/#/people/user-1`));
+    await waitFor(() => expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('https://allplays.ai/app/#/people/user-1'));
   });
 
   it('replaces the loading state with one complete delayed profile', async () => {
@@ -138,7 +146,10 @@ describe('FriendProfile', () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByRole('link', { name: 'Message' })).toHaveAttribute('href', '/messages/team-1?compose=user%3Afriend-2&recipientName=Jamie+Friend');
+    expect(await screen.findByRole('link', { name: 'Message' })).toHaveAttribute(
+      'href',
+      '/messages/team-1?compose=user%3Afriend-2&recipientName=Jamie+Friend'
+    );
   });
 
   it('shows a retryable posts error instead of authoritative empty copy', async () => {

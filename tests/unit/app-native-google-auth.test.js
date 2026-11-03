@@ -18,6 +18,7 @@ const nativeAuthMocks = vi.hoisted(() => ({
     signOut: vi.fn(),
     getIdToken: vi.fn(),
     getCurrentUser: vi.fn(),
+    reload: vi.fn(),
     deleteUser: vi.fn()
 }));
 
@@ -282,6 +283,7 @@ beforeEach(() => {
     capacitorState.platform = 'android';
     capacitorState.plugins = new Set(['FirebaseAuthentication']);
     firebaseMocks.auth.currentUser = null;
+    nativeAuthMocks.reload.mockResolvedValue(undefined);
     firebaseMocks.signInWithCustomToken.mockImplementation(async () => {
         const user = {
             uid: 'native-google-user',
@@ -443,6 +445,7 @@ describe('React app native Google auth', () => {
             body: JSON.stringify({ data: { code: 'FRIEND12' } })
         });
         expect(dbMocks.redeemFriendInvite).not.toHaveBeenCalled();
+        expect(nativeAuthMocks.reload).toHaveBeenCalledTimes(1);
         expect(dbMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
     });
 });
