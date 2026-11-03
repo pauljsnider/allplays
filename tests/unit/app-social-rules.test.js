@@ -115,6 +115,8 @@ describe('React app social Firestore rules', () => {
 
         expect(source).toContain('function canReadSocialPost(data)');
         expect(source).toContain('function isSocialPostCreatePayloadValid(data)');
+        expect(source).toContain('function hasSocialPostContactFields(keys)');
+        expect(source).toContain("!data.authorName.matches('.*@.*')");
         expect(source).toContain('function isCanonicalSocialPostRoute(value)');
         expect(source).toContain('function isSocialPostNavigationValid(data)');
         expect(source).toContain('function canModerateSocialPost(data)');
@@ -148,6 +150,8 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("snapshot.get('route', null) == route");
         expect(source).toContain("snapshot.get('href', null) == null");
         expect(source).toContain('isSocialPostNavigationValid(data)');
+        expect(source).toContain('!hasSocialPostContactFields(data.keys())');
+        expect(source).toContain('!hasSocialPostContactFields(request.resource.data.diff(resource.data).affectedKeys())');
     });
 
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('social post navigation rules engine coverage', () => {
@@ -189,6 +193,7 @@ describe('React app social Firestore rules', () => {
                 : href;
             return {
                 authorId: overrides.authorId || 'owner-1',
+                authorName: overrides.authorName || 'Team Owner',
                 type: 'team_media',
                 visibility: 'team',
                 title: 'Team update',
@@ -229,6 +234,32 @@ describe('React app social Firestore rules', () => {
             await assertSucceeds(setDoc(doc(db, 'socialPosts', 'valid-team-post'), socialPostPayload()));
         });
 
+        it('allows a selected friend to load a safe friend post', async () => {
+            const authorDb = testEnv.authenticatedContext('owner-1', {
+                email: 'owner@example.com',
+                email_verified: true
+            }).firestore();
+            const friendDb = testEnv.authenticatedContext('friend-1', {
+                email: 'friend@example.com',
+                email_verified: true
+            }).firestore();
+            const payload = socialPostPayload({ route: null, snapshotRoute: null });
+            payload.visibility = 'friends';
+            payload.teamId = null;
+            payload.teamIds = [];
+            payload.visibleUserIds = ['owner-1', 'friend-1'];
+            payload.authorName = 'ALL PLAYS user';
+            payload.authorPhotoUrl = null;
+            payload.snapshot.teamId = null;
+            delete payload.href;
+            delete payload.snapshot.href;
+
+            const postRef = doc(authorDb, 'socialPosts', 'valid-friend-post');
+            await assertSucceeds(setDoc(postRef, payload));
+            expect((await assertSucceeds(getDoc(doc(friendDb, 'socialPosts', 'valid-friend-post')))).data())
+                .toMatchObject({ authorName: 'ALL PLAYS user', authorPhotoUrl: null });
+        });
+
         it('allows the team owner to create a post with no navigation destination', async () => {
             const db = testEnv.authenticatedContext('owner-1', {
                 email: 'owner@example.com',
@@ -251,6 +282,53 @@ describe('React app social Firestore rules', () => {
                 authorId: 'outsider-1'
             })));
         });
+
+        it('denies an email-derived author name', async () => {
+            const db = testEnv.authenticatedContext('owner-1', {
+                email: 'owner@example.com',
+                email_verified: true
+            }).firestore();
+
+            await assertFails(setDoc(
+                doc(db, 'socialPosts', 'email-author-name'),
+                socialPostPayload({ authorName: 'owner@example.com' })
+            ));
+        });
+
+        it.each(['authorEmail', 'email', 'phone', 'phoneNumber', 'contactEmail'])(
+            'denies social post creates containing the prohibited contact field %s',
+            async (fieldName) => {
+                const db = testEnv.authenticatedContext('owner-1', {
+                    email: 'owner@example.com',
+                    email_verified: true
+                }).firestore();
+                const payload = socialPostPayload();
+                payload[fieldName] = fieldName.toLowerCase().includes('email')
+                    ? 'private@example.test'
+                    : '+15555550100';
+
+                await assertFails(setDoc(doc(db, 'socialPosts', `contact-create-${fieldName}`), payload));
+            }
+        );
+
+        it.each(['authorEmail', 'email', 'phone', 'phoneNumber', 'contactEmail'])(
+            'denies social post updates containing the prohibited contact field %s',
+            async (fieldName) => {
+                const db = testEnv.authenticatedContext('owner-1', {
+                    email: 'owner@example.com',
+                    email_verified: true
+                }).firestore();
+                const postRef = doc(db, 'socialPosts', `contact-update-${fieldName}`);
+                await assertSucceeds(setDoc(postRef, socialPostPayload()));
+
+                await assertFails(updateDoc(postRef, {
+                    [fieldName]: fieldName.toLowerCase().includes('email')
+                        ? 'private@example.test'
+                        : '+15555550100',
+                    updatedAt: Timestamp.now()
+                }));
+            }
+        );
 
         it.each([
             ['external route', { route: 'https://example.invalid/source', snapshotRoute: 'https://example.invalid/source' }],

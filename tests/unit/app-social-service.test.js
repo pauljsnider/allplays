@@ -256,6 +256,23 @@ describe('React app social service', () => {
                 hidden: false
             })
         );
+        expect(firebaseMocks.addDoc.mock.calls[0][1]).not.toHaveProperty('authorEmail');
+    });
+
+    it('uses a public-safe author name when the account has no display name', async () => {
+        const { createSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
+
+        await createSocialPost({ ...user, displayName: null }, {
+            type: 'manual_post',
+            visibility: 'friends',
+            title: 'Weekend update',
+            visibleUserIds: ['friend-1']
+        });
+
+        const storedPost = firebaseMocks.addDoc.mock.calls[0][1];
+        expect(storedPost.authorName).toBe('ALL PLAYS user');
+        expect(storedPost.authorName).not.toBe(user.email);
+        expect(storedPost).not.toHaveProperty('authorEmail');
     });
 
     it.each([

@@ -1908,9 +1908,17 @@ service cloud.firestore {
              snapshot.get('href', null) == null;
     }
 
+    function hasSocialPostContactFields(keys) {
+      return keys.hasAny([
+        'authorEmail', 'email', 'contactEmail', 'phone', 'phoneNumber'
+      ]);
+    }
+
     function isSocialPostCreatePayloadValid(data) {
       return isSignedIn() &&
+             !hasSocialPostContactFields(data.keys()) &&
              data.get('authorId', '') == request.auth.uid &&
+             !data.authorName.matches('.*@.*') &&
              data.get('type', '') is string &&
              isSocialPostType(data.get('type', '')) &&
              data.get('visibility', '') is string &&
@@ -3152,6 +3160,7 @@ service cloud.firestore {
       allow create: if isVerifiedForSensitiveWrite() &&
                        isSocialPostCreatePayloadValid(request.resource.data);
       allow update: if isVerifiedForSensitiveWrite() &&
+                    !hasSocialPostContactFields(request.resource.data.diff(resource.data).affectedKeys()) &&
                     (
                       isSocialPostAuthorContentUpdateValid() ||
                       isSocialPostAuthorHideUpdateValid() ||
