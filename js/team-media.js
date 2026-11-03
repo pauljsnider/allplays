@@ -30,6 +30,7 @@ import {
     isSupportedTeamMediaDocument,
     isSupportedTeamMediaImage,
     isTeamMediaDocument,
+    mergeFilteredMediaOrder,
     normalizeTeamMediaVideoDraft,
     sortByMediaOrder
 } from './team-media-utils.js?v=44339';
@@ -694,7 +695,9 @@ els.albumDetail.addEventListener('click', async (event) => {
     const itemButton = event.target.closest('[data-item-move]');
     if (itemButton) {
         const items = getItemsForFolder(itemButton.dataset.folderId);
-        const reordered = moveInArray(items, itemButton.dataset.itemId, itemButton.dataset.itemMove);
+        const filteredItems = getFilteredItems(items);
+        const reorderedFilteredItems = moveInArray(filteredItems, itemButton.dataset.itemId, itemButton.dataset.itemMove);
+        const reordered = mergeFilteredMediaOrder(items, reorderedFilteredItems.map((item) => item.id));
         persistAndReload(() => reorderTeamMediaItems(state.teamId, reordered.map((item) => item.id)), 'Item order saved.');
     }
 });
