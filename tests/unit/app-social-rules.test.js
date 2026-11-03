@@ -132,7 +132,7 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain('function canReadSocialPost(data)');
         expect(source).toContain('function isSocialPostCreatePayloadValid(data)');
         expect(source).toContain('function hasContact(k)');
-        expect(source).toContain("!data.authorName.matches('.*@.*')");
+        expect(source).toContain("data.authorName.matches('[^@]*')");
         expect(source).toContain('function isCanonicalSocialPostRoute(value)');
         expect(source).toContain('function isSocialPostNavigationValid(data)');
         expect(source).toContain('function canModerateSocialPost(data)');
@@ -299,15 +299,19 @@ describe('React app social Firestore rules', () => {
             })));
         });
 
-        it('denies an email-derived author name', async () => {
+        it.each([
+            ['single-line', 'owner@example.com'],
+            ['newline before the email', 'Team Owner\nowner@example.com'],
+            ['newline after the email', 'owner@example.com\nTeam Owner']
+        ])('denies a %s email-derived author name', async (label, authorName) => {
             const db = testEnv.authenticatedContext('owner-1', {
                 email: 'owner@example.com',
                 email_verified: true
             }).firestore();
 
             await assertFails(setDoc(
-                doc(db, 'socialPosts', 'email-author-name'),
-                socialPostPayload({ authorName: 'owner@example.com' })
+                doc(db, 'socialPosts', `email-author-name-${label.replaceAll(' ', '-')}`),
+                socialPostPayload({ authorName })
             ));
         });
 

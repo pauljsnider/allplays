@@ -259,10 +259,14 @@ describe('React app social service', () => {
         expect(firebaseMocks.addDoc.mock.calls[0][1]).not.toHaveProperty('authorEmail');
     });
 
-    it('uses a public-safe author name when the account has no display name', async () => {
+    it.each([
+        ['no display name', null],
+        ['an email display name', 'parent@example.test'],
+        ['a newline-containing email display name', 'Parent\nparent@example.test']
+    ])('uses a public-safe author name when the account has %s', async (_label, displayName) => {
         const { createSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
 
-        await createSocialPost({ ...user, displayName: null }, {
+        await createSocialPost({ ...user, displayName }, {
             type: 'manual_post',
             visibility: 'friends',
             title: 'Weekend update',

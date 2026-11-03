@@ -413,7 +413,8 @@ function uniqueStrings(values: unknown[] = []) {
 }
 
 function getUserDisplayName(user: AuthUser | null, fallback = 'ALL PLAYS user') {
-  return compactString(user?.displayName) || fallback;
+  const displayName = compactString(user?.displayName);
+  return displayName && !displayName.includes('@') ? displayName : fallback;
 }
 
 function mapSocialPost(docData: FirestoreDoc): SocialFeedItem {

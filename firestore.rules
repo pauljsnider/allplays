@@ -1920,7 +1920,7 @@ service cloud.firestore {
       return isSignedIn() &&
              !hasContact(data.keys()) &&
              data.authorId == request.auth.uid &&
-             !data.authorName.matches('.*@.*') &&
+             data.authorName.matches('[^@]*') &&
              isSocialPostType(data.type) &&
              isSocialVisibility(data.visibility) &&
              data.title is string &&

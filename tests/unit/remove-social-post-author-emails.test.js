@@ -90,9 +90,13 @@ describe('social post contact-data migration', () => {
         });
     });
 
-    it('replaces an email-shaped author name without a companion contact field', () => {
+    it.each([
+        'parent@example.test',
+        'Parent\nparent@example.test',
+        'parent@example.test\nParent'
+    ])('replaces an email-shaped author name without a companion contact field: %j', (authorName) => {
         expect(planSocialPostContactSanitization({
-            authorName: 'parent@example.test'
+            authorName
         })).toEqual({
             needsUpdate: true,
             deleteFields: [],
