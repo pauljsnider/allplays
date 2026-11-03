@@ -127,3 +127,13 @@ describe('legacy XSS guard: no unescaped user-data interpolation in markup', () 
         });
     }
 });
+
+describe('legacy XSS guard: document identifiers in admin link attributes', () => {
+    it('requires recent-team document IDs to be encoded before attribute interpolation', () => {
+        const adminJs = readFileSync(path.join(repoRoot, 'js/admin.js'), 'utf8');
+        const updateDashboardBody = adminJs.match(/function updateDashboard\(\)[\s\S]*?function renderRecentGameResults/)?.[0] || '';
+
+        expect(updateDashboardBody).not.toMatch(/href="[^"]*\$\{\s*team\.id\s*\}/);
+        expect(updateDashboardBody).toContain('teamId=${encodeURIComponent(team.id)}');
+    });
+});
