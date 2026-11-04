@@ -19,6 +19,7 @@ import { createDirectPracticeAttendanceCommands } from './directPracticeAttendan
 import { createDirectIncentiveCommands } from './directIncentives.js';
 import { createDirectTeamSetupCommands, TEAM_SETUP_PRESET_IDS } from './directTeamSetup.js';
 import { createDirectTrackingItemCommands } from './directTrackingItem.js';
+import { createDirectRosterLifecycleCommands } from './directRosterLifecycle.js';
 import { createDirectRosterCommands } from './directRoster.js';
 import { createDirectPracticeTimelineCommands } from './directPracticeTimeline.js';
 
@@ -238,6 +239,18 @@ export function createDirectFavoriteMcpSession(dependencies) {
             inputSchema: z.object({ proposalId: id, teamId: resourceId, itemId: resourceId, changes }).strict(), annotations: mutation
         }, run((args) => commands.prepare({ ...args, mode: 'update' })));
         registerOutcome('tracking_item', commands);
+    }
+    if (dependencies.rosterLifecycleStore) {
+        const commands = createDirectRosterLifecycleCommands({ ...dependencies, store: dependencies.rosterLifecycleStore });
+        server.registerTool('prepare_roster_player_active', {
+            description: 'Prepare deactivating or reactivating one exact roster player. Separate confirmation explains active views, retained family links/history, existing RSVP-link usability and future communication eligibility. No deletion, invitations or link/token edits.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, playerId: resourceId, active: z.boolean() }).strict(), annotations: mutation
+        }, run(({ playerId, active, ...args }) => commands.prepare({ ...args, changes: [{ playerId, active }] })));
+        server.registerTool('prepare_roster_lifecycle_batch', {
+            description: 'Prepare 1–20 distinct player deactivation/reactivation changes atomically. Mixed active booleans are allowed. Separate confirmation is required; no history, family links or other roster fields are rewritten.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, changes: z.array(z.object({ playerId: resourceId, active: z.boolean() }).strict()).min(1).max(20) }).strict(), annotations: mutation
+        }, run(commands.prepare));
+        registerOutcome('roster_lifecycle', commands, { ...mutation, destructiveHint: true });
     }
     if (dependencies.rosterStore) {
         const commands = createDirectRosterCommands({ ...dependencies, store: dependencies.rosterStore });
