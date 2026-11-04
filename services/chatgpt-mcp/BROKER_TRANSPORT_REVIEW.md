@@ -126,8 +126,8 @@ state must block activation. No live gate, security rule or consumer changed.
 
 ## Validation
 
-The combined backend suite passes 207 tests, including 40 channel/HTTP cases,
-18 canonical-membership, 13 consumer-ownership and 33 per-effect eligibility cases. It tests signature
+The combined backend suite passes 209 tests, including 40 channel/HTTP cases,
+20 canonical-membership, 13 consumer-ownership and 33 per-effect eligibility cases. It tests signature
 and token substitution, current identity/scope checks, parallel replay, process
 restart, lost persistence, false persistence results, disconnects, payload bounds,
 audience revocation, incomplete discovery and rollout/rollback races. Existing

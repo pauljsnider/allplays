@@ -72,6 +72,11 @@ describe('canonical schedule audience adapters', () => {
         const f = fixture(); f.rows.set('teams/team', team);
         assert.equal(await f.membership.authorizeActor({ uid: 'owner' }, 'team'), false);
     });
+    for (const uid of [123, ['owner']]) it(`rejects a non-string actor ID ${JSON.stringify(uid)}`, async () => {
+        const f = fixture(); f.rows.set('teams/team', { ownerId: uid });
+        assert.deepEqual(canonicalScheduleRoles({ teamId: 'team', team: { ownerId: uid }, user: {}, uid, emailVerified: true, email: 'owner@example.test' }), []);
+        assert.equal(await f.membership.authorizeActor({ uid }, 'team'), false);
+    });
     it('fails closed on incomplete queries, too many candidates or failed Auth lookups', async () => {
         const f = fixture(); f.overflow(); await assert.rejects(f.audience.resolve({ teamId: 'team', actorUid: 'owner' }));
         const g = fixture(); g.failQuery(); await assert.rejects(g.audience.resolve({ teamId: 'team', actorUid: 'owner' }));

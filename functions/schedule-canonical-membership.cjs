@@ -1,5 +1,6 @@
 "use strict";
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
+const validId = (value) => typeof value === 'string' && ID.test(value);
 // A deliberately stricter subset of firestore.rules: never trim identifiers
 // or email grants, and never case-fold stored admin-list entries into access.
 const email = (value) => typeof value === 'string' && value.length <= 320 && /^[^\s@]+@[^\s@]+$/.test(value) ? value.toLowerCase() : '';
@@ -17,7 +18,7 @@ const fail = () => { throw new Error('Canonical schedule membership is unavailab
 // emails and users.parentTeamIds. It intentionally ignores coachOf, favorites,
 // profile email, cached notificationRecipients and client-supplied role labels.
 function canonicalScheduleRoles({ teamId, team, user, uid, email: authEmail, emailVerified }) {
-    if (!ID.test(teamId || '') || !ID.test(uid || '') || !team || !user) return [];
+    if (!validId(teamId) || !validId(uid) || !team || !user) return [];
     const roles = new Set();
     const ownerId = team.ownerId;
     const verifiedEmail = emailVerified === true ? email(authEmail) : '';
@@ -30,7 +31,7 @@ function canonicalScheduleRoles({ teamId, team, user, uid, email: authEmail, ema
 function createCanonicalScheduleMembership({ firestore, auth }) {
     if (!firestore?.doc || !firestore?.collection || !auth?.getUser || !auth?.getUserByEmail) throw new Error('Canonical Firestore and Auth readers are required.');
     const teamFor = async (teamId) => {
-        if (!ID.test(teamId || '')) fail();
+        if (!validId(teamId)) fail();
         const snapshot = await firestore.doc(`teams/${teamId}`).get();
         if (!snapshot.exists) fail();
         return snapshot.data();
@@ -52,19 +53,19 @@ function createCanonicalScheduleMembership({ firestore, auth }) {
             // family audience. No reliance on eventually consistent token indexes.
             const parents = await firestore.collection('users').where('parentTeamIds', 'array-contains', teamId).limit(101).get();
             if (!Array.isArray(parents.docs) || parents.docs.length > 100) fail();
-            for (const row of parents.docs) { if (!ID.test(row.id || '')) fail(); uids.add(row.id); }
+            for (const row of parents.docs) { if (!validId(row.id)) fail(); uids.add(row.id); }
             for (const address of new Set(addresses)) {
                 let user;
                 try { user = await auth.getUserByEmail(address); }
                 catch (error) { if (error?.code === 'auth/user-not-found') continue; throw error; }
-                if (!ID.test(user?.uid || '') || email(user.email) !== address || typeof user.disabled !== 'boolean') fail();
+                if (!validId(user?.uid) || email(user.email) !== address || typeof user.disabled !== 'boolean') fail();
                 if (!user.disabled && user.emailVerified === true) uids.add(user.uid);
             }
             if (uids.size > 100) fail();
             return { complete: true, uids: [...uids].sort() };
         },
         async authorizeActor(actor, teamId) {
-            if (!ID.test(actor?.uid || '')) return false;
+            if (!validId(actor?.uid)) return false;
             const [team, user, account] = await Promise.all([teamFor(teamId), firestore.doc(`users/${actor.uid}`).get(), auth.getUser(actor.uid)]);
             if (!user.exists || account?.uid !== actor.uid || account.disabled !== false || account.emailVerified !== true) return false;
             return canonicalScheduleRoles({ teamId, team, user: user.data(), uid: actor.uid, email: account.email, emailVerified: account.emailVerified }).includes('staff');
