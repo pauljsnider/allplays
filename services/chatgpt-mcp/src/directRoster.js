@@ -6,18 +6,18 @@ import { createTeamProposalStore } from './directTeamProposalStore.js';
 const TOOL = 'mcp_direct_roster_player';
 const playerPath = (teamId, playerId) => `teams/${teamId}/players/${playerId}`;
 const fieldNames = ['name', 'number', 'position'];
-const normalizedName = (value) => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+export const normalizedName = (value) => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
 const safeText = (value, max) => typeof value === 'string' && value.length <= max && value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value);
-const safeFields = (fields) => fields && typeof fields === 'object' && !Array.isArray(fields)
+export const safeFields = (fields) => fields && typeof fields === 'object' && !Array.isArray(fields)
     && Object.keys(fields).length > 0 && Object.entries(fields).every(([key, value]) => fieldNames.includes(key)
         && safeText(value, key === 'name' ? 120 : key === 'number' ? 20 : 60) && (key !== 'name' || value.length > 0));
-const displayFields = (data) => Object.fromEntries(fieldNames.map((key) => [key,
+export const displayFields = (data) => Object.fromEntries(fieldNames.map((key) => [key,
     typeof data?.[key] === 'string' || (key === 'number' && typeof data?.[key] === 'number') ? data[key] : '']));
 
-export function createDirectRosterStore(options) {
+export function createRosterDomainStore(options, toolName, receiptFields) {
     const player = /^teams\/[A-Za-z0-9_-]{1,128}\/players\/[A-Za-z0-9_-]{1,128}$/;
     return createTeamProposalStore(options, {
-        toolName: TOOL, receiptFields: ['teamId', 'playerId', 'mode'],
+        toolName, receiptFields,
         policy: {
             read: (path) => player.test(path) || /^teams\/[A-Za-z0-9_-]{1,128}$/.test(path),
             write: (path) => player.test(path),
@@ -27,6 +27,10 @@ export function createDirectRosterStore(options) {
                 ? { fields: ['name', 'number', 'position', 'active'], limit: 201 } : null
         }
     });
+}
+
+export function createDirectRosterStore(options) {
+    return createRosterDomainStore(options, TOOL, ['teamId', 'playerId', 'mode']);
 }
 
 export function createDirectRosterCommands(dependencies) {

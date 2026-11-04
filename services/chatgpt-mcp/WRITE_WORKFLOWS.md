@@ -139,27 +139,26 @@ session does not authorize deployment, merge, or real team/game writes.
 
 ## Remaining work for direct MCP mutations
 
-An isolated, unregistered direct-command prototype supports seven bounded
-operations: adding/removing a managed team's drill favorite, creating a stat
-configuration by cloning an existing configuration in the same team, and
-renaming a configuration, creating one basic roster player, and updating one
-player’s name/number/position, creating a draft practice timeline, and updating
-a draft timeline’s title/location or appending blocks. It is exercised only with
-synthetic clients and data;
-the production server does not import it or advertise its tools. It does not
-grant persistent access or widen an OAuth scope. The 46 normal write-request
-tools still require app confirmation.
+An isolated, unregistered direct-command prototype supports eight bounded
+operations: team-drill favorite changes, stat-configuration cloning and renaming,
+single-player roster creation and updates, draft practice timeline creation and
+updates, and atomic basic-roster batches. It is exercised only with synthetic
+clients and data. The production server does not import it or advertise its
+tools. It does not grant persistent access or widen an OAuth scope. The 46 normal
+write-request tools still require app confirmation.
 
 `directRevisionCommand.js` shares proposal identity, actor checks, five-minute
 expiry, exact-preview/revision comparison, atomic receipts, and uncertain-outcome
 reconciliation. Domain definitions in `directFavorite.js` and
-`directStatConfiguration.js`, `directRoster.js` and `directPracticeTimeline.js` specify the allowed arguments, targets, preview and
+`directStatConfiguration.js`, `directRoster.js`, `directRosterBatch.js` and
+`directPracticeTimeline.js` specify the allowed arguments, targets, preview and
 write. `directCommandStore.js` shares user-credentialed REST transactions, while
 separate adapters allow only the relevant domain paths. The factory in
 `directFavoriteMcp.js` composes the domains and their common confirmation flow;
 its historical filename remains for compatibility.
 
-The complete prototype composition advertises twenty-one tools:
+The complete prototype composition advertises twenty-seven tools, including
+three schedule app-review/discovery tools:
 
 | Tools | Bounded behavior |
 | --- | --- |
@@ -170,6 +169,8 @@ The complete prototype composition advertises twenty-one tools:
 | list_managed_teams, list_team_stat_configurations | Discover current managed-team IDs/names and paginated configuration IDs/names/base types. |
 | prepare_create_roster_player, prepare_update_roster_player | Prepare one basic player create/update with only name, number and position. |
 | confirm_roster_player, get_roster_player_action | Approve one roster change and read its opaque completion receipt. |
+| prepare_roster_batch, confirm_roster_batch, get_roster_batch_action | Prepare, explicitly approve and check one atomic batch of 1–20 basic player creates/updates. |
+| list_team_schedule_events, prepare_schedule_event_review, get_schedule_event_review | Discover ordinary event IDs, stage a normalized create/update request with an advisory preview, and check its app outcome. No direct schedule execution. |
 | get_team_roster | Discover active/inactive roster IDs and public display fields, using the existing manager-only paginated reader. |
 | prepare_create_practice_timeline, prepare_update_practice_timeline | Prepare a draft timeline or a title/location change and appended blocks, linked to an existing non-recurring practice. |
 | confirm_practice_timeline, get_practice_timeline_action | Explicitly approve a timeline change and check its opaque completion receipt. |
@@ -203,6 +204,38 @@ whitespace/case matches, require app review. A roster change after preparation
 invalidates the preview. The query runs inside the committing transaction;
 the emulator race test verifies that two separately approved same-name creates
 do not both succeed. A transaction conflict never triggers automatic re-execution.
+
+Roster batches reuse those same field and permission boundaries. Each create
+gets an ID derived from the proposal UUID and operation index; each update
+requires an exact existing player ID. Preparation checks all resulting names,
+including duplicates within the batch and inactive players. Final-name swaps
+are allowed only when the resulting names are unambiguous. Existing duplicate
+names do not block number/position edits to exact IDs. A batch has at most 20
+operations and leaves at most 200 roster players. One approval displays every
+row, then a single transaction writes all rows, deletes the team proposal and
+writes one opaque receipt containing IDs and counts. There are no partial
+successes or automatic remaining-row retries. The full 20-operation boundary is
+tested against real rules, as are concurrent batches and rejected commits.
+
+Ordinary schedule discovery projects only public schedule fields and exact IDs.
+The prototype accepts bounded game/practice create/update review requests with
+explicit UTC offsets, rejecting invalid calendar dates, ambiguous local times,
+recurrence, imported/linked/active/special-engine event updates and unrelated
+fields. Game fields include opponent and home/away; practice fields include
+title. Arrival time applies only to games. Omitted end/arrival times in an
+update preview shift with the requested start time, matching the app handler.
+The bridge stores only requested fields; its preview is advisory, and the app
+rebuilds the authoritative preview from current data before explicit approval.
+
+Schedule writes remain app-confirmed: ordinary creation and date/location/title
+updates can trigger team notifications independently of pre-event reminder
+settings. No source markers, notification bypass or direct schedule execution
+were added. The actual notification-handler regression proves that disabling
+reminders does not suppress ordinary creation announcements. The shared app
+practice payload builder now omits `scheduleNotifications` from edits when the
+caller did not supply it. This preserves current reminder settings and delivery
+history through both web SDK and native field-masked updates, while explicit
+settings and new-practice defaults retain their existing behavior.
 
 Roster proposal content is stored only in the team's expiring
 `privateAiPendingActions` collection under existing current-manager rules.
@@ -309,8 +342,9 @@ persistent grant, or production registration is included here.
 
 1. Extend the shared command engine with additional domain schemas, current
    authorization and discovery. Full stat-schema editing, RSVP, recurring or
-   packet-assigned practices, editing/removing existing timeline blocks, full
-   roster/schedule batches, attachments and editable previews
+   packet-assigned practices, editing/removing existing timeline blocks,
+   contact/access roster imports, larger or partial roster batches, direct schedule
+   writes/batches, attachments and editable previews
    are still absent from the direct prototype; the 46 app-review tools cover the
    canonical writes through existing browser handlers.
 2. Review execution authorization for each additional command. If a persistent
@@ -318,7 +352,7 @@ persistent grant, or production registration is included here.
    scope. The bounded prototype instead requires a separate one-action approval;
    allplays.review alone never authorizes execution.
 3. Persist command outcomes/idempotency at the domain boundary, including
-   partial roster/schedule batches, notifications, invites, and provider effects.
+   partial/large roster or schedule batches, notifications, invites, and provider effects.
 4. Provide MCP-native previews and confirmations, then run multi-instance,
    revocation, permission, replay, and live isolated-account integration tests.
 
@@ -383,15 +417,18 @@ grant validation.
 
 Validated with isolated fixtures, without production team/game writes:
 
-- 433 focused tests across MCP core, OAuth, review requests, roster discovery,
+- 498 focused tests across MCP core, OAuth, review requests, roster discovery,
   direct-command protocol and state transitions, authenticated HTTP sessions,
   one-action expiry/consumption, configuration clone/rename/discovery, single-player
-  roster create/update and safe receipts, draft practice creation/append,
-  discovery and actual notification-handler suppression, and the
+  roster create/update, atomic roster batches and safe receipts, draft practice creation/append,
+  discovery and actual notification-handler suppression, offset-normalized schedule
+  review requests and notification semantics, and the
   existing private AI action service.
-- 11 app review service/component tests, including stale previews, concurrent
-  confirmation, and explicit confirmation of only remaining partial-import rows.
-- 35 Firestore emulator tests against the existing rules, including review
+- 289 app schedule/review tests, including web/native reminder preservation,
+  explicit reminder settings, stale previews, concurrent confirmation and explicit
+  confirmation of only remaining partial-import rows. The new omission regressions
+  failed on both web/native before the fix and pass after it.
+- 46 Firestore emulator tests against the existing rules, including review
   ownership, enforced verified-email policy, real REST roster pagination, and
   denied roster queries after manager revocation, actual direct-favorite REST
   transactions, revocation during approval, lost commit responses, and
@@ -404,8 +441,11 @@ Validated with isolated fixtures, without production team/game writes:
   same-name additions; practice discovery/create/append through authenticated
   HTTP, exact event/drill revision conflicts, packet/access guards, preserved
   Firestore reference/timestamp values, lost responses and concurrent same-event
-  timeline creation.
+  timeline creation; maximum mixed roster batches, opaque array receipts, declined
+  batches, rejected-commit atomicity, companion tampering and duplicate-name races;
+  broker-bound batch approval and schedule staging without event writes.
 - Production app build, production artifact guard, and cold-start budget check.
+- Two local module-mocked browser checks for the schedule editor and practice hub.
 - Built-app signed-out browser smoke preserving the review destination.
 - Synthetic browser preview exercising the actual review component's prepare
   and confirm flow, with no page errors and one call at each step.

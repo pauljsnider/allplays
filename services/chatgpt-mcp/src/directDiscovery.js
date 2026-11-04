@@ -2,6 +2,7 @@ import { DomainError } from './core.js';
 import { ID } from './directRevisionCommand.js';
 import { validateManager } from './directCommandAccess.js';
 import { isDirectPracticeEvent } from './directPracticeTimeline.js';
+import { scheduleFields, scheduleSummary } from './scheduleReview.js';
 import { getManagedTeamRoster } from './rosterDiscovery.js';
 
 // Discovery deliberately projects only names and schema summaries, never whole
@@ -22,6 +23,12 @@ export function createDirectDiscovery({ uid, getContext, getDb }) {
         return { items: docs.map(map), hasMore, nextCursor: hasMore ? docs.at(-1).id : null };
     };
     return {
+        async schedule(args) {
+            const db = await managedDb(args.teamId);
+            const query = db.collection(`teams/${args.teamId}/games`).select(...scheduleFields);
+            return { teamId: args.teamId, ...await page(query, args, (doc) => scheduleSummary(doc.id, doc.data())),
+                message: 'Choose exact event IDs and explicit time offsets. Schedule changes require app confirmation and may notify the team.' };
+        },
         async practices(args) {
             const db = await managedDb(args.teamId);
             const query = db.collection(`teams/${args.teamId}/games`).where('type', '==', 'practice')

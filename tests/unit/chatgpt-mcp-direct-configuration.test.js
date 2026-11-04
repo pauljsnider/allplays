@@ -120,7 +120,10 @@ describe('bounded configuration create and update', () => {
         const approvals = []; client.setRequestHandler(ElicitRequestSchema, async (request) => { approvals.push(request.params); return accepted(); });
         const [a, b] = InMemoryTransport.createLinkedPair(); await server.connect(a); await client.connect(b);
         try {
-            expect((await client.listTools()).tools).toHaveLength(9);
+            expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+                'list_managed_teams', 'list_team_stat_configurations', 'prepare_clone_stat_configuration',
+                'prepare_rename_stat_configuration', 'confirm_stat_configuration', 'get_stat_configuration_action'
+            ]));
             expect((await client.callTool({ name: 'list_managed_teams', arguments: {} })).structuredContent.teams).toEqual([{ id: 'team-1', name: 'Synthetic team' }]);
             expect((await client.callTool({ name: 'list_team_stat_configurations', arguments: { teamId: 'team-1' } })).structuredContent.configurations[0].id).toBe('source');
             expect((await client.callTool({ name: 'prepare_clone_stat_configuration', arguments: { proposalId, teamId: 'team-1', sourceConfigId: 'source', name: input.name, confirmed: true } })).isError).toBe(true);

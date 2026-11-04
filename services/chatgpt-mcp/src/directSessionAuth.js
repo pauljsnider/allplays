@@ -4,6 +4,7 @@ import { extractBearerToken } from './identity.js';
 import { createUserDb } from './firestoreRest.js';
 import { createDirectFavoriteStore } from './directFavoriteStore.js';
 import { createDirectStatConfigurationStore } from './directStatConfiguration.js';
+import { createDirectRosterBatchStore } from './directRosterBatch.js';
 import { createDirectRosterStore } from './directRoster.js';
 import { createDirectPracticeTimelineStore } from './directPracticeTimeline.js';
 
@@ -37,6 +38,7 @@ export function directFavoriteDependencies({ projectId, fetchImpl = fetch }) {
         store: createDirectFavoriteStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
         statConfigurationStore: createDirectStatConfigurationStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
         rosterStore: createDirectRosterStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
+        rosterBatchStore: createDirectRosterBatchStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
         practiceTimelineStore: createDirectPracticeTimelineStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
         getDb: async () => createUserDb({ projectId, idToken: (await getCurrentActor()).idToken, fetchImpl }),
         getContext: async () => {

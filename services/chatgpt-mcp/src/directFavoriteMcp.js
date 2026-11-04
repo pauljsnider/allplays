@@ -4,6 +4,8 @@ import { DomainError } from './core.js';
 import { createDirectFavoriteCommands } from './directFavorite.js';
 import { createDirectStatConfigurationCommands } from './directStatConfiguration.js';
 import { createDirectDiscovery } from './directDiscovery.js';
+import { createScheduleReviewCommands } from './scheduleReview.js';
+import { createDirectRosterBatchCommands } from './directRosterBatch.js';
 import { createDirectRosterCommands } from './directRoster.js';
 import { createDirectPracticeTimelineCommands } from './directPracticeTimeline.js';
 
@@ -78,6 +80,18 @@ export function createDirectFavoriteMcpSession(dependencies) {
         }, run((args) => commands.prepare({ ...args, mode: 'update' })));
         registerOutcome('roster_player', commands);
     }
+    if (dependencies.rosterBatchStore) {
+        const commands = createDirectRosterBatchCommands({ ...dependencies, store: dependencies.rosterBatchStore });
+        const fields = z.object({ name: z.string().min(1).max(120).optional(), number: z.string().max(20).optional(), position: z.string().max(60).optional() }).strict();
+        server.registerTool('prepare_roster_batch', {
+            description: 'Prepare 1–20 basic roster creates/updates for one atomic explicit approval. Creates require names; updates require exact player IDs. Checks the complete active/inactive roster and all resulting names. No contacts, invitations, custom fields or status changes. Reuse the same proposal UUID after interruptions.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, operations: z.array(z.discriminatedUnion('mode', [
+                z.object({ mode: z.literal('create'), fields: fields.extend({ name: z.string().min(1).max(120) }) }).strict(),
+                z.object({ mode: z.literal('update'), playerId: resourceId, fields }).strict()
+            ])).min(1).max(20) }).strict(), annotations: mutation
+        }, run(commands.prepare));
+        registerOutcome('roster_batch', commands);
+    }
     if (dependencies.practiceTimelineStore) {
         const commands = createDirectPracticeTimelineCommands({ ...dependencies, store: dependencies.practiceTimelineStore });
         const block = z.object({ drillId: resourceId.optional(), title: z.string().min(1).max(120).optional(),
@@ -97,6 +111,21 @@ export function createDirectFavoriteMcpSession(dependencies) {
     }
     if (dependencies.getDb) {
         const discovery = createDirectDiscovery(dependencies);
+        const schedule = createScheduleReviewCommands(dependencies);
+        server.registerTool('list_team_schedule_events', {
+            description: 'Discover exact event IDs and ordinary schedule fields, with app-review eligibility. Fetch every page before resolving names. Contacts, notes and attendance are excluded.',
+            inputSchema: z.object({ teamId: resourceId, cursor: resourceId.optional(), limit: z.number().int().min(1).max(50).optional() }).strict(), annotations: { readOnlyHint: true }
+        }, run(discovery.schedule));
+        server.registerTool('prepare_schedule_event_review', {
+            description: 'Stage ordinary game/practice creation or update for final review and confirmation in All Plays. Returns an advisory preview and review URL; DOES NOT execute a schedule change here. Schedule changes may notify the team independently of reminder settings. Use explicit UTC offsets and the same request UUID on retries.',
+            inputSchema: z.object({ requestId: id, mode: z.enum(['create', 'update']), teamId: resourceId, eventId: resourceId.optional(), eventType: z.enum(['game', 'practice']),
+                changes: z.object({ startDate: z.string().optional(), endDate: z.string().optional(), arrivalTime: z.string().optional(),
+                    location: z.string().max(200).optional(), title: z.string().min(1).max(120).optional(), opponent: z.string().min(1).max(120).optional(), isHome: z.boolean().optional() }).strict() }).strict(), annotations: mutation
+        }, run(schedule.prepare));
+        server.registerTool('get_schedule_event_review', {
+            description: 'Read the same account’s app review status. Requested/prepared does not mean the schedule change was applied.',
+            inputSchema: z.object({ requestId: id }).strict(), annotations: { readOnlyHint: true }
+        }, run(schedule.status));
         if (dependencies.practiceTimelineStore) {
             const paging = { teamId: resourceId, cursor: resourceId.optional(), limit: z.number().int().min(1).max(50).optional() };
             server.registerTool('list_team_practices', {

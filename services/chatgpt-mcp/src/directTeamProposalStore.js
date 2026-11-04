@@ -1,5 +1,5 @@
 import { DomainError } from './core.js';
-import { ID } from './directRevisionCommand.js';
+import { ID, fingerprint } from './directRevisionCommand.js';
 import { createDirectCommandStore } from './directCommandStore.js';
 
 // Shared privacy boundary for team-only action content. The personal journal
@@ -33,7 +33,7 @@ export function createTeamProposalStore(options, { toolName, receiptFields, poli
         const content = await reader.get(companionPath(path, header.data));
         if (!content.exists || content.data.userId !== uid || content.data.toolName !== toolName
             || content.data.status !== 'pending' || content.data.digest !== header.data.digest
-            || receiptFields.some((field) => header.data[field] !== content.data[field]) || header.data.expiresAt !== content.data.expiresAt) {
+            || receiptFields.some((field) => fingerprint({ value: header.data[field] }) !== fingerprint({ value: content.data[field] })) || header.data.expiresAt !== content.data.expiresAt) {
             throw new DomainError('conflict', 'The team proposal is unavailable or changed.');
         }
         return { exists: true, version: `${header.version}:${content.version}`, data: { ...content.data, status: 'prepared' } };

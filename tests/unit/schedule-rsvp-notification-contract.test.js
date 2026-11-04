@@ -38,6 +38,16 @@ function getSendCreatedScheduleEventNotification({ sendCategoryNotification }) {
 }
 
 describe('schedule and RSVP notification contract', () => {
+    it('still announces ordinary event creation when pre-event reminders are disabled', async () => {
+        const sent = [];
+        const notify = getSendCreatedScheduleEventNotification({ sendCategoryNotification: async (payload) => { sent.push(payload); } });
+        await notify({ teamId: 'synthetic-team', gameId: 'synthetic-event', game: {
+            type: 'practice', title: 'Synthetic Practice', status: 'scheduled',
+            date: '2026-12-01T17:00:00Z', scheduleNotifications: { enabled: false }
+        } });
+        expect(sent).toHaveLength(1);
+        expect(sent[0].category).toBe('schedule');
+    });
     it('sends created-event notifications unless the event is draft or part of a large import batch', () => {
         expect(functionsSource).toContain('function buildCreatedScheduleEventNotificationPayload(game = {})');
         expect(functionsSource).toContain('async function sendCreatedScheduleEventNotification({ teamId, gameId, game })');
