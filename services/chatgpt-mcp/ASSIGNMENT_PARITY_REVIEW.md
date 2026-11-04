@@ -1,5 +1,8 @@
 # Volunteer assignment lifecycle batch
 
+Historical checkpoint; see the subsequent [linked-family RSVP batch](FAMILY_RSVP_PARITY_REVIEW.md)
+for current coverage and final-dispatch guard hardening.
+
 This extends the [tracking-status checkpoint](TRACKING_STATUS_PARITY_REVIEW.md)
 with a coherent staff/parent lifecycle: create, update/rename, remove, claim and
 release. It remains an unmounted prototype in the existing draft. Production
