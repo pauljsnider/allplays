@@ -27,7 +27,7 @@ const header = `users/owner/privateAiPendingActions/direct_${proposalId}`;
 const payload = `teams/team-1/privateAiPendingActions/direct_owner_${proposalId}`;
 const rsvpInput = { proposalId, teamId: 'team-1', eventId: 'event-1', playerId: 'existing', response: 'going' };
 const rsvpPath = 'teams/team-1/games/event-1/rsvps/owner__existing';
-const accept = async () => ({ action: 'accept', content: { approve: true, notifyTeam: true } });
+const accept = async () => ({ action: 'accept', content: { approve: true, notifyTeam: true }, consume: async () => {} });
 
 describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('direct schedule and RSVP under real Firestore rules', () => {
     let env;
@@ -60,7 +60,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('direct schedule and RSVP 
     });
     it('requires distinct notification approval, creates once, and updates only selected fields under real rules', async () => {
         const command = commands(); await command.prepare(input);
-        expect((await command.confirm({ proposalId }, async () => ({ action: 'accept', content: { approve: true } }))).applied).toBe(false);
+        expect((await command.confirm({ proposalId }, async () => ({ action: 'accept', content: { approve: true }, consume: async () => {} }))).applied).toBe(false);
         expect((await getDoc(doc(db(), newPath))).exists()).toBe(false);
         await assertFails(getDoc(doc(db('other'), payload)));
         const created = await command.confirm({ proposalId }, accept);

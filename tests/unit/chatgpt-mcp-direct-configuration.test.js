@@ -1,3 +1,4 @@
+import { createTestActionAuthority } from '../helpers/direct-test-authority.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createDirectStatConfigurationCommands, createDirectStatConfigurationStore, cloneableConfiguration } from '../../services/chatgpt-mcp/src/directStatConfiguration.js';
 import { createDirectFavoriteCommands } from '../../services/chatgpt-mcp/src/directFavorite.js';
@@ -115,7 +116,7 @@ describe('bounded configuration create and update', () => {
         expect(write.updateMask.fieldPaths).toEqual(['name', 'updatedAt']); expect(write.currentDocument).toEqual({ exists: true });
     });
     it('offers discovery → prepare → explicit approve → clone and rename through the actual SDK', async () => {
-        const f = fixture(); const server = createDirectFavoriteMcpSession(f.dependencies);
+        const f = fixture(); const server = createDirectFavoriteMcpSession({ ...f.dependencies, authorizeAction: createTestActionAuthority() });
         const client = new Client({ name: 'synthetic', version: '1' }, { capabilities: { elicitation: { form: {} } } });
         const approvals = []; client.setRequestHandler(ElicitRequestSchema, async (request) => { approvals.push(request.params); return accepted(); });
         const [a, b] = InMemoryTransport.createLinkedPair(); await server.connect(a); await client.connect(b);

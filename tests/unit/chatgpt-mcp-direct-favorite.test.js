@@ -1,3 +1,4 @@
+import { createTestActionAuthority } from '../helpers/direct-test-authority.js';
 import { describe, expect, it, vi } from 'vitest';
 import { Client } from '../../services/chatgpt-mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
 import { InMemoryTransport } from '../../services/chatgpt-mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js';
@@ -11,7 +12,7 @@ const proposalId = '00112233-4455-4677-8899-aabbccddeeff';
 const input = { proposalId, teamId: 'team-1', drillId: 'drill-1', favorite: true };
 const proposalPath = `users/owner/privateAiPendingActions/direct_${proposalId}`;
 const favoritePath = 'teams/team-1/drillFavorites/drill-1';
-const accepted = () => Promise.resolve({ action: 'accept', content: { approve: true } });
+const accepted = () => Promise.resolve({ action: 'accept', content: { approve: true }, consume: async () => {} });
 
 function fixture() {
     const records = new Map();
@@ -37,6 +38,20 @@ function fixture() {
 }
 
 describe('bounded direct favorite command', () => {
+    it.each([0, 120001, Infinity, NaN])('rejects an unbounded approval lifetime: %s', (lifetimeMs) => {
+        expect(() => createOneActionApproval({ getActor: async () => ({}), lifetimeMs })).toThrow(/bounded approval lifetime/);
+    });
+    it.each(['uid', 'clientId', 'grantKey', 'expiresAt'])('does not elicit without the live actor binding field %s', async (field) => {
+        const actor = { uid: 'owner', clientId: 'client', grantKey: 'grant', expiresAt: Date.now() + 120000 }; delete actor[field];
+        const elicit = vi.fn(); const authorize = createOneActionApproval({ getActor: async () => actor });
+        await expect(authorize({}, elicit)).rejects.toMatchObject({ code: 'confirmation_unavailable' }); expect(elicit).not.toHaveBeenCalled();
+    });
+    it.each([undefined, null, true, 'yes'])('rejects accepted content without a callable one-use authority: %s', async (consume) => {
+        const f = fixture(); await f.commands.prepare(input);
+        await expect(f.commands.confirm({ proposalId }, async () => ({ action: 'accept', content: { approve: true }, consume })))
+            .rejects.toMatchObject({ code: 'confirmation_unavailable' });
+        expect(f.store.transaction).not.toHaveBeenCalled(); expect(f.records.has(favoritePath)).toBe(false);
+    });
     it('prepares without business writes, then atomically records an approved change and does not replay it', async () => {
         const f = fixture();
         const proposal = await f.commands.prepare(input);
@@ -136,9 +151,24 @@ describe('bounded direct favorite command', () => {
 });
 
 describe('MCP protocol approval, without a production endpoint', () => {
+    it.each([undefined, null, true])('refuses construction without a bound authority: %s', (authorizeAction) => {
+        expect(() => createDirectFavoriteMcpSession({ ...fixture().dependencies, authorizeAction })).toThrow(/approval authority/);
+    });
+    it('does not execute when a custom composition returns raw form content without a consumption authority', async () => {
+        const f = fixture(); const server = createDirectFavoriteMcpSession({ ...f.dependencies, authorizeAction: (preview, elicit) => elicit(preview) });
+        const client = new Client({ name: 'synthetic-raw-form', version: '1' }, { capabilities: { elicitation: { form: {} } } });
+        client.setRequestHandler(ElicitRequestSchema, async () => ({ action: 'accept', content: { approve: true } }));
+        const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+        await server.connect(serverTransport); await client.connect(clientTransport);
+        try {
+            await client.callTool({ name: 'prepare_team_drill_favorite', arguments: input });
+            const result = await client.callTool({ name: 'confirm_team_drill_favorite', arguments: { proposalId } });
+            expect(result.isError).toBe(true); expect(result.content[0].text).toContain('confirmation_unavailable'); expect(f.records.has(favoritePath)).toBe(false);
+        } finally { await client.close(); await server.close(); }
+    });
     it.each([true, false])('requires an initialized client with form elicitation support: %s', async (supportsApproval) => {
         const f = fixture();
-        const server = createDirectFavoriteMcpSession(f.dependencies);
+        const server = createDirectFavoriteMcpSession({ ...f.dependencies, authorizeAction: createTestActionAuthority() });
         const client = new Client({ name: 'synthetic-approval-client', version: '1' }, { capabilities: supportsApproval ? { elicitation: { form: {} } } : {} });
         const approve = vi.fn(async (request) => {
             expect(request.params.message).toContain('Synthetic Team');

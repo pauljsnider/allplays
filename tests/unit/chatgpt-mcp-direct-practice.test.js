@@ -1,3 +1,4 @@
+import { createTestActionAuthority } from '../helpers/direct-test-authority.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createDirectPracticeTimelineStore } from '../../services/chatgpt-mcp/src/directPracticeTimeline.js';
 import { createDirectFavoriteMcpSession } from '../../services/chatgpt-mcp/src/directFavoriteMcp.js';
@@ -74,7 +75,7 @@ describe('draft practice timeline commands', () => {
         expect(await f.commands.confirm({ proposalId }, async () => accepted())).toMatchObject({ status: 'completed' }); expect(f.store.transaction).toHaveBeenCalledTimes(1);
     });
     it('runs discovery and create/append through SDK form approval', async () => {
-        const f = directPracticeFixture(); const server = createDirectFavoriteMcpSession(f.dependencies);
+        const f = directPracticeFixture(); const server = createDirectFavoriteMcpSession({ ...f.dependencies, authorizeAction: createTestActionAuthority() });
         const client = new Client({ name: 'synthetic', version: '1' }, { capabilities: { elicitation: { form: {} } } });
         const approvals = []; client.setRequestHandler(ElicitRequestSchema, async (request) => { approvals.push(request.params); return accepted(); });
         const [a, b] = InMemoryTransport.createLinkedPair(); await server.connect(a); await client.connect(b);

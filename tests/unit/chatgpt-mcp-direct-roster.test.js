@@ -1,3 +1,4 @@
+import { createTestActionAuthority } from '../helpers/direct-test-authority.js';
 import { rosterFixture } from '../helpers/direct-roster-fixture.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createDirectRosterCommands, createDirectRosterStore } from '../../services/chatgpt-mcp/src/directRoster.js';
@@ -73,7 +74,7 @@ describe('single-player direct roster commands', () => {
         f.context.teams.clear(); await expect(f.commands.status({ proposalId })).rejects.toThrow();
     });
     it('discovers and executes create/update through SDK confirmation, refusing confirmed flags and contacts', async () => {
-        const f = fixture(); const server = createDirectFavoriteMcpSession(f.dependencies);
+        const f = fixture(); const server = createDirectFavoriteMcpSession({ ...f.dependencies, authorizeAction: createTestActionAuthority() });
         const client = new Client({ name: 'synthetic', version: '1' }, { capabilities: { elicitation: { form: {} } } });
         const approvals = []; client.setRequestHandler(ElicitRequestSchema, async (request) => { approvals.push(request.params.message); return accepted(); });
         const [a, b] = InMemoryTransport.createLinkedPair(); await server.connect(a); await client.connect(b);

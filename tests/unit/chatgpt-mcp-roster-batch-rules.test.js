@@ -29,7 +29,7 @@ const newPath = `teams/team-1/players/mcp_${proposalId}_0`;
 const oldPath = 'teams/team-1/players/existing';
 const header = `users/owner/privateAiPendingActions/direct_${proposalId}`;
 const payload = `teams/team-1/privateAiPendingActions/direct_owner_${proposalId}`;
-const accept = async () => ({ action: 'accept', content: { approve: true } });
+const accept = async () => ({ action: 'accept', content: { approve: true }, consume: async () => {} });
 
 describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('roster batches and schedule review under real Firestore rules', () => {
     let env;

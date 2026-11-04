@@ -1,3 +1,4 @@
+import { createTestActionAuthority } from '../helpers/direct-test-authority.js';
 import { describe, expect, it } from 'vitest';
 import { rosterFixture } from '../helpers/direct-roster-fixture.js';
 import { createDirectScheduleCommands } from '../../services/chatgpt-mcp/src/directSchedule.js';
@@ -17,7 +18,7 @@ const eventPath = 'teams/team-1/games/existing-event';
 const newPath = `teams/team-1/games/${create.eventId}`;
 const rsvpPath = `${eventPath}/rsvps/owner__existing`;
 const rsvpInput = { proposalId, teamId: 'team-1', eventId: 'existing-event', playerId: 'existing', response: 'going' };
-const accept = async () => ({ action: 'accept', content: { approve: true, notifyTeam: true } });
+const accept = async () => ({ action: 'accept', content: { approve: true, notifyTeam: true }, consume: async () => {} });
 function fixture() {
     const f = rosterFixture();
     f.put('teams/team-1/players/existing', { name: 'Synthetic Player', active: true });
@@ -145,7 +146,7 @@ describe('distinct one-action confirmation contract', () => {
         expect(() => approvedContent({ requiredAcknowledgements: ['arbitraryCapability'] }, answer)).toThrow();
     });
     it('shows two unchecked SDK approval fields for schedule saves; requires only ordinary approval for RSVP', async () => {
-        const f = fixture(); const server = createDirectFavoriteMcpSession({ ...f.dependencies, scheduleStore: f.store, rsvpStore: f.store });
+        const f = fixture(); const server = createDirectFavoriteMcpSession({ ...f.dependencies, authorizeAction: createTestActionAuthority(), scheduleStore: f.store, rsvpStore: f.store });
         const client = new Client({ name: 'synthetic', version: '1' }, { capabilities: { elicitation: { form: {} } } });
         let acknowledge = false; const requests = [];
         client.setRequestHandler(ElicitRequestSchema, async (request) => { requests.push(request.params); return { action: 'accept', content: { approve: true, notifyTeam: acknowledge } }; });

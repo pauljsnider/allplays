@@ -1,3 +1,4 @@
+import { createTestActionAuthority } from '../helpers/direct-test-authority.js';
 import { describe, expect, it, vi } from 'vitest';
 import { rosterFixture } from '../helpers/direct-roster-fixture.js';
 import { createDirectRosterBatchCommands } from '../../services/chatgpt-mcp/src/directRosterBatch.js';
@@ -14,7 +15,7 @@ const input = { proposalId, teamId: 'team-1', operations: [
 ] };
 const newPath = `teams/team-1/players/mcp_${proposalId}_0`;
 const oldPath = 'teams/team-1/players/existing';
-const accept = async () => ({ action: 'accept', content: { approve: true } });
+const accept = async () => ({ action: 'accept', content: { approve: true }, consume: async () => {} });
 const fixture = () => { const f = rosterFixture(); return { ...f, commands: createDirectRosterBatchCommands(f.dependencies) }; };
 
 describe('atomic basic roster batches', () => {
@@ -93,7 +94,7 @@ describe('atomic basic roster batches', () => {
         expect(unknown.records.has(newPath)).toBe(false); expect(unknown.records.get(oldPath).data.position).toBe('Forward');
     });
     it('exposes one batch approval through the SDK and rejects model-supplied confirmation', async () => {
-        const f = fixture(); const server = createDirectFavoriteMcpSession({ ...f.dependencies, rosterBatchStore: f.store });
+        const f = fixture(); const server = createDirectFavoriteMcpSession({ ...f.dependencies, authorizeAction: createTestActionAuthority(), rosterBatchStore: f.store });
         const client = new Client({ name: 'synthetic', version: '1' }, { capabilities: { elicitation: { form: {} } } });
         const approvals = []; client.setRequestHandler(ElicitRequestSchema, async (request) => { approvals.push(request.params.message); return accept(); });
         const [a, b] = InMemoryTransport.createLinkedPair(); await server.connect(a); await client.connect(b);

@@ -22,7 +22,7 @@ const second = '00112233-4455-4677-8899-aabbccddeeaa';
 const input = { proposalId: first, mode: 'create', teamId: 'team-1', eventId: 'practice-1', sessionId: `mcp_${first}`,
     changes: { title: 'Synthetic Private Coaching Plan', blocks: [{ drillId: 'drill-1', duration: 15 }] } };
 const sessionPath = `teams/team-1/practiceSessions/${input.sessionId}`;
-const accept = async () => ({ action: 'accept', content: { approve: true } });
+const accept = async () => ({ action: 'accept', content: { approve: true }, consume: async () => {} });
 
 describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('direct practice timeline with real Firestore rules', () => {
     let env;

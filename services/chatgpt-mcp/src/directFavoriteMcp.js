@@ -15,6 +15,7 @@ import { createDirectPracticeTimelineCommands } from './directPracticeTimeline.j
 // The authenticated router composes bounded domains here. Production server.js
 // never imports it. No generic document writer or model-controlled approval.
 export function createDirectFavoriteMcpSession(dependencies) {
+    if (typeof dependencies?.authorizeAction !== 'function') throw new DomainError('confirmation_unavailable', 'A session-bound one-action approval authority is required.');
     const server = new McpServer({ name: 'allplays-direct-command-prototype', version: '0.2.0' });
     const id = z.string().uuid();
     const resourceId = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
@@ -35,9 +36,7 @@ export function createDirectFavoriteMcpSession(dependencies) {
             message: `Approve this one change only? No ongoing write permission is granted.\n${JSON.stringify(approvedPreview, null, 2)}`,
             requestedSchema: { type: 'object', properties: confirmationFields(approvedPreview), required: Object.keys(confirmationFields(approvedPreview)) }
         }, { timeout: 120000, ...options });
-        return dependencies.authorizeAction
-            ? dependencies.authorizeAction(preview, elicit, extra.signal)
-            : elicit(preview, { signal: extra.signal });
+        return dependencies.authorizeAction(preview, elicit, extra.signal);
     };
     const mutation = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
     const registerOutcome = (suffix, commands, annotations = mutation) => {

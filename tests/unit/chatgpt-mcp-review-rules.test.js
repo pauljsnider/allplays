@@ -1,3 +1,4 @@
+import { createTestActionAuthority } from '../helpers/direct-test-authority.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
@@ -105,10 +106,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
     });
     it('executes one explicitly approved MCP favorite through real REST transactions and rules', async () => {
         const dependencies = await favoriteDependencies();
-        const server = createDirectFavoriteMcpSession(dependencies);
+        const server = createDirectFavoriteMcpSession({ ...dependencies, authorizeAction: createTestActionAuthority() });
         const client = new Client({ name: 'synthetic-client', version: '1' }, { capabilities: { elicitation: { form: {} } } });
         let approvals = 0;
-        client.setRequestHandler(ElicitRequestSchema, async () => { approvals += 1; return { action: 'accept', content: { approve: true } }; });
+        client.setRequestHandler(ElicitRequestSchema, async () => { approvals += 1; return { action: 'accept', content: { approve: true }, consume: async () => {} }; });
         const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
         await server.connect(serverTransport); await client.connect(clientTransport);
         const proposalId = id.slice(4);
@@ -132,7 +133,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
         await commands.prepare({ proposalId, teamId: 'team-1', drillId: 'drill-1', favorite: true });
         await expect(commands.confirm({ proposalId }, async () => {
             await env.withSecurityRulesDisabled(async (context) => updateDoc(doc(context.firestore(), 'teams/team-1'), { ownerId: 'replacement' }));
-            return { action: 'accept', content: { approve: true } };
+            return { action: 'accept', content: { approve: true }, consume: async () => {} };
         })).rejects.toThrow();
         await env.withSecurityRulesDisabled(async (context) => {
             expect((await getDoc(doc(context.firestore(), 'teams/team-1/drillFavorites/drill-1'))).exists()).toBe(false);
@@ -172,7 +173,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
         const bearer = await issue('owner');
         const client = new Client({ name: 'isolated-emulator-client', version: '1' }, { capabilities: { elicitation: { form: {} } } });
         client.onerror = () => {};
-        client.setRequestHandler(ElicitRequestSchema, async () => ({ action: 'accept', content: { approve: true } }));
+        client.setRequestHandler(ElicitRequestSchema, async () => ({ action: 'accept', content: { approve: true }, consume: async () => {} }));
         const transport = new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${bearer}` } } });
         try {
             await client.connect(transport);
@@ -260,7 +261,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
         const commands = createDirectRosterCommands({ ...dependencies, store });
         await commands.prepare({ proposalId, mode: 'create', teamId: 'team-1', playerId: `mcp_${proposalId}`, fields: { name: 'Synthetic New' } });
         lose = true;
-        expect(await commands.confirm({ proposalId }, async () => ({ action: 'accept', content: { approve: true } }))).toMatchObject({ status: 'completed' });
+        expect(await commands.confirm({ proposalId }, async () => ({ action: 'accept', content: { approve: true }, consume: async () => {} }))).toMatchObject({ status: 'completed' });
         expect(await commands.confirm({ proposalId }, async () => { throw new Error('Must not recreate'); })).toMatchObject({ status: 'completed' });
         expect(commits).toBe(1);
         const playerPath = `teams/team-1/players/mcp_${proposalId}`;
@@ -268,7 +269,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
         const next = '00112233-4455-4677-8899-aabbccddeeaa';
         const preview = await commands.prepare({ proposalId: next, mode: 'update', teamId: 'team-1', playerId: `mcp_${proposalId}`, fields: { position: 'Forward' } });
         expect(JSON.stringify(preview)).not.toContain('synthetic-parent'); expect(JSON.stringify(preview)).not.toContain('synthetic-private');
-        expect(await commands.confirm({ proposalId: next }, async () => ({ action: 'accept', content: { approve: true } }))).toMatchObject({ status: 'completed' });
+        expect(await commands.confirm({ proposalId: next }, async () => ({ action: 'accept', content: { approve: true }, consume: async () => {} }))).toMatchObject({ status: 'completed' });
         expect((await getDoc(doc(userDb('owner'), playerPath))).data()).toMatchObject({ parentEmail: 'synthetic-parent@example.test', medicalInfo: 'synthetic-private', active: false, position: 'Forward' });
     });
     it('does not create duplicate names when two reviewed roster transactions race', async () => {
@@ -296,7 +297,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
         await commands.prepare({ proposalId, mode: 'rename', teamId: 'team-1', configId: 'source', name: 'Renamed' });
         await expect(commands.confirm({ proposalId }, async () => {
             await updateDoc(doc(userDb('owner'), configPath), { scoringColumn: 'Concurrent update' });
-            return { action: 'accept', content: { approve: true } };
+            return { action: 'accept', content: { approve: true }, consume: async () => {} };
         })).rejects.toMatchObject({ code: 'conflict' });
         expect((await getDoc(doc(userDb('owner'), configPath))).data().name).toBe('Synthetic');
         await expect(storeFor('other').transaction(async (tx) => tx.patch(configPath, { name: 'Denied', updatedAt: new Date() }))).rejects.toMatchObject({ code: 'permission_denied' });
@@ -304,7 +305,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
         await commands.prepare({ proposalId: next, mode: 'rename', teamId: 'team-1', configId: 'source', name: 'Revoked' });
         await expect(commands.confirm({ proposalId: next }, async () => {
             await env.withSecurityRulesDisabled(async (context) => updateDoc(doc(context.firestore(), 'teams/team-1'), { ownerId: 'replacement' }));
-            return { action: 'accept', content: { approve: true } };
+            return { action: 'accept', content: { approve: true }, consume: async () => {} };
         })).rejects.toThrow();
         await env.withSecurityRulesDisabled(async (context) => expect((await getDoc(doc(context.firestore(), configPath))).data().name).toBe('Synthetic'));
     });
@@ -325,7 +326,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
         const proposalId = id.slice(4);
         await commands.prepare({ proposalId, mode: 'clone', teamId: 'team-1', configId: `mcp_${proposalId}`, sourceConfigId: 'source', name: 'Synthetic clone' });
         loseResponse = true;
-        expect(await commands.confirm({ proposalId }, async () => ({ action: 'accept', content: { approve: true } }))).toMatchObject({ status: 'completed' });
+        expect(await commands.confirm({ proposalId }, async () => ({ action: 'accept', content: { approve: true }, consume: async () => {} }))).toMatchObject({ status: 'completed' });
         expect(await commands.confirm({ proposalId }, async () => { throw new Error('Must not re-approve or re-create'); })).toMatchObject({ status: 'completed' });
         expect(commits).toBe(1);
         expect((await getDoc(doc(userDb('owner'), `teams/team-1/statTrackerConfigs/mcp_${proposalId}`))).data().name).toBe('Synthetic clone');
@@ -350,13 +351,13 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
         const commands = createDirectFavoriteCommands({ ...dependencies, store });
         await commands.prepare({ proposalId, teamId: 'team-1', drillId: 'drill-1', favorite: true });
         loseResponse = true;
-        expect(await commands.confirm({ proposalId }, async () => ({ action: 'accept', content: { approve: true } }))).toMatchObject({ status: 'completed' });
+        expect(await commands.confirm({ proposalId }, async () => ({ action: 'accept', content: { approve: true }, consume: async () => {} }))).toMatchObject({ status: 'completed' });
         const removeId = '00112233-4455-4677-8899-aabbccddeeaa';
         await commands.prepare({ proposalId: removeId, teamId: 'team-1', drillId: 'drill-1', favorite: false });
         let approvals = 0;
         let release;
         const ready = new Promise((resolve) => { release = resolve; });
-        const approve = async () => { if (++approvals === 2) release(); await ready; return { action: 'accept', content: { approve: true } }; };
+        const approve = async () => { if (++approvals === 2) release(); await ready; return { action: 'accept', content: { approve: true }, consume: async () => {} }; };
         const results = await Promise.allSettled([
             commands.confirm({ proposalId: removeId }, approve),
             createDirectFavoriteCommands({ ...dependencies, store }).confirm({ proposalId: removeId }, approve)
@@ -370,7 +371,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
         if (!results.some((result) => result.status === 'fulfilled')) {
             expect((await getDoc(doc(userDb('owner'), 'teams/team-1/drillFavorites/drill-1'))).exists()).toBe(true);
             expect(await commands.status({ proposalId: removeId })).toMatchObject({ status: 'prepared' });
-            expect(await commands.confirm({ proposalId: removeId }, async () => ({ action: 'accept', content: { approve: true } }))).toMatchObject({ status: 'completed' });
+            expect(await commands.confirm({ proposalId: removeId }, async () => ({ action: 'accept', content: { approve: true }, consume: async () => {} }))).toMatchObject({ status: 'completed' });
         }
         expect((await getDoc(doc(userDb('owner'), 'teams/team-1/drillFavorites/drill-1'))).exists()).toBe(false);
         expect(await commands.status({ proposalId: removeId })).toMatchObject({ status: 'completed' });

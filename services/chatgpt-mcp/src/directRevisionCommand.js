@@ -84,10 +84,12 @@ export function createRevisionCommands({ uid, store, getContext, now = Date.now 
                 || fingerprint(before.data.preview) !== fingerprint(domain.preview(targetBeforeApproval, before.data))) {
                 throw new DomainError('conflict', 'The displayed proposal no longer matches current data. Prepare it again.');
             }
+            if (typeof approve !== 'function') throw new DomainError('confirmation_unavailable', 'A bound approval authority is required.');
             const approval = await approve(before.data.preview);
             if (!approvedContent(before.data.preview, approval)) {
                 return { proposalId, status: approval?.action === 'decline' ? 'declined' : 'cancelled', applied: false };
             }
+            if (typeof approval.consume !== 'function') throw new DomainError('confirmation_unavailable', 'A one-use session-bound approval is required before execution.');
             await authorize(before.data);
             try {
                 return await store.transaction(async (transaction) => {
@@ -106,7 +108,7 @@ export function createRevisionCommands({ uid, store, getContext, now = Date.now 
                     transaction.set(pathFor(proposalId), completed);
                     return result(proposalId, completed);
                 }, { beforeCommit: async () => {
-                    await approval.consume?.();
+                    await approval.consume();
                     if (Date.parse(before.data.expiresAt) <= now()) throw new DomainError('confirmation_expired', 'The proposal expired before execution.');
                     await domain.beforeCommit?.(targetBeforeApproval, before.data);
                 } });

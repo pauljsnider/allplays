@@ -1,3 +1,4 @@
+import { createTestActionAuthority } from '../helpers/direct-test-authority.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createScheduleReviewCommands, normalizeScheduleInstant } from '../../services/chatgpt-mcp/src/scheduleReview.js';
 import { createDirectDiscovery } from '../../services/chatgpt-mcp/src/directDiscovery.js';
@@ -91,7 +92,7 @@ describe('ordinary schedule review bridge', () => {
         f.context.teams.clear(); await expect(discovery.schedule({ teamId: 'team-1', cursor: 'a' })).rejects.toMatchObject({ code: 'permission_denied' });
     });
     it('exposes discovery and app review through the SDK without a direct schedule confirm tool', async () => {
-        const f = fixture(); const server = createDirectFavoriteMcpSession(f.dependencies);
+        const f = fixture(); const server = createDirectFavoriteMcpSession({ ...f.dependencies, authorizeAction: createTestActionAuthority() });
         const client = new Client({ name: 'synthetic', version: '1' }, { capabilities: {} });
         const [a, b] = InMemoryTransport.createLinkedPair(); await server.connect(a); await client.connect(b);
         try {
