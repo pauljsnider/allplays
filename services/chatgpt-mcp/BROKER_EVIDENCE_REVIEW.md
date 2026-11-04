@@ -36,6 +36,29 @@ Before a schedule commit it verifies the approved preview, current actor,
 exact project, transaction read versions, event write, completion metadata and
 companion deletion. The durable authority consumes one action before execution.
 
+Independent review of `ee9d7192` found that matching the preview digest alone
+did not bind the supplied write's semantics. A trusted-composition harness could
+substitute an unapproved opponent and obtain evidence for that different event.
+Create and update regression tests reproduced acceptance before this fix; this
+was not demonstrated reachable through the current domain engine.
+
+The bridge now privately snapshots the actual approved preview and independently
+reconstructs the allowed write in `scheduleEvidenceSemantics.js`. It normalizes
+the requested changes, recomputes the actor-bound intent digest, verifies the
+target/mode/type and current before/derived after summaries, and compares the
+entire canonical wire mutation. Create defaults, actor audit fields, shifted
+end/arrival times, and the exact update mask are enforced. Audit timestamps are
+bounded to the approval attempt. Added, removed, or substituted fields fail
+before evidence issuance; neither a supplied digest nor a completion receipt
+can bless a different write. The verifier deliberately remains independent of
+the domain writer: adding a write field requires explicit verifier review.
+
+This fix passes 54 bridge tests (including create/update game/practice success
+and field-tampering regressions), 391 MCP tests overall, and 18 focused emulator
+tests. The new real-broker integration regression injects a malicious write plan
+at the trusted-composition boundary and verifies zero business commits and no
+delivery evidence. These checks do not establish the production channel below.
+
 After an acknowledged Firestore commit, the adapter verifies write-result count
 and event updateTime, then rereads that exact event using the current user's
 credentials. Its content digest uses canonical Firestore wire fields, preserving

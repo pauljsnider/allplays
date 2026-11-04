@@ -1,5 +1,6 @@
 import { DomainError } from './core.js';
 import { fingerprint } from './directRevisionCommand.js';
+import { approvedScheduleWrite } from './scheduleEvidenceSemantics.js';
 
 const identityKeys = ['uid', 'clientId', 'grantKey', 'sessionId'];
 const sameActor = (one, two) => identityKeys.every((key) => one[key] === two[key]);
@@ -57,7 +58,8 @@ export function createBrokerScheduleEvidenceBridge({ projectId, getActor, sessio
         verifyForm: async (handle, actor, command) => {
             const form = forms.get(handle);
             if (!form || !sameActor(form, actor) || form.previewDigest !== command.previewDigest) deny();
-            return { ...command, ...form, disconnected: false };
+            const { preview, ...binding } = form;
+            return { ...command, ...binding, disconnected: false };
         },
         verifyCommitObservation: async (handle, expected) => {
             const observed = observations.get(handle);
@@ -72,7 +74,7 @@ export function createBrokerScheduleEvidenceBridge({ projectId, getActor, sessio
             if (!sameActor({ ...actor, sessionId }, live) || content.approve !== true) deny();
             const handle = Object.freeze({});
             forms.set(handle, { ...Object.fromEntries(identityKeys.map((key) => [key, live[key]])), previewDigest: fingerprint(preview), issuedAt, expiresAt,
-                approve: content.approve, notifyTeam: content.notifyTeam === true });
+                preview: structuredClone(preview), approve: content.approve, notifyTeam: content.notifyTeam === true });
             return handle;
         },
         async beforeCommit({ descriptor, formEvidence, plan }) {
@@ -89,6 +91,8 @@ export function createBrokerScheduleEvidenceBridge({ projectId, getActor, sessio
             const receipt = plan.writes.find((write) => write.update?.name === receiptPath)?.update.fields;
             if (!receipt || receipt.digest?.stringValue !== descriptor.intentDigest || receipt.status?.stringValue !== 'completed' || receipt.receiptOnly?.booleanValue !== true
                 || !plan.writes.some((write) => write.delete === `${prefix}teams/${descriptor.teamId}/privateAiPendingActions/direct_${actor.uid}_${descriptor.proposalId}`)) deny();
+            const expected = approvedScheduleWrite({ preview: form.preview, descriptor, actor, row, write: eventWrite, issuedAt: form.issuedAt, now: now() });
+            if (fingerprint(canonicalEvidenceFields(expected)) !== fingerprint(canonicalEvidenceFields(eventWrite.update.fields))) deny();
             const fields = descriptor.mode === 'create' ? structuredClone(eventWrite.update.fields) : structuredClone(row.found.fields);
             if (descriptor.mode === 'update') {
                 const mask = eventWrite.updateMask.fieldPaths;

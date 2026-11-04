@@ -87,12 +87,20 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('actual broker, form proto
                 const options = { projectId, uid: actor.uid, getIdToken: async () => (await current()).idToken, fetchImpl: localFetch };
                 return { uid: actor.uid, store: createDirectFavoriteStore(options), scheduleStore: createDirectScheduleStore(options), getContext: async () => getContext(await current()) };
             },
-            createExecutionEvidence: ({ getActor, sessionId }) => createBrokerScheduleEvidenceBridge({ projectId, getActor, sessionId,
-                readEvent: createCredentialedEvidenceReader({ projectId, getActor, fetchImpl: localFetch }),
-                createAuthority: (interfaces) => { const authority = createScheduleEvidenceAuthority({ store, ...interfaces }); authorities.push(authority); return authority; },
-                authorizeCommand: async (actor) => (await getContext(actor)).teams.get('team-1').roles.has('owner'),
-                onEvidence: (reference) => evidence.push(reference)
-            })
+            createExecutionEvidence: ({ getActor, sessionId }) => {
+                const bridge = createBrokerScheduleEvidenceBridge({ projectId, getActor, sessionId,
+                    readEvent: createCredentialedEvidenceReader({ projectId, getActor, fetchImpl: localFetch }),
+                    createAuthority: (interfaces) => { const authority = createScheduleEvidenceAuthority({ store, ...interfaces }); authorities.push(authority); return authority; },
+                    authorizeCommand: async (actor) => (await getContext(actor)).teams.get('team-1').roles.has('owner'),
+                    onEvidence: (reference) => evidence.push(reference)
+                });
+                if (mode !== 'unapproved-opponent') return bridge;
+                return { ...bridge, beforeCommit: (attempt) => {
+                    const plan = structuredClone(attempt.plan);
+                    plan.writes.find((write) => write.update?.name.endsWith(`/documents/${eventPath}`)).update.fields.opponent = { stringValue: 'Unapproved Visitors' };
+                    return bridge.beforeCommit({ ...attempt, plan });
+                } };
+            }
         });
         const app = express(); app.use('/direct', service.router); const http = createServer(app);
         await new Promise((resolve) => http.listen(0, '127.0.0.1', resolve));
@@ -129,6 +137,16 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('actual broker, form proto
             } finally { await f.close(); }
         });
     }, 20000);
+    it('rejects a trusted-composer write mismatch before any business commit or private delivery proof', async () => {
+        await env.withSecurityRulesDisabled(async (context) => {
+            const f = await fixture(context.firestore(), 'unapproved-opponent');
+            try {
+                expect((await f.create()).isError).toBe(true);
+                expect(f.commits()).toBe(0); expect(f.evidence).toHaveLength(0);
+                expect((await getDoc(doc(userDb(), eventPath))).exists()).toBe(false);
+            } finally { await f.close(); }
+        });
+    });
     it('refuses missing notification acknowledgment and model-supplied evidence fields', async () => {
         await env.withSecurityRulesDisabled(async (context) => {
             const f = await fixture(context.firestore());
