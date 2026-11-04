@@ -1,5 +1,8 @@
 # Private player tracking completion checkpoint
 
+Historical checkpoint; the subsequent [assignment lifecycle batch](ASSIGNMENT_PARITY_REVIEW.md)
+contains the current coverage comparison and remaining gates.
+
 This follows [the tracking-item checkpoint](TRACKING_PARITY_REVIEW.md). The
 unmounted direct prototype now covers a bounded part of **8 of the 46 app write
 workflow names**. The new name is `set_player_tracking_status`; the remaining
