@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, runTransaction, collection, query, where, limit, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, runTransaction, collection, query, where, limit, getDocs, orderBy, startAfter } from 'firebase/firestore';
 import { createMockUserToken } from '@firebase/util';
 import { compactFirestoreRules } from '../../scripts/compact-firestore-rules.mjs';
 import { createOAuthBroker, s256Challenge } from '../../services/chatgpt-mcp/src/oauth.js';
@@ -12,7 +12,7 @@ import { createDirectSessionAuthenticator } from '../../services/chatgpt-mcp/src
 import { createDirectSessionRouter } from '../../services/chatgpt-mcp/src/directSessionTransport.js';
 import { createDirectScheduleStore } from '../../services/chatgpt-mcp/src/directSchedule.js';
 import { createDirectFavoriteStore } from '../../services/chatgpt-mcp/src/directFavoriteStore.js';
-import { createBrokerScheduleEvidenceBridge, createCredentialedEvidenceReader } from '../../services/chatgpt-mcp/src/directScheduleEvidence.js';
+import { createBrokerScheduleEvidenceBridge, createCredentialedEvidenceReader, canonicalEvidenceFields } from '../../services/chatgpt-mcp/src/directScheduleEvidence.js';
 import express from '../../services/chatgpt-mcp/node_modules/express/index.js';
 import { Client } from '../../services/chatgpt-mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
 import { StreamableHTTPClientTransport } from '../../services/chatgpt-mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/client/streamableHttp.js';
@@ -22,8 +22,9 @@ const { createScheduleEvidenceAuthority } = require('../../functions/schedule-de
 const { createFirestoreNotificationJournalStore } = require('../../functions/notification-attempt-journal.cjs');
 const { createScheduleDeliveryCoordinator } = require('../../functions/schedule-delivery-coordinator.cjs');
 const { createScheduleDeliveryProviders } = require('../../functions/schedule-delivery-providers.cjs');
-const { createCanonicalScheduleMembership } = require('../../functions/schedule-canonical-membership.cjs');
+const { createCanonicalScheduleMembership, createCanonicalScheduleReadiness } = require('../../functions/schedule-canonical-membership.cjs');
 const { createScheduleDeliveryAudience, createFirestoreScheduleRecipientLoader } = require('../../functions/schedule-delivery-audience.cjs');
+const { createScheduleRecoveryPipeline, createFirestoreScheduleRecoveryScanner } = require('../../functions/schedule-recovery-pipeline.cjs');
 const projectId = 'demo-allplays-mcp-review';
 const proposalId = '00112233-4455-4677-8899-aabbccddeeff';
 const secondId = '00112233-4455-4677-8899-aabbccddeeaa';
@@ -46,18 +47,47 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('actual broker, form proto
     });
     async function fixture(database, mode = 'normal') {
         const serverDb = {
+            collection: (path) => {
+                const builder = (constraints = []) => ({
+                    where: (field, op, value) => builder([...constraints, where(field, op, value)]),
+                    orderBy: (field) => builder([...constraints, orderBy(field)]), limit: (count) => builder([...constraints, limit(count)]),
+                    startAfter: (cursor) => builder([...constraints, startAfter(cursor)]),
+                    get: () => getDocs(query(collection(database, path), ...constraints))
+                }); return builder();
+            },
             doc: (path) => ({ path, get: async () => { const row = await getDoc(doc(database, path)); return { exists: row.exists(), data: () => row.data() }; } }),
             runTransaction: (callback) => runTransaction(database, (tx) => callback({ get: async (ref) => { const row = await tx.get(doc(database, ref.path)); return { exists: row.exists(), data: () => row.data() }; }, set: (ref, data) => tx.set(doc(database, ref.path), data) }))
         };
         const store = createFirestoreNotificationJournalStore(serverDb);
+        let pipeline; let pipelineFactory; let pipelineClockOffset = 0; let pipelineEffect; let earlyPipelineResult; let pipelineSends = 0; let eventBeforeVersion = null; let readinessUnavailable = false;
+        const triggerHandles = new WeakMap();
         let commits = 0; let exchanges = 0; let pushes = 0; let acknowledge = true; let revoked = false;
         const localFetch = async (url, options) => {
             const host = process.env.FIRESTORE_EMULATOR_HOST;
             if (!/^(127\.0\.0\.1|localhost):\d+$/.test(host) || !url.startsWith('https://firestore.googleapis.com/v1/')) throw new Error('Only isolated emulator requests are allowed');
             const committing = url.endsWith(':commit') && JSON.parse(options.body).transaction;
             if (committing) { commits++; if (mode === 'wrong-user') options = { ...options, headers: { ...options.headers, Authorization: `Bearer ${token('other')}` } }; }
+            if (committing && pipeline) {
+                const fences = await getDocs(query(collection(database, 'teams/team-1/notificationSendLog'), where('kind', '==', 'schedule-proof-fence')));
+                if (mode === 'pipeline-legacy-required') expect(fences.docs).toHaveLength(0);
+                else expect(fences.docs.some((row) => row.data().producerState === 'dispatched')).toBe(true);
+            }
             const response = await fetch(url.replace('https://firestore.googleapis.com', `http://${host}`), options);
+            if (pipeline && url.endsWith(':batchGet') && JSON.parse(options.body).transaction && JSON.parse(options.body).documents[0].endsWith(`/documents/${eventPath}`)) {
+                const rows = await response.clone().json(); eventBeforeVersion = rows[0].found?.updateTime || null;
+            }
             if (committing && response.ok) {
+                if (pipeline) {
+                    const prefix = `projects/${projectId}/databases/(default)/documents/`;
+                    const read = await fetch(`http://${host}/v1/${prefix.slice(0, -1)}:batchGet`, { method: 'POST', headers: options.headers, body: JSON.stringify({ documents: [prefix + eventPath] }) });
+                    const row = (await read.json())[0].found;
+                    if (mode === 'pipeline-readiness-changed') await setDoc(doc(database, 'teams/team-1'), { ownerId: 'owner', adminEmails: [' admin@example.test '], name: 'Synthetic Team' });
+                    const handle = Object.freeze({}); triggerHandles.set(handle, { teamId: 'team-1', eventId, sourceVersion: row.updateTime, beforeVersion: eventBeforeVersion,
+                        fields: canonicalEvidenceFields(row.fields), actorUid: 'owner', title: 'Schedule event added', body: 'Review the schedule in the app.' });
+                    pipelineEffect = await pipeline.capture(handle);
+                    earlyPipelineResult = await pipeline.process(pipelineEffect);
+                    if (mode === 'pipeline-lost-response') throw new Error('Synthetic lost commit response after durable trigger capture');
+                }
                 if (mode === 'lost-response') throw new Error('Synthetic lost commit response');
                 if (mode === 'forged-version') {
                     const body = await response.json(); body.writeResults[0].updateTime = '1970-01-01T00:00:01Z'; body.commitTime = '1970-01-01T00:00:01Z';
@@ -84,6 +114,29 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('actual broker, form proto
             const team = (await getDoc(doc(userDb(actor.uid), 'teams/team-1'))).data();
             return { uid: actor.uid, teams: new Map([['team-1', { team, roles: new Set(team?.ownerId === actor.uid ? ['owner'] : []) }]]) };
         };
+        if (mode.startsWith('pipeline-')) {
+            await setDoc(doc(database, 'users/owner'), {});
+            await setDoc(doc(database, 'users/member'), { parentTeamIds: ['team-1'] });
+            if (mode === 'pipeline-legacy-required') await setDoc(doc(database, 'teams/team-1'), { ownerId: 'owner', adminEmails: [' admin@example.test '], name: 'Synthetic Team' });
+            const auth = { getUser: async (uid) => ({ uid, disabled: false, emailVerified: true, email: `${uid}@example.test` }), getUserByEmail: async () => { throw new Error('Synthetic fixture has no valid email admins'); } };
+            const membership = createCanonicalScheduleMembership({ firestore: serverDb, auth });
+            const audience = createScheduleDeliveryAudience({ ...membership, loadRecipient: createFirestoreScheduleRecipientLoader({ firestore: serverDb, auth, resolveCanonicalRoles: membership.resolveCanonicalRoles }) });
+            const assess = createCanonicalScheduleReadiness({ readTeam: async (teamId) => (await serverDb.doc(`teams/${teamId}`).get()).data(), resolveAudience: audience.resolve });
+            const providers = createScheduleDeliveryProviders({ firestore: serverDb });
+            pipelineFactory = () => createScheduleRecoveryPipeline({ store, now: () => Date.now() + pipelineClockOffset,
+                authority: { verifyConsumedApproval: (ref) => authorities[0].verifyConsumedApproval(ref), verifyCommit: (ref) => authorities[0].verifyCommit(ref) },
+                verifyPlatformTrigger: async (handle) => { if (!triggerHandles.has(handle)) throw new Error('Untrusted trigger'); return triggerHandles.get(handle); },
+                assessAudience: async (args) => { if (readinessUnavailable) throw new Error('Synthetic temporary audience read failure'); return assess(args); },
+                // Synthetic legacy adapter only; production legacy trigger is unchanged.
+                prepareLegacyPlan: async () => [{ recipientUid: 'member', channel: 'inbox', endpoint: 'member' }],
+                authorizeDelivery: async ({ request }) => ({ actorAllowed: (await getContext({ uid: request.actorUid })).teams.get('team-1').roles.has('owner'), sourceCurrent: true,
+                    recipientAllowed: (await getDoc(doc(database, `users/${request.recipientUid}`))).data()?.parentTeamIds?.includes(request.teamId) === true }),
+                providers: { ...providers, send: async (...args) => { pipelineSends++; return providers.send(...args); } },
+                readVerifiedDeploymentGate: async () => ({ mode: 'journal', legacyHead: 'a'.repeat(40), journalHead: 'b'.repeat(40), legacyCompatible: true, bothConsumersGated: true, compatibleProducersVerified: true }),
+                scanWork: createFirestoreScheduleRecoveryScanner(serverDb)
+            });
+            pipeline = pipelineFactory();
+        }
         const service = createDirectSessionRouter({ authenticate,
             createDependencies: (actor, current) => {
                 const options = { projectId, uid: actor.uid, getIdToken: async () => (await current()).idToken, fetchImpl: localFetch };
@@ -94,7 +147,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('actual broker, form proto
                     readEvent: createCredentialedEvidenceReader({ projectId, getActor, fetchImpl: localFetch }),
                     createAuthority: (interfaces) => { const authority = createScheduleEvidenceAuthority({ store, ...interfaces }); authorities.push(authority); return authority; },
                     authorizeCommand: async (actor) => (await getContext(actor)).teams.get('team-1').roles.has('owner'),
-                    onEvidence: (reference) => evidence.push(reference)
+                    onEvidence: (reference) => evidence.push(reference),
+                    ...(pipeline ? { producer: mode === 'pipeline-cancel-before-dispatch' ? { ...pipeline.producer, beginWrite: async () => { throw new Error('Synthetic cancellation before dispatch'); } } : pipeline.producer } : {})
                 });
                 if (mode !== 'unapproved-opponent') return bridge;
                 return { ...bridge, beforeCommit: (attempt) => {
@@ -116,10 +170,69 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('actual broker, form proto
             authorize: async ({ actor }) => ({ actorAllowed: (await getContext(actor)).teams.get('team-1').roles.has('owner'), recipientAllowed: true }),
             resolveRecipients: async () => [{ recipientUid: 'member', channel: 'inbox', endpoint: 'member' }, { recipientUid: 'member', channel: 'push', endpoint: 'synthetic-device' }],
             providers: createScheduleDeliveryProviders({ firestore: serverDb, messaging: { send: async () => { pushes++; throw new Error('Isolated unknown push outcome'); } } }) });
-        return { create, client, bearer, evidence, authorities, store, authenticate, coordinator, commits: () => commits, exchanges: () => exchanges, pushes: () => pushes,
+        return { create, client, bearer, evidence, authorities, store, pipeline, pipelineFactory, pipelineEffect: () => pipelineEffect, earlyPipelineResult: () => earlyPipelineResult, pipelineSends: () => pipelineSends, expirePipeline: () => { pipelineClockOffset += 180000; }, setReadinessUnavailable: (value) => { readinessUnavailable = value; }, authenticate, coordinator, commits: () => commits, exchanges: () => exchanges, pushes: () => pushes,
             setAcknowledge: (value) => { acknowledge = value; }, revoke: () => { revoked = true; }, localFetch,
             close: async () => { await client.close().catch(() => {}); await service.close(); http.closeAllConnections(); await new Promise((resolve) => http.close(resolve)); } };
     }
+    it('pages the private recovery collection without dropping the lookahead row or crossing teams', async () => {
+        await env.withSecurityRulesDisabled(async (context) => {
+            const database = context.firestore();
+            const backend = { doc: (path) => doc(database, path), collection: (path) => {
+                const builder = (constraints = []) => ({ orderBy: (field) => builder([...constraints, orderBy(field)]),
+                    limit: (count) => builder([...constraints, limit(count)]), startAfter: (ref) => builder([...constraints, startAfter(ref)]),
+                    get: () => getDocs(query(collection(database, path), ...constraints)) });
+                return builder();
+            } };
+            await Promise.all(Array.from({ length: 43 }, (_, index) => setDoc(doc(database, `teams/team-1/notificationSendLog/scan_${String(index).padStart(3, '0')}`), { index })));
+            await setDoc(doc(database, 'teams/other/notificationSendLog/scan_000'), { index: 'other' });
+            const scan = createFirestoreScheduleRecoveryScanner(backend); const rows = []; let cursor = null; const sizes = [];
+            do { const page = await scan({ teamId: 'team-1', cursor }); rows.push(...page.rows); sizes.push(page.rows.length); cursor = page.nextCursor; } while (cursor);
+            expect(sizes).toEqual([20, 20, 3]); expect(rows.map((row) => row.index)).toEqual(Array.from({ length: 43 }, (_, index) => index));
+            for (const invalid of [{ teamId: 123 }, { teamId: 'team-1', cursor: ['scan_000'] }, { teamId: '../other' }]) await expect(scan(invalid)).rejects.toThrow();
+        });
+    });
+    it.each(['pipeline-normal', 'pipeline-lost-response', 'pipeline-legacy-required', 'pipeline-readiness-changed'])('composes the actual approved writer, durable trigger and restarted recovery: %s', async (mode) => {
+        await env.withSecurityRulesDisabled(async (context) => {
+            const f = await fixture(context.firestore(), mode);
+            try {
+                const created = await f.create(); expect(created.structuredContent?.status, JSON.stringify(created.content)).toBe('completed'); expect(f.commits()).toBe(1);
+                if (mode === 'pipeline-legacy-required') expect(f.earlyPipelineResult().owner).toBe('legacy');
+                else expect(f.earlyPipelineResult().state).toBe('waiting');
+                if (mode === 'pipeline-lost-response') f.expirePipeline();
+                const result = await f.pipelineFactory().process(f.pipelineEffect()); expect(result.state).toBe('completed');
+                const expectedOwner = mode === 'pipeline-normal' ? 'journal' : 'legacy';
+                const owners = await getDocs(query(collection(context.firestore(), 'teams/team-1/notificationSendLog'), where('kind', '==', 'schedule-consumer-owner')));
+                expect(owners.docs.map((row) => row.data().owner)).toEqual([expectedOwner]); expect(f.pipelineSends()).toBe(1);
+                await f.pipelineFactory().recover({ teamId: 'team-1' }); expect(f.pipelineSends()).toBe(1);
+                const jobs = await getDocs(query(collection(context.firestore(), 'teams/team-1/notificationSendLog'), where('kind', '==', 'schedule-recovery-job')));
+                expect(jobs.docs).toHaveLength(1); expect(jobs.docs[0].data().payload.fields.opponent.stringValue).toBe('Synthetic Visitors');
+                await assertFails(getDoc(doc(userDb(), jobs.docs[0].ref.path)));
+            } finally { await f.close(); }
+        });
+    }, 20000);
+    it('does not select ownership while audience discovery fails, then recovers its retained payload', async () => {
+        await env.withSecurityRulesDisabled(async (context) => {
+            const f = await fixture(context.firestore(), 'pipeline-normal');
+            try {
+                await f.create(); f.setReadinessUnavailable(true);
+                await expect(f.pipelineFactory().process(f.pipelineEffect())).rejects.toThrow();
+                const owners = await getDocs(query(collection(context.firestore(), 'teams/team-1/notificationSendLog'), where('kind', '==', 'schedule-consumer-owner')));
+                expect(owners.docs).toHaveLength(0); expect(f.pipelineSends()).toBe(0);
+                f.setReadinessUnavailable(false); await f.pipelineFactory().recover({ teamId: 'team-1' }); expect(f.pipelineSends()).toBe(1);
+            } finally { await f.close(); }
+        });
+    });
+    it('cancels the actual writer fence before dispatch without a business commit or notification', async () => {
+        await env.withSecurityRulesDisabled(async (context) => {
+            const f = await fixture(context.firestore(), 'pipeline-cancel-before-dispatch');
+            try {
+                expect((await f.create()).isError).toBe(true); expect(f.commits()).toBe(0); expect(f.pipelineSends()).toBe(0);
+                const fences = await getDocs(query(collection(context.firestore(), 'teams/team-1/notificationSendLog'), where('kind', '==', 'schedule-proof-fence')));
+                expect(fences.docs.map((row) => row.data().state)).toEqual(['cancelled']);
+                expect((await getDoc(doc(userDb(), eventPath))).exists()).toBe(false);
+            } finally { await f.close(); }
+        });
+    });
     it.each([
         ['exact owner', { ownerId: 'owner' }, true, true],
         ['padded owner', { ownerId: ' owner ' }, false, false],

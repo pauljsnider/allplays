@@ -1,5 +1,9 @@
 # Proof/trigger ordering and manager compatibility
 
+Historical model checkpoint: see [RECOVERY_COMPOSITION_REVIEW.md](RECOVERY_COMPOSITION_REVIEW.md)
+for the subsequent isolated producer wiring, durable payload recovery, readiness
+gating and safe cancellation implementation. Production remains unmounted.
+
 This is an unmounted protocol model. It changes no live consumer, Firestore rule,
 credential or team data. The production pre-commit hook, private index adapters,
 trigger authentication and recovery worker still require implementation/review.
