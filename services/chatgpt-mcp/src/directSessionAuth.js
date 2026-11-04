@@ -52,6 +52,7 @@ export function directFavoriteDependencies({ projectId, fetchImpl = fetch }) {
         assignmentStore: createDirectAssignmentStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
         assignmentClaimStore: createDirectAssignmentClaimStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
         familyRsvpStore: createDirectFamilyRsvpStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
+        familyRsvpNoteStore: createDirectFamilyRsvpStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }, { staffNotes: true }),
         practiceAttendanceStore: createDirectPracticeAttendanceStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
         incentiveStore: createDirectIncentiveStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
         teamSetupStore: createDirectTeamSetupStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),

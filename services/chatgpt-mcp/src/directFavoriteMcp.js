@@ -133,6 +133,19 @@ export function createDirectFavoriteMcpSession(dependencies) {
         }, run(commands.prepare));
         registerOutcome('practice_attendance', commands);
     }
+    if (dependencies.familyRsvpNoteStore) {
+        const commands = createDirectFamilyRsvpCommands({ ...dependencies, store: dependencies.familyRsvpNoteStore }, { staffNotes: true });
+        const shared = { proposalId: id, teamId: resourceId, eventId: resourceId, response: z.enum(['going', 'maybe', 'not_going']), note: z.string().max(2000) };
+        server.registerTool('prepare_linked_child_rsvp_with_staff_note', {
+            description: 'Prepare one linked child response with an explicit staff-only note. Empty note clears its text. Requires separate note-audience confirmation; no messages are sent. Team-visible or legacy notes require app review.',
+            inputSchema: z.object({ ...shared, playerId: resourceId }).strict(), annotations: mutation
+        }, run(({ playerId, ...args }) => commands.prepare({ ...args, playerIds: [playerId] })));
+        server.registerTool('prepare_linked_children_rsvps_with_staff_note', {
+            description: 'Prepare an atomic response and the same exact staff-only note for 1–10 selected linked children. Explicit empty note clears each selected note. Requires separate confirmation; base records, audiences and other authors stay unchanged.',
+            inputSchema: z.object({ ...shared, playerIds: z.array(resourceId).min(1).max(10) }).strict(), annotations: mutation
+        }, run(commands.prepare));
+        registerOutcome('family_rsvp_staff_note', commands, { ...mutation, destructiveHint: true });
+    }
     if (dependencies.familyRsvpStore) {
         const commands = createDirectFamilyRsvpCommands({ ...dependencies, store: dependencies.familyRsvpStore });
         const response = z.enum(['going', 'maybe', 'not_going']);

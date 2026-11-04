@@ -1,6 +1,7 @@
 import { DomainError } from './core.js';
 
 const labels = Object.freeze({ notifyTeam: 'I also approve the team notification effects described above',
+    staffRsvpNote: 'I approve replacing or clearing this exact note for every selected child, visible to me and authorized team staff',
     publicConfiguration: 'I approve the publicly readable configuration metadata and possible automatic analytics display changes described above',
     incentiveTerms: 'I also approve the incentive calculation changes described above; this does not transfer money or record a payment' });
 export function confirmationFields(preview) {
