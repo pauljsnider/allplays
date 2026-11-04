@@ -19,9 +19,49 @@ function fixture(overrides = {}) {
         verifyLiveSession: async () => permitted ? { ...actor, reviewRequests: true, connected: true, expiresAt: 200000 } : null, authorizeActor: async () => permitted,
         executeCommand: async ({ idToken, assertCurrent }) => { calls++; assert.equal(idToken, input.idToken); await assertCurrent(); return { commitVerified: true, secret: 'must-not-escape' }; }, ...overrides };
     return { input, dependencies, firestore, create: () => createScheduleBrokerChannel(dependencies), envelope: (changes = {}) => signBrokerCommand({ ...input, ...changes }), calls: () => calls,
-        advance: () => { clock = 160000; }, revoke: () => { permitted = false; } };
+        advance: (value = 160000) => { clock = value; }, revoke: () => { permitted = false; } };
 }
 describe('unmounted authenticated broker command channel', () => {
+    for (const check of [1, 2]) for (const kind of ['expiry', 'removed-key', 'replaced-key']) it(`rejects ${kind} during authorization check ${check} before invoking the executor`, async () => {
+        let authorizations = 0; let executions = 0;
+        const f = fixture({ authorizeActor: async () => {
+            await Promise.resolve();
+            if (++authorizations === check) {
+                if (kind === 'expiry') f.advance(150001);
+                if (kind === 'removed-key') f.dependencies.publicKeys.delete('test-key');
+                if (kind === 'replaced-key') f.dependencies.publicKeys.set('test-key', generateKeyPairSync('ed25519').publicKey);
+            }
+            return true;
+        }, executeCommand: async () => { executions++; return { commitVerified: true }; } });
+        const key = f.dependencies.publicKeys.get('test-key');
+        await assert.rejects(f.create().handle(f.envelope()), { code: 'broker_request_denied' });
+        assert.equal(executions, 0); assert.equal(f.firestore.documents.size, check === 1 ? 0 : 1);
+        if (check === 2) {
+            assert.equal([...f.firestore.documents.values()][0].state, 'reserved');
+            f.advance(100000); f.dependencies.publicKeys.set('test-key', key);
+            assert.equal((await f.create().handle(f.envelope())).status, 'unverified'); assert.equal(executions, 0);
+        }
+    });
+    for (const kind of ['expiry', 'removed-key']) it(`carries a synchronous ${kind} guard to the actual REST fetch boundary`, async () => {
+        const { createDirectCommandStore } = await import('../../services/chatgpt-mcp/src/directCommandStore.js');
+        let businessCommits = 0; let entered = 0;
+        const f = fixture({ executeCommand: async ({ assertCurrent, assertDispatchReady }) => {
+            entered++; assert.equal(typeof assertDispatchReady, 'function');
+            const store = createDirectCommandStore({ projectId: 'demo-allplays-mcp-review', uid: 'owner', idToken: 'synthetic-user-token', fetchImpl: async (url) => {
+                if (url.endsWith(':commit')) businessCommits++;
+                return new Response(JSON.stringify(url.endsWith(':beginTransaction') ? { transaction: 'synthetic' } : {}), { status: 200 });
+            } }, { write: () => true });
+            await store.transaction(async (tx) => { tx.set('teams/team/games/event', {}); }, { beforeDispatch: async () => {
+                assert.equal(await assertCurrent(), assertDispatchReady);
+                queueMicrotask(() => { if (kind === 'expiry') f.advance(150001); else f.dependencies.publicKeys.clear(); });
+                return assertDispatchReady;
+            } });
+            return { commitVerified: true };
+        } });
+        await assert.rejects(f.create().handle(f.envelope()));
+        assert.equal(entered, 1); assert.equal(businessCommits, 0);
+        assert.equal([...f.firestore.documents.values()][0].state, 'unverified');
+    });
     it('executes a signed, current command once across parallel calls, restart and new nonce', async () => {
         const f = fixture(); const channel = f.create();
         const result = await Promise.all([channel.handle(f.envelope()), channel.handle(f.envelope())]);
@@ -126,6 +166,45 @@ async function invoke(handler, envelope, overrides = {}) {
     await handler(req, res); return res;
 }
 describe('private HTTP ingress contract', () => {
+    it('terminates a stalled body read without invoking the channel', { timeout: 1000 }, async () => {
+        const f = fixture(); let channelCalls = 0;
+        const handler = httpHandler(f, { bodyReadTimeoutMs: 5, channel: { handle: async () => { channelCalls++; } } });
+        const req = new Readable({ read() {} });
+        Object.assign(req, { method: 'POST', url: '/internal/v1/schedule-command', headers: { host: '127.0.0.1', 'content-type': 'application/json', authorization: 'Bearer synthetic-workload-token' } });
+        const res = { setHeader() {}, end(value) { this.body = JSON.parse(value); } };
+        await handler(req, res);
+        assert.equal(res.statusCode, 408); assert.equal(req.destroyed, true); assert.equal(channelCalls, 0);
+        assert.deepEqual(res.body, { error: 'Command outcome unavailable.' });
+    });
+    for (const elapsed of [9999, 10000]) it(`enforces the body deadline at elapsed ${elapsed}ms`, async () => {
+        const f = fixture(); let clock = 100000; let channelCalls = 0;
+        const handler = httpHandler(f, { now: () => clock, channel: { handle: async () => { channelCalls++; return { operationId: 'a'.repeat(64), status: 'committed' }; } } });
+        const req = Readable.from((async function* () { yield Buffer.from('{'); clock += elapsed; yield Buffer.from('}'); })());
+        Object.assign(req, { method: 'POST', url: '/internal/v1/schedule-command', headers: { host: '127.0.0.1', 'content-type': 'application/json', authorization: 'Bearer synthetic-workload-token' } });
+        const res = { setHeader() {}, end(value) { this.body = JSON.parse(value); } };
+        await handler(req, res); assert.equal(res.statusCode, elapsed < 10000 ? 200 : 408); assert.equal(channelCalls, elapsed < 10000 ? 1 : 0);
+    });
+    it('rejects unbounded or invalid body timeout configuration', () => {
+        const f = fixture();
+        for (const bodyReadTimeoutMs of [0, -1, 30001, Infinity, 1.5, '1000']) assert.throws(() => httpHandler(f, { bodyReadTimeoutMs }));
+    });
+    for (const phase of ['rate-limit', 'body']) for (const change of ['expiry', 'allowlist']) it(`rechecks workload ${change} after awaiting ${phase}`, async () => {
+        const f = fixture(); let clock = 100000; let channelCalls = 0; const principals = ['synthetic-broker'];
+        const invalidate = () => { if (change === 'expiry') clock = 100002; else principals.length = 0; };
+        const handler = httpHandler(f, { now: () => clock, allowedPrincipals: principals,
+            verifyWorkloadIdentity: async () => ({ principal: 'synthetic-broker', audience: 'isolated-command-backend', expiresAt: 100001 }),
+            takeRateLimit: async () => { if (phase === 'rate-limit') { await Promise.resolve(); invalidate(); } return true; },
+            channel: { handle: async () => { channelCalls++; return { operationId: 'a'.repeat(64), status: 'committed' }; } } });
+        const body = JSON.stringify(f.envelope());
+        const req = Readable.from((async function* () {
+            yield Buffer.from(body.slice(0, 10)); await Promise.resolve();
+            if (phase === 'body') invalidate(); yield Buffer.from(body.slice(10));
+        })());
+        Object.assign(req, { method: 'POST', url: '/internal/v1/schedule-command', headers: { host: '127.0.0.1', 'content-type': 'application/json', authorization: 'Bearer synthetic-workload-token' } });
+        const res = { setHeader() {}, end(value) { this.body = JSON.parse(value); } };
+        await handler(req, res); assert.equal(res.statusCode, 403); assert.equal(channelCalls, 0);
+        assert.deepEqual(res.body, { error: 'Command outcome unavailable.' });
+    });
     for (const kind of ['host', 'origin', 'content-type', 'method', 'path', 'workload', 'rate', 'size']) it(`rejects invalid ${kind} before command execution`, async () => {
         const f = fixture(); const envelope = f.envelope(); let overrides = {}; let dependencies = {};
         const headers = { host: '127.0.0.1', 'content-type': 'application/json', authorization: 'Bearer synthetic-workload-token' };

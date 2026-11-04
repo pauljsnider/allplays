@@ -46,17 +46,25 @@ function createScheduleBrokerChannel({ audience, publicKeys, store, verifyUserTo
             || !['proposalId', 'teamId', 'eventId'].every((key) => ID.test(payload.command[key] || ''))
             || !['create', 'update'].includes(payload.command.mode) || !['game', 'practice'].includes(payload.command.eventType)
             || !exact(payload.approval, ['preview', 'approve', 'notifyTeam']) || payload.approval.approve !== true || payload.approval.notifyTeam !== true) fail();
+        const assertDispatchReady = () => {
+            if (publicKeys.get(envelope.keyId) !== key || now() >= payload.expiresAt) fail();
+        };
         const checkCurrent = async () => {
+            assertDispatchReady();
             const user = await verifyUserToken(envelope.idToken, { checkRevoked: true });
             const session = await verifyLiveSession({ ...payload.actor, expiresAt: payload.expiresAt, purpose: payload.purpose });
             if (publicKeys.get(envelope.keyId) !== key || user?.uid !== payload.actor.uid || user.disabled !== false || user.emailVerified !== true
                 || !Number.isSafeInteger(user.expiresAt) || user.expiresAt < payload.expiresAt || now() >= payload.expiresAt
                 || !session || !actorKeys.every((field) => session[field] === payload.actor[field]) || session.reviewRequests !== true || session.connected !== true
-                || !Number.isSafeInteger(session.expiresAt) || session.expiresAt < payload.expiresAt
-                || await authorizeActor(payload.actor, payload.command.teamId) !== true) fail();
+                || !Number.isSafeInteger(session.expiresAt) || session.expiresAt < payload.expiresAt) fail();
+            if (await authorizeActor(payload.actor, payload.command.teamId) !== true) fail();
+            // Authorization can await I/O beyond the approved deadline or a
+            // signing-key removal. Its response must not revive either grant.
+            assertDispatchReady();
+            return assertDispatchReady;
         };
         await checkCurrent();
-        return { payload, checkCurrent };
+        return { payload, checkCurrent, assertDispatchReady };
     };
     const checkedRow = (row, binding) => {
         if (row && (row.kind !== 'broker-command-attempt' || row.requestHash !== binding.requestHash || row.actorHash !== binding.actorHash
@@ -66,7 +74,8 @@ function createScheduleBrokerChannel({ audience, publicKeys, store, verifyUserTo
     return {
         async handle(envelope) {
             try {
-                const { payload, checkCurrent } = await authenticate(envelope);
+                const { payload, checkCurrent, assertDispatchReady } = await authenticate(envelope);
+                assertDispatchReady();
                 const { actor, command, approval } = payload;
                 // Stable across new transport nonces/token refreshes: replay,
                 // parallel calls and restarts cannot repeat the same mutation.
@@ -74,7 +83,7 @@ function createScheduleBrokerChannel({ audience, publicKeys, store, verifyUserTo
                 const binding = { actorHash: hash(actor), requestHash: hash({ actor, command, approval }) };
                 if (payload.purpose === 'schedule.status') {
                     const row = checkedRow(await store.get(command.teamId, operationId), binding);
-                    await checkCurrent();
+                    (await checkCurrent())();
                     return { operationId, status: !row ? 'not_started' : row.state === 'committed' ? 'committed' : 'unverified' };
                 }
                 let claimed = false;
@@ -88,14 +97,17 @@ function createScheduleBrokerChannel({ audience, publicKeys, store, verifyUserTo
                 });
                 checkedRow(row, binding);
                 if (!row || (claimed && row.state !== 'reserved')) fail('broker_outcome_unknown');
-                await checkCurrent();
+                (await checkCurrent())();
                 if (!claimed) return { operationId, status: row.state === 'committed' ? 'committed' : 'unverified' };
                 let committed = false;
                 try {
                     // The ID token exists only in this invocation. It is never
                     // placed in durable attempt state, status, logs or errors.
+                    // The executor must await assertCurrent after its own I/O,
+                    // then run assertDispatchReady synchronously at final fetch.
+                    assertDispatchReady();
                     const result = await executeCommand({ actor: structuredClone(actor), command: structuredClone(command), approval: structuredClone(approval),
-                        idToken: envelope.idToken, issuedAt: payload.issuedAt, expiresAt: payload.expiresAt, assertCurrent: checkCurrent });
+                        idToken: envelope.idToken, issuedAt: payload.issuedAt, expiresAt: payload.expiresAt, assertCurrent: checkCurrent, assertDispatchReady });
                     committed = result?.commitVerified === true;
                 } catch { /* Unknown writes are never replayed automatically. */ }
                 const saved = await store.change(command.teamId, operationId, (existing) => {
@@ -105,7 +117,7 @@ function createScheduleBrokerChannel({ audience, publicKeys, store, verifyUserTo
                 });
                 checkedRow(saved, binding);
                 if (!saved || saved.state !== (committed ? 'committed' : 'unverified')) fail('broker_outcome_unknown');
-                await checkCurrent();
+                (await checkCurrent())();
                 return { operationId, status: committed ? 'committed' : 'unverified' };
             } catch (error) {
                 // Never return an SDK/provider error, token or raw request.

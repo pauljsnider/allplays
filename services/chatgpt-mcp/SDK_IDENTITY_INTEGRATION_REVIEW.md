@@ -1,5 +1,9 @@
 # SDK identity adapters and remaining composition boundary
 
+The subsequent [channel expiry review](CHANNEL_EXPIRY_REVIEW.md) records
+post-authorization key/deadline checks, the executor's final synchronous guard,
+and workload expiry/allowlist checks after bounded body reads.
+
 This checkpoint adds unmounted backend identity adapters and tightens the final
 REST dispatch guard. It creates no credentials, grants, routes, live data or
 deployment. Existing production entry points remain unchanged.

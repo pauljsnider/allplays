@@ -4,6 +4,8 @@ Later checkpoints: [recovery composition](RECOVERY_COMPOSITION_REVIEW.md) wires
 the isolated producer/trigger/recovery chain; [SDK identity integration](SDK_IDENTITY_INTEGRATION_REVIEW.md)
 adds concrete unmounted Firebase/Google verifier adapters. Historical limitations
 below are superseded only where those documents explicitly describe implementation.
+The [channel expiry review](CHANNEL_EXPIRY_REVIEW.md) documents subsequent
+post-authorization guards and bounded workload-ingress body reads.
 
 This checkpoint is an executable protocol model, not an activated backend or a
 finished remote create/update workflow. No production entry point imports these
