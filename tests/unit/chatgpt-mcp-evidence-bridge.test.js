@@ -4,13 +4,14 @@ import { createBrokerScheduleEvidenceBridge, canonicalEvidenceFields } from '../
 import { encodeValue } from '../../services/chatgpt-mcp/src/firestoreRest.js';
 import { scheduleAfter, scheduleSummary } from '../../services/chatgpt-mcp/src/scheduleReview.js';
 import { fingerprint } from '../../services/chatgpt-mcp/src/directRevisionCommand.js';
+import { createDirectCommandStore } from '../../services/chatgpt-mcp/src/directCommandStore.js';
 const require = createRequire(import.meta.url);
 const { FakeFirestore } = require('../../functions/test/helpers/notification-journal-fixture.cjs');
 const { createFirestoreNotificationJournalStore } = require('../../functions/notification-attempt-journal.cjs');
 const { createScheduleEvidenceAuthority } = require('../../functions/schedule-delivery-evidence.cjs');
 
-async function fixture({ mode = 'create', eventType = 'game' } = {}) {
-    let clock = 100000; const evidence = []; let authority;
+async function fixture({ mode = 'create', eventType = 'game', onDispatch } = {}) {
+    let clock = 100000; const evidence = []; let authority; let disconnected = false;
     const actor = { uid: 'owner', clientId: 'client', grantKey: fingerprint('synthetic-grant'), reviewRequests: true, expiresAt: 200000 };
     const changes = mode === 'create'
         ? { startDate: '2060-01-01T12:00:00.000Z', endDate: '2060-01-01T13:00:00.000Z', ...(eventType === 'game' ? { opponent: 'Approved Visitors' } : { title: 'Approved Practice' }) }
@@ -38,14 +39,41 @@ async function fixture({ mode = 'create', eventType = 'game' } = {}) {
     ] };
     const event = { version: '1970-01-01T00:01:40.001Z', data: canonicalEvidenceFields(mode === 'create' ? fields : { ...encodeValue(old).mapValue.fields, ...fields }) };
     const response = { commitTime: event.version, writeResults: [{ updateTime: event.version }, { updateTime: event.version }, {}] };
-    const bridge = createBrokerScheduleEvidenceBridge({ projectId: 'demo-allplays-mcp-review', getActor: async () => actor, sessionId: 'session', now: () => clock,
+    const bridge = createBrokerScheduleEvidenceBridge({ projectId: 'demo-allplays-mcp-review', getActor: async () => { if (disconnected) throw new Error('Session disconnected'); return actor; }, sessionId: 'session', now: () => clock,
+        ...(onDispatch ? { producer: { arm: async () => Object.freeze({}), beginWrite: async () => onDispatch({ actor, expire: () => { clock = 150000; }, disconnect: () => { disconnected = true; } }), cancelUnstarted: async () => {}, publish: async () => {} } } : {}),
         readEvent: async () => event, authorizeCommand: async () => true, onEvidence: (reference) => evidence.push(reference),
         createAuthority: (interfaces) => { authority = createScheduleEvidenceAuthority({ store: createFirestoreNotificationJournalStore(new FakeFirestore()), now: () => clock, ...interfaces }); return authority; } });
     const formEvidence = await bridge.captureForm({ actor, preview, issuedAt: 90000, expiresAt: 150000, content: { approve: true, notifyTeam: true } });
-    return { bridge, actor, preview, descriptor, formEvidence, plan, event, response, evidence, authority, advance: () => { clock = 100001; } };
+    return { bridge, actor, preview, descriptor, formEvidence, plan, event, response, evidence, authority, advance: () => { clock = 100001; }, expire: () => { clock = 150000; } };
 }
 
 describe('opaque local broker-to-command evidence bridge', () => {
+    it.each(['expiry', 'disconnect', 'identity', 'scope'])('rejects %s during the dispatch acknowledgment before returning to the writer', async (kind) => {
+        const f = await fixture({ onDispatch: async ({ actor, expire, disconnect }) => {
+            if (kind === 'expiry') expire();
+            if (kind === 'disconnect') disconnect();
+            if (kind === 'identity') actor.grantKey = fingerprint('different-grant');
+            if (kind === 'scope') actor.reviewRequests = false;
+        } });
+        const attempt = await f.bridge.beforeCommit(f);
+        await expect(f.bridge.beforeDispatch(attempt)).rejects.toThrow(); expect(f.evidence).toHaveLength(0);
+    });
+    it('checks the captured form expiry before dispatch even without a producer adapter', async () => {
+        const f = await fixture(); const attempt = await f.bridge.beforeCommit(f); f.expire();
+        await expect(f.bridge.beforeDispatch(attempt)).rejects.toThrow();
+    });
+    it('checks the deadline synchronously at the REST fetch boundary after all awaited hooks', async () => {
+        const f = await fixture({ onDispatch: async () => {} }); const attempt = await f.bridge.beforeCommit(f);
+        const guard = await f.bridge.beforeDispatch(attempt); let commits = 0;
+        const store = createDirectCommandStore({ projectId: 'demo-allplays-mcp-review', uid: 'owner', idToken: 'synthetic', fetchImpl: async (url) => {
+            if (url.endsWith(':commit')) commits++;
+            return new Response(JSON.stringify(url.endsWith(':beginTransaction') ? { transaction: 'synthetic' } : {}), { status: 200 });
+        } }, { write: () => true });
+        await expect(store.transaction(async (tx) => { tx.set('teams/team-1/games/event-1', {}); }, {
+            beforeDispatch: async () => { queueMicrotask(f.expire); return guard; }
+        })).rejects.toThrow();
+        expect(commits).toBe(0);
+    });
     it('records independently observed exact writes and rejects replay of the same form or commit handle', async () => {
         const f = await fixture(); const attempt = await f.bridge.beforeCommit(f); f.advance();
         await f.bridge.afterCommit(attempt, f); expect(f.evidence).toHaveLength(1);

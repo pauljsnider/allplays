@@ -50,6 +50,7 @@ function createScheduleRecoveryPipeline({ store, authority, verifyPlatformTrigge
         async beginWrite(handle) {
             const value = reservationFor(handle); if (now() >= value.expiresAt) fail();
             if (value.fence) await ordering.beginWrite(value.fence);
+            if (now() >= value.expiresAt) fail();
         },
         async cancelUnstarted(handle) { const value = reservationFor(handle); if (value.fence) await ordering.cancelUnstarted(value.fence); },
         async publish(reference, handle) {

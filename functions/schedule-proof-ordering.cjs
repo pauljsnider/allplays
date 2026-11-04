@@ -86,7 +86,11 @@ function createScheduleProofOrdering({ store, verifyApprovedIntent, verifyCommit
                     || now() >= row.intent.expiresAt) fail('write_not_authorized');
                 return { ...row, producerState: 'dispatched', dispatchStartedAt: now() };
             });
-            if (fence(saved, reference.fenceId).intentHash !== reference.intentHash || saved.producerState !== 'dispatched') fail();
+            const row = fence(saved, reference.fenceId);
+            // The durable write can finish in time while its acknowledgment is
+            // delayed past expiry. Never let that acknowledgment start a write.
+            if (row.intentHash !== reference.intentHash || row.state !== 'pending' || row.producerState !== 'dispatched'
+                || now() >= row.intent.expiresAt) fail('write_not_authorized');
         },
         async cancelUnstarted(reference) {
             const saved = await store.change(reference.teamId, reference.fenceId, (existing) => {

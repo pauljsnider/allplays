@@ -14,7 +14,8 @@ export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, 
     };
     async function request(suffix, options = {}, beforeSend) {
         const token = getIdToken ? await getIdToken() : idToken;
-        await beforeSend?.();
+        const beforeFetch = await beforeSend?.();
+        beforeFetch?.();
         const response = await fetchImpl(`${base}${suffix}`, {
             ...options,
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
@@ -103,8 +104,8 @@ export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, 
                     const plan = { writes: structuredClone(writes), reads: Object.fromEntries(observations) };
                     const response = await request(':commit', { method: 'POST', body: JSON.stringify({ writes, transaction }) }, async () => {
                         await beforeCommit?.(structuredClone(plan));
-                        await beforeDispatch?.();
-                        dispatched = true;
+                        const assertReady = await beforeDispatch?.();
+                        return () => { assertReady?.(); dispatched = true; };
                     });
                     committed = true;
                     await afterCommit?.({ plan: structuredClone(plan), response: structuredClone(response) });

@@ -17,7 +17,10 @@ and manager-compatibility assessment.
    a private fence before the user-credentialed REST write. Known incompatible
    metadata selects the existing legacy route; temporary reads fail closed.
    Immediately before sending the commit, the writer durably changes the fence
-   from `armed` to `dispatched`. Neither acknowledgment grants data access.
+   from `armed` to `dispatched`. It rechecks expiry after the persistence
+   acknowledgment and revalidates the actor/session after that wait. A final
+   synchronous approval-deadline guard runs at the REST fetch boundary, after
+   all awaited hooks. Neither acknowledgment grants data access.
 3. The trigger adapter retains the verified event fields, version, predecessor,
    actor and notification text in a server-private recovery job before capture
    acknowledgment. The ordering index derives its event digest from that saved
@@ -62,14 +65,16 @@ are synthetic. No real message provider or production account is contacted.
 
 Validation in this checkpoint:
 
-- **234 backend tests**, 13 suites:
+- **235 backend tests**, 13 suites:
   `node --test functions/test/schedule-*.test.cjs functions/test/notification-attempt-journal.test.cjs`.
-- **391 MCP tests**, 14 root unit suites (all `chatgpt-mcp-*.test.js` excluding
+- **397 MCP tests**, 14 root unit suites (all `chatgpt-mcp-*.test.js` excluding
   rules suites), including existing session, permission and confirmation tests.
-- **62 emulator tests** across `chatgpt-mcp-broker-evidence-rules.test.js`,
+- **65 emulator tests** across `chatgpt-mcp-broker-evidence-rules.test.js`,
   `notification-attempt-journal-rules.test.js` and
   `chatgpt-mcp-schedule-rsvp-rules.test.js`.
-- **145 existing notification tests**: `npm --prefix functions run test:notifications`.
+- **145 existing notification tests** passed in the preceding composition
+  checkpoint: `npm --prefix functions run test:notifications`. Those paths are
+  unchanged by the subsequent dispatch-acknowledgment fix.
 
 Regressions cover concurrent recovery, payload persistence with lost responses,
 restart with frozen plans, early trigger arrival, lost business-commit response,
@@ -78,6 +83,18 @@ cancellation, stale handles, uncertain provider responses without resend,
 private-record denial, strict identifiers and 43-record scanner pagination.
 The 26 existing manager-versus-rules comparisons remain in the emulator suite.
 These counts describe these commands, not complete repository coverage.
+
+The delayed-acknowledgment regression failed on the preceding checkpoint:
+`beginWrite` persisted before expiry but returned after expiry and still let the
+writer proceed. Five bridge regressions also reproduced expiry, disconnection,
+identity/scope changes during the wait, and expiry without a producer adapter.
+The fix rejects these before fetch. A separate test expires the approval in a
+microtask after the asynchronous hook and proves the final REST guard prevents
+the commit. Emulator cases exercise expiry, revocation and actual MCP session
+closure after dispatch acknowledgment: zero business commits, zero sends and
+no private commit evidence, with the dispatched fence retained even after
+recovery. Test-only cleanup releases emulator transaction locks after assertions;
+the application does not bypass revoked credentials to perform rollback.
 
 ## Activation prerequisites still open
 

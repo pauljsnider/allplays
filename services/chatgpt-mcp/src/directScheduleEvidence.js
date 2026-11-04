@@ -113,13 +113,20 @@ export function createBrokerScheduleEvidenceBridge({ projectId, getActor, sessio
                 deny();
             }
             const attempt = Object.freeze({});
-            attempts.set(attempt, { reservation, reference, dispatchId: dispatch.dispatchId, command, planDigest: fingerprint(plan), eventIndex: plan.writes.indexOf(eventWrite) });
+            attempts.set(attempt, { reservation, reference, expiresAt: form.expiresAt, dispatchId: dispatch.dispatchId, command, planDigest: fingerprint(plan), eventIndex: plan.writes.indexOf(eventWrite) });
             return attempt;
         },
         async beforeDispatch(handle) {
             const attempt = attempts.get(handle);
-            if (!attempt || !sameActor(await current(), attempt.command)) deny();
+            if (!attempt || now() >= attempt.expiresAt || !sameActor(await current(), attempt.command) || now() >= attempt.expiresAt) deny();
             if (attempt.reservation) await producer.beginWrite(attempt.reservation);
+            // Persistence and authentication may both await I/O. Recheck the
+            // live session and captured approval after the acknowledgment, not
+            // only before it. A dispatched fence remains retained on failure.
+            if (!sameActor(await current(), attempt.command) || now() >= attempt.expiresAt) deny();
+            // The REST adapter invokes this synchronous deadline guard after
+            // all awaited hooks, directly before calling fetch.
+            return () => { if (now() >= attempt.expiresAt) deny(); };
         },
         async commitFailed(handle, { dispatched }) {
             const attempt = attempts.get(handle);

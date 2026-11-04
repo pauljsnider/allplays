@@ -59,8 +59,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('actual broker, form proto
             runTransaction: (callback) => runTransaction(database, (tx) => callback({ get: async (ref) => { const row = await tx.get(doc(database, ref.path)); return { exists: row.exists(), data: () => row.data() }; }, set: (ref, data) => tx.set(doc(database, ref.path), data) }))
         };
         const store = createFirestoreNotificationJournalStore(serverDb);
-        let pipeline; let pipelineFactory; let pipelineClockOffset = 0; let pipelineEffect; let earlyPipelineResult; let pipelineSends = 0; let eventBeforeVersion = null; let readinessUnavailable = false;
+        let pipeline; let pipelineFactory; let pipelineClockOffset = 0; let bridgeClockOffset = 0; let pipelineEffect; let earlyPipelineResult; let pipelineSends = 0; let eventBeforeVersion = null; let readinessUnavailable = false;
         const triggerHandles = new WeakMap();
+        const openTransactions = new Set();
         let commits = 0; let exchanges = 0; let pushes = 0; let acknowledge = true; let revoked = false;
         const localFetch = async (url, options) => {
             const host = process.env.FIRESTORE_EMULATOR_HOST;
@@ -73,6 +74,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('actual broker, form proto
                 else expect(fences.docs.some((row) => row.data().producerState === 'dispatched')).toBe(true);
             }
             const response = await fetch(url.replace('https://firestore.googleapis.com', `http://${host}`), options);
+            if (response.ok && url.endsWith(':beginTransaction')) openTransactions.add((await response.clone().json()).transaction);
+            if (response.ok && (committing || url.endsWith(':rollback'))) openTransactions.delete(JSON.parse(options.body).transaction);
             if (pipeline && url.endsWith(':batchGet') && JSON.parse(options.body).transaction && JSON.parse(options.body).documents[0].endsWith(`/documents/${eventPath}`)) {
                 const rows = await response.clone().json(); eventBeforeVersion = rows[0].found?.updateTime || null;
             }
@@ -143,12 +146,18 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('actual broker, form proto
                 return { uid: actor.uid, store: createDirectFavoriteStore(options), scheduleStore: createDirectScheduleStore(options), getContext: async () => getContext(await current()) };
             },
             createExecutionEvidence: ({ getActor, sessionId }) => {
-                const bridge = createBrokerScheduleEvidenceBridge({ projectId, getActor, sessionId,
+                const bridge = createBrokerScheduleEvidenceBridge({ projectId, getActor, sessionId, now: () => Date.now() + bridgeClockOffset,
                     readEvent: createCredentialedEvidenceReader({ projectId, getActor, fetchImpl: localFetch }),
                     createAuthority: (interfaces) => { const authority = createScheduleEvidenceAuthority({ store, ...interfaces }); authorities.push(authority); return authority; },
                     authorizeCommand: async (actor) => (await getContext(actor)).teams.get('team-1').roles.has('owner'),
                     onEvidence: (reference) => evidence.push(reference),
-                    ...(pipeline ? { producer: mode === 'pipeline-cancel-before-dispatch' ? { ...pipeline.producer, beginWrite: async () => { throw new Error('Synthetic cancellation before dispatch'); } } : pipeline.producer } : {})
+                    ...(pipeline ? { producer: { ...pipeline.producer, beginWrite: async (handle) => {
+                        if (mode === 'pipeline-cancel-before-dispatch') throw new Error('Synthetic cancellation before dispatch');
+                        await pipeline.producer.beginWrite(handle);
+                        if (mode === 'pipeline-expired-after-ack') bridgeClockOffset += 180000;
+                        if (mode === 'pipeline-revoked-after-ack') revoked = true;
+                        if (mode === 'pipeline-disconnected-after-ack') await service.close();
+                    } } } : {})
                 });
                 if (mode !== 'unapproved-opponent') return bridge;
                 return { ...bridge, beforeCommit: (attempt) => {
@@ -164,7 +173,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('actual broker, form proto
         client.setRequestHandler(ElicitRequestSchema, async () => ({ action: 'accept', content: { approve: true, notifyTeam: acknowledge } }));
         const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${http.address().port}/direct`), { requestInit: { headers: { Authorization: `Bearer ${bearer}` } } });
         await client.connect(transport);
-        const create = async () => { await client.callTool({ name: 'prepare_create_schedule_event', arguments: input }); return client.callTool({ name: 'confirm_schedule_event', arguments: { proposalId } }); };
+        const create = async () => { await client.callTool({ name: 'prepare_create_schedule_event', arguments: input }); return client.callTool({ name: 'confirm_schedule_event', arguments: { proposalId } }, undefined,
+            mode === 'pipeline-disconnected-after-ack' ? { timeout: 2000 } : undefined); };
         const coordinator = () => createScheduleDeliveryCoordinator({ store, authenticate, verifyApproval: authorities[0].verifyApproval, verifyCommit: authorities[0].verifyCommit,
             readEvent: createCredentialedEvidenceReader({ projectId, getActor: () => authenticate(`Bearer ${bearer}`), fetchImpl: localFetch }),
             authorize: async ({ actor }) => ({ actorAllowed: (await getContext(actor)).teams.get('team-1').roles.has('owner'), recipientAllowed: true }),
@@ -172,7 +182,15 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('actual broker, form proto
             providers: createScheduleDeliveryProviders({ firestore: serverDb, messaging: { send: async () => { pushes++; throw new Error('Isolated unknown push outcome'); } } }) });
         return { create, client, bearer, evidence, authorities, store, pipeline, pipelineFactory, pipelineEffect: () => pipelineEffect, earlyPipelineResult: () => earlyPipelineResult, pipelineSends: () => pipelineSends, expirePipeline: () => { pipelineClockOffset += 180000; }, setReadinessUnavailable: (value) => { readinessUnavailable = value; }, authenticate, coordinator, commits: () => commits, exchanges: () => exchanges, pushes: () => pushes,
             setAcknowledge: (value) => { acknowledge = value; }, revoke: () => { revoked = true; }, localFetch,
-            close: async () => { await client.close().catch(() => {}); await service.close(); http.closeAllConnections(); await new Promise((resolve) => http.close(resolve)); } };
+            close: async () => {
+                await client.close().catch(() => {}); await service.close(); http.closeAllConnections(); await new Promise((resolve) => http.close(resolve));
+                // Test-only cleanup: revocation/disconnection deliberately denies
+                // the application's rollback credential. Release emulator locks
+                // after assertions so the next isolated fixture can clear data.
+                for (const transaction of openTransactions) await fetch(`http://${process.env.FIRESTORE_EMULATOR_HOST}/v1/projects/${projectId}/databases/(default)/documents:rollback`, {
+                    method: 'POST', headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ transaction })
+                });
+            } };
     }
     it('pages the private recovery collection without dropping the lookahead row or crossing teams', async () => {
         await env.withSecurityRulesDisabled(async (context) => {
@@ -222,6 +240,20 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('actual broker, form proto
             } finally { await f.close(); }
         });
     });
+    it.each(['pipeline-expired-after-ack', 'pipeline-revoked-after-ack', 'pipeline-disconnected-after-ack'])('does not send a business commit after a delayed dispatch acknowledgment: %s', async (mode) => {
+        await env.withSecurityRulesDisabled(async (context) => {
+            const f = await fixture(context.firestore(), mode);
+            try {
+                const result = await f.create().catch(() => ({ isError: true })); expect(result.isError).toBe(true);
+                const fences = await getDocs(query(collection(context.firestore(), 'teams/team-1/notificationSendLog'), where('kind', '==', 'schedule-proof-fence')));
+                expect(fences.docs.map((row) => row.data().producerState)).toEqual(['dispatched']);
+                expect((await getDoc(doc(context.firestore(), eventPath))).exists()).toBe(false);
+                expect(f.commits()).toBe(0); expect(f.pipelineSends()).toBe(0); expect(f.evidence).toHaveLength(0);
+                f.expirePipeline(); await f.pipelineFactory().recover({ teamId: 'team-1' });
+                expect((await getDoc(fences.docs[0].ref)).data().producerState).toBe('dispatched');
+            } finally { await f.close(); }
+        });
+    }, 20000);
     it('cancels the actual writer fence before dispatch without a business commit or notification', async () => {
         await env.withSecurityRulesDisabled(async (context) => {
             const f = await fixture(context.firestore(), 'pipeline-cancel-before-dispatch');

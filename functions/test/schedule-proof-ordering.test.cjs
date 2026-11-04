@@ -40,6 +40,15 @@ function fixture() {
 
 }
 describe('private proof/trigger ordering without ownership transfer', () => {
+    it('refuses a dispatch acknowledgment returned after approval expiry and retains the ambiguous reservation', async () => {
+        const f = fixture(); const reference = await f.create().arm('private-intent');
+        const change = f.store.change;
+        f.dependencies.store = { ...f.store, change: async (...args) => { const result = await change(...args); f.expire(); return result; } };
+        await assert.rejects(f.create().beginWrite(reference), { code: 'write_not_authorized' });
+        const row = await f.store.get(reference.teamId, reference.fenceId);
+        assert.equal(row.producerState, 'dispatched');
+        await assert.rejects(f.create().cancelUnstarted(reference), { code: 'write_outcome_unknown' });
+    });
     it('waits when trigger arrives before proof, then routes one journal effect after proof persists', async () => {
         const f = fixture(); await f.start(); await f.create().captureTrigger('platform-trigger');
         await assert.rejects(f.deliver('legacy'), { code: 'proof_pending' }); await assert.rejects(f.deliver('journal'), { code: 'proof_pending' });
