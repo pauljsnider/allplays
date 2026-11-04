@@ -115,6 +115,7 @@ describe('React app social Firestore rules', () => {
 
         expect(source).toContain('function canReadSocialPost(data)');
         expect(source).toContain('function isSocialPostCreatePayloadValid(data)');
+        expect(source).toContain('function isSocialPostPayloadPrivacySafe(data)');
         expect(source).toContain('function isCanonicalSocialPostRoute(value)');
         expect(source).toContain('function isSocialPostNavigationValid(data)');
         expect(source).toContain('function canModerateSocialPost(data)');
@@ -190,23 +191,23 @@ describe('React app social Firestore rules', () => {
             return {
                 authorId: overrides.authorId || 'owner-1',
                 type: 'team_media',
-                visibility: 'team',
+                visibility: overrides.visibility || 'team',
                 title: 'Team update',
                 detail: 'Team media · Bears',
                 caption: '',
-                teamId: 'team-1',
-                teamIds: ['team-1'],
+                teamId: Object.prototype.hasOwnProperty.call(overrides, 'teamId') ? overrides.teamId : 'team-1',
+                teamIds: overrides.teamIds || ['team-1'],
                 playerIds: [],
                 playerNames: [],
                 media: [],
-                visibleUserIds: [overrides.authorId || 'owner-1'],
+                visibleUserIds: overrides.visibleUserIds || [overrides.authorId || 'owner-1'],
                 route,
                 href,
                 snapshot: {
                     type: 'team_media',
                     title: 'Team update',
                     detail: 'Team media · Bears',
-                    teamId: 'team-1',
+                    teamId: Object.prototype.hasOwnProperty.call(overrides, 'teamId') ? overrides.teamId : 'team-1',
                     playerIds: [],
                     playerNames: [],
                     route: snapshotRoute,
@@ -227,6 +228,97 @@ describe('React app social Firestore rules', () => {
             }).firestore();
 
             await assertSucceeds(setDoc(doc(db, 'socialPosts', 'valid-team-post'), socialPostPayload()));
+        });
+
+        it('allows an authorized author to create a friend post without private contact fields', async () => {
+            const db = testEnv.authenticatedContext('owner-1', {
+                email: 'owner@example.com',
+                email_verified: true
+            }).firestore();
+
+            await assertSucceeds(setDoc(doc(db, 'socialPosts', 'valid-friend-post'), socialPostPayload({
+                visibility: 'friends',
+                teamId: null,
+                teamIds: [],
+                visibleUserIds: ['owner-1', 'friend-1']
+            })));
+        });
+
+        it.each([
+            ['authorEmail', 'author@example.com'],
+            ['email', 'author@example.com'],
+            ['phone', '+15555550100'],
+            ['phoneNumber', '+15555550100'],
+            ['contactEmail', 'author@example.com'],
+            ['contactPhone', '+15555550100']
+        ])('denies an authorized team post create containing private contact field %s', async (field, value) => {
+            const db = testEnv.authenticatedContext('owner-1', {
+                email: 'owner@example.com',
+                email_verified: true
+            }).firestore();
+
+            await assertFails(setDoc(doc(db, 'socialPosts', `private-create-${field}`), {
+                ...socialPostPayload(),
+                [field]: value
+            }));
+        });
+
+        it.each([
+            ['authorEmail', 'author@example.com'],
+            ['email', 'author@example.com'],
+            ['phone', '+15555550100'],
+            ['phoneNumber', '+15555550100'],
+            ['contactEmail', 'author@example.com'],
+            ['contactPhone', '+15555550100']
+        ])('denies an authorized author update that adds private contact field %s', async (field, value) => {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'socialPosts', `private-update-${field}`), socialPostPayload());
+            });
+            const db = testEnv.authenticatedContext('owner-1', {
+                email: 'owner@example.com',
+                email_verified: true
+            }).firestore();
+
+            await assertFails(updateDoc(doc(db, 'socialPosts', `private-update-${field}`), {
+                title: 'Updated team post',
+                updatedAt: Timestamp.now(),
+                [field]: value
+            }));
+        });
+
+        it.each([
+            ['team', {}],
+            ['friend', { visibility: 'friends', teamId: null, teamIds: [], visibleUserIds: ['owner-1', 'friend-1'] }]
+        ])('allows authorized %s post create and content update without private contact fields', async (label, overrides) => {
+            const db = testEnv.authenticatedContext('owner-1', {
+                email: 'owner@example.com',
+                email_verified: true
+            }).firestore();
+            const postRef = doc(db, 'socialPosts', `valid-${label}-post-update`);
+
+            await assertSucceeds(setDoc(postRef, socialPostPayload(overrides)));
+            await assertSucceeds(updateDoc(postRef, {
+                title: 'Updated team post',
+                updatedAt: Timestamp.now()
+            }));
+        });
+
+        it('denies an author content update while a historical private contact field remains', async () => {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'socialPosts', 'historical-private-field'), {
+                    ...socialPostPayload(),
+                    authorEmail: 'author@example.com'
+                });
+            });
+            const db = testEnv.authenticatedContext('owner-1', {
+                email: 'owner@example.com',
+                email_verified: true
+            }).firestore();
+
+            await assertFails(updateDoc(doc(db, 'socialPosts', 'historical-private-field'), {
+                title: 'Updated team post',
+                updatedAt: Timestamp.now()
+            }));
         });
 
         it('allows the team owner to create a post with no navigation destination', async () => {
