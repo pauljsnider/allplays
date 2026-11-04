@@ -6,6 +6,7 @@ import { createMockUserToken } from '@firebase/util';
 import { compactFirestoreRules } from '../../scripts/compact-firestore-rules.mjs';
 import { createDirectTrackingItemCommands, createDirectTrackingItemStore } from '../../services/chatgpt-mcp/src/directTrackingItem.js';
 import { createDirectDiscovery } from '../../services/chatgpt-mcp/src/directDiscovery.js';
+import { createDirectTrackingStatusCommands, createDirectTrackingStatusStore } from '../../services/chatgpt-mcp/src/directTrackingStatus.js';
 import { createUserDb } from '../../services/chatgpt-mcp/src/firestoreRest.js';
 const projectId = 'demo-allplays-mcp-review';
 const proposalId = '00112233-4455-4677-8899-aabbccddeeff';
@@ -32,6 +33,17 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('private tracking commands
     };
     const commands = (fetchImpl = localFetch) => createDirectTrackingItemCommands({ uid: 'owner', getContext,
         store: createDirectTrackingItemStore({ projectId, uid: 'owner', idToken: token(), fetchImpl }) });
+    const statusInput = { proposalId: secondId, teamId: 'team-1', itemId: input.itemId, playerId: 'player', complete: true };
+    const statusPath = `${path}/memberTracking/player`;
+    const statusCommands = (fetchImpl = localFetch) => createDirectTrackingStatusCommands({ uid: 'owner', getContext,
+        store: createDirectTrackingStatusStore({ projectId, uid: 'owner', idToken: token(), fetchImpl }) });
+    const seedStatus = async () => {
+        const engine = commands(); await engine.prepare(input); await engine.confirm({ proposalId }, accept);
+        await env.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), 'teams/team-1/players/player'), { name: 'Synthetic Player', number: '07', active: true });
+            await setDoc(doc(context.firestore(), `${path}/memberTracking/untouched`), { complete: false, note: 'Preserve' });
+        });
+    };
     beforeEach(async () => {
         await env.clearFirestore();
         await env.withSecurityRulesDisabled(async (context) => {
@@ -94,5 +106,55 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('private tracking commands
         const discovery = createDirectDiscovery({ uid: 'owner', getContext, getDb: async () => createUserDb({ projectId, idToken: token(), fetchImpl: localFetch }) });
         const result = await discovery.trackingItems({ teamId: 'team-1', limit: 1 }); expect(result.items[0]).toMatchObject({ id: input.itemId, name: input.changes.name, visibility: 'private' });
         expect(result.hasMore).toBe(false); expect(JSON.stringify(result)).not.toContain(input.changes.description);
+    });
+    it('creates and updates only one private completion under real rules, without names in personal metadata', async () => {
+        await seedStatus(); const engine = statusCommands(); await engine.prepare(statusInput);
+        const statusHeader = `users/owner/privateAiPendingActions/direct_${secondId}`;
+        const statusPayload = `teams/team-1/privateAiPendingActions/direct_owner_${secondId}`;
+        expect(JSON.stringify((await getDoc(doc(db(), statusHeader))).data())).not.toContain('Synthetic Player');
+        await assertFails(getDoc(doc(db('other'), statusPayload)));
+        await engine.confirm({ proposalId: secondId }, accept);
+        expect((await getDoc(doc(db(), statusPath))).data()).toMatchObject({ teamId: 'team-1', trackingItemId: input.itemId, playerId: 'player', playerName: 'Synthetic Player', playerNumber: '07', complete: true, status: 'complete', updatedBy: 'owner', updatedByEmail: null });
+        await assertFails(getDoc(doc(db('other'), statusPath)));
+        expect((await getDoc(doc(db(), statusHeader))).data()).toMatchObject({ receiptOnly: true, status: 'completed', playerId: 'player' });
+        expect(JSON.stringify((await getDoc(doc(db(), statusHeader))).data())).not.toContain('Synthetic Player');
+        await env.withSecurityRulesDisabled(async (context) => expect((await getDoc(doc(context.firestore(), statusPayload))).exists()).toBe(false));
+        const thirdId = '00112233-4455-4677-8899-aabbccddeebb';
+        await engine.prepare({ ...statusInput, proposalId: thirdId, complete: false }); await engine.confirm({ proposalId: thirdId }, accept);
+        expect((await getDoc(doc(db(), statusPath))).data()).toMatchObject({ complete: false, status: 'incomplete' });
+        expect((await getDoc(doc(db(), `${path}/memberTracking/untouched`))).data()).toEqual({ complete: false, note: 'Preserve' });
+        expect((await getDoc(doc(db(), path))).data().name).toBe(input.changes.name);
+    });
+    it.each(['publication', 'archival', 'player_deactivation', 'player_rename'])('rejects %s during completion approval', async (kind) => {
+        await seedStatus(); const engine = statusCommands(); await engine.prepare(statusInput);
+        await expect(engine.confirm({ proposalId: secondId }, async () => {
+            await env.withSecurityRulesDisabled(async (context) => {
+                if (kind === 'publication') await updateDoc(doc(context.firestore(), path), { visibility: 'public' });
+                if (kind === 'archival') await updateDoc(doc(context.firestore(), path), { status: 'archived', active: false, archived: true });
+                if (kind === 'player_deactivation') await updateDoc(doc(context.firestore(), 'teams/team-1/players/player'), { active: false });
+                if (kind === 'player_rename') await updateDoc(doc(context.firestore(), 'teams/team-1/players/player'), { name: 'Different Player' });
+            }); return accept();
+        })).rejects.toThrow();
+        expect((await getDoc(doc(db(), statusPath))).exists()).toBe(false);
+    });
+    it('denies incorrect credentials at the status business commit', async () => {
+        await seedStatus(); let commits = 0; const engine = statusCommands(async (url, options) => {
+            if (url.endsWith(':commit') && JSON.parse(options.body).transaction) { commits++; return localFetch(url, { ...options, headers: { ...options.headers, Authorization: `Bearer ${token('other')}` } }); }
+            return localFetch(url, options);
+        });
+        await engine.prepare(statusInput); await expect(engine.confirm({ proposalId: secondId }, accept)).rejects.toThrow(); expect(commits).toBe(1); expect((await getDoc(doc(db(), statusPath))).exists()).toBe(false);
+    });
+    it('reconciles a lost completion response without another business commit', async () => {
+        await seedStatus(); let commits = 0; const engine = statusCommands(async (url, options) => {
+            const response = await localFetch(url, options);
+            if (url.endsWith(':commit') && JSON.parse(options.body).transaction) { commits++; if (response.ok) throw new Error('Synthetic lost response'); }
+            return response;
+        });
+        await engine.prepare(statusInput); expect((await engine.confirm({ proposalId: secondId }, accept)).status).toBe('completed');
+        expect((await engine.confirm({ proposalId: secondId }, accept)).status).toBe('completed'); expect(commits).toBe(1);
+    });
+    it('preserves legacy completion notes and refuses conversion', async () => {
+        await seedStatus(); const original = { complete: false, note: 'Preserve historical staff note' }; await setDoc(doc(db(), statusPath), original);
+        await expect(statusCommands().prepare(statusInput)).rejects.toMatchObject({ code: 'unsupported_tracking_status' }); expect((await getDoc(doc(db(), statusPath))).data()).toEqual(original);
     });
 });

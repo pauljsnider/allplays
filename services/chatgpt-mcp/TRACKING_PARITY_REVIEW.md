@@ -1,5 +1,8 @@
 # Current app comparison and private tracking-item parity
 
+Historical checkpoint; subsequent player-completion coverage and current gaps
+are documented in [TRACKING_STATUS_PARITY_REVIEW.md](TRACKING_STATUS_PARITY_REVIEW.md).
+
 The app's write definitions in `apps/app/src/lib/privateAiService.ts` and
 `resourcePacketsAiTools.ts` contain **46 named write workflows**. The existing
 MCP review-request catalog covers those same 46 names; the regression suite

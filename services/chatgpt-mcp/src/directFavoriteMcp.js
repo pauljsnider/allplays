@@ -9,6 +9,7 @@ import { createDirectScheduleCommands } from './directSchedule.js';
 import { createDirectRsvpCommands } from './directRsvp.js';
 import { createScheduleReviewCommands } from './scheduleReview.js';
 import { createDirectRosterBatchCommands } from './directRosterBatch.js';
+import { createDirectTrackingStatusCommands } from './directTrackingStatus.js';
 import { createDirectTrackingItemCommands } from './directTrackingItem.js';
 import { createDirectRosterCommands } from './directRoster.js';
 import { createDirectPracticeTimelineCommands } from './directPracticeTimeline.js';
@@ -72,6 +73,14 @@ export function createDirectFavoriteMcpSession(dependencies) {
             inputSchema: z.object({ proposalId: id, teamId: resourceId, configId: resourceId, name }).strict(), annotations: mutation
         }, run((args) => commands.prepare({ ...args, mode: 'rename' })));
         registerOutcome('stat_configuration', commands);
+    }
+    if (dependencies.trackingStatusStore) {
+        const commands = createDirectTrackingStatusCommands({ ...dependencies, store: dependencies.trackingStatusStore });
+        server.registerTool('prepare_player_tracking_status', {
+            description: 'Prepare one explicit complete/incomplete status for an exact active player and private active tracking item. Shows current status before approval. Public, archived and legacy items/statuses require app review; no messages or access changes.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, itemId: resourceId, playerId: resourceId, complete: z.boolean() }).strict(), annotations: mutation
+        }, run(commands.prepare));
+        registerOutcome('player_tracking_status', commands);
     }
     if (dependencies.trackingItemStore) {
         const commands = createDirectTrackingItemCommands({ ...dependencies, store: dependencies.trackingItemStore });
