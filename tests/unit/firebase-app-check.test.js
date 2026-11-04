@@ -331,9 +331,11 @@ describe('Firebase App Check initialization', () => {
 
     it('rejects known-expired native tokens instead of extending them with the fallback TTL', () => {
         const now = 1_800_000_000_000;
-        const payload = Buffer.from(JSON.stringify({ exp: now / 1000 - 1 })).toString('base64url');
-        expect(() => normalizeNativeAppCheckToken({ token: `header.${payload}.signature` }, now)).toThrow('temporarily unavailable');
-        expect(() => normalizeNativeAppCheckToken({ token: 'fixture', expireTimeMillis: now - 1 }, now)).toThrow('temporarily unavailable');
+        for (const expiry of [now - 1, 0, -1]) {
+            const payload = Buffer.from(JSON.stringify({ exp: expiry / 1000 })).toString('base64url');
+            expect(() => normalizeNativeAppCheckToken({ token: `header.${payload}.signature` }, now)).toThrow('temporarily unavailable');
+            expect(() => normalizeNativeAppCheckToken({ token: 'fixture', expireTimeMillis: expiry }, now)).toThrow('temporarily unavailable');
+        }
     });
 
     it('uses a finite future fallback for malformed native tokens without a 0ms or NaN refresh window', () => {

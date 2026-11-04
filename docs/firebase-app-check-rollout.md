@@ -44,16 +44,16 @@ Before declaring an AI incident resolved:
 Do not disable or delay enforcement, strip a rejected token, register production
 debug tokens, or relax API-key/provider restrictions to make a smoke test pass.
 
-## Historical monitoring rollout for other Firebase services
+## Monitoring and existing protection
 
-App Check client initialization is fail-open by design. Deploying this code starts
-attestation and metrics collection but does not reject a request if attestation
-fails. Firebase Console enforcement is the separate fail-closed rollout gate.
+General Firebase initialization retains its historical non-blocking behavior.
+The AI request boundary separately requires successful token acquisition.
+Neither client behavior changes Firebase Console enforcement.
 
 Candidate-host validation and DNS cutover observation follow the
-[hosting cutover runbook](hosting-cutover-runbook.md). During that entire gate,
-every Firebase API remains **Unenforced**; enforcement is a separate rollout
-decision.
+[hosting cutover runbook](hosting-cutover-runbook.md). Preserve the currently
+active protection policy during cutover. Historical instructions describing
+unenforced monitoring do not authorize weakening an already enforced service.
 
 ## Client configuration
 
@@ -70,10 +70,11 @@ decision.
    `APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY`. The staging workflow writes only
    this public key to `/.well-known/allplays-runtime-config.json`; no debug token
    or credential is written to the bundle.
-   Keep `APP_CHECK_ENFORCEMENT_READY` unset or `false` during monitoring. After
-   every production client is token-ready and immediately before enabling the
-   first console enforcement, set it to `true`; production and Pages staging
-   will then fail instead of publishing a missing or malformed site key.
+   The historical unset/`false` gate publishes disabled web attestation. For
+   AI-capable production releases, an approved rollout must set
+   `APP_CHECK_ENFORCEMENT_READY=true`; production and Pages staging then fail
+   instead of publishing a missing or malformed site key. Validate the provider
+   and allowed domains before that configuration change.
 4. Preview channels use dynamic sibling hosts such as
    `game-flow-c6311--<channel>-<hash>.web.app`. The production hostname allowlist
    does not cover these hosts, and allowing all of `web.app` is unsafe. The
@@ -81,9 +82,9 @@ decision.
    variable `APP_CHECK_PREVIEW_RECAPTCHA_ENTERPRISE_SITE_KEY`; set it only when
    a controlled preview hostname/provider strategy has been registered. With
    `APP_CHECK_ENFORCEMENT_READY=true`, preview staging intentionally fails if
-   that variable is missing. Until that strategy exists, previews are useful
-   for unenforced monitoring but cannot be relied on for post-enforcement API
-   testing.
+   that variable is missing. Until that strategy exists, preview builds cannot
+   demonstrate production attestation. Use isolated synthetic fixtures for local
+   regression tests; do not weaken production enforcement for a preview.
 5. For direct builds, the equivalent runtime contract is:
 
    ```js
@@ -96,9 +97,10 @@ decision.
    };
    ```
 
-Local web origins automatically select the Firebase debug provider. Copy the
-generated browser debug token from DevTools into Firebase Console > App Check >
-Apps > Manage debug tokens. Never commit or share a registered debug token.
+Local web origins automatically select the Firebase debug provider. Use an
+isolated development project and its approved debug-token registration process.
+Never register a production debug token for incident diagnosis, or commit/share
+a registered debug token.
 
 ### iOS and Android
 
@@ -118,18 +120,19 @@ all use the native token.
 Native debug/simulator runs need Firebase App Check debug tokens. The documented
 `npm run mobile:build:ios` and `npm run mobile:build:android` commands use the
 explicit `native-debug` Vite build mode, which asks the native SDK to generate a
-platform registration token. Capture that token from device logs and register
-it in Firebase Console. Do not put the generated token in an environment file
-or build command.
+platform registration token. Use only an isolated development project and its
+approved registration process. A simulator/debug-token test cannot prove
+production App Attest or Play Integrity. Do not put the generated token in an
+environment file or build command.
 
 `npm run app:build`, `npm run mobile:sync`, and all CI/deployment workflows stay
 in production mode. They fail closed if a web debug value or the native-debug
 opt-in is present; only the local native debug scripts can select the bypass
 provider.
 
-## Compatibility verification before enforcement
+## Compatibility verification
 
-1. Deploy the clients while every Firebase API remains **Unenforced**.
+1. Release approved clients while preserving existing enforcement settings.
 2. Confirm `globalThis.__ALLPLAYS_APP_CHECK_STATUS__` reaches `token-ready` on:
    - Safari and Chrome on `allplays.ai`;
    - a fresh iOS release/TestFlight build on a physical device;
@@ -139,13 +142,16 @@ provider.
    roster CRUD, image upload, push registration, Stripe checkout redirects,
    AI chat/import/wrap-up, public schedules, live tracking, video embeds, and the
    external scoreboard iframe.
-4. In App Check metrics, investigate every unknown or invalid client. Do not
-   enforce while a supported released client still lacks valid tokens.
+4. In App Check metrics, investigate every unknown or invalid client. Assess
+   compatibility before approving any additional protection requirement; do not
+   turn off existing protection to accommodate an incompatible client.
 5. Keep a rollback owner available and record baseline error/quota rates.
 
 ## Staged enforcement
 
-Enable one service at a time and repeat the smoke matrix after each step:
+The historical staged rollout order below is a planning reference for separately
+approved additions to protection, not an instruction to alter live settings.
+Preserve existing enforcement and repeat the smoke matrix after each approved step:
 
 1. Firebase AI Logic baseline protection. Also enable authenticated-users mode
    after verifying every AI entry point requires a signed-in Firebase user.

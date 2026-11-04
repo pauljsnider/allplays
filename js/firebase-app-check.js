@@ -96,7 +96,7 @@ export function normalizeNativeAppCheckToken(result, now = Date.now()) {
                     globalThis.atob(normalizedPayload + padding)
                 )?.exp);
                 const expirationMillis = expirationSeconds * 1000;
-                if (Number.isFinite(expirationMillis) && expirationMillis > 0) {
+                if (Number.isFinite(expirationMillis)) {
                     jwtExpiry = expirationMillis;
                 }
             }
@@ -108,7 +108,7 @@ export function normalizeNativeAppCheckToken(result, now = Date.now()) {
 
     // Missing metadata may use the bounded compatibility TTL below, but a
     // known-expired token must never acquire a fabricated future lifetime.
-    if ((Number.isFinite(nativeExpiry) && nativeExpiry > 0 && nativeExpiry <= now)
+    if ((Number.isFinite(nativeExpiry) && nativeExpiry <= now)
         || (jwtExpiry !== undefined && jwtExpiry <= now)) {
         throw createNativeTokenUnavailableError();
     }
