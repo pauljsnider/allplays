@@ -14,6 +14,7 @@ import { createDirectTrackingBatchCommands, createDirectTrackingLifecycleCommand
 import { createDirectTrackingStatusCommands } from './directTrackingStatus.js';
 import { ASSIGNMENT_ROLE, createDirectAssignmentCommands } from './directAssignments.js';
 import { createDirectAssignmentClaimCommands } from './directAssignmentClaims.js';
+import { createDirectAssignmentBatchCommands } from './directAssignmentBatch.js';
 import { createDirectPlayerProfileCommands } from './directPlayerProfile.js';
 import { createDirectFamilyRsvpCommands } from './directFamilyRsvp.js';
 import { createDirectPracticeAttendanceCommands } from './directPracticeAttendance.js';
@@ -207,6 +208,17 @@ export function createDirectFavoriteMcpSession(dependencies) {
             description: 'List supported ordinary-event slots for a current manager. Does not return event notes or unrelated fields.',
             inputSchema: z.object({ teamId: resourceId, eventId: resourceId }).strict(), annotations: { readOnlyHint: true }
         }, run(commands.discover));
+    }
+    if (dependencies.assignmentBatchStore) {
+        const commands = createDirectAssignmentBatchCommands({ ...dependencies, store: dependencies.assignmentBatchStore });
+        const role = z.string().regex(ASSIGNMENT_ROLE);
+        server.registerTool('prepare_schedule_assignment_batch', {
+            description: 'Prepare 1–20 creates/updates on one ordinary event. Use exact current roles and complete replacement slots; swaps, chained edits and removals are unsupported. All changes apply atomically after a separate acknowledgement of displayed claim removals and no volunteer notification. Discover existing slots with list_managed_event_assignments.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, eventId: resourceId, operations: z.array(z.object({
+                action: z.enum(['create', 'update']), role, assignment: z.object({ role, value: z.string().max(100), claimable: z.boolean() }).strict()
+            }).strict()).min(1).max(20) }).strict(), annotations: mutation
+        }, run(commands.prepare));
+        registerOutcome('schedule_assignment_batch', commands, { ...mutation, destructiveHint: true });
     }
     if (dependencies.assignmentClaimStore) {
         const commands = createDirectAssignmentClaimCommands({ ...dependencies, store: dependencies.assignmentClaimStore });

@@ -1,6 +1,7 @@
 import { DomainError } from './core.js';
 
-const labels = Object.freeze({ statPresentation: 'I approve these display and ranking changes, including historical displays; percentage format adds a suffix without multiplying stored values',
+const labels = Object.freeze({ assignmentChanges: 'I approve every displayed slot change and removal of the listed volunteer claims; affected volunteers will not be notified by this change',
+    statPresentation: 'I approve these display and ranking changes, including historical displays; percentage format adds a suffix without multiplying stored values',
     rosterLifecycle: 'I approve these roster status effects, including family schedules, existing RSVP links and future communication eligibility; this does not revoke family links or erase history',
     trackingLifecycle: 'I approve this lifecycle change while preserving existing completion records; reactivation does not reset them',
     privatePlayerProfile: 'I approve saving or clearing this exact private text, readable by authorized team owners/admins and all parents linked to this player',

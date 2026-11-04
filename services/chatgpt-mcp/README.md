@@ -35,10 +35,11 @@ providers or MCP status reads. See [write workflows](WRITE_WORKFLOWS.md) for the
 exact remaining integration work and [review slices](REVIEW_SLICES.md) for the
 proposed dependency stack. No new PRs or handoff were created for that plan.
 
-The latest [stat presentation checkpoint](STAT_PRESENTATION_REVIEW.md) adds
-customized preset creation and selected display/ranking updates, preserving stat
-identities, formulas and visibility. It also adds explicit public-metadata
-acknowledgement to older clone/rename tools. Coverage remains 20 of 46 workflow
+The latest [assignment batch checkpoint](ASSIGNMENT_BATCH_REVIEW.md) adds atomic
+creation/update of 1–20 volunteer slots with explicit review of affected claims
+and acknowledgement that volunteers are not notified. The preceding
+[stat presentation checkpoint](STAT_PRESENTATION_REVIEW.md) adds customized
+presets and selected display/ranking changes. Coverage remains 20 of 46 workflow
 names partially direct, with 26 app-review-only. Profiles and RSVP notes retain
 hard pending-text cleanup and client/transcript retention gates. Full parity and
 production activation remain open.

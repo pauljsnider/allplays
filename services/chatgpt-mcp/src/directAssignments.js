@@ -33,28 +33,32 @@ export function canonicalAssignmentClaim(snapshot) {
     return data;
 }
 const TOOL = 'mcp_direct_assignment_management';
-export function createDirectAssignmentStore(options) {
-    return createTeamProposalStore(options, { toolName: TOOL, receiptFields: ['teamId', 'eventId'], policy: {
+export function normalizeAssignmentOperation({ action, role, assignment }) {
+    if (!['create', 'update', 'remove'].includes(action) || !assignmentRoleValid(role)) throw new DomainError('invalid_argument', 'Use a supported exact role and create/update/remove.');
+    if (action === 'remove') {
+        if (assignment !== undefined) throw new DomainError('invalid_argument', 'A removal does not accept replacement fields.');
+        return { action, role };
+    }
+    if (!assignment || Object.keys(assignment).sort().join(',') !== 'claimable,role,value' || !assignmentRoleValid(assignment.role)
+        || typeof assignment.claimable !== 'boolean' || !boundedAssignmentText(assignment.value, 100)
+        || (assignment.claimable && assignment.value !== '') || (action === 'create' && role !== assignment.role)) throw new DomainError('invalid_argument', 'Supply the complete role/value/claimable slot; an open slot has an empty value.');
+    return { action, role, assignment: { role: assignment.role, value: assignment.value, claimable: assignment.claimable } };
+}
+export function createAssignmentDomainStore(options, toolName) {
+    return createTeamProposalStore(options, { toolName, receiptFields: ['teamId', 'eventId'], policy: {
         read: (path) => assignmentEventPattern.test(path) || assignmentClaimPattern.test(path) || /^teams\/[A-Za-z0-9_-]{1,128}$/.test(path),
         write: (path) => assignmentEventPattern.test(path) || assignmentClaimPattern.test(path),
         delete: (path) => assignmentClaimPattern.test(path),
         patch: (path, data) => assignmentEventPattern.test(path) && Object.keys(data).length === 1 && Array.isArray(data.assignments)
     } });
 }
+export function createDirectAssignmentStore(options) { return createAssignmentDomainStore(options, TOOL); }
 export function createDirectAssignmentCommands(dependencies) {
     const commands = createRevisionCommands(dependencies, {
         toolName: TOOL,
         args: ({ teamId, eventId, action, role, assignment }) => {
-            if (![teamId, eventId].every((id) => typeof id === 'string' && ID.test(id)) || !['create', 'update', 'remove'].includes(action)
-                || !assignmentRoleValid(role)) throw new DomainError('invalid_argument', 'Use exact team/event IDs, a supported exact role and create/update/remove.');
-            if (action === 'remove') {
-                if (assignment !== undefined) throw new DomainError('invalid_argument', 'A removal does not accept replacement fields.');
-                return { teamId, eventId, action, role };
-            }
-            if (!assignment || Object.keys(assignment).sort().join(',') !== 'claimable,role,value' || !assignmentRoleValid(assignment.role)
-                || typeof assignment.claimable !== 'boolean' || !boundedAssignmentText(assignment.value, 100)
-                || (assignment.claimable && assignment.value !== '') || (action === 'create' && role !== assignment.role)) throw new DomainError('invalid_argument', 'Supply the complete role/value/claimable slot; an open slot has an empty value.');
-            return { teamId, eventId, action, role, assignment: { role: assignment.role, value: assignment.value, claimable: assignment.claimable } };
+            if (![teamId, eventId].every((id) => typeof id === 'string' && ID.test(id))) throw new DomainError('invalid_argument', 'Use exact team/event IDs.');
+            return { teamId, eventId, ...normalizeAssignmentOperation({ action, role, assignment }) };
         },
         authorize: (context, uid, args) => validateManager(context, uid, args.teamId),
         validateReceipt: (record) => [record.teamId, record.eventId].every((id) => typeof id === 'string' && ID.test(id)),
