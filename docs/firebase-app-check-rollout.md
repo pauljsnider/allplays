@@ -167,17 +167,22 @@ unenforced/exempt unless their backend explicitly verifies the
 attach the primary token to known primary-project REST calls where available,
 but sending a header alone does not enforce or validate it server-side.
 
-The legacy browser surface currently vendors Firebase Web SDK 12.6.0. It sends
-baseline App Check session tokens, but Firebase AI Logic replay protection needs
-Web SDK 12.14.0 or newer. Keep replay protection disabled until the vendored SDK
-is upgraded as one tested unit and AI calls have been verified in current web and
-native releases.
+Current AI callers request baseline App Check session tokens. Replay protection
+requires limited-use tokens and compatible SDK/provider support across web and
+the native bridge. Inspect the live replay-protection mode as part of diagnosis;
+the public runtime configuration does not reveal it. If replay protection is
+already active, preserve it and treat limited-use-token compatibility as a
+release prerequisite. Do not change its mode to work around a failed request.
+Any SDK/provider upgrade must be tested across current web and native releases.
 
 ## Rollback
 
 If legitimate clients receive `401`, `403`, `appCheck/fetch-status-error`, or
-`unauthorized-app` errors, switch the affected API back to **Unenforced** in
-Firebase Console. Do not ship a client-side bypass or a production debug token.
-Use App Check metrics plus the `allplays:app-check-status` browser event to find
-the unregistered app/provider, correct registration, redeploy, and resume the
-staged rollout.
+`unauthorized-app` errors, preserve enforcement and diagnose the exact provider,
+app version, and baseline/replay-protection requirements. Use App Check metrics
+plus the `allplays:app-check-status` browser event without recording tokens.
+An approved client rollback is appropriate only if the prior artifact remains
+compatible with the active protection policy. Provider/configuration repairs and
+releases require separate operator authorization. Until a verified client is
+available, retain manual entry and deterministic CSV imports; do not disable
+enforcement, strip rejected tokens, or register production debug tokens.
