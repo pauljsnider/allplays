@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { doc, getDoc, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
 import { compactFirestoreRules } from '../../scripts/compact-firestore-rules.mjs';
+import { createMockUserToken } from '@firebase/util';
+import { createUserDb } from '../../services/chatgpt-mcp/src/firestoreRest.js';
+import { getManagedTeamRoster } from '../../services/chatgpt-mcp/src/rosterDiscovery.js';
 const id = 'mcp_00112233-4455-4677-8899-aabbccddeeff';
 const userPath = `users/owner/privateAiPendingActions/${id}`;
 const teamPath = `teams/team-1/privateAiPendingActions/${id}`;
@@ -45,5 +48,27 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
         const db = userDb('owner');
         await setDoc(doc(db, teamPath), { ...payload, expiresAtAt: new Date(0) });
         await assertFails(getDoc(doc(db, teamPath)));
+    });
+    it('runs projected roster pagination through real REST rules and rejects a revoked manager', async () => {
+        const host = process.env.FIRESTORE_EMULATOR_HOST;
+        if (!/^(127\.0\.0\.1|localhost):\d+$/.test(host)) throw new Error('Only a local emulator is allowed.');
+        await env.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), 'teams/team-1/players/a'), { name: 'Synthetic A', active: false });
+            await setDoc(doc(context.firestore(), 'teams/team-1/players/b'), { name: 'Synthetic B', active: true });
+        });
+        const db = createUserDb({
+            projectId: 'demo-allplays-mcp-review',
+            idToken: createMockUserToken({ sub: 'owner', email: 'owner@example.test', email_verified: true }, 'demo-allplays-mcp-review'),
+            fetchImpl: (url, options) => {
+                if (!url.startsWith('https://firestore.googleapis.com/v1/')) throw new Error('Unexpected test request');
+                return fetch(url.replace('https://firestore.googleapis.com', `http://${host}`), options);
+            }
+        });
+        const context = { teams: new Map([['team-1', { roles: new Set(['owner']) }]]) };
+        const first = await getManagedTeamRoster(db, context, { teamId: 'team-1', limit: 1 });
+        expect(first).toMatchObject({ players: [{ id: 'a', active: false }], hasMore: true, nextCursor: 'a' });
+        expect(await getManagedTeamRoster(db, context, { teamId: 'team-1', limit: 1, cursor: first.nextCursor })).toMatchObject({ players: [{ id: 'b', active: true }], hasMore: false });
+        await env.withSecurityRulesDisabled(async (context) => updateDoc(doc(context.firestore(), 'teams/team-1'), { ownerId: 'replacement' }));
+        await expect(getManagedTeamRoster(db, context, { teamId: 'team-1' })).rejects.toMatchObject({ code: 'permission_denied' });
     });
 });

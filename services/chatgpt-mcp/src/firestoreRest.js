@@ -157,15 +157,32 @@ export function createUserDb({ projectId, idToken, fetchImpl = fetch }) {
                 limit(count) {
                     return makeQuery({ ...options, limit: count });
                 },
+                startAfterDocumentId(id) {
+                    if (!/^[A-Za-z0-9_-]{1,128}$/.test(id || '') || options.orderBy?.field !== '__name__') {
+                        throw new DomainError('invalid_argument', 'Document cursors require a valid ID and document-name ordering.');
+                    }
+                    return makeQuery({ ...options, afterDocumentId: id });
+                },
                 async get() {
+                    const structuredQuery = buildStructuredQuery(collectionId, options);
+                    if (options.afterDocumentId) {
+                        if (options.orderBy?.field !== '__name__') throw new DomainError('invalid_argument', 'Document cursor ordering changed.');
+                        structuredQuery.startAt = {
+                            values: [{ referenceValue: `${baseUrl.slice('https://firestore.googleapis.com/v1/'.length)}/${path}/${options.afterDocumentId}` }],
+                            before: false
+                        };
+                    }
                     const response = await fetchImpl(queryUrl, {
                         method: 'POST',
                         headers,
-                        body: JSON.stringify({ structuredQuery: buildStructuredQuery(collectionId, options) })
+                        body: JSON.stringify({ structuredQuery })
                     });
                     if (!response.ok) throwForStatus(response.status, path);
                     const rows = await response.json();
-                    const docs = (Array.isArray(rows) ? rows : [])
+                    if (!Array.isArray(rows) || rows.some((row) => !row || typeof row !== 'object' || row.error || (!row.document && typeof row.readTime !== 'string'))) {
+                        throw new DomainError('unavailable', 'The query response could not be verified.');
+                    }
+                    const docs = rows
                         .filter((row) => row.document)
                         .map((row) => ({
                             id: row.document.name.split('/').pop(),

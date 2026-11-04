@@ -92,6 +92,11 @@ describe('explicit review-only OAuth capability', () => {
             const response = await fetch(`${origin}/mcp`, { method: 'POST', headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'create_team', arguments: { requestId: '00112233-4455-4677-8899-aabbccddeeff', arguments: { name: 'Synthetic', sport: 'Soccer' } } } }) });
             expect(await response.text()).toContain('insufficient_scope');
             expect(guard).toHaveBeenCalledTimes(1);
+            const listed = await fetch(`${origin}/mcp`, { method: 'POST', headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }) });
+            const listText = await listed.text();
+            expect(listText).toContain('get_team_roster');
+            expect(listText).toContain('nextCursor');
+            expect(guard).toHaveBeenCalledTimes(2);
             const client = await (await fetch(`${origin}/oauth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redirect_uris: [redirectUri] }) })).json();
             const query = new URLSearchParams({ client_id: client.client_id, redirect_uri: redirectUri, response_type: 'code', code_challenge: s256Challenge(verifier), code_challenge_method: 'S256', scope: 'allplays.read allplays.review' });
             const html = await (await fetch(`${origin}/oauth/authorize?${query}`)).text();

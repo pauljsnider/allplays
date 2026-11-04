@@ -26,6 +26,7 @@ import {
 import { createIdentityResolver, extractBearerToken } from './identity.js';
 import { createUserDb } from './firestoreRest.js';
 import { writeCatalog, prepareWriteReview, getWriteReviewStatus } from './writeReview.js';
+import { getManagedTeamRoster } from './rosterDiscovery.js';
 import { createOAuthBroker, metadataFor, OAuthError, requestedReviewScope } from './oauth.js';
 import {
     createFirestoreOAuthGrantStore,
@@ -156,7 +157,7 @@ function renderSignInPage({ clientId, redirectUri, codeChallenge, state, scope, 
 <body>
     <div class="card">
         <h1>ALL PLAYS</h1>
-        <p>Sign in to connect your AllPlays account to ChatGPT. ChatGPT can read your teams, schedule, and game summaries. Changes require your separate review and confirmation in AllPlays.</p>
+        <p>Sign in to connect your AllPlays account to ChatGPT. ChatGPT can read your teams, managed roster names and IDs, schedule, and game summaries. Changes require your separate review and confirmation in AllPlays.</p>
         ${error ? `<div class="error">${escapeHtml(error)}</div>` : ''}
         <form method="POST" action="/oauth/authorize">
             ${hiddenInputs}
@@ -227,6 +228,17 @@ function buildServer(identity, { reviewRequests = false } = {}) {
         inputSchema: {},
         annotations: { readOnlyHint: true }
     }, run((context) => listMyTeams(db, context)));
+
+    server.registerTool('get_team_roster', {
+        title: 'Get managed team roster',
+        description: 'Discover exact player IDs and active/inactive state for a team you currently manage before proposing roster changes. Returns only names, numbers, positions, and active state; no family contacts or private profile fields. Follow nextCursor until hasMore is false before checking duplicates or unique names. Concurrent changes still require confirmation-time revalidation.',
+        inputSchema: {
+            teamId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+            cursor: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(),
+            limit: z.number().int().min(1).max(100).optional()
+        },
+        annotations: { readOnlyHint: true }
+    }, run((context, args) => getManagedTeamRoster(db, context, args)));
 
     server.registerTool('list_schedule', {
         title: 'List schedule',

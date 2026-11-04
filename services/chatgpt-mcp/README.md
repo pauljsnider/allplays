@@ -1,8 +1,9 @@
 # AllPlays ChatGPT MCP Service (user-credentialed, rules-enforced)
 
 Remote MCP server exposing permission-aware AllPlays tools to ChatGPT:
-`get_profile`, `list_schedule`, `get_game_summary` — names aligned with the
-in-app private AI registry (`apps/app/src/lib/privateAiService.ts`).
+`get_profile`, `list_schedule`, `get_game_summary`, and `get_team_roster`.
+Roster discovery requires current manager access and paginates active/inactive
+player IDs, names, numbers, and positions without returning private contacts.
 
 The 46 private AI write names also accept durable review requests. Final
 validation and explicit confirmation happen in the signed-in app; these are

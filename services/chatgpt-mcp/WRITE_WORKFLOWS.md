@@ -2,7 +2,8 @@
 
 ## Implemented boundary
 
-The MCP service retains its three read tools and adds the 46 canonical write
+The MCP service retains its original three read tools, adds managed roster
+discovery, and adds the 46 canonical write
 names in `src/writeCatalog.json`, plus `get_action_status`. Each write tool saves
 a **review request**, not a business mutation. It returns an authenticated app
 link. In that app, the user selects **Prepare for review**, sees the normalized
@@ -41,7 +42,15 @@ apply. Resource packets remain gated by their existing feature flag. Files and
 images are not uploaded through this bridge; use structured roster operations or
 schedule rows, or the app's existing attachment workflow. This catalog covers
 private AI writes, not every control on every legacy page. The existing read
-catalog is still three tools, so complex IDs must come from known app context.
+catalog is still limited: get_team_roster adds manager-only player discovery,
+but most other complex IDs must come from known app context.
+
+For a roster conversation, call get_profile to select the exact managed team,
+then get_team_roster. Follow nextCursor until hasMore is false before deciding
+whether a name is new or uniquely identifies a player. Both active and inactive
+players are included; never merge duplicate names automatically. Pages are not
+a frozen snapshot. The app still reloads and revalidates current roster data
+before confirming an import. Contacts and private profile fields are omitted.
 
 Catalog JSON is duplicated in the isolated MCP package and app package because
 production builds prohibit importing the service source into the app. Tests
@@ -142,6 +151,28 @@ session does not authorize deployment, merge, or real team/game writes.
 
 This bridge can remain as a fallback while those domains move server-side.
 
+### Direct confirmation transport findings
+
+The installed MCP SDK is 1.32.1 and negotiates through protocol 2025-11-25.
+Its server elicitation API checks client capabilities stored during
+initialization. This service currently builds a fresh server/transport for every
+HTTP request, without a session ID, and closes it with the response. Simply
+calling elicitInput in a later tools/call therefore does not supply a working
+confirmation channel. Verify a compatible client/transport design, with
+actor-bound state across restarts, before connecting it to mutation execution.
+Do not infer support in the connected ChatGPT client from SDK availability.
+
+OpenAI's [MCP server guidance](https://developers.openai.com/plugins/build/mcp-server)
+states that annotations inform client safety behavior but do not replace
+server authorization, validation, or confirmation. A caller-supplied confirmed
+boolean or copied confirmation nonce is not evidence that the displayed payload
+was approved. The [MCP elicitation specification](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation)
+provides an explicit user-interaction mechanism, subject to client capability
+negotiation. Any future execution path must bind its response to the actor and
+exact prepared revision, handle decline/cancel without effects, and retain the
+app review fallback when supported confirmation is unavailable. No new execution
+scope, access settings, credentials, or transport behavior were enabled here.
+
 Rollback to a pre-scope MCP binary keeps old read grants valid but rejects new
 review-scoped grants because their authenticated encryption metadata differs.
 Reconnect those clients as read-only rather than rotating secrets or weakening
@@ -151,12 +182,14 @@ grant validation.
 
 Validated with isolated fixtures, without production team/game writes:
 
-- 321 focused tests across MCP core, OAuth, review requests, and the existing
+- 330 focused tests across MCP core, OAuth, review requests, roster discovery,
+  and the existing
   private AI action service.
 - 11 app review service/component tests, including stale previews, concurrent
   confirmation, and explicit confirmation of only remaining partial-import rows.
-- 17 Firestore emulator tests against the existing rules, including review
-  ownership, current-manager access, and enforced verified-email policy.
+- 18 Firestore emulator tests against the existing rules, including review
+  ownership, enforced verified-email policy, real REST roster pagination, and
+  denied roster queries after manager revocation.
 - Production app build, production artifact guard, and cold-start budget check.
 - Built-app signed-out browser smoke preserving the review destination.
 - Synthetic browser preview exercising the actual review component's prepare
