@@ -22,7 +22,7 @@ function createScheduleProofOrdering({ store, verifyApprovedIntent, verifyCommit
     if (!store?.get || !store?.change || [verifyApprovedIntent, verifyCommit, verifyTrigger].some((fn) => typeof fn !== 'function')) throw new Error('Durable state and trusted intent, commit and trigger verifiers are required.');
     const fence = (row, id) => {
         if (!row || row.kind !== 'schedule-proof-fence' || row.fenceId !== id || row.intentHash !== hash(row.intent)
-            || !['pending', 'proof', 'legacy'].includes(row.state)
+            || !['pending', 'proof', 'legacy', 'cancelled'].includes(row.state)
             || (row.state === 'proof' && (!row.reference || row.reference.evidenceId !== row.intent.approvalId || row.reference.teamId !== row.intent.teamId || !row.sourceVersion))) fail();
         return row;
     };
@@ -36,7 +36,7 @@ function createScheduleProofOrdering({ store, verifyApprovedIntent, verifyCommit
         // failed MCP proof. Never let an unrelated intent hold its notification.
         if (!row || !same(row.intent, event, ['teamId', 'eventId', 'beforeVersion', 'eventDigest'])) return { state: 'legacy' };
         if (row.state === 'pending') return { state: 'pending' };
-        if (row.state === 'legacy') return { state: 'legacy' };
+        if (['legacy', 'cancelled'].includes(row.state)) return { state: 'legacy' };
         // A later recreation can share null predecessor/content with an old
         // create. Proof for another exact commit is not proof for this effect.
         if (row.sourceVersion !== event.sourceVersion) return { state: 'legacy' };
@@ -52,14 +52,51 @@ function createScheduleProofOrdering({ store, verifyApprovedIntent, verifyCommit
                 || !Number.isSafeInteger(intent.expiresAt) || intent.expiresAt <= now() || intent.expiresAt - now() > 120000) fail();
             intent.beforeVersion = before(intent.beforeVersion);
             const id = fenceIdFor(intent); const intentHash = hash(intent);
+            const prior = await store.get(intent.teamId, id);
+            let archivedHash = null;
+            if (prior && fence(prior, id).state === 'cancelled' && prior.intentHash !== intentHash) {
+                archivedHash = hash(prior);
+                const archiveId = hash({ kind: 'cancelled-proof-fence-v1', fenceId: id, intentHash: prior.intentHash });
+                const archived = await store.change(intent.teamId, archiveId, (existing) => {
+                    if (existing && hash(existing) !== archivedHash) fail();
+                    return existing || prior;
+                });
+                if (!archived || hash(archived) !== archivedHash) fail();
+            }
             const saved = await store.change(intent.teamId, id, (existing) => {
-                if (existing) { if (fence(existing, id).intentHash !== intentHash || existing.state !== 'pending') fail('proof_fence_conflict'); return existing; }
-                return { kind: 'schedule-proof-fence', fenceId: id, intent, intentHash, state: 'pending', armedAt: now() };
+                if (existing) {
+                    fence(existing, id);
+                    if (existing.state === 'cancelled' && hash(existing) === archivedHash) { /* preserved tombstone permits a fresh intent */ }
+                    else {
+                        if (existing.intentHash !== intentHash || existing.state !== 'pending') fail('proof_fence_conflict');
+                        return existing;
+                    }
+                }
+                return { kind: 'schedule-proof-fence', fenceId: id, intent, intentHash, state: 'pending', producerState: 'armed', armedAt: now() };
             });
             if (fence(saved, id).intentHash !== intentHash || saved.state !== 'pending' || now() >= intent.expiresAt) fail();
             // Internal ordering acknowledgment only, not a write capability.
             // The existing one-action command engine still authorizes the write.
-            return { teamId: intent.teamId, fenceId: id };
+            return { teamId: intent.teamId, fenceId: id, intentHash };
+        },
+        async beginWrite(reference) {
+            const saved = await store.change(reference.teamId, reference.fenceId, (existing) => {
+                const row = fence(existing, reference.fenceId);
+                if (row.intentHash !== reference.intentHash || row.state !== 'pending' || row.producerState !== 'armed'
+                    || now() >= row.intent.expiresAt) fail('write_not_authorized');
+                return { ...row, producerState: 'dispatched', dispatchStartedAt: now() };
+            });
+            if (fence(saved, reference.fenceId).intentHash !== reference.intentHash || saved.producerState !== 'dispatched') fail();
+        },
+        async cancelUnstarted(reference) {
+            const saved = await store.change(reference.teamId, reference.fenceId, (existing) => {
+                const row = fence(existing, reference.fenceId);
+                if (row.intentHash !== reference.intentHash) fail('proof_fence_conflict');
+                if (row.state === 'cancelled') return row;
+                if (row.state !== 'pending' || row.producerState !== 'armed') fail('write_outcome_unknown');
+                return { ...row, state: 'cancelled', producerState: 'cancelled', resolvedAt: now() };
+            });
+            if (fence(saved, reference.fenceId).state !== 'cancelled' || saved.intentHash !== reference.intentHash) fail();
         },
         async captureTrigger(triggerHandle) {
             const event = structuredClone(await verifyTrigger(triggerHandle));
@@ -86,7 +123,7 @@ function createScheduleProofOrdering({ store, verifyApprovedIntent, verifyCommit
             const id = fenceIdFor(commit);
             const saved = await store.change(commit.teamId, id, (existing) => {
                 const row = fence(existing, id);
-                if (!same(row.intent, commit, [...bindingKeys, 'uid']) || row.state === 'legacy') fail('proof_path_closed');
+                if (!same(row.intent, commit, [...bindingKeys, 'uid']) || row.producerState !== 'dispatched' || ['legacy', 'cancelled'].includes(row.state)) fail('proof_path_closed');
                 if (row.state === 'proof') { if (row.sourceVersion !== commit.sourceVersion) fail(); return row; }
                 return { ...row, state: 'proof', reference: { teamId: reference.teamId, evidenceId: reference.evidenceId }, sourceVersion: commit.sourceVersion, resolvedAt: now() };
             });

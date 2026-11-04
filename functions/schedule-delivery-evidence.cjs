@@ -111,6 +111,11 @@ function createScheduleEvidenceAuthority({ store, authenticate, verifyForm, reso
             });
             return reference;
         },
+        async verifyConsumedApproval(reference) {
+            const row = await read(reference);
+            if (row.state !== 'consumed') fail('approval_not_consumed');
+            return { ...structuredClone(row.approval), consumed: true, consumedAt: row.consumedAt };
+        },
         async verifyApproval(reference) {
             const row = await read(reference);
             if (row.state !== 'committed') fail('commit_unverified');

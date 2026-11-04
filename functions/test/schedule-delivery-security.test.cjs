@@ -33,6 +33,16 @@ function evidenceFixture(overrides = {}) {
 }
 
 describe('durable actor-bound schedule approval evidence', () => {
+    it('allows producer arming only from the private consumed state, never an issued approval or completed receipt', async () => {
+        const f = evidenceFixture(); const ref = await f.issue();
+        await assert.rejects(f.authority.verifyConsumedApproval(ref), { code: 'approval_not_consumed' });
+        const dispatch = await f.consume(ref);
+        const consumed = await f.create().verifyConsumedApproval(ref);
+        assert.equal(consumed.consumed, true); assert.equal(consumed.approvalId, ref.evidenceId);
+        await assert.rejects(f.authority.verifyConsumedApproval({ status: 'completed' }));
+        f.observe(dispatch.dispatchId); await f.record(ref, dispatch.dispatchId);
+        await assert.rejects(f.authority.verifyConsumedApproval(ref), { code: 'approval_not_consumed' });
+    });
     it('persists one approval and one consumed commit, then feeds the coordinator without a client receipt', async () => {
         const f = evidenceFixture(); const ref = await f.issue(); const dispatch = await f.consume(ref); f.observe(dispatch.dispatchId);
         await f.record(ref, dispatch.dispatchId);

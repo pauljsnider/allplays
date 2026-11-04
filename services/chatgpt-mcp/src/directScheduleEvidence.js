@@ -43,8 +43,9 @@ export function createCredentialedEvidenceReader({ projectId, getActor, fetchImp
 // credentials. The injected authority factory is server-owned. Opaque object
 // handles cannot be supplied by JSON tool arguments or user-written receipts.
 // A production split-process channel is deliberately not implemented here.
-export function createBrokerScheduleEvidenceBridge({ projectId, getActor, sessionId, createAuthority, readEvent, authorizeCommand, onEvidence = () => {}, now = Date.now }) {
+export function createBrokerScheduleEvidenceBridge({ projectId, getActor, sessionId, createAuthority, readEvent, authorizeCommand, onEvidence = () => {}, producer, now = Date.now }) {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId || '') || !/^[a-z][a-z0-9-]{3,62}$/.test(projectId || '') || [getActor, createAuthority, readEvent, authorizeCommand].some((fn) => typeof fn !== 'function')) throw new Error('A live broker session, credentialed reader and trusted authority are required.');
+    if (producer && ['arm', 'beginWrite', 'cancelUnstarted', 'publish'].some((key) => typeof producer[key] !== 'function')) throw new Error('A complete durable producer adapter is required.');
     const forms = new WeakMap(); const commands = new WeakMap(); const observations = new WeakMap(); const attempts = new WeakMap();
     const credential = Object.freeze({});
     const current = async () => {
@@ -105,9 +106,24 @@ export function createBrokerScheduleEvidenceBridge({ projectId, getActor, sessio
             const reference = await authority.issue(credential, { formHandle: formEvidence, commandHandle });
             const dispatch = await authority.consume(credential, reference);
             if (!sameActor(await current(), actor) || now() >= form.expiresAt) deny();
+            const reservation = producer ? await producer.arm(reference) : null;
+            if (producer && (!reservation || typeof reservation !== 'object')) deny();
+            if (!sameActor(await current(), actor) || now() >= form.expiresAt) {
+                if (reservation) await producer.cancelUnstarted(reservation);
+                deny();
+            }
             const attempt = Object.freeze({});
-            attempts.set(attempt, { reference, dispatchId: dispatch.dispatchId, command, planDigest: fingerprint(plan), eventIndex: plan.writes.indexOf(eventWrite) });
+            attempts.set(attempt, { reservation, reference, dispatchId: dispatch.dispatchId, command, planDigest: fingerprint(plan), eventIndex: plan.writes.indexOf(eventWrite) });
             return attempt;
+        },
+        async beforeDispatch(handle) {
+            const attempt = attempts.get(handle);
+            if (!attempt || !sameActor(await current(), attempt.command)) deny();
+            if (attempt.reservation) await producer.beginWrite(attempt.reservation);
+        },
+        async commitFailed(handle, { dispatched }) {
+            const attempt = attempts.get(handle);
+            if (attempt?.reservation && !dispatched) await producer.cancelUnstarted(attempt.reservation);
         },
         async afterCommit(handle, { plan, response }) {
             const attempt = attempts.get(handle);
@@ -121,6 +137,7 @@ export function createBrokerScheduleEvidenceBridge({ projectId, getActor, sessio
             observations.set(observationHandle, { ...attempt.command, dispatchId: attempt.dispatchId, committed: true, sourceVersion, committedAt: Date.parse(sourceVersion) });
             await authority.recordCommit(credential, attempt.reference, attempt.dispatchId, observationHandle);
             attempt.recorded = true;
+            if (attempt.reservation) await producer.publish(attempt.reference, attempt.reservation);
             await onEvidence(attempt.reference);
         }
     };

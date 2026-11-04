@@ -71,13 +71,14 @@ export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, 
             if (companions.length > 1 || companions.some((entry) => !policy.prepare?.(entry.path))) throw new DomainError('permission_denied', 'The proposal companion is outside this domain.');
             await request(':commit', { method: 'POST', body: JSON.stringify({ writes: [{ path, data }, ...companions].map((entry) => ({ ...write(entry.path, entry.data), currentDocument: { exists: false } })) }) });
         },
-        async transaction(callback, { beforeCommit, afterCommit } = {}) {
+        async transaction(callback, { beforeCommit, beforeDispatch, afterCommit, commitFailed } = {}) {
             const started = await request(':beginTransaction', { method: 'POST', body: JSON.stringify({ options: { readWrite: {} } }) });
             if (!started.transaction) throw new DomainError('unavailable', 'Transaction unavailable.');
             const transaction = started.transaction;
             const writes = [];
             const observations = new Map();
             let committed = false;
+            let dispatched = false;
             try {
                 const result = await callback({
                     get: (path) => get(path, transaction, observations),
@@ -100,11 +101,18 @@ export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, 
                 });
                 if (writes.length) {
                     const plan = { writes: structuredClone(writes), reads: Object.fromEntries(observations) };
-                    const response = await request(':commit', { method: 'POST', body: JSON.stringify({ writes, transaction }) }, () => beforeCommit?.(structuredClone(plan)));
+                    const response = await request(':commit', { method: 'POST', body: JSON.stringify({ writes, transaction }) }, async () => {
+                        await beforeCommit?.(structuredClone(plan));
+                        await beforeDispatch?.();
+                        dispatched = true;
+                    });
                     committed = true;
                     await afterCommit?.({ plan: structuredClone(plan), response: structuredClone(response) });
                 }
                 return result;
+            } catch (error) {
+                if (commitFailed) await Promise.resolve().then(() => commitFailed({ dispatched })).catch(() => {});
+                throw error;
             } finally {
                 if (!committed) await request(':rollback', { method: 'POST', body: JSON.stringify({ transaction }) }).catch(() => {});
             }

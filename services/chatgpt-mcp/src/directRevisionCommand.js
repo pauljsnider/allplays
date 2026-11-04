@@ -114,7 +114,9 @@ export function createRevisionCommands({ uid, store, getContext, executionEviden
                     if (Date.parse(before.data.expiresAt) <= now()) throw new DomainError('confirmation_expired', 'The proposal expired before execution.');
                     await domain.beforeCommit?.(targetBeforeApproval, before.data);
                     if (executionEvidence && evidenceDescriptor) evidenceAttempt = await executionEvidence.beforeCommit({ descriptor: evidenceDescriptor, formEvidence: approval.formEvidence, plan });
-                }, afterCommit: executionEvidence && domain.deliveryEvidence ? (observation) => executionEvidence.afterCommit(evidenceAttempt, observation) : undefined });
+                }, beforeDispatch: executionEvidence && domain.deliveryEvidence ? () => executionEvidence.beforeDispatch?.(evidenceAttempt) : undefined,
+                commitFailed: executionEvidence && domain.deliveryEvidence ? (failure) => executionEvidence.commitFailed?.(evidenceAttempt, failure) : undefined,
+                afterCommit: executionEvidence && domain.deliveryEvidence ? (observation) => executionEvidence.afterCommit(evidenceAttempt, observation) : undefined });
             } catch (error) {
                 // A lost commit response is reconciled from the atomic receipt.
                 // Never retry a business mutation automatically.

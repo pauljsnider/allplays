@@ -194,7 +194,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('notification journal with
             const reference = { teamId: event.teamId, evidenceId: intent.approvalId };
             const verifyCommit = async () => ({ ...intent, sourceVersion: event.sourceVersion, committed: true, mode: 'create', eventType: 'game' });
             const create = () => createScheduleProofOrdering({ store, now: () => clock, verifyApprovedIntent: async () => intent, verifyCommit, verifyTrigger: async () => event });
-            const armed = await create().arm('synthetic-private-intent'); const effect = await create().captureTrigger('synthetic-platform-trigger');
+            const armed = await create().arm('synthetic-private-intent'); await create().beginWrite(armed); const effect = await create().captureTrigger('synthetic-platform-trigger');
             fencePath = `teams/team-1/notificationSendLog/durable_${armed.fenceId}`;
             inboxPath = `teams/team-1/notificationSendLog/durable_${hash({ kind: 'schedule-trigger-inbox-v1', ...effect })}`;
             const decide = createScheduleConsumerOwnership({ store, readVerifiedDeploymentGate: async () => ({ mode: 'journal', legacyHead: 'a'.repeat(40), journalHead: 'b'.repeat(40), legacyCompatible: true, bothConsumersGated: true, compatibleProducersVerified: true }),
