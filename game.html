@@ -447,14 +447,14 @@
 
     <script type="module">
         import { getTeamScorePair } from './js/season-record.js';
-        import { getTeam, getDelegatedTeamContext, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433211';
+        import { getTeam, getDelegatedTeamContext, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433212';
         import { generateGameInsights } from './js/post-game-insights.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=443387';
-        import { checkAuth } from './js/auth.js?v=4433216';
-        import { collection, deleteField, doc, functions, getDocs, httpsCallable, query, orderBy, runTransaction } from "./js/firebase.js?v=4433196";
-        import { db } from './js/firebase.js?v=4433196';
-        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443362';
-        import { resolveLiveStatConfig } from './js/live-game-state.js?v=59';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=443388';
+        import { checkAuth } from './js/auth.js?v=4433217';
+        import { collection, deleteField, doc, functions, getDocs, httpsCallable, query, orderBy, runTransaction } from "./js/firebase.js?v=4433197";
+        import { db } from './js/firebase.js?v=4433197';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443363';
+        import { resolveLiveStatConfig } from './js/live-game-state.js?v=60';
         import { splitPlayerStatsByVisibility } from './js/stat-leaderboards.js?v=4';
         import { formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=8';
         import { normalizeStatKey, resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=11';

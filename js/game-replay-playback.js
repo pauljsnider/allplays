@@ -11,7 +11,7 @@ export function unavailableReplayPlayback(message = 'Replay video is unavailable
 // Observe Firebase identity directly: checkAuth waits for profile/access reads
 // and cannot invalidate principal-scoped media promptly during that wait.
 export async function observeReplayPlaybackAuth(onChange, deps = {}) {
-    const firebase = deps.firebase || await import('./firebase.js?v=4433196');
+    const firebase = deps.firebase || await import('./firebase.js?v=4433197');
     return firebase.onAuthStateChanged(firebase.auth, onChange);
 }
 
@@ -21,7 +21,7 @@ export async function observeReplayPlaybackAuth(onChange, deps = {}) {
 // in a game document or fall back to an older URL after denial/removal.
 export async function resolveAuthorizedReplayPlayback({ teamId, gameId, clipStartMs, clipEndMs }, deps = {}) {
     try {
-        const firebase = deps.firebase || await import('./firebase.js?v=4433196');
+        const firebase = deps.firebase || await import('./firebase.js?v=4433197');
         const principal = firebase.auth?.currentUser || null;
         const readPlayback = firebase.httpsCallable(firebase.functions, 'getGameReplayPlayback', { timeout: 10000 });
         const { data } = await readPlayback({ teamId, gameId });

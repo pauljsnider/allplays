@@ -14,7 +14,7 @@ function buildHarnessHtml(pass) {
 <body>
     <main id="team-pass-root"></main>
     <script type="module">
-        import { buildTeamPassMarkup, getTeamPassAccess } from '/js/team-pass.js?v=44349';
+        import { buildTeamPassMarkup, getTeamPassAccess } from '/js/team-pass.js?v=44350';
 
         const team = ${JSON.stringify(TEAM)};
         const user = { uid: 'owner-1' };

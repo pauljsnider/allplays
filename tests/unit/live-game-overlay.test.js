@@ -140,8 +140,8 @@ describe('live game overlay page', () => {
         expect(source).toContain("params.demo === '1'");
         expect(source).toContain("params.replay === 'true'");
         expect(source).toContain('startDemoReplayMode');
-        expect(source).toContain("return import('./db.js?v=4433211')");
-        expect(source).toContain("import('./live-game-state.js?v=59')");
+        expect(source).toContain("return import('./db.js?v=4433212')");
+        expect(source).toContain("import('./live-game-state.js?v=60')");
         expect(source).toContain('stateTools.applyResetEventState');
         expect(source).toContain('reconcileOverlayLiveEvents');
         expect(source).toContain("from './live-game-overlay-model.js?v=33'");
@@ -158,7 +158,7 @@ describe('live game overlay page', () => {
         expect(source).toContain('database.subscribeReactions');
         expect(source).toContain('getOverlayLiveClockMs');
         expect(source).toContain('syncLiveClockAnchor');
-        expect(source).toContain("import('./auth.js?v=4433216')");
+        expect(source).toContain("import('./auth.js?v=4433217')");
         expect(source).toContain("import('./live-game-chat.js?v=4')");
         expect(currentLiveGameSource).toContain("from './live-game-overlay-model.js?v=33'");
         expect(currentLiveGameSource).toContain("from './live-game-video.js?v=443319'");
@@ -197,9 +197,9 @@ describe('live game overlay page', () => {
         expect(source).not.toContain('trackViewerPresence(');
         expect(source).toContain('sendChatReaction');
         expect(source).toContain("from './game-share-links.js?v=1'");
-        expect(source).toContain("from './utils.js?v=443387'");
+        expect(source).toContain("from './utils.js?v=443388'");
         expect(source).toContain("from './live-game-announcer.js?v=1'");
-        expect(source).toContain("import('./team-entitlements.js?v=10')");
+        expect(source).toContain("import('./team-entitlements.js?v=11')");
         expect(source).toContain('isRecordedReplayTeamPassGateEnabled');
         expect(source).toContain('getTeamEntitlementStatus');
         expect(source).toContain('showReplayAccessGate');

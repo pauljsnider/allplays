@@ -384,7 +384,7 @@ function extractEditTeamModule() {
             'const { buildTeamSportConfigMigrationPlan } = deps.teamStatConfigMigration;'
         )
         .replace(
-            "import { configureDiamondTeamForSport } from './js/diamond-scorebook-client.js?v=5';",
+            "import { configureDiamondTeamForSport } from './js/diamond-scorebook-client.js?v=6';",
             'const { configureDiamondTeamForSport } = deps.diamondScorebookClient;'
         )
         .replace(

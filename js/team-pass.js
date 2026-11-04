@@ -1,6 +1,6 @@
 import { hasFullTeamAccess } from './team-access.js?v=44338';
 import { PREMIUM_FEATURES, resolvePremiumAccess } from './premium-access-core.js?v=1';
-import { readPremiumAccessConfig } from './premium-access.js?v=8';
+import { readPremiumAccessConfig } from './premium-access.js?v=9';
 
 function escapeTeamPassHtml(value) {
     return String(value ?? '')
@@ -74,7 +74,7 @@ function arrayIncludesTeamId(values, teamId) {
 
 function loadFirebase(deps = {}) {
     if (deps.firebase) return deps.firebase;
-    return import('./firebase.js?v=4433196');
+    return import('./firebase.js?v=4433197');
 }
 
 function dataFromSnapshot(docSnap) {

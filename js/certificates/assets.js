@@ -9,7 +9,7 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from '../firebase.js?v=4433196';
+} from '../firebase.js?v=4433197';
 import { createSecureUploadToken } from '../secure-upload-token.js?v=1';
 
 const MAX_CERTIFICATE_ASSET_BYTES = 5 * 1024 * 1024;

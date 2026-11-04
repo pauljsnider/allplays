@@ -55,7 +55,7 @@ export async function buildCalendarGameMaterializationId(
 }
 
 async function loadFirebaseDependencies() {
-    return import('./firebase.js?v=4433196');
+    return import('./firebase.js?v=4433197');
 }
 
 function getExistingGameId(snapshot) {

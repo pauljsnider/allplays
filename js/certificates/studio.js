@@ -1,4 +1,4 @@
-import { checkAuth } from '../auth.js?v=4433216';
+import { checkAuth } from '../auth.js?v=4433217';
 import {
     getTeam,
     getUserProfile,
@@ -22,10 +22,10 @@ import {
     archiveCertificate,
     canAccessCertificates,
     canViewSavedCertificate
-} from '../db.js?v=4433211';
-import { loadCompleteCertificateNarrativeStats } from '../diamond-legacy-game-context.js?v=2';
-import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443387';
-import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=443362';
+} from '../db.js?v=4433212';
+import { loadCompleteCertificateNarrativeStats } from '../diamond-legacy-game-context.js?v=3';
+import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443388';
+import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=443363';
 import { TEMPLATES } from './templates.js?v=2';
 import { CERTIFICATE_FONT_OPTIONS, renderCertificate, createPreviewDraft, resolveColors, getContrastWarning } from './renderer.js?v=2';
 import { buildDefaultSigners, normalizeSigners } from './signers.js?v=2';
@@ -927,7 +927,7 @@ function bindSetupEvents() {
                 renderSetup();
                 schedulePreviewRender();
 
-                const { uploadCertificateAsset } = await import('./assets.js?v=14');
+                const { uploadCertificateAsset } = await import('./assets.js?v=15');
                 const asset = await uploadCertificateAsset(state.teamId, file, kind, state.user?.uid || null);
                 state.assets.unshift(asset);
                 state.shared[slot] = asset;
@@ -972,7 +972,7 @@ function bindSetupEvents() {
             const index = Number(input.dataset.signatureUpload);
             const previousSigner = { ...state.shared.signers[index] };
             try {
-                const { deleteSignatureImage, uploadSignatureImage } = await import('./assets.js?v=14');
+                const { deleteSignatureImage, uploadSignatureImage } = await import('./assets.js?v=15');
                 const result = await uploadSignatureImage(state.teamId, file);
                 state.shared.signers[index].signatureStyle = 'image';
                 state.shared.signers[index].signatureImageUrl = result.url;

@@ -282,7 +282,7 @@ for (const uid of ['owner', 'staff', 'delegate']) {
         const source = readFileSync('track-statsheet.html', 'utf8');
         const expression = source.match(/const liveEventsSnap = (await getDocs\([^;]+\));/)[1];
         const count = await page.evaluate(async expression => {
-            const sdk = await import('/js/firebase.js?v=4433196');
+            const sdk = await import('/js/firebase.js?v=4433197');
             const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
             return new AsyncFunction('db', 'getDocs', 'collection', 'query', 'limit', 'currentTeamId', 'currentGameId',
                 `return (${expression}).size;`)(sdk.db, sdk.getDocs, sdk.collection, sdk.query, sdk.limit, 'team-1', 'game-1');

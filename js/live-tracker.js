@@ -1,10 +1,10 @@
 import { getTeamScorePair } from './season-record.js';
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433211';
-import { db } from './firebase.js?v=4433196';
-import { getUrlParams, escapeHtml } from './utils.js?v=443387';
-import { checkAuth } from './auth.js?v=4433216';
-import { writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp } from './firebase.js?v=4433196';
+import { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433212';
+import { db } from './firebase.js?v=4433197';
+import { getUrlParams, escapeHtml } from './utils.js?v=443388';
+import { checkAuth } from './auth.js?v=4433217';
+import { writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp } from './firebase.js?v=4433197';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './firebase-ai.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
@@ -16,7 +16,7 @@ import { resolveFinalScore } from './live-tracker-email.js?v=2';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { buildVideoTimestampMetadata, hasConfiguredLiveStream } from './live-stream-utils.js?v=3';
-import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=59';
+import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=60';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
 import { resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';
 import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=6';

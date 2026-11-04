@@ -1,5 +1,5 @@
 import { normalizeLiveEventScores } from './live-event-score-orientation.js?v=1';
-import { escapeHtml } from './utils.js?v=443387';
+import { escapeHtml } from './utils.js?v=443388';
 import { getDefaultLivePeriod, getGoalSportProfile } from './live-sport-config.js';
 
 const statKeyMap = {

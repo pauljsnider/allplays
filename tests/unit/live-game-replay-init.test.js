@@ -280,7 +280,7 @@ function buildModuleSource() {
             'const { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, hasActiveLiveLifecycle, hasCompletedReplayLifecycle, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
         )
         .replaceAll(
-            "import('./game-replay-playback.js?v=4')",
+            "import('./game-replay-playback.js?v=5')",
             'Promise.resolve(deps.replayPlayback)'
         )
         .replace(

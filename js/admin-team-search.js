@@ -6,7 +6,7 @@ import {
     orderBy,
     query,
     where
-} from './firebase.js?v=4433196';
+} from './firebase.js?v=4433197';
 
 export const ADMIN_TEAM_SEARCH_MIN_LENGTH = 2;
 export const ADMIN_TEAM_SEARCH_MAX_LENGTH = 100;

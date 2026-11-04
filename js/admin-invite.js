@@ -1,4 +1,4 @@
-import { functions, httpsCallable } from './firebase.js?v=4433196';
+import { functions, httpsCallable } from './firebase.js?v=4433197';
 
 export async function redeemAdminInviteCallablePersistence({
     userId,

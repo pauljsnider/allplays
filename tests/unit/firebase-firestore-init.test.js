@@ -83,7 +83,7 @@ vi.mock('../../js/vendor/firebase-functions.js', () => ({
     httpsCallable: vi.fn()
 }));
 
-vi.mock('../../js/firebase-app-check.js?v=13', () => ({
+vi.mock('../../js/firebase-app-check.js?v=14', () => ({
     initializePrimaryAppCheck: vi.fn(async () => ({ state: 'skipped' }))
 }));
 
@@ -123,7 +123,7 @@ describe('firebase firestore initialization', () => {
 
     async function loadFirebaseForWindow(windowValue) {
         vi.stubGlobal('window', windowValue);
-        return import('../../js/firebase.js?v=4433196');
+        return import('../../js/firebase.js?v=4433197');
     }
 
     it.each([
