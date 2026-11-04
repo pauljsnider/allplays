@@ -123,10 +123,12 @@ export function createBrokerScheduleEvidenceBridge({ projectId, getActor, sessio
             // Persistence and authentication may both await I/O. Recheck the
             // live session and captured approval after the acknowledgment, not
             // only before it. A dispatched fence remains retained on failure.
-            if (!sameActor(await current(), attempt.command) || now() >= attempt.expiresAt) deny();
+            const live = await current();
+            if (!sameActor(live, attempt.command) || now() >= attempt.expiresAt) deny();
+            const dispatchExpiresAt = Math.min(attempt.expiresAt, live.expiresAt);
             // The REST adapter invokes this synchronous deadline guard after
             // all awaited hooks, directly before calling fetch.
-            return () => { if (now() >= attempt.expiresAt) deny(); };
+            return () => { if (now() >= dispatchExpiresAt) deny(); };
         },
         async commitFailed(handle, { dispatched }) {
             const attempt = attempts.get(handle);

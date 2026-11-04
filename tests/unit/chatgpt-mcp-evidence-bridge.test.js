@@ -74,6 +74,11 @@ describe('opaque local broker-to-command evidence bridge', () => {
         })).rejects.toThrow();
         expect(commits).toBe(0);
     });
+    it('also binds the final fetch guard to a shorter actor expiry returned after dispatch acknowledgment', async () => {
+        const f = await fixture({ onDispatch: async ({ actor }) => { actor.expiresAt = 100001; } });
+        const attempt = await f.bridge.beforeCommit(f); const guard = await f.bridge.beforeDispatch(attempt);
+        f.advance(); expect(guard).toThrow();
+    });
     it('records independently observed exact writes and rejects replay of the same form or commit handle', async () => {
         const f = await fixture(); const attempt = await f.bridge.beforeCommit(f); f.advance();
         await f.bridge.afterCommit(attempt, f); expect(f.evidence).toHaveLength(1);
