@@ -1,5 +1,9 @@
 # Isolated authenticated session-to-signer composition
 
+Subsequent replacement-session status and durable notification recovery are
+documented in [RESTART_RECOVERY_REVIEW.md](RESTART_RECOVERY_REVIEW.md). Counts and
+limitations below describe the earlier session/signer checkpoint.
+
 The direct prototype can now compose an actual authenticated MCP SDK session,
 its exact confirmation form, a private signed command channel, live session
 introspection, and the credentialed schedule executor. This is opt-in library

@@ -81,6 +81,31 @@ describe('isolated producer/trigger/recovery composition', () => {
         const f = fixture(); const handle = await f.start(); const effect = await f.pipeline.capture('platform-trigger'); await f.pipeline.producer.publish(f.reference, handle); f.loseProvider();
         assert.equal((await f.create().process(effect)).state, 'uncertain'); await f.create().recover({ teamId: 'team' }); assert.equal(f.sends(), 1); assert.equal(f.jobs()[0].state, 'uncertain');
     });
+    it('reconciles a verified provider acceptance across worker restart without a second send', async () => {
+        const { createScheduleRecoveryWorker } = require('../schedule-recovery-worker.cjs');
+        const f = fixture(); const handle = await f.start(); const effect = await f.pipeline.capture('platform-trigger'); await f.pipeline.producer.publish(f.reference, handle); f.loseProvider();
+        assert.equal((await f.create().process(effect)).state, 'uncertain'); let reconciliations = 0;
+        f.dependencies.providers.reconcile = async (_request, metadata) => { reconciliations++; return { ...metadata, final: true, outcome: 'accepted', receiptId: 'synthetic-reconciled' }; };
+        const createWorker = () => createScheduleRecoveryWorker({ store: f.dependencies.store, pipeline: f.create(), now: f.dependencies.now, authorizeRun: async () => true });
+        await Promise.all([createWorker().run({ teamId: 'team' }), createWorker().run({ teamId: 'team' })]);
+        assert.equal(f.jobs()[0].state, 'completed'); assert.equal(f.sends(), 1); assert.equal(reconciliations, 1);
+        await createWorker().run({ teamId: 'team' }); assert.equal(f.sends(), 1);
+    });
+    it('does not duplicate an in-flight provider attempt when a worker lease expires and another worker scans the same page', async () => {
+        const { createScheduleRecoveryWorker } = require('../schedule-recovery-worker.cjs');
+        const f = fixture(); const handle = await f.start(); await f.pipeline.capture('platform-trigger'); await f.pipeline.producer.publish(f.reference, handle);
+        let started; const entered = new Promise((resolve) => { started = resolve; }); let finish; const wait = new Promise((resolve) => { finish = resolve; }); let sends = 0;
+        f.dependencies.providers.send = async (_request, metadata) => { sends++; started(); await wait; return { ...metadata, final: true, outcome: 'accepted', receiptId: 'synthetic-late-receipt' }; };
+        const createWorker = () => createScheduleRecoveryWorker({ store: f.dependencies.store, pipeline: f.create(), now: f.dependencies.now, leaseMs: 1000, authorizeRun: async () => true });
+        const first = createWorker().run({ teamId: 'team' }); await entered; f.expire();
+        await createWorker().run({ teamId: 'team' }); assert.equal(sends, 1); finish(); await assert.rejects(first);
+        assert.equal(f.jobs()[0].state, 'completed'); await createWorker().run({ teamId: 'team' }); assert.equal(sends, 1);
+    });
+    for (const response of [null, { final: true, outcome: 'accepted' }]) it('retains uncertainty when reconciliation lacks exact attempt evidence', async () => {
+        const f = fixture(); const handle = await f.start(); const effect = await f.pipeline.capture('platform-trigger'); await f.pipeline.producer.publish(f.reference, handle); f.loseProvider();
+        await f.create().process(effect); f.dependencies.providers.reconcile = async () => response;
+        await f.create().recover({ teamId: 'team' }); assert.equal(f.jobs()[0].state, 'uncertain'); assert.equal(f.sends(), 1);
+    });
     it('rechecks current authorization instead of using the frozen audience as permission', async () => {
         const f = fixture(); const handle = await f.start(); const effect = await f.pipeline.capture('platform-trigger'); await f.pipeline.producer.publish(f.reference, handle); f.revoke();
         await assert.rejects(f.create().process(effect)); assert.equal(f.sends(), 0); assert.notEqual(f.jobs()[0].state, 'completed');

@@ -24,6 +24,7 @@ const { createScheduleDeliveryCoordinator } = require('../../functions/schedule-
 const { createScheduleDeliveryProviders } = require('../../functions/schedule-delivery-providers.cjs');
 const { createCanonicalScheduleMembership, createCanonicalScheduleReadiness } = require('../../functions/schedule-canonical-membership.cjs');
 const { createScheduleDeliveryAudience, createFirestoreScheduleRecipientLoader } = require('../../functions/schedule-delivery-audience.cjs');
+const { createScheduleRecoveryWorker } = require('../../functions/schedule-recovery-worker.cjs');
 const { createScheduleRecoveryPipeline, createFirestoreScheduleRecoveryScanner } = require('../../functions/schedule-recovery-pipeline.cjs');
 const projectId = 'demo-allplays-mcp-review';
 const proposalId = '00112233-4455-4677-8899-aabbccddeeff';
@@ -134,7 +135,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('actual broker, form proto
                 prepareLegacyPlan: async () => [{ recipientUid: 'member', channel: 'inbox', endpoint: 'member' }],
                 authorizeDelivery: async ({ request }) => ({ actorAllowed: (await getContext({ uid: request.actorUid })).teams.get('team-1').roles.has('owner'), sourceCurrent: true,
                     recipientAllowed: (await getDoc(doc(database, `users/${request.recipientUid}`))).data()?.parentTeamIds?.includes(request.teamId) === true }),
-                providers: { ...providers, send: async (...args) => { pipelineSends++; return providers.send(...args); } },
+                providers: { ...providers, send: async (...args) => { pipelineSends++; const result = await providers.send(...args); if (mode === 'pipeline-provider-lost-response' && pipelineSends === 1) throw new Error('Synthetic lost provider response'); return result; } },
                 readVerifiedDeploymentGate: async () => ({ mode: 'journal', legacyHead: 'a'.repeat(40), journalHead: 'b'.repeat(40), legacyCompatible: true, bothConsumersGated: true, compatibleProducersVerified: true }),
                 scanWork: createFirestoreScheduleRecoveryScanner(serverDb)
             });
@@ -207,6 +208,21 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('actual broker, form proto
             do { const page = await scan({ teamId: 'team-1', cursor }); rows.push(...page.rows); sizes.push(page.rows.length); cursor = page.nextCursor; } while (cursor);
             expect(sizes).toEqual([20, 20, 3]); expect(rows.map((row) => row.index)).toEqual(Array.from({ length: 43 }, (_, index) => index));
             for (const invalid of [{ teamId: 123 }, { teamId: 'team-1', cursor: ['scan_000'] }, { teamId: '../other' }]) await expect(scan(invalid)).rejects.toThrow();
+        });
+    });
+    it('reconciles an actual emulator inbox write after provider response loss through restarted workers', async () => {
+        await env.withSecurityRulesDisabled(async (context) => {
+            const f = await fixture(context.firestore(), 'pipeline-provider-lost-response');
+            try {
+                expect((await f.create()).structuredContent.status).toBe('completed');
+                expect((await f.pipelineFactory().process(f.pipelineEffect())).state).toBe('uncertain'); expect(f.pipelineSends()).toBe(1);
+                const createWorker = () => createScheduleRecoveryWorker({ store: f.store, pipeline: f.pipelineFactory(), authorizeRun: async () => true });
+                await createWorker().run({ teamId: 'team-1' });
+                const jobs = await getDocs(query(collection(context.firestore(), 'teams/team-1/notificationSendLog'), where('kind', '==', 'schedule-recovery-job')));
+                expect(jobs.docs).toHaveLength(1); expect(jobs.docs[0].data().state).toBe('completed');
+                expect((await getDocs(collection(context.firestore(), 'users/member/notificationInbox'))).docs).toHaveLength(1);
+                await createWorker().run({ teamId: 'team-1' }); expect(f.pipelineSends()).toBe(1); expect(f.commits()).toBe(1);
+            } finally { await f.close(); }
         });
     });
     it.each(['pipeline-normal', 'pipeline-lost-response', 'pipeline-legacy-required', 'pipeline-readiness-changed'])('composes the actual approved writer, durable trigger and restarted recovery: %s', async (mode) => {

@@ -124,6 +124,10 @@ function createScheduleRecoveryPipeline({ store, authority, verifyPlatformTrigge
                     if (!(await decide({ ...effect, consumer: owner })).mayConsume) fail();
                     return authorizeDelivery({ owner, request, phase, payload: structuredClone(job.payload) });
                 }, send: providers.send, reconcile: providers.reconcile });
+            // Resolve uncertain prior provider attempts against their exact
+            // durable identities before delivery considers any bounded retry.
+            // Missing/ambiguous receipts never authorize a second send.
+            await journal.reconcilePlan(requests, sourceFor(job.payload));
             const result = await journal.deliverPlan(requests, sourceFor(job.payload));
             const state = result.results.some((row) => ['uncertain', 'dispatching'].includes(row.status)) ? 'uncertain'
                 : result.results.every((row) => ['accepted', 'suppressed', 'failed'].includes(row.status)) ? 'completed' : 'pending';

@@ -11,6 +11,7 @@ const { createScheduleDeliveryProviders } = require('../../functions/schedule-de
 const { createScheduleEvidenceAuthority } = require('../../functions/schedule-delivery-evidence.cjs');
 const { createFirestoreStatusRateLimit } = require('../../functions/schedule-delivery-status.cjs');
 
+const { createScheduleRecoveryWorker } = require('../../functions/schedule-recovery-worker.cjs');
 const { createScheduleProofOrdering } = require('../../functions/schedule-proof-ordering.cjs');
 const { createScheduleEffectEligibility } = require('../../functions/schedule-effect-eligibility.cjs');
 const { createScheduleConsumerOwnership } = require('../../functions/schedule-consumer-ownership.cjs');
@@ -45,6 +46,27 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('notification journal with
             await setDoc(doc(context.firestore(), 'securityPolicies/verifiedEmail'), { mode: 'enforce', exemptUserIds: [] });
             await setDoc(doc(context.firestore(), 'teams/team-1'), { ownerId: 'owner', name: 'Synthetic Team', recipientEnabled: true });
         });
+    });
+    it('keeps recovery cursor leases private and coordinates actual concurrent Firestore workers', async () => {
+        const workerId = hash({ kind: 'schedule-recovery-worker-v1', teamId: 'team-1' });
+        const path = `teams/team-1/notificationSendLog/durable_${workerId}`;
+        await env.withSecurityRulesDisabled(async (context) => {
+            let release; const pending = new Promise((resolve) => { release = resolve; }); let started; const entered = new Promise((resolve) => { started = resolve; });
+            let scans = 0; const store = serverStore(context.firestore());
+            const pipeline = { recover: async ({ cursor }) => {
+                scans++; if (scans === 1) { started(); await pending; }
+                return { results: [], nextCursor: cursor === null ? 'next-page' : null };
+            } };
+            const create = () => createScheduleRecoveryWorker({ store, pipeline, authorizeRun: async () => true });
+            const first = create().run({ teamId: 'team-1' }); await entered;
+            expect(await create().run({ teamId: 'team-1' })).toEqual({ state: 'busy' }); release(); await first;
+            expect((await getDoc(doc(context.firestore(), path))).data().cursor).toBe('next-page');
+            expect((await create().run({ teamId: 'team-1' })).cycleComplete).toBe(true); expect(scans).toBe(2);
+        });
+        for (const uid of ['owner', 'member', 'other']) {
+            await assertFails(getDoc(doc(db(uid), path)));
+            await assertFails(setDoc(doc(db(uid), path), { kind: 'schedule-recovery-worker', cursor: 'forged', lease: null }));
+        }
     });
     it('persists exact server-only requests while denying manager/member reads and forged receipts', async () => {
         await env.withSecurityRulesDisabled(async (context) => {
