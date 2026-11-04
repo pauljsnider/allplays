@@ -62,7 +62,13 @@ export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, 
     }
     const write = (path, data) => {
         assertPath(path, true);
-        return { update: { name: name(path), fields: encodeValue(data).mapValue.fields } };
+        const timestamps = policy.serverTimestamps?.(path, data) || [];
+        if (!Array.isArray(timestamps) || new Set(timestamps).size !== timestamps.length
+            || timestamps.some((field) => !/^[A-Za-z][A-Za-z0-9_]*$/.test(field) || !(data[field] instanceof Date))) {
+            throw new DomainError('permission_denied', 'Invalid server timestamp field policy.');
+        }
+        return { update: { name: name(path), fields: encodeValue(Object.fromEntries(Object.entries(data).filter(([key]) => !timestamps.includes(key)))).mapValue.fields },
+            ...(timestamps.length ? { updateTransforms: timestamps.map((fieldPath) => ({ fieldPath, setToServerValue: 'REQUEST_TIME' })) } : {}) };
     };
     return {
         get,
@@ -87,7 +93,11 @@ export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, 
                     set: (path, data) => writes.push(write(path, data)),
                     patch: (path, data) => {
                         if (!policy.patch?.(path, data)) throw new DomainError('permission_denied', 'This patch is outside the command domain.');
-                        writes.push({ ...write(path, data), updateMask: { fieldPaths: Object.keys(data) }, currentDocument: { exists: true } });
+                        const encoded = write(path, data);
+                        const fieldPaths = Object.keys(encoded.update.fields);
+                        writes.push(!fieldPaths.length && encoded.updateTransforms?.length
+                            ? { transform: { document: name(path), fieldTransforms: encoded.updateTransforms }, currentDocument: { exists: true } }
+                            : { ...encoded, updateMask: { fieldPaths }, currentDocument: { exists: true } });
                     },
                     patchFields: (path, data, fieldPaths) => {
                         if (!policy.patchFields?.(path, data, fieldPaths)) throw new DomainError('permission_denied', 'This field-mask patch is outside the command domain.');

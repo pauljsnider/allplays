@@ -1,6 +1,7 @@
 import { DomainError } from './core.js';
 
-const labels = Object.freeze({ notifyTeam: 'I also approve the team notification effects described above' });
+const labels = Object.freeze({ notifyTeam: 'I also approve the team notification effects described above',
+    incentiveTerms: 'I also approve the incentive calculation changes described above; this does not transfer money or record a payment' });
 export function confirmationFields(preview) {
     const required = preview?.requiredAcknowledgements ?? [];
     if (!Array.isArray(required) || required.some((key) => !Object.hasOwn(labels, key)) || new Set(required).size !== required.length) {

@@ -14,6 +14,7 @@ import { ASSIGNMENT_ROLE, createDirectAssignmentCommands } from './directAssignm
 import { createDirectAssignmentClaimCommands } from './directAssignmentClaims.js';
 import { createDirectFamilyRsvpCommands } from './directFamilyRsvp.js';
 import { createDirectPracticeAttendanceCommands } from './directPracticeAttendance.js';
+import { createDirectIncentiveCommands } from './directIncentives.js';
 import { createDirectTrackingItemCommands } from './directTrackingItem.js';
 import { createDirectRosterCommands } from './directRoster.js';
 import { createDirectPracticeTimelineCommands } from './directPracticeTimeline.js';
@@ -77,6 +78,34 @@ export function createDirectFavoriteMcpSession(dependencies) {
             inputSchema: z.object({ proposalId: id, teamId: resourceId, configId: resourceId, name }).strict(), annotations: mutation
         }, run((args) => commands.prepare({ ...args, mode: 'rename' })));
         registerOutcome('stat_configuration', commands);
+    }
+    if (dependencies.incentiveStore) {
+        const commands = createDirectIncentiveCommands({ ...dependencies, store: dependencies.incentiveStore });
+        const scope = { proposalId: id, teamId: resourceId, playerId: resourceId };
+        const terms = z.object({ statKey: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/), type: z.enum(['per_unit', 'threshold']),
+            amountCents: z.number().int().min(1).max(1000000), threshold: z.number().int().min(0).max(1000000).nullable(),
+            thresholdOp: z.enum(['gt', 'gte']).nullable(), active: z.boolean() }).strict();
+        for (const mode of ['create', 'revise']) server.registerTool(`prepare_${mode}_player_incentive_rule`, {
+            description: 'Prepare private positive-value incentive terms for one exactly linked child. Revision closes the current version and creates a replacement from execution time. Requires a separate incentive-effects acknowledgement; no payment or messaging occurs.',
+            inputSchema: z.object({ ...scope, terms, ...(mode === 'revise' ? { ruleId: resourceId } : {}) }).strict(), annotations: mutation
+        }, run(({ ruleId, ...args }) => commands.prepare({ ...args, mode, sourceId: ruleId, resultId: `mcp_${args.proposalId}` })));
+        server.registerTool('prepare_set_player_incentive_active', {
+            description: 'Prepare an explicit active true/false state by versioning a current private incentive rule. Historical versions remain unchanged apart from closing the current interval. No payment occurs.',
+            inputSchema: z.object({ ...scope, ruleId: resourceId, active: z.boolean() }).strict(), annotations: mutation
+        }, run(({ ruleId, ...args }) => commands.prepare({ ...args, mode: 'set_active', sourceId: ruleId, resultId: `mcp_${args.proposalId}` })));
+        server.registerTool('prepare_retire_player_incentive_rule', {
+            description: 'Prepare closing one current private incentive rule from execution time. Does not delete its history, transfer money or change paid records.',
+            inputSchema: z.object({ ...scope, ruleId: resourceId }).strict(), annotations: mutation
+        }, run(({ ruleId, ...args }) => commands.prepare({ ...args, mode: 'retire', sourceId: ruleId, resultId: ruleId })));
+        server.registerTool('prepare_player_incentive_cap', {
+            description: 'Prepare setting integer cents or explicit null to clear the private per-game cap. This global cap can change displayed past and future earnings. Requires a distinct incentive-effects acknowledgement; no payment occurs.',
+            inputSchema: z.object({ ...scope, maxPerGameCents: z.number().int().min(0).max(1000000).nullable() }).strict(), annotations: mutation
+        }, run((args) => commands.prepare({ ...args, mode: 'cap', resultId: `_cap_${args.playerId}` })));
+        registerOutcome('player_incentive', commands, { ...mutation, destructiveHint: true });
+        server.registerTool('list_my_player_incentives', {
+            description: 'Discover this parent’s own current private rules, cap and configured stat keys for an exactly linked child. No other parent’s rules or payment records are exposed.',
+            inputSchema: z.object({ teamId: resourceId, playerId: resourceId }).strict(), annotations: { readOnlyHint: true }
+        }, run(commands.discover));
     }
     if (dependencies.practiceAttendanceStore) {
         const commands = createDirectPracticeAttendanceCommands({ ...dependencies, store: dependencies.practiceAttendanceStore });
