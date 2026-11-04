@@ -35,10 +35,11 @@ providers or MCP status reads. See [write workflows](WRITE_WORKFLOWS.md) for the
 exact remaining integration work and [review slices](REVIEW_SLICES.md) for the
 proposed dependency stack. No new PRs or handoff were created for that plan.
 
-The latest [private incentive checkpoint](INCENTIVE_PARITY_REVIEW.md) records
-bounded direct coverage for 18 of the 46 app write workflow names, including
-private rule creation/versioning, explicit active state, retirement and cap
-settings. It lists the remaining gaps, validation and activation gates.
+The latest [team setup checkpoint](TEAM_SETUP_PARITY_REVIEW.md) records partial
+direct coverage for 19 of the 46 app write workflow names. It adds bounded
+name/ZIP updates and reviewed stat-preset creation, with explicit approval of
+public metadata and possible analytics display effects. Earlier checkpoints
+cover incentive, practice, roster and schedule work; full parity remains open.
 
 Spec: `/spec/chatgpt-app-integration/` · Plan: `AllPlays_ChatGPT_App_Integration_Plan.docx`
 
