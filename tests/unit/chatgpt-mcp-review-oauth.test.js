@@ -54,6 +54,7 @@ describe('explicit review-only OAuth capability', () => {
         const rotated = await restarted.exchange({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token });
         expect(rotated.scope).toBe('allplays.read allplays.review');
         expect(await restarted.resolveAccessToken(rotated.access_token)).toMatchObject({ reviewRequests: true });
+        expect(await restarted.resolveAccessToken(rotated.access_token, { includeBinding: true })).toMatchObject({ clientId: expect.any(String), expiresAt: expect.any(Number), reviewRequests: true });
     });
     it('authenticates scope in durable code and grant envelopes, preserves it across restart and rejects tampering', async () => {
         const fixture = firestoreFixture();
@@ -63,6 +64,7 @@ describe('explicit review-only OAuth capability', () => {
         const restarted = createOAuthBroker({ grantStore: fixture.store() });
         const tokens = await restarted.exchange({ grant_type: 'authorization_code', code, code_verifier: verifier });
         expect(await restarted.resolveAccessToken(tokens.access_token)).toMatchObject({ reviewRequests: true });
+        expect(await restarted.resolveAccessToken(tokens.access_token, { includeBinding: true })).toMatchObject({ clientId, expiresAt: expect.any(Number), reviewRequests: true });
         const rotated = await restarted.exchange({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token });
         expect(rotated.scope).toBe('allplays.read allplays.review');
         const access = [...fixture.documents.values()].filter((record) => record.fields.type.stringValue === 'access');

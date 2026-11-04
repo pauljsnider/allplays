@@ -38,7 +38,7 @@ export function createIdentityResolver({ apiKey, referer = DEFAULT_REFERER, fetc
     if (!apiKey) throw new Error('createIdentityResolver requires the Firebase web API key.');
     const cache = new Map();
 
-    return async function resolveIdentity(authorizationHeader) {
+    return async function resolveIdentity(authorizationHeader, { forceRefresh = false } = {}) {
         const token = extractBearerToken(authorizationHeader);
         if (!token) throw new DomainError('unauthenticated', 'Missing bearer token.');
 
@@ -56,7 +56,7 @@ export function createIdentityResolver({ apiKey, referer = DEFAULT_REFERER, fetc
         }
 
         const cached = cache.get(token);
-        if (cached && cached.expiresAt - EXPIRY_MARGIN_MS > now()) return cached;
+        if (!forceRefresh && cached && cached.expiresAt - EXPIRY_MARGIN_MS > now()) return cached;
 
         const response = await fetchImpl(TOKEN_ENDPOINT, {
             method: 'POST',
@@ -68,6 +68,7 @@ export function createIdentityResolver({ apiKey, referer = DEFAULT_REFERER, fetc
             body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: token }).toString()
         });
         if (!response.ok) {
+            cache.delete(token);
             throw new DomainError('unauthenticated', 'Invalid or revoked token.');
         }
         let body;

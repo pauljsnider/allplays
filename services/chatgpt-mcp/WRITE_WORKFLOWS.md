@@ -169,23 +169,47 @@ itself, invite anyone, send communications, change financial records, or expose
 arbitrary document writes. RSVP was deferred because its actual write path also
 coordinates private notes, legacy records, and availability cutoffs.
 
-**Concrete integration decision:** keep this factory unregistered until an
-authenticated transport binds initialization, every tool request, and each
-elicitation response to the same actor and OAuth client/grant, including expiry,
-revocation, and reconnect handling. Establish an explicit one-action execution
-authorization contract; existing allplays.review grants must not silently gain
-execution authority. Verify the real ChatGPT client's approval behavior using
-an isolated account. An in-memory protocol test proves the command/elicitation
-exchange, not HTTP identity binding or production client compatibility. The
-current stateless endpoint cannot safely be treated as already satisfying those
-requirements. No deployment, credentials, access settings, persistent grant, or
-production registration is included in this prototype.
+The opt-in transport composition is now implemented in
+`directSessionTransport.js`, with `directSessionAuth.js` and
+`directActionApproval.js`. Initialization, POST responses to elicitation, GET
+streams, DELETE, and tool calls authenticate against the broker grant. Sessions
+bind the verified user, authenticated OAuth client ID, and a hash of the exact
+access grant. Raw Firebase bearers and unconsented read grants are denied.
+Firebase refresh credentials are checked freshly instead of accepting the read
+identity cache. Current identity is checked again before application reads and
+commits. Client/grant metadata is read from the authenticated grant store, never
+tool arguments; existing OAuth responses and scope grants are unchanged.
+
+Session state is in memory, expires within ten minutes (or sooner with the
+access grant), and has global/per-user capacity limits. Approval expires within
+two minutes and is consumed once immediately before the commit attempt. It is
+bound to the exact preview and connection; it is not returned as a reusable
+model-visible token or stored as ongoing permission. Disconnecting an approval
+stream invalidates the session. Restart, expiry, or use of a different access
+grant requires new initialization; never automatically resume a pending approval.
+Host/origin checks default to loopback-only hosts and no browser origins.
+
+**Concrete integration decision:** keep this router unmounted in production.
+The synthetic HTTP tests now prove authenticated session isolation and the
+one-action approval contract, including an end-to-end run against emulator
+accounts and real Firestore rules. They do not prove that the deployed ChatGPT
+client supports the required form UI, handles reconnects, or collects approval
+as expected. The protocol trusts the authenticated client to represent the user's
+choice; it is not independent proof of a physical human interaction. Before
+activation, review user-facing consent wording, test a designated isolated live
+account, set explicit allowed hosts/origins, and decide single-instance/affinity
+or distributed session routing. Current sessions fail closed on another
+instance. Repeated fresh credential checks also require latency/rate-limit
+validation. No designated live test account was identified in the MCP docs or
+available read-only connector tools. No deployment, credentials, access settings,
+persistent grant, or production registration is included here.
 
 1. Extract shared server command schemas, complete domain authorization, and
    read capabilities from the browser registry; avoid copying browser writes.
-2. Introduce a distinct direct-mutation OAuth scope for those commands and
-   durable actor/payload-bound confirmations. The new allplays.review scope
-   permits draft requests only and must never imply direct execution authority.
+2. Review execution authorization for each additional command. If a persistent
+   execution capability is introduced, require a distinct explicitly consented
+   scope. The bounded prototype instead requires a separate one-action approval;
+   allplays.review alone never authorizes execution.
 3. Persist command outcomes/idempotency at the domain boundary, including
    partial roster/schedule batches, notifications, invites, and provider effects.
 4. Provide MCP-native previews and confirmations, then run multi-instance,
@@ -197,12 +221,13 @@ This bridge can remain as a fallback while those domains move server-side.
 
 The installed MCP SDK is 1.32.1 and negotiates through protocol 2025-11-25.
 Its server elicitation API checks client capabilities stored during
-initialization. This service currently builds a fresh server/transport for every
+initialization. The production service still builds a fresh server/transport for every
 HTTP request, without a session ID, and closes it with the response. Simply
 calling elicitInput in a later tools/call therefore does not supply a working
-confirmation channel. Verify a compatible client/transport design, with
-actor-bound state across restarts, before connecting it to mutation execution.
-Do not infer support in the connected ChatGPT client from SDK availability.
+confirmation channel. The new, unmounted session router retains capabilities
+within an actor-bound session and requires new initialization after restart.
+Do not infer support in the connected ChatGPT client from SDK availability or
+the synthetic HTTP tests.
 
 OpenAI's [MCP server guidance](https://developers.openai.com/plugins/build/mcp-server)
 states that annotations inform client safety behavior but do not replace
@@ -224,17 +249,17 @@ grant validation.
 
 Validated with isolated fixtures, without production team/game writes:
 
-- 344 focused tests across MCP core, OAuth, review requests, roster discovery,
-  direct-command protocol and state transitions,
-  and the existing
-  private AI action service.
+- 359 focused tests across MCP core, OAuth, review requests, roster discovery,
+  direct-command protocol and state transitions, authenticated HTTP sessions,
+  one-action expiry/consumption, and the existing private AI action service.
 - 11 app review service/component tests, including stale previews, concurrent
   confirmation, and explicit confirmation of only remaining partial-import rows.
-- 21 Firestore emulator tests against the existing rules, including review
+- 22 Firestore emulator tests against the existing rules, including review
   ownership, enforced verified-email policy, real REST roster pagination, and
   denied roster queries after manager revocation, actual direct-favorite REST
   transactions, revocation during approval, lost commit responses, and
-  concurrent confirmations.
+  concurrent confirmations, and broker-bound HTTP approval through an actual
+  REST transaction with isolated emulator accounts.
 - Production app build, production artifact guard, and cold-start budget check.
 - Built-app signed-out browser smoke preserving the review destination.
 - Synthetic browser preview exercising the actual review component's prepare

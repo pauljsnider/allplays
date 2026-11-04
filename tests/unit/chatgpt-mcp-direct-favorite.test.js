@@ -5,6 +5,7 @@ import { ElicitRequestSchema } from '../../services/chatgpt-mcp/node_modules/@mo
 import { createDirectFavoriteCommands } from '../../services/chatgpt-mcp/src/directFavorite.js';
 import { createDirectFavoriteMcpSession } from '../../services/chatgpt-mcp/src/directFavoriteMcp.js';
 import { createDirectFavoriteStore } from '../../services/chatgpt-mcp/src/directFavoriteStore.js';
+import { createOneActionApproval } from '../../services/chatgpt-mcp/src/directActionApproval.js';
 
 const proposalId = '00112233-4455-4677-8899-aabbccddeeff';
 const input = { proposalId, teamId: 'team-1', drillId: 'drill-1', favorite: true };
@@ -23,9 +24,10 @@ function fixture() {
     const store = {
         get: vi.fn(async (path) => structuredClone(records.get(path) || { exists: false, data: null, version: null })),
         create: vi.fn(async (path, data) => { if (records.has(path)) throw new Error('exists'); put(path, data); }),
-        transaction: vi.fn(async (callback) => {
+        transaction: vi.fn(async (callback, { beforeCommit } = {}) => {
             const writes = [];
             const result = await callback({ get: store.get, set: (path, data) => writes.push(() => put(path, data)), delete: (path) => writes.push(() => records.delete(path)) });
+            if (writes.length) await beforeCommit?.();
             writes.forEach((write) => write());
             return result;
         })
@@ -85,7 +87,7 @@ describe('bounded direct favorite command', () => {
         const f = fixture(); await f.commands.prepare(input);
         await expect(f.commands.prepare({ ...input, favorite: false })).rejects.toMatchObject({ code: 'conflict' });
         const transaction = f.store.transaction.getMockImplementation();
-        f.store.transaction.mockImplementation(async (callback) => { await transaction(callback); throw new Error('response lost'); });
+        f.store.transaction.mockImplementation(async (callback, options) => { await transaction(callback, options); throw new Error('response lost'); });
         expect(await f.commands.confirm({ proposalId }, accepted)).toMatchObject({ status: 'completed' });
         expect(f.store.transaction).toHaveBeenCalledTimes(1);
     });
@@ -118,6 +120,18 @@ describe('bounded direct favorite command', () => {
         await expect(store.create('teams/team-1/games/game-1', {})).rejects.toThrow();
         await expect(store.get(`users/other/privateAiPendingActions/direct_${proposalId}`)).rejects.toThrow();
         expect(fetchImpl).not.toHaveBeenCalled();
+    });
+    it('checks approval after credential refresh and never sends a commit if the approval expired meanwhile', async () => {
+        let clock = 1000; let authentications = 0;
+        const authorize = createOneActionApproval({ getActor: async () => ({ uid: 'owner', clientId: 'client', grantKey: 'grant', expiresAt: 10000 }), now: () => clock, lifetimeMs: 1000 });
+        const approval = await authorize({ favorite: true }, accepted);
+        const fetchImpl = vi.fn(async (url) => ({ ok: true, json: async () => url.endsWith(':beginTransaction') ? { transaction: 'synthetic' } : {} }));
+        const store = createDirectFavoriteStore({ uid: 'owner', projectId: 'synthetic', fetchImpl, getIdToken: async () => {
+            if (++authentications === 2) clock = 3000;
+            return 'synthetic-token';
+        } });
+        await expect(store.transaction(async (transaction) => { transaction.set(favoritePath, { addedBy: 'owner' }); }, { beforeCommit: approval.consume })).rejects.toMatchObject({ code: 'confirmation_expired' });
+        expect(fetchImpl.mock.calls.map(([url]) => url.split(':').at(-1))).toEqual(['beginTransaction', 'rollback']);
     });
 });
 

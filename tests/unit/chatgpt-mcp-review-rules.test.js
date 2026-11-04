@@ -12,6 +12,12 @@ import { createDirectFavoriteMcpSession } from '../../services/chatgpt-mcp/src/d
 import { Client } from '../../services/chatgpt-mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
 import { InMemoryTransport } from '../../services/chatgpt-mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js';
 import { ElicitRequestSchema } from '../../services/chatgpt-mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js';
+import { createServer } from 'node:http';
+import express from '../../services/chatgpt-mcp/node_modules/express/index.js';
+import { StreamableHTTPClientTransport } from '../../services/chatgpt-mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/client/streamableHttp.js';
+import { createDirectSessionRouter } from '../../services/chatgpt-mcp/src/directSessionTransport.js';
+import { createDirectSessionAuthenticator } from '../../services/chatgpt-mcp/src/directSessionAuth.js';
+import { createOAuthBroker, s256Challenge } from '../../services/chatgpt-mcp/src/oauth.js';
 const id = 'mcp_00112233-4455-4677-8899-aabbccddeeff';
 const userPath = `users/owner/privateAiPendingActions/${id}`;
 const teamPath = `teams/team-1/privateAiPendingActions/${id}`;
@@ -133,6 +139,47 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
         const unverified = createDirectFavoriteCommands(await favoriteDependencies('owner', false));
         await expect(unverified.prepare({ proposalId: '00112233-4455-4677-8899-aabbccddeeaa', teamId: 'team-1', drillId: 'drill-1', favorite: false })).rejects.toThrow();
     });
+    it('connects broker-bound HTTP approvals to real Firestore transactions using isolated emulator accounts', async () => {
+        const dependencies = await favoriteDependencies();
+        const oauth = createOAuthBroker();
+        const issue = async (uid) => {
+            const redirectUri = 'https://chatgpt.com/connector/oauth/synthetic-emulator';
+            const clientId = oauth.registerClient({ redirect_uris: [redirectUri] }).client_id;
+            const verifier = 'synthetic-verifier-with-more-than-forty-three-characters';
+            const code = await oauth.approveAuthorization({ clientId, redirectUri, codeChallenge: s256Challenge(verifier), firebaseRefreshToken: uid, scope: 'allplays.review', reviewApproved: true });
+            return (await oauth.exchange({ grant_type: 'authorization_code', code, code_verifier: verifier })).access_token;
+        };
+        const authenticate = createDirectSessionAuthenticator({ oauth, resolveIdentity: async (authorization) => {
+            const uid = authorization.slice(7);
+            return { uid, email: `${uid}@example.test`, via: 'refresh-token', idToken: createMockUserToken({ sub: uid, email: `${uid}@example.test`, email_verified: true }, 'demo-allplays-mcp-review') };
+        } });
+        const service = createDirectSessionRouter({ authenticate, createDependencies: (actor, current) => ({
+            ...dependencies, uid: actor.uid,
+            store: createDirectFavoriteStore({ projectId: 'demo-allplays-mcp-review', uid: actor.uid, getIdToken: async () => (await current()).idToken, fetchImpl: localFetch }),
+            getContext: async () => { await current(); return dependencies.getContext(); }
+        }) });
+        const app = express(); app.use('/direct', service.router);
+        const http = createServer(app); await new Promise((resolve) => http.listen(0, '127.0.0.1', resolve));
+        const url = `http://127.0.0.1:${http.address().port}/direct`;
+        const bearer = await issue('owner');
+        const client = new Client({ name: 'isolated-emulator-client', version: '1' }, { capabilities: { elicitation: { form: {} } } });
+        client.onerror = () => {};
+        client.setRequestHandler(ElicitRequestSchema, async () => ({ action: 'accept', content: { approve: true } }));
+        const transport = new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${bearer}` } } });
+        try {
+            await client.connect(transport);
+            const outsider = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${await issue('other')}`, 'Mcp-Session-Id': transport.sessionId, 'Content-Type': 'application/json' }, body: '{}' });
+            expect(outsider.status).toBe(403);
+            const proposalId = id.slice(4);
+            expect((await client.callTool({ name: 'prepare_team_drill_favorite', arguments: { proposalId, teamId: 'team-1', drillId: 'drill-1', favorite: true } })).isError).not.toBe(true);
+            const result = await client.callTool({ name: 'confirm_team_drill_favorite', arguments: { proposalId } });
+            expect(result.structuredContent?.status, JSON.stringify(result.content)).toBe('completed');
+            expect((await getDoc(doc(userDb('owner'), 'teams/team-1/drillFavorites/drill-1'))).data().addedBy).toBe('owner');
+        } finally {
+            await client.close(); await service.close(); http.closeAllConnections();
+            await new Promise((resolve) => http.close(resolve));
+        }
+    }, 15000);
     it('reconciles a lost successful REST commit and fails closed on concurrent transaction conflicts', async () => {
         const dependencies = await favoriteDependencies();
         const proposalId = id.slice(4);

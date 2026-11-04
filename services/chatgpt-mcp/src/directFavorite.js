@@ -134,7 +134,10 @@ export function createDirectFavoriteCommands({ uid, store, getContext, now = Dat
                     const completed = { ...current.data, status: 'completed', completedAt: new Date(now()).toISOString(), approvalMethod: 'mcp-form-elicitation', approvedBy: uid };
                     transaction.set(pathFor(proposalId), completed);
                     return result(proposalId, completed);
-                });
+                }, { beforeCommit: async () => {
+                    await approval.consume?.();
+                    if (Date.parse(before.data.expiresAt) <= now()) throw new DomainError('confirmation_expired', 'The proposal expired before execution.');
+                } });
             } catch (error) {
                 // A lost commit response is reconciled from the atomic receipt.
                 // Never retry a business mutation automatically.

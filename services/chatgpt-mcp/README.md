@@ -11,7 +11,8 @@ not direct in-chat mutation tools. See [write workflows](WRITE_WORKFLOWS.md) for
 the catalog, retry contract, limitations, and rollout order.
 
 An isolated direct favorite-command prototype exercises prepare, explicit MCP
-form approval, and transactional execution with synthetic data. It is not
+form approval, and transactional execution through authenticated HTTP sessions
+with synthetic data and emulator accounts. It is not
 registered in the production server and grants no ongoing write capability.
 See the write-workflow document for its tests and required integration decision.
 
