@@ -1,5 +1,8 @@
 # Isolated producer, trigger and recovery composition
 
+See [SDK_IDENTITY_INTEGRATION_REVIEW.md](SDK_IDENTITY_INTEGRATION_REVIEW.md) for
+the subsequent fresh-actor deadline guard and unmounted SDK identity adapters.
+
 This checkpoint connects the actual MCP command writer to the private ordering
 and delivery modules in isolated tests. It does not mount a production route,
 deploy a worker, migrate the live legacy consumer, change grants or write live

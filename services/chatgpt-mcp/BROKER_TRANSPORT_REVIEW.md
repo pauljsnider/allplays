@@ -1,5 +1,10 @@
 # Isolated broker/backend transport and rollout contract
 
+Later checkpoints: [recovery composition](RECOVERY_COMPOSITION_REVIEW.md) wires
+the isolated producer/trigger/recovery chain; [SDK identity integration](SDK_IDENTITY_INTEGRATION_REVIEW.md)
+adds concrete unmounted Firebase/Google verifier adapters. Historical limitations
+below are superseded only where those documents explicitly describe implementation.
+
 This checkpoint is an executable protocol model, not an activated backend or a
 finished remote create/update workflow. No production entry point imports these
 modules. Tests create ephemeral signing keys in memory and use synthetic user
