@@ -35,11 +35,11 @@ providers or MCP status reads. See [write workflows](WRITE_WORKFLOWS.md) for the
 exact remaining integration work and [review slices](REVIEW_SLICES.md) for the
 proposed dependency stack. No new PRs or handoff were created for that plan.
 
-The latest [family RSVP note checkpoint](FAMILY_RSVP_NOTES_REVIEW.md) extends
-single/selected-child RSVPs with explicitly approved staff-only note creation,
-replacement and clearing. Coverage remains 19 of 46 workflow names partially
-direct. Earlier checkpoints cover team setup, incentives, practice, roster and
-schedule work; full parity and production activation remain open.
+The latest [draft block editing checkpoint](PRACTICE_BLOCK_CONTENT_REVIEW.md)
+adds explicitly approved replacement/removal of selected practice blocks while
+preserving recorded notes and unrelated state. Coverage remains 19 of 46
+workflow names partially direct. Earlier checkpoints cover RSVP notes, team
+setup, incentives, roster and schedule work; full parity and activation remain open.
 
 Spec: `/spec/chatgpt-app-integration/` · Plan: `AllPlays_ChatGPT_App_Integration_Plan.docx`
 

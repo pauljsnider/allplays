@@ -83,8 +83,10 @@ competing notes, no partial writes and lost-response reconciliation.
 
 Independent review of this extension, live MCP/native clients, live identity and
 credential handling, actual production contention, mounted host/session routing
-and existing notification rollout gates remain open. No new write domain name
-is counted, and full parity is not claimed. Medical/profile edits, team-visible
+and existing notification rollout gates remain open. Pending note text is not
+automatically cleaned after expiry; retention/cleanup review remains an explicit
+privacy gate. No new write domain name is counted, and full parity is not claimed.
+Medical/profile edits, team-visible
 notes, base-family reconciliation and notification-producing workflows remain
 outside this batch.
 
