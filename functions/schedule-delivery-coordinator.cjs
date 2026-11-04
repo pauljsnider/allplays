@@ -4,6 +4,7 @@
 // approval/commit authority; client-writable MCP receipts are never evidence.
 const { createHash } = require('node:crypto');
 const { createNotificationAttemptJournal, normalizeNotificationAttempt, NotificationJournalError } = require('./notification-attempt-journal.cjs');
+const { isBrokerClientId } = require('./schedule-delivery-identity.cjs');
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
@@ -21,7 +22,7 @@ function createScheduleDeliveryCoordinator({ store, authenticate, verifyApproval
     const safely = async (callback) => { try { return await callback(); } catch { fail(); } };
     const actorFor = async (credential) => {
         const actor = await safely(() => authenticate(credential));
-        if (!actor || !ID.test(actor.uid || '') || !ID.test(actor.clientId || '') || !HASH.test(actor.grantKey || '')
+        if (!actor || !ID.test(actor.uid || '') || !isBrokerClientId(actor.clientId) || !HASH.test(actor.grantKey || '')
             || actor.reviewRequests !== true || !Number.isSafeInteger(actor.expiresAt) || actor.expiresAt <= now()) fail();
         return actor;
     };

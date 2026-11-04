@@ -91,11 +91,19 @@ after each journal layer:
   shared fixture, and expanded unit/emulator tests at
   `cae0a9637909f764ace760ab6ac6ffd0af43e9d9`. Depends on I1.
 - I3: durable actor-bound evidence, authenticated status/rate limits, canonical
-  audience interfaces and integration tests. Depends on I2.
+  audience interfaces and integration tests at
+  `bed4ababb5f545d3b3e891002b2dd7baeb3dc99d`. Depends on I2.
+- J1: fail-closed exported composition paths and 16 regressions at
+  `030db46d7b942e12c9677f3108477ca0f1ab3498`. Applies to the full bed4abab
+  integration tree, including the still-unsplit B–H domains; it does not apply
+  to the small journal-only stack.
+- J2: optional local actual-broker/form/credentialed-write evidence adapter,
+  broker client-ID compatibility and adversarial integration tests. Depends on J1.
 
 Each artifact has a SHA-256 digest and exact source commits in `manifest.json`.
 App tests and emulator suites still need to run on eventual branch trees;
-the script's Node checks are explicitly narrower. It verifies that neither
+the script's Node/MCP unit checks are explicitly narrower than emulator, app
+and production integration validation. It verifies that neither
 `functions/index.js` nor `firestore.rules` changes in these slices. The earlier
 B–H slices remain a dependency-aware assembly plan, not materialized branches.
 The coordinator/adapter layer is still larger than the preferred review target;
@@ -107,5 +115,7 @@ Run from the repository root with a fresh output directory:
 node services/chatgpt-mcp/scripts/prepare-review-slices.mjs \
   ed4d65e77d5417fd42239139c29b2684912be3a9 \
   30c7453082f175dbc0d69f833d6b63c9d24a394e \
-  cae0a9637909f764ace760ab6ac6ffd0af43e9d9 HEAD /tmp/allplays-review-slices
+  cae0a9637909f764ace760ab6ac6ffd0af43e9d9 \
+  bed4ababb5f545d3b3e891002b2dd7baeb3dc99d \
+  030db46d7b942e12c9677f3108477ca0f1ab3498 HEAD /tmp/allplays-review-slices
 ```

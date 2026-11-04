@@ -14,7 +14,7 @@ const validActor = (actor, now) => typeof actor?.uid === 'string' && typeof acto
 // Opt-in composition module only: server.js never mounts this router. Sessions
 // are bounded, in memory, and never represent a persistent execution grant.
 export function createDirectSessionRouter({
-    authenticate, createDependencies, now = Date.now, sessionLifetimeMs = 600000,
+    authenticate, createDependencies, createExecutionEvidence, now = Date.now, sessionLifetimeMs = 600000,
     approvalLifetimeMs = 120000, maxSessions = 100, maxSessionsPerActor = 5,
     allowedHosts = ['localhost', '127.0.0.1'], allowedOrigins = []
 }) {
@@ -63,9 +63,11 @@ export function createDirectSessionRouter({
                     }
                     return current;
                 };
+                const executionEvidence = createExecutionEvidence?.({ getActor: getCurrentActor, sessionId: session.id });
                 session.server = createDirectFavoriteMcpSession({
                     ...createDependencies(actor, getCurrentActor),
-                    authorizeAction: createOneActionApproval({ getActor: getCurrentActor, now, lifetimeMs: approvalLifetimeMs })
+                    ...(executionEvidence ? { executionEvidence } : {}),
+                    authorizeAction: createOneActionApproval({ getActor: getCurrentActor, now, lifetimeMs: approvalLifetimeMs, captureForm: executionEvidence?.captureForm })
                 });
                 session.transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => session.id });
                 const currentSession = session;

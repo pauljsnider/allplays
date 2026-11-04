@@ -250,3 +250,8 @@ The unmounted [delivery coordinator and provider interfaces](DELIVERY_INTEGRATIO
 add exact event/approval binding, pinned inbox/FCM requests and bounded status
 reconciliation. Durable evidence, status routing and audience interfaces now have isolated
 implementations; live broker/writer/client integration remains unfinished; this does not activate direct schedule notifications.
+
+The [broker boundary review](BROKER_EVIDENCE_REVIEW.md) describes fail-closed
+composition hardening and the actual isolated broker/form/credentialed-write
+adapter. Feature expansion is paused; production transport and single-consumer
+activation remain open security/integration work.

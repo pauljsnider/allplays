@@ -29,6 +29,7 @@ export function createDirectSessionAuthenticator({ oauth, resolveIdentity, now =
         return {
             uid: identity.uid, email: identity.email, idToken: identity.idToken,
             clientId: grant.clientId, expiresAt: grant.expiresAt,
+            reviewRequests: true,
             grantKey: createHash('sha256').update(token).digest('hex')
         };
     };

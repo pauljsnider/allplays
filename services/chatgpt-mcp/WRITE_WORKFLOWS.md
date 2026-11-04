@@ -509,8 +509,9 @@ verified approval/commit claims against an exact event version and digest,
 reserves a private binding, and exposes authenticated bounded status functions.
 A durable evidence authority now stores broker-verified approval, consumes it
 once and records independently verified commit observations. Its verifier
-callbacks remain isolated test adapters; the MCP transport and Firestore writer
-are **not** connected to this authority yet.
+callbacks are connected to the actual broker/session/form and credentialed
+writer by an optional local adapter. Production transport is unimplemented; see
+[the broker boundary review](BROKER_EVIDENCE_REVIEW.md).
 `schedule-delivery-providers.cjs` pins complete versioned inbox/FCM requests,
 reconciles deterministic inbox writes and leaves unknown push outcomes uncertain.
 An unmounted authenticated HTTP status handler now checks broker identity,
@@ -519,7 +520,7 @@ audience resolver and Firestore/Auth loader check current preferences, roles
 and endpoints. No real provider client or status endpoint is configured.
 
 See [delivery interface contracts and activation prerequisites](DELIVERY_INTEGRATION.md).
-Remaining work includes real broker/form/commit verifier integration, canonical
+Remaining work includes the reviewed production broker-to-backend channel, canonical
 member/role adapters, status route and App Check client integration, provider/native review,
 and replacing the selected legacy trigger path without double delivery. No new
 client rule, MCP Admin credential, persistent grant, production registration or
@@ -533,19 +534,15 @@ integration draft. The stack itself has not been published or handed off.
 
 Validated with isolated fixtures, without production team/game writes:
 
-- 540 focused tests across MCP core, OAuth, review requests, roster discovery,
-  direct-command protocol and state transitions, authenticated HTTP sessions,
-  one-action expiry/consumption, configuration clone/rename/discovery, single-player
-  roster create/update, atomic roster batches and safe receipts, draft practice creation/append,
-  discovery and actual notification-handler suppression, offset-normalized schedule
-  review requests and notification semantics, direct schedule saves with distinct
-  notification acknowledgment, bounded manager RSVP and cutoff parity, and the
-  existing private AI action service.
-- 289 app schedule/review tests, including web/native reminder preservation,
+- Latest boundary stage: 350 MCP unit/protocol tests across 14 files, including
+  13 opaque evidence adapter tests. The separate hardening commit passes 337
+  tests in a clean archive; all 16 new hardening regressions fail on the prior
+  source. No new action domains were added during this security review stage.
+- Earlier domain baseline: 289 app schedule/review tests, including web/native reminder preservation,
   explicit reminder settings, stale previews, concurrent confirmation and explicit
   confirmation of only remaining partial-import rows. The new omission regressions
   failed on both web/native before the fix and pass after it.
-- 66 Firestore emulator tests against the existing rules, including review
+- 72 Firestore emulator tests against the existing rules, including review
   ownership, enforced verified-email policy, real REST roster pagination, and
   denied roster queries after manager revocation, actual direct-favorite REST
   transactions, revocation during approval, lost commit responses, and
@@ -567,8 +564,10 @@ Validated with isolated fixtures, without production team/game writes:
   rejection and cutoff checks immediately before commit; server-only notification
   journal privacy, independent-worker leases, frozen plans, restart reconciliation
   and actor/recipient revocation; real event updateTime binding, concurrent
-  delivery, private approval/provider records and recipient-only inbox reads.
-- 102 Node tests for the journal, evidence/status/audience integration, provider adapters and existing Diamond notification sender,
+  delivery, private approval/provider records and recipient-only inbox reads;
+  actual broker/form/user-credentialed commit integration, wrong-user writes,
+  lost responses and forged versions that cannot create backend send authority.
+- 103 Node tests for the journal, evidence/status/audience integration, provider adapters and existing Diamond notification sender,
   covering lost journal responses, uncertain provider outcomes, bounded retries,
   concurrent workers, late evidence, frozen/empty audiences, channel isolation
   provider-error privacy, mismatched/expired approval evidence, pinned provider

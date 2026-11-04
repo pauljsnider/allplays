@@ -2,6 +2,7 @@
 const { randomUUID } = require('node:crypto');
 const { scheduleDeliveryFingerprint: hash } = require('./schedule-delivery-coordinator.cjs');
 const { NotificationJournalError } = require('./notification-attempt-journal.cjs');
+const { isBrokerClientId } = require('./schedule-delivery-identity.cjs');
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -18,7 +19,7 @@ function createScheduleEvidenceAuthority({ store, authenticate, verifyForm, reso
     const safe = async (callback) => { try { return await callback(); } catch { fail(); } };
     const actorFor = async (credential) => {
         const actor = await safe(() => authenticate(credential));
-        if (!actor || !['uid', 'clientId', 'sessionId'].every((key) => ID.test(actor[key] || '')) || !HASH.test(actor.grantKey || '')
+        if (!actor || !['uid', 'sessionId'].every((key) => ID.test(actor[key] || '')) || !isBrokerClientId(actor.clientId) || !HASH.test(actor.grantKey || '')
             || actor.reviewRequests !== true || !Number.isSafeInteger(actor.expiresAt) || actor.expiresAt <= now()) fail();
         return actor;
     };

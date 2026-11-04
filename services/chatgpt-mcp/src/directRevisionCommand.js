@@ -11,7 +11,7 @@ const canonical = (value) => Array.isArray(value) ? value.map(canonical)
         : value;
 export const fingerprint = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 const proposalPath = (uid, id) => `users/${uid}/privateAiPendingActions/direct_${id}`;
-export function createRevisionCommands({ uid, store, getContext, now = Date.now }, domain) {
+export function createRevisionCommands({ uid, store, getContext, executionEvidence, now = Date.now }, domain) {
     if (!ID.test(uid)) throw new Error('A verified actor is required.');
     const pathFor = (id) => {
         if (!UUID.test(id)) throw new DomainError('invalid_argument', 'Use a UUID v4 proposalId.');
@@ -91,6 +91,7 @@ export function createRevisionCommands({ uid, store, getContext, now = Date.now 
             }
             if (typeof approval.consume !== 'function') throw new DomainError('confirmation_unavailable', 'A one-use session-bound approval is required before execution.');
             await authorize(before.data);
+            let evidenceDescriptor; let evidenceAttempt;
             try {
                 return await store.transaction(async (transaction) => {
                     const current = await transaction.get(pathFor(proposalId));
@@ -104,14 +105,16 @@ export function createRevisionCommands({ uid, store, getContext, now = Date.now 
                         throw new DomainError('conflict', 'The target changed after preparation. Review a fresh proposal.');
                     }
                     await domain.apply(transaction, target, current.data, { uid, now });
+                    evidenceDescriptor = domain.deliveryEvidence?.(current.data, proposalId);
                     const completed = { ...current.data, status: 'completed', completedAt: new Date(now()).toISOString(), approvalMethod: 'mcp-form-elicitation', approvedBy: uid };
                     transaction.set(pathFor(proposalId), completed);
                     return result(proposalId, completed);
-                }, { beforeCommit: async () => {
+                }, { beforeCommit: async (plan) => {
                     await approval.consume();
                     if (Date.parse(before.data.expiresAt) <= now()) throw new DomainError('confirmation_expired', 'The proposal expired before execution.');
                     await domain.beforeCommit?.(targetBeforeApproval, before.data);
-                } });
+                    if (executionEvidence && evidenceDescriptor) evidenceAttempt = await executionEvidence.beforeCommit({ descriptor: evidenceDescriptor, formEvidence: approval.formEvidence, plan });
+                }, afterCommit: executionEvidence && domain.deliveryEvidence ? (observation) => executionEvidence.afterCommit(evidenceAttempt, observation) : undefined });
             } catch (error) {
                 // A lost commit response is reconciled from the atomic receipt.
                 // Never retry a business mutation automatically.

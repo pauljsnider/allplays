@@ -25,6 +25,8 @@ const normalizedLabel = (value) => String(value || '').trim().replace(/\s+/g, ' 
 export function createDirectScheduleCommands(dependencies) {
     return createRevisionCommands(dependencies, {
         toolName: TOOL,
+        deliveryEvidence: (record, proposalId) => ({ proposalId, teamId: record.teamId, eventId: record.eventId, mode: record.mode, eventType: record.eventType,
+            intentDigest: record.digest, previewDigest: fingerprint(record.preview), beforeVersion: record.revisions.event }),
         args: ({ mode, teamId, eventId, eventType, changes }) => {
             if (!['create', 'update'].includes(mode) || !ID.test(teamId || '') || !ID.test(eventId || '')) throw new DomainError('invalid_argument', 'Use exact team/event IDs and create or update.');
             return { mode, teamId, eventId, eventType, changes: normalizeScheduleFields(eventType, changes) };

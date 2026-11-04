@@ -12,10 +12,11 @@ No credentials, access grants or production notification handlers change.
 `resolveRecipients`. None has a permissive default. The first three are trust
 boundaries, not JSON decoding hooks. They must verify broker-issued credentials
 and independently authenticated evidence. A durable evidence authority now
-implements issuance, one-use consumption and commit recording, but **the current
-MCP transport and Firestore writer are not yet connected to it**. The tests use
-synthetic broker/form and commit-observation verifiers; they do not validate a
-deployed signing, transport or attestation scheme.
+implements issuance, one-use consumption and commit recording. The optional
+local adapter now connects the actual broker/session/form and credentialed
+writer to it in isolated tests. Production composition is still unconfigured.
+See [the broker boundary review](BROKER_EVIDENCE_REVIEW.md) for the trust
+contract, verified coverage and proposed production architecture.
 
 `bind(credential, { approvalHandle, commitHandle })` accepts opaque references
 for those authorities. It never accepts a client completion record as proof.
@@ -130,9 +131,9 @@ do not establish the production network trust boundary.
 
 ## Activation prerequisites
 
-1. Connect and review the durable authority's real broker-form, command and
-   Firestore-writer verifiers and authenticated backend connection without
-   broadening MCP application-data privileges.
+1. Review and implement the production broker-to-backend channel and trusted
+   command execution boundary. The tested local adapter must not be deployed
+   by granting the MCP application-data Admin access.
 2. Supply complete canonical member/role and manager authorization adapters to
    the implemented audience resolver; test revocation across the real path.
 3. Route the selected approved schedule effect through exactly one consumer.

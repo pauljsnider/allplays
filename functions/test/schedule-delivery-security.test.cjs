@@ -144,6 +144,12 @@ function routeFixture(overrides = {}) {
 }
 
 describe('unmounted authenticated delivery status route', () => {
+    it('accepts the real broker callback-bound client ID shape without accepting path or control characters', async () => {
+        for (const clientId of [`allplays-chatgpt-connector.${'x'.repeat(43)}`, 'client/other', 'client\nother']) {
+            const f = routeFixture({ authenticate: async () => ({ uid: 'owner', clientId, grantKey: hash('grant'), reviewRequests: true, expiresAt: 200000 }) });
+            const response = await f.run(); assert.equal(response.code, clientId.includes('.') ? 200 : 401);
+        }
+    });
     it('projects bounded partial delivery and consumes App Check for reconciliation', async () => {
         const f = routeFixture(); const response = await f.run(); assert.equal(response.code, 200);
         assert.equal(response.body.accepted, 1); assert.equal(response.body.uncertain, 1); assert.ok(!JSON.stringify(response.body).includes('must-not-return'));

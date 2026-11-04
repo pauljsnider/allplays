@@ -25,13 +25,14 @@ export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, 
         }
         return response.json();
     }
-    async function get(path, transaction) {
+    async function get(path, transaction, observations) {
         assertPath(path);
         // batchGet represents missing documents explicitly and records their
         // absence in a transaction's read set, avoiding an unchecked create race.
         const body = await request(':batchGet', { method: 'POST', body: JSON.stringify({ documents: [name(path)], ...(transaction ? { transaction } : {}) }) });
         if (!Array.isArray(body) || body.length !== 1) throw new DomainError('unavailable', 'Invalid document response.');
         const row = body[0];
+        observations?.set(path, structuredClone(row));
         if (row.missing === name(path)) return { exists: false, data: null, version: null };
         if (row.found?.name !== name(path) || !row.found.updateTime) throw new DomainError('unavailable', 'Document revision unavailable.');
         return { exists: true, data: decodeFields(row.found.fields), version: row.found.updateTime };
@@ -70,15 +71,16 @@ export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, 
             if (companions.length > 1 || companions.some((entry) => !policy.prepare?.(entry.path))) throw new DomainError('permission_denied', 'The proposal companion is outside this domain.');
             await request(':commit', { method: 'POST', body: JSON.stringify({ writes: [{ path, data }, ...companions].map((entry) => ({ ...write(entry.path, entry.data), currentDocument: { exists: false } })) }) });
         },
-        async transaction(callback, { beforeCommit } = {}) {
+        async transaction(callback, { beforeCommit, afterCommit } = {}) {
             const started = await request(':beginTransaction', { method: 'POST', body: JSON.stringify({ options: { readWrite: {} } }) });
             if (!started.transaction) throw new DomainError('unavailable', 'Transaction unavailable.');
             const transaction = started.transaction;
             const writes = [];
+            const observations = new Map();
             let committed = false;
             try {
                 const result = await callback({
-                    get: (path) => get(path, transaction),
+                    get: (path) => get(path, transaction, observations),
                     list: (path, queryArgs) => list(path, transaction, queryArgs),
                     set: (path, data) => writes.push(write(path, data)),
                     patch: (path, data) => {
@@ -97,8 +99,10 @@ export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, 
                     }
                 });
                 if (writes.length) {
-                    await request(':commit', { method: 'POST', body: JSON.stringify({ writes, transaction }) }, beforeCommit);
+                    const plan = { writes: structuredClone(writes), reads: Object.fromEntries(observations) };
+                    const response = await request(':commit', { method: 'POST', body: JSON.stringify({ writes, transaction }) }, () => beforeCommit?.(structuredClone(plan)));
                     committed = true;
+                    await afterCommit?.({ plan: structuredClone(plan), response: structuredClone(response) });
                 }
                 return result;
             } finally {

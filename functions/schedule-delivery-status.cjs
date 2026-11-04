@@ -1,5 +1,6 @@
 "use strict";
 const { scheduleDeliveryFingerprint: hash } = require('./schedule-delivery-coordinator.cjs');
+const { isBrokerClientId } = require('./schedule-delivery-identity.cjs');
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const HASH = /^[a-f0-9]{64}$/;
 
@@ -25,7 +26,7 @@ function createScheduleDeliveryStatusHandler({ authenticate, verifyAppCheck, tak
             const authorization = req.headers.authorization;
             if (typeof authorization !== 'string' || !/^Bearer [A-Za-z0-9._~-]{1,8192}$/.test(authorization)) return reject(401);
             const actor = await authenticate(authorization);
-            if (!actor || !ID.test(actor.uid || '') || !ID.test(actor.clientId || '') || !HASH.test(actor.grantKey || '')
+            if (!actor || !ID.test(actor.uid || '') || !isBrokerClientId(actor.clientId) || !HASH.test(actor.grantKey || '')
                 || actor.reviewRequests !== true || !Number.isSafeInteger(actor.expiresAt) || actor.expiresAt <= now()) return reject(401);
             const token = req.headers['x-firebase-appcheck'];
             if (typeof token !== 'string' || !token || token.length > 8192) return reject(403);
