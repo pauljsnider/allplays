@@ -139,6 +139,48 @@ session does not authorize deployment, merge, or real team/game writes.
 
 ## Remaining work for direct MCP mutations
 
+An isolated, unregistered direct-command prototype now exists for one bounded
+workflow: adding/removing a managed team's drill favorite. It is exercised only
+with synthetic clients and data; the production server does not import it or
+advertise its tools. It does not grant persistent access or widen an OAuth scope.
+The 46 normal write-request tools still require app confirmation.
+
+The prototype modules are `directFavorite.js` (command),
+`directFavoriteStore.js` (user-credentialed REST transactions), and
+`directFavoriteMcp.js` (transport-bound MCP session factory). Its three tools are
+prepare_team_drill_favorite, confirm_team_drill_favorite, and
+get_team_drill_favorite_action. Preparation records a five-minute proposal with
+exact team/drill IDs, desired boolean, labels, and current document revisions.
+Confirmation requests a default-false approval through negotiated MCP form
+elicitation; an arbitrary confirmed argument is rejected. Decline, cancellation,
+missing client support, changed actor, expired/edited proposal, changed targets,
+or revoked manager access prevent execution. The command checks current access
+again after approval. One Firestore transaction reads target revisions and
+atomically applies the reversible favorite change and completion receipt.
+Repeated calls return that receipt, and a lost commit response is reconciled
+without automatically replaying the write. An unverified outcome is reported
+as unknown and must retain the same proposal ID. Concurrent transactions can
+both abort; a known conflict requires a new explicit approval of the still-valid
+proposal instead of an automatic execution retry.
+
+The prototype matches the existing favorite document contract (`addedBy`,
+`addedAt`) and immutable add/remove Firestore rules. It does not update the drill
+itself, invite anyone, send communications, change financial records, or expose
+arbitrary document writes. RSVP was deferred because its actual write path also
+coordinates private notes, legacy records, and availability cutoffs.
+
+**Concrete integration decision:** keep this factory unregistered until an
+authenticated transport binds initialization, every tool request, and each
+elicitation response to the same actor and OAuth client/grant, including expiry,
+revocation, and reconnect handling. Establish an explicit one-action execution
+authorization contract; existing allplays.review grants must not silently gain
+execution authority. Verify the real ChatGPT client's approval behavior using
+an isolated account. An in-memory protocol test proves the command/elicitation
+exchange, not HTTP identity binding or production client compatibility. The
+current stateless endpoint cannot safely be treated as already satisfying those
+requirements. No deployment, credentials, access settings, persistent grant, or
+production registration is included in this prototype.
+
 1. Extract shared server command schemas, complete domain authorization, and
    read capabilities from the browser registry; avoid copying browser writes.
 2. Introduce a distinct direct-mutation OAuth scope for those commands and
@@ -182,14 +224,17 @@ grant validation.
 
 Validated with isolated fixtures, without production team/game writes:
 
-- 330 focused tests across MCP core, OAuth, review requests, roster discovery,
+- 344 focused tests across MCP core, OAuth, review requests, roster discovery,
+  direct-command protocol and state transitions,
   and the existing
   private AI action service.
 - 11 app review service/component tests, including stale previews, concurrent
   confirmation, and explicit confirmation of only remaining partial-import rows.
-- 18 Firestore emulator tests against the existing rules, including review
+- 21 Firestore emulator tests against the existing rules, including review
   ownership, enforced verified-email policy, real REST roster pagination, and
-  denied roster queries after manager revocation.
+  denied roster queries after manager revocation, actual direct-favorite REST
+  transactions, revocation during approval, lost commit responses, and
+  concurrent confirmations.
 - Production app build, production artifact guard, and cold-start budget check.
 - Built-app signed-out browser smoke preserving the review destination.
 - Synthetic browser preview exercising the actual review component's prepare

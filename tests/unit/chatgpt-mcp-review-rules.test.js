@@ -6,6 +6,12 @@ import { compactFirestoreRules } from '../../scripts/compact-firestore-rules.mjs
 import { createMockUserToken } from '@firebase/util';
 import { createUserDb } from '../../services/chatgpt-mcp/src/firestoreRest.js';
 import { getManagedTeamRoster } from '../../services/chatgpt-mcp/src/rosterDiscovery.js';
+import { createDirectFavoriteCommands } from '../../services/chatgpt-mcp/src/directFavorite.js';
+import { createDirectFavoriteStore } from '../../services/chatgpt-mcp/src/directFavoriteStore.js';
+import { createDirectFavoriteMcpSession } from '../../services/chatgpt-mcp/src/directFavoriteMcp.js';
+import { Client } from '../../services/chatgpt-mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
+import { InMemoryTransport } from '../../services/chatgpt-mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js';
+import { ElicitRequestSchema } from '../../services/chatgpt-mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js';
 const id = 'mcp_00112233-4455-4677-8899-aabbccddeeff';
 const userPath = `users/owner/privateAiPendingActions/${id}`;
 const teamPath = `teams/team-1/privateAiPendingActions/${id}`;
@@ -25,6 +31,24 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
         });
     });
     const userDb = (uid, verified = true) => env.authenticatedContext(uid, { email: `${uid}@example.test`, email_verified: verified }).firestore();
+    const localFetch = (url, options) => {
+        const host = process.env.FIRESTORE_EMULATOR_HOST;
+        if (!/^(127\.0\.0\.1|localhost):\d+$/.test(host) || !url.startsWith('https://firestore.googleapis.com/v1/')) throw new Error('Only a local emulator request is allowed.');
+        return fetch(url.replace('https://firestore.googleapis.com', `http://${host}`), options);
+    };
+    async function favoriteDependencies(uid = 'owner', verified = true) {
+        await env.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), 'drillLibrary/drill-1'), { source: 'community', title: 'Synthetic Passing' });
+        });
+        return {
+            uid,
+            store: createDirectFavoriteStore({ projectId: 'demo-allplays-mcp-review', uid, idToken: createMockUserToken({ sub: uid, email: `${uid}@example.test`, email_verified: verified }, 'demo-allplays-mcp-review'), fetchImpl: localFetch }),
+            getContext: async () => {
+                const team = (await getDoc(doc(userDb(uid, verified), 'teams/team-1'))).data();
+                return { uid, teams: new Map([['team-1', { roles: new Set(team?.ownerId === uid ? ['owner'] : []) }]]) };
+            }
+        };
+    }
     it('accepts an atomic manager request while other accounts and unverified users cannot write it', async () => {
         const db = userDb('owner');
         const batch = writeBatch(db);
@@ -71,4 +95,87 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
         await env.withSecurityRulesDisabled(async (context) => updateDoc(doc(context.firestore(), 'teams/team-1'), { ownerId: 'replacement' }));
         await expect(getManagedTeamRoster(db, context, { teamId: 'team-1' })).rejects.toMatchObject({ code: 'permission_denied' });
     });
+    it('executes one explicitly approved MCP favorite through real REST transactions and rules', async () => {
+        const dependencies = await favoriteDependencies();
+        const server = createDirectFavoriteMcpSession(dependencies);
+        const client = new Client({ name: 'synthetic-client', version: '1' }, { capabilities: { elicitation: { form: {} } } });
+        let approvals = 0;
+        client.setRequestHandler(ElicitRequestSchema, async () => { approvals += 1; return { action: 'accept', content: { approve: true } }; });
+        const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+        await server.connect(serverTransport); await client.connect(clientTransport);
+        const proposalId = id.slice(4);
+        try {
+            const prepared = await client.callTool({ name: 'prepare_team_drill_favorite', arguments: { proposalId, teamId: 'team-1', drillId: 'drill-1', favorite: true } });
+            expect(prepared.isError, JSON.stringify(prepared.content)).not.toBe(true);
+            expect((await getDoc(doc(userDb('owner'), 'teams/team-1/drillFavorites/drill-1'))).exists()).toBe(false);
+            const completed = await client.callTool({ name: 'confirm_team_drill_favorite', arguments: { proposalId } });
+            expect(completed.isError, JSON.stringify(completed.content)).not.toBe(true);
+            expect(completed.structuredContent.status).toBe('completed');
+            expect((await getDoc(doc(userDb('owner'), 'teams/team-1/drillFavorites/drill-1'))).data().addedBy).toBe('owner');
+            expect((await getDoc(doc(userDb('owner'), `users/owner/privateAiPendingActions/direct_${proposalId}`))).data().status).toBe('completed');
+            const restarted = createDirectFavoriteCommands(dependencies);
+            expect(await restarted.confirm({ proposalId }, () => { throw new Error('Do not replay approval'); })).toMatchObject({ status: 'completed' });
+            expect(approvals).toBe(1);
+        } finally { await client.close(); await server.close(); }
+    }, 15000);
+    it('rejects a manager revoked during approval and unverified preparation', async () => {
+        const proposalId = id.slice(4);
+        const commands = createDirectFavoriteCommands(await favoriteDependencies());
+        await commands.prepare({ proposalId, teamId: 'team-1', drillId: 'drill-1', favorite: true });
+        await expect(commands.confirm({ proposalId }, async () => {
+            await env.withSecurityRulesDisabled(async (context) => updateDoc(doc(context.firestore(), 'teams/team-1'), { ownerId: 'replacement' }));
+            return { action: 'accept', content: { approve: true } };
+        })).rejects.toThrow();
+        await env.withSecurityRulesDisabled(async (context) => {
+            expect((await getDoc(doc(context.firestore(), 'teams/team-1/drillFavorites/drill-1'))).exists()).toBe(false);
+            await updateDoc(doc(context.firestore(), 'teams/team-1'), { ownerId: 'owner' });
+        });
+        const unverified = createDirectFavoriteCommands(await favoriteDependencies('owner', false));
+        await expect(unverified.prepare({ proposalId: '00112233-4455-4677-8899-aabbccddeeaa', teamId: 'team-1', drillId: 'drill-1', favorite: false })).rejects.toThrow();
+    });
+    it('reconciles a lost successful REST commit and fails closed on concurrent transaction conflicts', async () => {
+        const dependencies = await favoriteDependencies();
+        const proposalId = id.slice(4);
+        let loseResponse = false;
+        const store = createDirectFavoriteStore({
+            projectId: 'demo-allplays-mcp-review', uid: 'owner',
+            idToken: createMockUserToken({ sub: 'owner', email: 'owner@example.test', email_verified: true }, 'demo-allplays-mcp-review'),
+            fetchImpl: async (url, options) => {
+                const response = await localFetch(url, options);
+                if (loseResponse && url.endsWith(':commit') && JSON.parse(options.body).transaction && response.ok) {
+                    loseResponse = false;
+                    await response.json();
+                    throw new Error('Synthetic lost commit response');
+                }
+                return response;
+            }
+        });
+        const commands = createDirectFavoriteCommands({ ...dependencies, store });
+        await commands.prepare({ proposalId, teamId: 'team-1', drillId: 'drill-1', favorite: true });
+        loseResponse = true;
+        expect(await commands.confirm({ proposalId }, async () => ({ action: 'accept', content: { approve: true } }))).toMatchObject({ status: 'completed' });
+        const removeId = '00112233-4455-4677-8899-aabbccddeeaa';
+        await commands.prepare({ proposalId: removeId, teamId: 'team-1', drillId: 'drill-1', favorite: false });
+        let approvals = 0;
+        let release;
+        const ready = new Promise((resolve) => { release = resolve; });
+        const approve = async () => { if (++approvals === 2) release(); await ready; return { action: 'accept', content: { approve: true } }; };
+        const results = await Promise.allSettled([
+            commands.confirm({ proposalId: removeId }, approve),
+            createDirectFavoriteCommands({ ...dependencies, store }).confirm({ proposalId: removeId }, approve)
+        ]);
+        for (const result of results) {
+            if (result.status === 'fulfilled') expect(result.value.status).toBe('completed');
+            else expect(result.reason.code).toBe('conflict');
+        }
+        // Firestore may abort both contenders. A known conflict is not silently
+        // retried: verify the unchanged state, then obtain a NEW explicit approval.
+        if (!results.some((result) => result.status === 'fulfilled')) {
+            expect((await getDoc(doc(userDb('owner'), 'teams/team-1/drillFavorites/drill-1'))).exists()).toBe(true);
+            expect(await commands.status({ proposalId: removeId })).toMatchObject({ status: 'prepared' });
+            expect(await commands.confirm({ proposalId: removeId }, async () => ({ action: 'accept', content: { approve: true } }))).toMatchObject({ status: 'completed' });
+        }
+        expect((await getDoc(doc(userDb('owner'), 'teams/team-1/drillFavorites/drill-1'))).exists()).toBe(false);
+        expect(await commands.status({ proposalId: removeId })).toMatchObject({ status: 'completed' });
+    }, 25000);
 });

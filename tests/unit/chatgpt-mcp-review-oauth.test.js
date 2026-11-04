@@ -96,6 +96,8 @@ describe('explicit review-only OAuth capability', () => {
             const listText = await listed.text();
             expect(listText).toContain('get_team_roster');
             expect(listText).toContain('nextCursor');
+            expect(listText).not.toContain('prepare_team_drill_favorite');
+            expect(listText).not.toContain('confirm_team_drill_favorite');
             expect(guard).toHaveBeenCalledTimes(2);
             const client = await (await fetch(`${origin}/oauth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redirect_uris: [redirectUri] }) })).json();
             const query = new URLSearchParams({ client_id: client.client_id, redirect_uri: redirectUri, response_type: 'code', code_challenge: s256Challenge(verifier), code_challenge_method: 'S256', scope: 'allplays.read allplays.review' });
