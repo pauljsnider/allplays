@@ -29,7 +29,11 @@ Managed-team and configuration discovery support the prepare → explicit MCP fo
 approval → transaction flow through authenticated HTTP sessions. Tests use
 synthetic data and emulator accounts. The router is unmounted in production and
 grants no ongoing write capability.
-See the write-workflow document for its tests and required integration decision.
+An unmounted server-only notification journal now provides durable attempt and
+reconciliation primitives; it is not connected to deployed triggers, real
+providers or MCP status reads. See [write workflows](WRITE_WORKFLOWS.md) for the
+exact remaining integration work and [review slices](REVIEW_SLICES.md) for the
+proposed dependency stack. No new PRs or handoff were created for that plan.
 
 Spec: `/spec/chatgpt-app-integration/` · Plan: `AllPlays_ChatGPT_App_Integration_Plan.docx`
 

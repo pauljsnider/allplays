@@ -459,6 +459,63 @@ review-scoped grants because their authenticated encryption metadata differs.
 Reconnect those clients as read-only rather than rotating secrets or weakening
 grant validation.
 
+## Unmounted delivery-journal prototype
+
+`functions/notification-attempt-journal.cjs` now implements a server-only
+notification attempt journal and Firestore storage adapter. It is **not imported
+by `functions/index.js`**, has no deployed trigger/callable or real provider
+adapter, and is not consulted by MCP schedule receipts. Those receipts continue
+to report delivery as unverified.
+
+The ordinary notification path currently writes a five-minute dedup claim before
+provider dispatch. A recent claim is neither proof of provider acceptance nor a
+safe basis for retrying an uncertain send. The new journal does not wrap that
+path or interpret its `null` result as delivery evidence.
+
+The new journal stores exact bounded request parameters and a frozen audience
+plan under `teams/{teamId}/notificationSendLog/durable_{hash}`. Existing rules
+deny all client reads and writes there, including team managers. Device endpoints,
+message bodies and provider evidence remain server-private. It accepts only
+internal verified schedule-source requests, never model/client-selected sender
+arguments. The required authorization callback must verify current actor scope,
+source revision and exact endpoint eligibility; real production identity/source
+resolution is still an integration requirement.
+
+Each recipient/channel has an independent lease and durable provider boundary.
+The first audience plan is immutable, including an empty plan: retried discovery
+cannot add newly joined members or rotated endpoints. Live eligibility is checked
+again before dispatch, so a frozen target can still be suppressed after access
+loss. Other channels may succeed while one channel remains uncertain.
+
+| Durable state | Meaning and safe next step |
+| --- | --- |
+| pending / leased | No verified provider call yet. An expired lease can be reacquired after current authorization. |
+| dispatching | A durable marker was written before the external call. Lease expiry becomes uncertain, never an automatic resend. |
+| retryable | A pre-dispatch failure or authoritative final rejection proves this attempt did not accept delivery. Retry uses the same exact parameters/key after a bounded delay, at most three attempts by default. |
+| accepted | A final response for this exact request/attempt confirms provider acceptance. It does not prove delivery to a device. |
+| uncertain | Timeout, malformed response, unreadable dispatch boundary or worker crash prevents verification. Only authoritative evidence for the exact attempt can resolve it; absence, 404 or nonfinal evidence cannot authorize a resend. |
+| suppressed / failed | Current scope/source/endpoint is no longer eligible, or the bounded attempt limit was exhausted. No automatic send. |
+
+Lost journal commit responses are reconciled before advancing. A late final
+provider response can settle the matching uncertain attempt without resending.
+Only bounded evidence fields are retained. Public projections contain opaque
+IDs, attempt/state and acceptance certainty, never endpoint or message content.
+The `reconcile` adapter is optional: providers without an authoritative lookup
+leave uncertain attempts unresolved. No exactly-once device-delivery claim is
+made.
+
+Remaining integration work is concrete: bind an approved schedule transaction
+to its immutable event revision; implement a trusted frozen audience resolver;
+provide inbox/push adapters with pinned serialization versions, persisted exact
+provider parameters and provider-specific evidence validation; expose
+only authorized bounded status via a backend; and replace the selected legacy
+trigger path without double delivery. No new client rule, MCP Admin credential,
+persistent grant, production registration or live provider call is included.
+
+See [the proposed dependent review slices](REVIEW_SLICES.md) for how to review
+this server-only core independently while keeping one producer and the existing
+integration draft. The stack itself has not been published or handed off.
+
 ## Local validation
 
 Validated with isolated fixtures, without production team/game writes:
@@ -475,7 +532,7 @@ Validated with isolated fixtures, without production team/game writes:
   explicit reminder settings, stale previews, concurrent confirmation and explicit
   confirmation of only remaining partial-import rows. The new omission regressions
   failed on both web/native before the fix and pass after it.
-- 57 Firestore emulator tests against the existing rules, including review
+- 61 Firestore emulator tests against the existing rules, including review
   ownership, enforced verified-email policy, real REST roster pagination, and
   denied roster queries after manager revocation, actual direct-favorite REST
   transactions, revocation during approval, lost commit responses, and
@@ -494,7 +551,15 @@ Validated with isolated fixtures, without production team/game writes:
   game/practice saves, field preservation, separate notification approval over
   authenticated HTTP, duplicate schedule races, rejected commits and lost-response
   reconciliation; scoped RSVP records, preserved private notes, base-response
-  rejection and cutoff checks immediately before commit.
+  rejection and cutoff checks immediately before commit; server-only notification
+  journal privacy, independent-worker leases, frozen plans, restart reconciliation
+  and actor/recipient revocation.
+- 42 Node tests for the new journal and the existing Diamond notification sender,
+  covering lost journal responses, uncertain provider outcomes, bounded retries,
+  concurrent workers, late evidence, frozen/empty audiences, channel isolation
+  and provider-error privacy.
+- 145 existing notification tests across category dispatch, load, triggers and
+  media batches.
 - Production app build, production artifact guard, and cold-start budget check.
 - Two local module-mocked browser checks for the schedule editor and practice hub.
 - Built-app signed-out browser smoke preserving the review destination.
