@@ -139,10 +139,11 @@ session does not authorize deployment, merge, or real team/game writes.
 
 ## Remaining work for direct MCP mutations
 
-An isolated, unregistered direct-command prototype supports three bounded
+An isolated, unregistered direct-command prototype supports five bounded
 operations: adding/removing a managed team's drill favorite, creating a stat
 configuration by cloning an existing configuration in the same team, and
-renaming a configuration. It is exercised only with synthetic clients and data;
+renaming a configuration, creating one basic roster player, and updating one
+player’s name/number/position. It is exercised only with synthetic clients and data;
 the production server does not import it or advertise its tools. It does not
 grant persistent access or widen an OAuth scope. The 46 normal write-request
 tools still require app confirmation.
@@ -150,13 +151,13 @@ tools still require app confirmation.
 `directRevisionCommand.js` shares proposal identity, actor checks, five-minute
 expiry, exact-preview/revision comparison, atomic receipts, and uncertain-outcome
 reconciliation. Domain definitions in `directFavorite.js` and
-`directStatConfiguration.js` specify the allowed arguments, targets, preview and
+`directStatConfiguration.js`, plus `directRoster.js`, specify the allowed arguments, targets, preview and
 write. `directCommandStore.js` shares user-credentialed REST transactions, while
 separate adapters allow only the relevant domain paths. The factory in
 `directFavoriteMcp.js` composes the domains and their common confirmation flow;
 its historical filename remains for compatibility.
 
-The complete prototype composition advertises nine tools:
+The complete prototype composition advertises fourteen tools:
 
 | Tools | Bounded behavior |
 | --- | --- |
@@ -165,6 +166,9 @@ The complete prototype composition advertises nine tools:
 | prepare_rename_stat_configuration | Prepare changing only a configuration's name. |
 | confirm_stat_configuration, get_stat_configuration_action | Explicitly approve either configuration operation and check its durable receipt. |
 | list_managed_teams, list_team_stat_configurations | Discover current managed-team IDs/names and paginated configuration IDs/names/base types. |
+| prepare_create_roster_player, prepare_update_roster_player | Prepare one basic player create/update with only name, number and position. |
+| confirm_roster_player, get_roster_player_action | Approve one roster change and read its opaque completion receipt. |
+| get_team_roster | Discover active/inactive roster IDs and public display fields, using the existing manager-only paginated reader. |
 
 Clone preparation displays the exact copied schema, including stat visibility,
 formulas and scoring settings. Unknown schema extensions or oversized previews
@@ -180,6 +184,34 @@ Discovery requires current manager access even though configuration metadata is
 publicly readable under existing rules. It projects only summaries, handles
 duplicate names through exact IDs and pagination, and propagates read failures.
 It is not a frozen snapshot: preparation and confirmation re-read the target.
+
+Roster creation supports name-only adds; number and position are optional.
+Update requires an exact player ID and changes only explicitly supplied fields;
+empty number/position clears that field. It preserves inactive status, legacy
+restricted fields and private profiles. Contacts, invitations, custom fields,
+photos and activate/deactivate are rejected rather than inferred. New player IDs
+are derived from the proposal UUID. Preparation and confirmation query the
+complete active/inactive roster, bounded to 200 players, with projected fields
+and revision checks. Larger rosters fail to the app instead of checking a
+partial page. Matching names, including inactive players and normalized
+whitespace/case matches, require app review. A roster change after preparation
+invalidates the preview. The query runs inside the committing transaction;
+the emulator race test verifies that two separately approved same-name creates
+do not both succeed. A transaction conflict never triggers automatic re-execution.
+
+Roster proposal content is stored only in the team's expiring
+`privateAiPendingActions` collection under existing current-manager rules.
+The user-side envelope contains only actor/team/player IDs, operation, digest,
+expiry and status—no player names, field values or preview. Completion atomically
+writes the player change and opaque user receipt and deletes the team payload.
+The shared engine accepts this domain's validated receipt after proposal expiry
+without needing the deleted content, and rechecks current team access before
+returning the outcome. Pending content becomes unreadable after access loss or
+expiry under the existing rules; no rule change or broader access is included.
+Expired abandoned payloads are not automatically deleted by this prototype;
+storage cleanup remains a rollout consideration, even though the rules deny
+reads. Lost successful commits reconcile from the durable receipt and do not
+create a replacement player.
 
 Confirmation requests a default-false approval through negotiated MCP form
 elicitation; an arbitrary confirmed argument is rejected. Decline, cancellation,
@@ -237,7 +269,7 @@ persistent grant, or production registration is included here.
 
 1. Extend the shared command engine with additional domain schemas, current
    authorization and discovery. Full stat-schema editing, drill discovery, RSVP,
-   practice timelines, roster/schedule batches, attachments and editable previews
+   practice timelines, full roster/schedule batches, attachments and editable previews
    are still absent from the direct prototype; the 46 app-review tools cover the
    canonical writes through existing browser handlers.
 2. Review execution authorization for each additional command. If a persistent
@@ -310,20 +342,24 @@ grant validation.
 
 Validated with isolated fixtures, without production team/game writes:
 
-- 381 focused tests across MCP core, OAuth, review requests, roster discovery,
+- 401 focused tests across MCP core, OAuth, review requests, roster discovery,
   direct-command protocol and state transitions, authenticated HTTP sessions,
-  one-action expiry/consumption, configuration clone/rename/discovery, and the
+  one-action expiry/consumption, configuration clone/rename/discovery, single-player
+  roster create/update and safe receipts, and the
   existing private AI action service.
 - 11 app review service/component tests, including stale previews, concurrent
   confirmation, and explicit confirmation of only remaining partial-import rows.
-- 24 Firestore emulator tests against the existing rules, including review
+- 27 Firestore emulator tests against the existing rules, including review
   ownership, enforced verified-email policy, real REST roster pagination, and
   denied roster queries after manager revocation, actual direct-favorite REST
   transactions, revocation during approval, lost commit responses, and
   concurrent confirmations, and broker-bound HTTP approval through an actual
   REST transaction with isolated emulator accounts, configuration clone/rename
   through authenticated HTTP, projected pagination, field-mask preservation,
-  revision conflicts and lost configuration-creation commit responses.
+  revision conflicts and lost configuration-creation commit responses; roster
+  creation/update over authenticated HTTP, pending-payload access loss/expiry,
+  legacy restricted-field preservation, lost creation responses and concurrent
+  same-name additions.
 - Production app build, production artifact guard, and cold-start budget check.
 - Built-app signed-out browser smoke preserving the review destination.
 - Synthetic browser preview exercising the actual review component's prepare

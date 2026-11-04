@@ -36,15 +36,38 @@ export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, 
         if (row.found?.name !== name(path) || !row.found.updateTime) throw new DomainError('unavailable', 'Document revision unavailable.');
         return { exists: true, data: decodeFields(row.found.fields), version: row.found.updateTime };
     }
+    async function list(path, transaction) {
+        const query = policy.query?.(path);
+        if (!query) throw new DomainError('permission_denied', 'This query is outside the command domain.');
+        const segments = path.split('/');
+        const collectionId = segments.pop();
+        const parent = segments.join('/');
+        const rows = await request(`/${parent}:runQuery`, { method: 'POST', body: JSON.stringify({
+            structuredQuery: { from: [{ collectionId }], select: { fields: query.fields.map((fieldPath) => ({ fieldPath })) },
+                orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }], limit: query.limit },
+            ...(transaction ? { transaction } : {})
+        }) });
+        if (!Array.isArray(rows) || rows.some((row) => !row || row.error || (!row.document && typeof row.readTime !== 'string'))) {
+            throw new DomainError('unavailable', 'The query response could not be verified.');
+        }
+        return rows.filter((row) => row.document).map(({ document }) => {
+            const prefix = `${name(path)}/`;
+            const id = document.name?.startsWith(prefix) ? document.name.slice(prefix.length) : '';
+            if (!/^[A-Za-z0-9_-]{1,128}$/.test(id) || !document.updateTime) throw new DomainError('unavailable', 'A query revision could not be verified.');
+            return { id, exists: true, data: decodeFields(document.fields), version: document.updateTime };
+        });
+    }
     const write = (path, data) => {
         assertPath(path, true);
         return { update: { name: name(path), fields: encodeValue(data).mapValue.fields } };
     };
     return {
         get,
-        async create(path, data) {
+        list,
+        async create(path, data, companions = []) {
             if (!proposal.test(path)) throw new DomainError('permission_denied', 'Only proposals may be prepared.');
-            await request(':commit', { method: 'POST', body: JSON.stringify({ writes: [{ ...write(path, data), currentDocument: { exists: false } }] }) });
+            if (companions.length > 1 || companions.some((entry) => !policy.prepare?.(entry.path))) throw new DomainError('permission_denied', 'The proposal companion is outside this domain.');
+            await request(':commit', { method: 'POST', body: JSON.stringify({ writes: [{ path, data }, ...companions].map((entry) => ({ ...write(entry.path, entry.data), currentDocument: { exists: false } })) }) });
         },
         async transaction(callback, { beforeCommit } = {}) {
             const started = await request(':beginTransaction', { method: 'POST', body: JSON.stringify({ options: { readWrite: {} } }) });
@@ -55,6 +78,7 @@ export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, 
             try {
                 const result = await callback({
                     get: (path) => get(path, transaction),
+                    list: (path) => list(path, transaction),
                     set: (path, data) => writes.push(write(path, data)),
                     patch: (path, data) => {
                         if (!policy.patch?.(path, data)) throw new DomainError('permission_denied', 'This patch is outside the command domain.');
@@ -62,7 +86,7 @@ export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, 
                     },
                     delete: (path) => {
                         assertPath(path, true);
-                        if (!policy.delete?.(path)) throw new DomainError('permission_denied', 'Only a favorite may be removed.');
+                        if (!policy.delete?.(path)) throw new DomainError('permission_denied', 'Deletion is outside this command domain.');
                         writes.push({ delete: name(path) });
                     }
                 });

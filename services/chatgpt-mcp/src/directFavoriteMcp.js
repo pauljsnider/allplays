@@ -4,6 +4,7 @@ import { DomainError } from './core.js';
 import { createDirectFavoriteCommands } from './directFavorite.js';
 import { createDirectStatConfigurationCommands } from './directStatConfiguration.js';
 import { createDirectDiscovery } from './directDiscovery.js';
+import { createDirectRosterCommands } from './directRoster.js';
 
 // The authenticated router composes bounded domains here. Production server.js
 // never imports it. No generic document writer or model-controlled approval.
@@ -63,8 +64,25 @@ export function createDirectFavoriteMcpSession(dependencies) {
         }, run((args) => commands.prepare({ ...args, mode: 'rename' })));
         registerOutcome('stat_configuration', commands);
     }
+    if (dependencies.rosterStore) {
+        const commands = createDirectRosterCommands({ ...dependencies, store: dependencies.rosterStore });
+        const fields = z.object({ name: z.string().min(1).max(120).optional(), number: z.string().max(20).optional(), position: z.string().max(60).optional() }).strict();
+        server.registerTool('prepare_create_roster_player', {
+            description: 'Prepare one player with a name and optional number/position. Checks the complete bounded active/inactive roster for duplicate names. No contacts, invitations or custom fields. Reuse the same proposal UUID after interruptions.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, fields: fields.extend({ name: z.string().min(1).max(120) }) }).strict(), annotations: mutation
+        }, run(({ proposalId, ...args }) => commands.prepare({ ...args, proposalId, mode: 'create', playerId: `mcp_${proposalId}` })));
+        server.registerTool('prepare_update_roster_player', {
+            description: 'Prepare changes only to the exact player’s name, number or position. Missing fields are preserved; empty number/position explicitly clears that field. Contacts, private fields, roster status and access require app review.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, playerId: resourceId, fields }).strict(), annotations: mutation
+        }, run((args) => commands.prepare({ ...args, mode: 'update' })));
+        registerOutcome('roster_player', commands);
+    }
     if (dependencies.getDb) {
         const discovery = createDirectDiscovery(dependencies);
+        if (dependencies.rosterStore) server.registerTool('get_team_roster', {
+            description: 'Discover exact active/inactive player IDs, names, numbers and positions before preparing a player update. Fetch all pages before matching names. Private contact/profile fields are excluded.',
+            inputSchema: z.object({ teamId: resourceId, cursor: resourceId.optional(), limit: z.number().int().min(1).max(100).optional() }).strict(), annotations: { readOnlyHint: true }
+        }, run(discovery.roster));
         server.registerTool('list_managed_teams', {
             description: 'Discover exact IDs and names of currently managed teams for direct proposal preparation.',
             inputSchema: z.object({}).strict(), annotations: { readOnlyHint: true }

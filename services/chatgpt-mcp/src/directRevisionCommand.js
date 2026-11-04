@@ -18,6 +18,13 @@ export function createRevisionCommands({ uid, store, getContext, now = Date.now 
     };
     const result = (id, record) => ({ proposalId: id, status: record.status, ...domain.result(record) });
     const validateProposal = (record) => {
+        if (record?.receiptOnly === true && domain.validateReceipt) {
+            if (record.userId !== uid || record.toolName !== domain.toolName || record.status !== 'completed'
+                || !/^[a-f0-9]{64}$/.test(record.digest || '') || !domain.validateReceipt(record)) {
+                throw new DomainError('not_found', 'No completed receipt is available for this account.');
+            }
+            return;
+        }
         if (!record || record.userId !== uid || record.toolName !== domain.toolName
             || !Number.isFinite(Date.parse(record.expiresAt))
             || record.digest !== fingerprint({ uid, ...domain.args(record) })) {
@@ -105,7 +112,10 @@ export function createRevisionCommands({ uid, store, getContext, now = Date.now 
                 // A lost commit response is reconciled from the atomic receipt.
                 // Never retry a business mutation automatically.
                 const saved = await store.get(pathFor(proposalId)).catch(() => null);
-                if (saved?.data?.digest === before.data.digest && saved.data.status === 'completed') return result(proposalId, saved.data);
+                if (saved?.data?.digest === before.data.digest && saved.data.status === 'completed') {
+                    validateProposal(saved.data);
+                    return result(proposalId, saved.data);
+                }
                 if (!(error instanceof DomainError) || error.code === 'unavailable') {
                     throw new DomainError('outcome_unknown', 'The outcome could not be verified. Check this same proposal ID; do not create a replacement or assume the change failed.');
                 }

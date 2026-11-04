@@ -11,7 +11,9 @@ not direct in-chat mutation tools. See [write workflows](WRITE_WORKFLOWS.md) for
 the catalog, retry contract, limitations, and rollout order.
 
 An isolated direct-command prototype supports team drill favorites, creating a
-stat configuration by cloning an existing one, and renaming a configuration.
+stat configuration by cloning an existing one, renaming a configuration, and
+creating/updating one player’s basic roster fields. Roster proposals keep player
+content behind current team authorization and store only opaque user receipts.
 Managed-team and configuration discovery support the prepare → explicit MCP form
 approval → transaction flow through authenticated HTTP sessions. Tests use
 synthetic data and emulator accounts. The router is unmounted in production and

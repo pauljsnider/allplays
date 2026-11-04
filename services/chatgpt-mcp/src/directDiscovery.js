@@ -1,11 +1,17 @@
 import { DomainError } from './core.js';
 import { ID } from './directRevisionCommand.js';
 import { validateManager } from './directCommandAccess.js';
+import { getManagedTeamRoster } from './rosterDiscovery.js';
 
 // Discovery deliberately projects only names and schema summaries, never whole
 // team, player or configuration documents. Every page rechecks current access.
 export function createDirectDiscovery({ uid, getContext, getDb }) {
     return {
+        async roster(args) {
+            const context = await getContext();
+            if (context.uid !== uid) throw new DomainError('permission_denied', 'The connected account changed.');
+            return getManagedTeamRoster(await getDb(), context, args);
+        },
         async teams() {
             const context = await getContext();
             if (context.uid !== uid) throw new DomainError('permission_denied', 'The connected account changed.');

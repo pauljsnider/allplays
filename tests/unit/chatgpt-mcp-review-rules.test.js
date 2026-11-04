@@ -7,6 +7,7 @@ import { createMockUserToken } from '@firebase/util';
 import { createUserDb } from '../../services/chatgpt-mcp/src/firestoreRest.js';
 import { getManagedTeamRoster } from '../../services/chatgpt-mcp/src/rosterDiscovery.js';
 import { createDirectFavoriteCommands } from '../../services/chatgpt-mcp/src/directFavorite.js';
+import { createDirectRosterCommands, createDirectRosterStore } from '../../services/chatgpt-mcp/src/directRoster.js';
 import { createDirectStatConfigurationCommands, createDirectStatConfigurationStore } from '../../services/chatgpt-mcp/src/directStatConfiguration.js';
 import { createDirectFavoriteStore } from '../../services/chatgpt-mcp/src/directFavoriteStore.js';
 import { createDirectFavoriteMcpSession } from '../../services/chatgpt-mcp/src/directFavoriteMcp.js';
@@ -161,6 +162,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
             ...dependencies, uid: actor.uid,
             store: createDirectFavoriteStore({ projectId: 'demo-allplays-mcp-review', uid: actor.uid, getIdToken: async () => (await current()).idToken, fetchImpl: localFetch }),
             statConfigurationStore: createDirectStatConfigurationStore({ projectId: 'demo-allplays-mcp-review', uid: actor.uid, getIdToken: async () => (await current()).idToken, fetchImpl: localFetch }),
+            rosterStore: createDirectRosterStore({ projectId: 'demo-allplays-mcp-review', uid: actor.uid, getIdToken: async () => (await current()).idToken, fetchImpl: localFetch }),
             getDb: async () => createUserDb({ projectId: 'demo-allplays-mcp-review', idToken: (await current()).idToken, fetchImpl: localFetch }),
             getContext: async () => { await current(); return dependencies.getContext(); }
         }) });
@@ -198,12 +200,91 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
             expect((await client.callTool({ name: 'confirm_stat_configuration', arguments: { proposalId: renameId } })).structuredContent.status).toBe('completed');
             expect((await getDoc(cloned)).data()).toMatchObject({ ...source, name: 'Renamed clone', futureSetting: { retained: true } });
             expect((await getDoc(doc(userDb('owner'), 'teams/team-1/statTrackerConfigs/source'))).data()).toEqual(source);
+            const rosterId = '00112233-4455-4677-8899-aabbccddeedd';
+            const updateId = '00112233-4455-4677-8899-aabbccddeecc';
+            const playerName = 'Synthetic HTTP Player';
+            expect((await client.callTool({ name: 'prepare_create_roster_player', arguments: { proposalId: rosterId, teamId: 'team-1', fields: { name: playerName } } })).isError).not.toBe(true);
+            const userRecord = doc(userDb('owner'), `users/owner/privateAiPendingActions/direct_${rosterId}`);
+            expect(JSON.stringify((await getDoc(userRecord)).data())).not.toContain(playerName);
+            const teamRecordPath = `teams/team-1/privateAiPendingActions/direct_owner_${rosterId}`;
+            expect((await getDoc(doc(userDb('owner'), teamRecordPath))).data().fields.name).toBe(playerName);
+            const rosterResult = await client.callTool({ name: 'confirm_roster_player', arguments: { proposalId: rosterId } });
+            expect(rosterResult.structuredContent?.status, JSON.stringify(rosterResult.content)).toBe('completed');
+            const player = doc(userDb('owner'), `teams/team-1/players/mcp_${rosterId}`);
+            expect((await getDoc(player)).data()).toMatchObject({ name: playerName, active: true });
+            expect((await getDoc(userRecord)).data()).toMatchObject({ receiptOnly: true, status: 'completed' });
+            expect(JSON.stringify((await getDoc(userRecord)).data())).not.toContain(playerName);
+            await env.withSecurityRulesDisabled(async (context) => expect((await getDoc(doc(context.firestore(), teamRecordPath))).exists()).toBe(false));
+            expect((await client.callTool({ name: 'get_team_roster', arguments: { teamId: 'team-1' } })).structuredContent.players[0]).toMatchObject({ id: `mcp_${rosterId}`, name: playerName });
+            await updateDoc(player, { active: false, customSetting: 'preserved' });
+            expect((await client.callTool({ name: 'prepare_update_roster_player', arguments: { proposalId: updateId, teamId: 'team-1', playerId: `mcp_${rosterId}`, fields: { number: '09', position: 'Forward' } } })).isError).not.toBe(true);
+            expect((await client.callTool({ name: 'confirm_roster_player', arguments: { proposalId: updateId } })).structuredContent.status).toBe('completed');
+            expect((await getDoc(player)).data()).toMatchObject({ name: playerName, number: '09', active: false, customSetting: 'preserved' });
+
 
         } finally {
             await client.close(); await service.close(); http.closeAllConnections();
             await new Promise((resolve) => http.close(resolve));
         }
     }, 15000);
+    it('keeps pending roster content behind current team access and expiry, with only opaque user history', async () => {
+        const dependencies = await favoriteDependencies();
+        const options = { projectId: 'demo-allplays-mcp-review', uid: 'owner', idToken: createMockUserToken({ sub: 'owner', email: 'owner@example.test', email_verified: true }, 'demo-allplays-mcp-review'), fetchImpl: localFetch };
+        const store = createDirectRosterStore(options);
+        const commands = createDirectRosterCommands({ ...dependencies, store });
+        const proposalId = id.slice(4);
+        await commands.prepare({ proposalId, mode: 'create', teamId: 'team-1', playerId: `mcp_${proposalId}`, fields: { name: 'Synthetic Private Preview' } });
+        const pending = `teams/team-1/privateAiPendingActions/direct_owner_${proposalId}`;
+        const header = `users/owner/privateAiPendingActions/direct_${proposalId}`;
+        expect(JSON.stringify((await getDoc(doc(userDb('owner'), header))).data())).not.toContain('Synthetic Private Preview');
+        await env.withSecurityRulesDisabled(async (context) => updateDoc(doc(context.firestore(), 'teams/team-1'), { ownerId: 'replacement' }));
+        await assertFails(getDoc(doc(userDb('owner'), pending)));
+        await expect(commands.confirm({ proposalId }, async () => { throw new Error('No approval after revocation'); })).rejects.toThrow();
+        expect((await getDoc(doc(userDb('owner'), header))).exists()).toBe(true);
+        await env.withSecurityRulesDisabled(async (context) => {
+            await updateDoc(doc(context.firestore(), 'teams/team-1'), { ownerId: 'owner' });
+            await updateDoc(doc(context.firestore(), pending), { expiresAtAt: new Date(0) });
+        });
+        await assertFails(getDoc(doc(userDb('owner'), pending)));
+        await expect(commands.status({ proposalId })).rejects.toThrow();
+        await expect(createDirectRosterStore({ ...options, idToken: createMockUserToken({ sub: 'owner', email: 'owner@example.test', email_verified: false }, 'demo-allplays-mcp-review') }).create(`users/owner/privateAiPendingActions/direct_00112233-4455-4677-8899-aabbccddeeaa`, { teamId: 'team-1', playerId: 'new', mode: 'create', fields: { name: 'Synthetic' }, digest: 'a'.repeat(64), expiresAt: new Date(Date.now() + 300000).toISOString() })).rejects.toThrow();
+    });
+    it('reconciles an atomic roster create after a lost response and preserves legacy restricted fields on update', async () => {
+        const dependencies = await favoriteDependencies();
+        const proposalId = id.slice(4); let lose = false; let commits = 0;
+        const store = createDirectRosterStore({ projectId: 'demo-allplays-mcp-review', uid: 'owner', idToken: createMockUserToken({ sub: 'owner', email: 'owner@example.test', email_verified: true }, 'demo-allplays-mcp-review'), fetchImpl: async (url, options) => {
+            const response = await localFetch(url, options);
+            if (url.endsWith(':commit') && JSON.parse(options.body).transaction) { commits++; if (lose && response.ok) { lose = false; throw new Error('Synthetic lost response'); } }
+            return response;
+        } });
+        const commands = createDirectRosterCommands({ ...dependencies, store });
+        await commands.prepare({ proposalId, mode: 'create', teamId: 'team-1', playerId: `mcp_${proposalId}`, fields: { name: 'Synthetic New' } });
+        lose = true;
+        expect(await commands.confirm({ proposalId }, async () => ({ action: 'accept', content: { approve: true } }))).toMatchObject({ status: 'completed' });
+        expect(await commands.confirm({ proposalId }, async () => { throw new Error('Must not recreate'); })).toMatchObject({ status: 'completed' });
+        expect(commits).toBe(1);
+        const playerPath = `teams/team-1/players/mcp_${proposalId}`;
+        await env.withSecurityRulesDisabled(async (context) => updateDoc(doc(context.firestore(), playerPath), { parentEmail: 'synthetic-parent@example.test', medicalInfo: 'synthetic-private', active: false }));
+        const next = '00112233-4455-4677-8899-aabbccddeeaa';
+        const preview = await commands.prepare({ proposalId: next, mode: 'update', teamId: 'team-1', playerId: `mcp_${proposalId}`, fields: { position: 'Forward' } });
+        expect(JSON.stringify(preview)).not.toContain('synthetic-parent'); expect(JSON.stringify(preview)).not.toContain('synthetic-private');
+        expect(await commands.confirm({ proposalId: next }, async () => ({ action: 'accept', content: { approve: true } }))).toMatchObject({ status: 'completed' });
+        expect((await getDoc(doc(userDb('owner'), playerPath))).data()).toMatchObject({ parentEmail: 'synthetic-parent@example.test', medicalInfo: 'synthetic-private', active: false, position: 'Forward' });
+    });
+    it('does not create duplicate names when two reviewed roster transactions race', async () => {
+        const dependencies = await favoriteDependencies();
+        const store = createDirectRosterStore({ projectId: 'demo-allplays-mcp-review', uid: 'owner', idToken: createMockUserToken({ sub: 'owner', email: 'owner@example.test', email_verified: true }, 'demo-allplays-mcp-review'), fetchImpl: localFetch });
+        const commands = createDirectRosterCommands({ ...dependencies, store });
+        const first = id.slice(4); const second = '00112233-4455-4677-8899-aabbccddeeaa';
+        for (const proposalId of [first, second]) await commands.prepare({ proposalId, mode: 'create', teamId: 'team-1', playerId: `mcp_${proposalId}`, fields: { name: 'Synthetic Same Name' } });
+        let arrived = 0; let release;
+        const bothRead = new Promise((resolve) => { release = resolve; });
+        const approve = async () => ({ action: 'accept', content: { approve: true }, consume: async () => { arrived++; if (arrived === 2) release(); await bothRead; } });
+        const results = await Promise.allSettled([commands.confirm({ proposalId: first }, approve), commands.confirm({ proposalId: second }, approve)]);
+        const players = await Promise.all([first, second].map((proposalId) => getDoc(doc(userDb('owner'), `teams/team-1/players/mcp_${proposalId}`))));
+        expect(players.filter((entry) => entry.exists()).length).toBeLessThanOrEqual(1);
+        expect(results.filter((entry) => entry.status === 'fulfilled').length).toBeLessThanOrEqual(1);
+    }, 20000);
     it('enforces configuration manager access and rejects target revisions changed during approval', async () => {
         const dependencies = await favoriteDependencies();
         const configPath = 'teams/team-1/statTrackerConfigs/source';
