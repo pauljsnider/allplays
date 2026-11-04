@@ -5,13 +5,13 @@ import {
     initializeAppCheck
 } from './vendor/firebase-app-check.js';
 import { resolveAppCheckRuntimeConfig } from './firebase-runtime-config.js?v=23';
-import { registerPrimaryAppCheckContext } from './firebase-app-check-rest.js?v=1';
+import { registerPrimaryAppCheckContext } from './firebase-app-check-rest.js?v=2';
 
 export {
     getPrimaryAppCheckHeaders,
     getPrimaryAppCheckToken,
     isPrimaryFirebaseRestRequest
-} from './firebase-app-check-rest.js?v=1';
+} from './firebase-app-check-rest.js?v=2';
 
 const INITIALIZATIONS_KEY = '__allplaysAppCheckInitializations';
 const STATUS_KEY = '__ALLPLAYS_APP_CHECK_STATUS__';
@@ -96,7 +96,7 @@ export function normalizeNativeAppCheckToken(result, now = Date.now()) {
                     globalThis.atob(normalizedPayload + padding)
                 )?.exp);
                 const expirationMillis = expirationSeconds * 1000;
-                if (Number.isFinite(expirationMillis) && expirationMillis > now) {
+                if (Number.isFinite(expirationMillis) && expirationMillis > 0) {
                     jwtExpiry = expirationMillis;
                 }
             }
@@ -104,6 +104,13 @@ export function normalizeNativeAppCheckToken(result, now = Date.now()) {
             // A native token should be a JWT, but expiry metadata is optional.
             // Keep malformed payloads fail-open without logging token contents.
         }
+    }
+
+    // Missing metadata may use the bounded compatibility TTL below, but a
+    // known-expired token must never acquire a fabricated future lifetime.
+    if ((Number.isFinite(nativeExpiry) && nativeExpiry > 0 && nativeExpiry <= now)
+        || (jwtExpiry !== undefined && jwtExpiry <= now)) {
+        throw createNativeTokenUnavailableError();
     }
 
     const expireTimeMillis = Number.isFinite(nativeExpiry) && nativeExpiry > now
@@ -237,6 +244,16 @@ export async function initializeNativeAppCheck(app, config) {
                 globalThis.setTimeout(attemptBridgeActivation, NATIVE_TOKEN_RETRY_COOLDOWN_MS);
             });
     };
+
+    // AI is enforced independently of the other services. A user-initiated AI
+    // request may await this bounded loader without blocking app/data startup.
+    // This also consumes a late startup token before the background retry timer.
+    registerPrimaryAppCheckContext({
+        tokenPreparer: async () => {
+            await loadNativeToken();
+            activateBridge();
+        }
+    });
 
     // Do not register the JavaScript App Check provider until native
     // attestation has produced a real token. Firebase SDKs wait on a registered

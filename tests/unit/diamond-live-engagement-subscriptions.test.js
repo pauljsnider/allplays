@@ -13,7 +13,7 @@ const firebaseMocks = vi.hoisted(() => ({
   query: vi.fn((...parts) => ({ type: "query", parts })),
 }));
 
-vi.mock("../../js/firebase.js?v=4433195", () => firebaseMocks);
+vi.mock("../../js/firebase.js?v=4433196", () => firebaseMocks);
 
 import { subscribeReactions } from "../../js/diamond-live-engagement-subscriptions.js";
 

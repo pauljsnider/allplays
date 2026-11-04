@@ -1,5 +1,51 @@
 # Firebase App Check rollout
 
+## AI Logic requires valid attestation
+
+Firebase documents automatic App Check enforcement for AI Logic beginning
+November 2, 2026. The historical monitoring-only guidance below must not be
+used as evidence that AI generation can work without a valid token. See the
+[Firebase AI Logic App Check guidance](https://firebase.google.com/docs/ai-logic/app-check).
+
+All generation consumers use `js/firebase-ai.js`. It waits for a real token
+before creating the Firebase AI service, then permits one forced-token refresh
+and generation retry only after an explicit App Check 401/403. It does not
+retry writes, arbitrary permission errors, rate limits, or ambiguous network
+failures. Missing/unavailable attestation produces an actionable error; manual
+entry and well-formed deterministic CSV imports remain available.
+
+The native app shell remains non-blocking. AI alone can await the bounded
+native token loader and activate a late startup token without waiting for the
+background retry. A known-expired native token is never assigned a new fallback
+lifetime. This changes no provider selection, debug-token policy, server
+enforcement, or project access settings.
+
+Before declaring an AI incident resolved:
+
+1. Inspect deployed public runtime configuration and the installed app version
+   separately. Hosted web configuration does not prove the configuration inside
+   a packaged Android/iOS release.
+2. Obtain an authorized read of AI Logic enforcement and the exact production
+   app/provider registrations. Verify the web hostname allowlist and Android
+   Play signing fingerprints/iOS App Attest configuration. Never publish tokens.
+3. For web, an approved rollout must publish the existing registered public
+   reCAPTCHA Enterprise key with `APP_CHECK_ENFORCEMENT_READY=true` through the
+   normal release process. This enables attestation assessments and requires
+   operator approval; do not infer that approval from a code fix. A deployed
+   `enabled:false` configuration cannot provide the token required by AI.
+4. Release native code through the existing mobile process. Hosting changes
+   alone do not update packaged native clients.
+5. On supported web, Play-distributed Android and iOS installs, use synthetic
+   image/PDF/text roster and schedule previews. Check cold start, resume after
+   expiry, offline recovery, and rejected renewal. Do not confirm customer rows
+   or invitations during diagnosis. Confirm useful errors and deterministic
+   CSV/manual fallback when attestation cannot recover.
+
+Do not disable or delay enforcement, strip a rejected token, register production
+debug tokens, or relax API-key/provider restrictions to make a smoke test pass.
+
+## Historical monitoring rollout for other Firebase services
+
 App Check client initialization is fail-open by design. Deploying this code starts
 attestation and metrics collection but does not reject a request if attestation
 fails. Firebase Console enforcement is the separate fail-closed rollout gate.

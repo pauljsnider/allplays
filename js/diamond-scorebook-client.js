@@ -30,7 +30,7 @@ function createSecureRequestId(cryptoSource = globalThis.crypto) {
 async function getCallable(name, dependencies) {
     const firebase = dependencies.httpsCallable
         ? dependencies
-        : await import('./firebase.js?v=4433195');
+        : await import('./firebase.js?v=4433196');
     return firebase.httpsCallable(firebase.functions, name);
 }
 

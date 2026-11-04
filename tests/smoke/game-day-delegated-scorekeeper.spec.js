@@ -286,7 +286,7 @@ async function installModuleMocks(page) {
         body: firebaseAppModule
     }));
 
-    await page.route(/\/js\/vendor\/firebase-ai\.js$/, (route) => route.fulfill({
+    await page.route(/\/js\/firebase-ai\.js(?:\?v=\d+)?$/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: firebaseAiModule

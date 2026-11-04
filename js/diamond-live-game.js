@@ -3,11 +3,11 @@ import {
   functions,
   httpsCallable,
   onAuthStateChanged,
-} from "./firebase.js?v=4433195";
+} from "./firebase.js?v=4433196";
 import {
   subscribeLiveChat,
   subscribeReactions,
-} from "./diamond-live-engagement-subscriptions.js?v=2";
+} from "./diamond-live-engagement-subscriptions.js?v=3";
 import {
   formatDiamondInning,
   normalizeDiamondPublicGame,

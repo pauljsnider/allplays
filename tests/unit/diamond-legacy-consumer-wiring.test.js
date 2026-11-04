@@ -6,7 +6,7 @@ const readPage = (name) => readFileSync(new URL(`../../${name}`, import.meta.url
 describe('legacy Diamond consumer wiring', () => {
     it('routes team-chat AI stats and events through the complete mixed-engine bridge', () => {
         const source = readPage('team-chat.html');
-        expect(source).toContain("from './js/diamond-legacy-game-context.js?v=1'");
+        expect(source).toContain("from './js/diamond-legacy-game-context.js?v=2'");
         expect(source).toContain('loadCompleteAiGameContext({');
         expect(source).toContain('getGames(teamId, { requireCompleteSharedGames: true })');
         expect(source).not.toContain('getAggregatedStatsForGames(teamId, completedGames.map');
@@ -21,7 +21,7 @@ describe('legacy Diamond consumer wiring', () => {
 
     it('preserves Diamond projection identity and checks incentive evidence before caching earnings', () => {
         const source = readPage('parent-dashboard.html');
-        expect(source).toContain("from './js/diamond-legacy-game-context.js?v=1'");
+        expect(source).toContain("from './js/diamond-legacy-game-context.js?v=2'");
         expect(source).toContain('trackingEngine: game.trackingEngine || null');
         expect(source).toContain('diamondScorebookInstanceId: game.diamondScorebookInstanceId || null');
         expect(source).toContain('loadCompletePlayerStatsForGames({');
@@ -34,7 +34,7 @@ describe('legacy Diamond consumer wiring', () => {
 
     it('only caches a complete mixed-engine drills AI context and lets incomplete evidence fail closed', () => {
         const source = readPage('drills.html');
-        expect(source).toContain("from './js/diamond-legacy-game-context.js?v=1'");
+        expect(source).toContain("from './js/diamond-legacy-game-context.js?v=2'");
         expect(source).toContain('const loaded = await loadCompleteAiGameContext({');
         expect(source).toContain('getGames(state.teamId, { requireCompleteSharedGames: true })');
         expect(source).toContain('state.aiRawGameContext = completeContext;');
@@ -84,7 +84,7 @@ describe('legacy Diamond consumer wiring', () => {
 
     it('routes both legacy certificate generation paths through complete mixed-engine narrative evidence', () => {
         const source = readPage('js/certificates/studio.js');
-        expect(source).toContain("from '../diamond-legacy-game-context.js?v=1'");
+        expect(source).toContain("from '../diamond-legacy-game-context.js?v=2'");
         const initial = source.slice(source.indexOf('async function generateTeamCertificates()'), source.indexOf('function renderReview()'));
         const regenerate = source.slice(source.indexOf('async function runDraftRegeneration('), source.indexOf('async function regenerateDrafts('));
         expect(initial).toContain('loadCompleteCertificateNarrativeStats({');
@@ -103,7 +103,7 @@ describe('legacy Diamond consumer wiring', () => {
     it('builds athlete profile snapshots through complete engine-aware season evidence', () => {
         const source = readPage('js/db.js');
         const summary = source.slice(source.indexOf('async function buildAthleteProfileSeasonSummary('), source.indexOf('function sanitizeAthleteProfileMediaName('));
-        expect(source).toContain("from './diamond-legacy-game-context.js?v=1'");
+        expect(source).toContain("from './diamond-legacy-game-context.js?v=2'");
         expect(summary).toContain('loadCompleteAthleteProfileSeasonStats({');
         expect(summary).toContain('getGames(link.teamId, { requireCompleteSharedGames: true })');
         expect(summary).toContain('const gameRef = getGameDocRef(teamId, gameId);');

@@ -280,7 +280,7 @@ function buildModuleSource() {
             'const { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, hasActiveLiveLifecycle, hasCompletedReplayLifecycle, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
         )
         .replaceAll(
-            "import('./game-replay-playback.js?v=3')",
+            "import('./game-replay-playback.js?v=4')",
             'Promise.resolve(deps.replayPlayback)'
         )
         .replace(
@@ -300,7 +300,7 @@ function buildModuleSource() {
             'const { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } = deps.teamEntitlements;'
         )
         .replace(
-            "import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';",
+            "import { getAI, getGenerativeModel, GoogleAIBackend } from './firebase-ai.js?v=1';",
             'const { getAI, getGenerativeModel, GoogleAIBackend } = deps.firebaseAi;'
         )
         .replace(

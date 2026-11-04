@@ -5,7 +5,7 @@ const firebaseMocks = vi.hoisted(() => ({
     listManagedTeams: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=33', () => ({
+vi.mock('../../js/firebase.js?v=4433196', () => ({
     auth: firebaseMocks.auth,
     functions: {},
     httpsCallable: vi.fn((_functions, name) => {
@@ -14,11 +14,11 @@ vi.mock('../../js/firebase.js?v=33', () => ({
     })
 }));
 
-vi.mock('../../js/firebase-app-check-rest.js?v=1', () => ({
+vi.mock('../../js/firebase-app-check-rest.js?v=2', () => ({
     getPrimaryAppCheckHeaders: vi.fn(async (headers) => headers)
 }));
 
-const { loadDashboardTeams } = await import('../../js/dashboard-team-load.js?v=6');
+const { loadDashboardTeams } = await import('../../js/dashboard-team-load.js?v=7');
 
 function dashboardResult({
     items = [],

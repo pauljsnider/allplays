@@ -951,7 +951,7 @@ async function installMocks(
       body: liveGameVideoModule,
     }),
   );
-  await page.route(/\/js\/vendor\/firebase-ai\.js(?:\?.*)?$/, (route) =>
+  await page.route(/\/js\/firebase-ai\.js(?:\?.*)?$/, (route) =>
     route.fulfill({
       status: 200,
       contentType: "application/javascript",

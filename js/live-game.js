@@ -18,12 +18,12 @@ import {
   updateGame,
   uploadGameClip,
   deleteUploadedMediaObjects
-} from './db.js?v=4433210';
-import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443386';
+} from './db.js?v=4433211';
+import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443387';
 import { hasFullTeamAccess } from './team-access.js?v=44338';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
 import { computePanelVisibility } from './live-stream-utils.js?v=2';
-import { checkAuth } from './auth.js?v=4433215';
+import { checkAuth } from './auth.js?v=4433216';
 import { isViewerChatEnabled } from './live-game-chat.js?v=4';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import {
@@ -38,10 +38,10 @@ import {
 import { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, hasActiveLiveLifecycle, hasCompletedReplayLifecycle, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=443319';
 import { resolvePublicProjectionVideoOptions, getOverlayLiveClockMs } from './live-game-overlay-model.js?v=33';
 import { buildGameReportShareUrl, buildGameWatchShareUrl } from './game-share-links.js?v=1';
-import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=9';
-import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
+import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=10';
+import { getAI, getGenerativeModel, GoogleAIBackend } from './firebase-ai.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=58';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=59';
 import { getDefaultLivePeriod } from './live-sport-config.js?v=2';
 import { BROADCAST_STREAM_HEARTBEAT_MS, buildBroadcastRuntimeSession } from './game-day-broadcast.js?v=5';
 import { createSafeImageElement, resolveSafeProfilePhotoUrl, resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';
@@ -53,7 +53,7 @@ import {
   postDiamondLiveReaction,
   subscribeLiveChat as subscribeDiamondLiveChat,
   subscribeReactions as subscribeDiamondReactions
-} from './diamond-live-engagement-subscriptions.js?v=2';
+} from './diamond-live-engagement-subscriptions.js?v=3';
 
 const DIAMOND_INSTANCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -856,7 +856,7 @@ async function refreshVideoPanelNow({ force = false } = {}) {
     if (projection !== replayPlaybackProjection) setupVideoPanel(unavailable);
     replayPlaybackProjection = projection;
     try {
-      const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=3');
+      const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=4');
       if (requestId !== replayPlaybackRequestId) return false;
       nextPlayback = await resolveAuthorizedReplayPlayback({
         teamId: state.teamId, gameId: state.gameId,
@@ -3122,7 +3122,7 @@ async function init() {
   }
 
   if (game.isPublicProjection === true) {
-    const { observeReplayPlaybackAuth, unavailableReplayPlayback, createReplayPlaybackRevalidator } = await import('./game-replay-playback.js?v=3');
+    const { observeReplayPlaybackAuth, unavailableReplayPlayback, createReplayPlaybackRevalidator } = await import('./game-replay-playback.js?v=4');
     if (state.isReplay && game.hasRecordedReplay !== false && hasCompletedReplayLifecycle(game)) {
       replayPlaybackRevalidator = createReplayPlaybackRevalidator({
         refresh: () => refreshVideoPanelNow(),

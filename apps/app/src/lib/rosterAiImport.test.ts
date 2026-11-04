@@ -20,7 +20,7 @@ vi.mock('../../../../js/vendor/firebase-app.js', () => ({
   getApp: vi.fn(() => ({}))
 }));
 
-vi.mock('../../../../js/vendor/firebase-ai.js', () => ({
+vi.mock('../../../../js/firebase-ai.js', () => ({
   getAI: vi.fn(() => ({})),
   getGenerativeModel: aiMocks.getGenerativeModel,
   GoogleAIBackend: vi.fn(),
@@ -43,6 +43,25 @@ import {
 describe('rosterAiImport', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it.each(['image/png', 'application/pdf', 'text'])('reports attestation failure without blaming the %s roster or staging writes', async (type) => {
+    const message = 'AI could not verify this app. Use manual entry or CSV import.';
+    aiMocks.generateContent.mockRejectedValueOnce(Object.assign(new Error(message), { code: 'ai/app-check-unavailable' }));
+    const result = await generateRosterAiImportRows(type === 'text'
+      ? { text: 'Please interpret this attached roster information for our team.' }
+      : { imageFile: new File(['synthetic'], type === 'application/pdf' ? 'roster.pdf' : 'roster.png', { type }) });
+    expect(result.rows).toEqual([]);
+    expect(result.errors).toEqual([message]);
+    expect(buildRosterAiImportCommitPlan(result.rows).operations).toEqual([]);
+  });
+
+  it('keeps valid deterministic CSV available when AI attestation is unavailable', async () => {
+    aiMocks.generateContent.mockRejectedValue(new Error('Attestation unavailable'));
+    const result = await generateRosterAiImportRows({ csvText: 'name,number\nSynthetic Player,12' });
+    expect(result.errors).toEqual([]);
+    expect(result.rows).toHaveLength(1);
+    expect(aiMocks.generateContent).not.toHaveBeenCalled();
   });
 
   it('builds a prompt with current roster context and text/image instructions', () => {

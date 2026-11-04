@@ -10,8 +10,8 @@ describe('cancelScheduledGame', () => {
     it('wires edit schedule through the shared cancellation helper', () => {
         const source = readEditSchedule();
 
-        expect(source).toContain("import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=4';");
-        expect(source).toContain("import { activateDiamondGameForLegacy, cancelDiamondGameForLegacy, getDiamondGameAccess } from './js/diamond-scorebook-client.js?v=4';");
+        expect(source).toContain("import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=5';");
+        expect(source).toContain("import { activateDiamondGameForLegacy, cancelDiamondGameForLegacy, getDiamondGameAccess } from './js/diamond-scorebook-client.js?v=5';");
         expect(source).toContain('const result = await cancelScheduledGame({');
         expect(source).toContain('cancelDiamondGame: cancelDiamondGameForLegacy,');
         expect(source).toContain('if (!result.canonical) {');

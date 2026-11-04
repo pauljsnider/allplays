@@ -1,5 +1,5 @@
-import { auth, functions, httpsCallable } from './firebase.js?v=33';
-import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
+import { auth, functions, httpsCallable } from './firebase.js?v=4433196';
+import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=2';
 import { filterTeamsByActive } from './team-visibility.js?v=2';
 
 const DASHBOARD_TEAM_LOAD_VERSION = 1;

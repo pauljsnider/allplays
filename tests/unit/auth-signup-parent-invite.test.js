@@ -43,10 +43,10 @@ const authEmailMocks = vi.hoisted(() => ({
     queuePasswordResetEmail: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=33', () => firebaseMocks);
-vi.mock('../../js/db.js?v=4433210', () => dbMocks);
-vi.mock('../../js/auth-email.js?v=8', () => authEmailMocks);
-vi.mock('../../js/admin-invite.js?v=12', () => ({
+vi.mock('../../js/firebase.js?v=4433196', () => firebaseMocks);
+vi.mock('../../js/db.js?v=4433211', () => dbMocks);
+vi.mock('../../js/auth-email.js?v=9', () => authEmailMocks);
+vi.mock('../../js/admin-invite.js?v=13', () => ({
     redeemAdminInviteAcceptance: vi.fn()
 }));
 

@@ -169,7 +169,7 @@ vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock('../../js/vendor/firebase-app.js', () => ({
     getApp: aiMocks.getApp
 }));
-vi.mock('../../js/vendor/firebase-ai.js', () => ({
+vi.mock('../../js/firebase-ai.js', () => ({
     getAI: aiMocks.getAI,
     getGenerativeModel: aiMocks.getGenerativeModel,
     GoogleAIBackend: aiMocks.GoogleAIBackend,

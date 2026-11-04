@@ -34,7 +34,7 @@ const firebaseMocks = vi.hoisted(() => ({
     deleteField: vi.fn(() => ({ __deleteField: true }))
 }));
 
-vi.mock('../../js/firebase.js?v=33', () => ({
+vi.mock('../../js/firebase.js?v=4433196', () => ({
     db: { kind: 'db' },
     auth: firebaseMocks.auth,
     storage: {},

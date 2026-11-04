@@ -3,7 +3,7 @@ import { collection as legacyCollection, db as legacyDb, deleteDoc as legacyDele
 import { buildTrackStatsheetApplyPlan as legacyBuildTrackStatsheetApplyPlan, validateTrackStatsheetApplyRows as legacyValidateTrackStatsheetApplyRows } from '@legacy/track-statsheet-apply.js';
 import { addAggregatedStatsWritesToBatch as legacyAddAggregatedStatsWritesToBatch } from '@legacy/live-tracker-save-complete.js';
 import { getApp as legacyGetApp } from '@legacy/vendor/firebase-app.js';
-import { getAI as legacyGetAI, getGenerativeModel as legacyGetGenerativeModel, GoogleAIBackend as LegacyGoogleAIBackend, Schema as LegacySchema } from '@legacy/vendor/firebase-ai.js';
+import { getAI as legacyGetAI, getGenerativeModel as legacyGetGenerativeModel, GoogleAIBackend as LegacyGoogleAIBackend, Schema as LegacySchema } from '@legacy/firebase-ai.js';
 
 /**
  * Typed adapter boundary for the legacy js/ + vendored Firebase imports used by
