@@ -2235,9 +2235,11 @@ function setPeriod(p) {
     }
   });
 
-  // Log period changes during live game
-  if (state.running && previousPeriod !== p) {
+  // Persist and share period changes even while the clock is paused.
+  if (previousPeriod !== p) {
     addLog(`Period changed: ${previousPeriod} → ${p}`);
+    persistLocalTrackerState();
+    syncClockToGameDoc();
     if (liveState.isLive) {
       broadcastEvent(baseLiveEvent({
         type: 'period_change',
