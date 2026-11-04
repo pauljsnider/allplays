@@ -77,6 +77,11 @@ describe('canonical schedule audience adapters', () => {
         assert.deepEqual(canonicalScheduleRoles({ teamId: 'team', team: { ownerId: uid }, user: {}, uid, emailVerified: true, email: 'owner@example.test' }), []);
         assert.equal(await f.membership.authorizeActor({ uid }, 'team'), false);
     });
+    it('reports incompatible complete discovery even when the exact owner can manage', async () => {
+        const f = fixture(); f.rows.get('teams/team').adminEmails = [' admin@example.test '];
+        assert.equal(await f.membership.authorizeActor({ uid: 'owner' }, 'team'), true);
+        await assert.rejects(f.membership.listCanonicalMembers('team'));
+    });
     it('fails closed on incomplete queries, too many candidates or failed Auth lookups', async () => {
         const f = fixture(); f.overflow(); await assert.rejects(f.audience.resolve({ teamId: 'team', actorUid: 'owner' }));
         const g = fixture(); g.failQuery(); await assert.rejects(g.audience.resolve({ teamId: 'team', actorUid: 'owner' }));

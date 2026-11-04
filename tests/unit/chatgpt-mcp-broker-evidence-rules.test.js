@@ -22,7 +22,7 @@ const { createScheduleEvidenceAuthority } = require('../../functions/schedule-de
 const { createFirestoreNotificationJournalStore } = require('../../functions/notification-attempt-journal.cjs');
 const { createScheduleDeliveryCoordinator } = require('../../functions/schedule-delivery-coordinator.cjs');
 const { createScheduleDeliveryProviders } = require('../../functions/schedule-delivery-providers.cjs');
-const { createCanonicalScheduleMembership, canonicalScheduleRoles } = require('../../functions/schedule-canonical-membership.cjs');
+const { createCanonicalScheduleMembership } = require('../../functions/schedule-canonical-membership.cjs');
 const { createScheduleDeliveryAudience, createFirestoreScheduleRecipientLoader } = require('../../functions/schedule-delivery-audience.cjs');
 const projectId = 'demo-allplays-mcp-review';
 const proposalId = '00112233-4455-4677-8899-aabbccddeeff';
@@ -135,14 +135,31 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('actual broker, form proto
         ['exact admin', { ownerId: 'other', adminEmails: ['owner@example.test'] }, true, true],
         ['tabbed admin', { ownerId: 'other', adminEmails: ['\towner@example.test\t'] }, false, false],
         ['uppercase stored admin', { ownerId: 'other', adminEmails: ['OWNER@example.test'] }, false, false],
-        ['single-space admin', { ownerId: 'other', adminEmails: [' owner@example.test '] }, false, true]
-    ])('keeps canonical manager authority within actual rules: %s', async (_label, team, expectedManager, expectedRules) => {
+        ['single-space admin', { ownerId: 'other', adminEmails: [' owner@example.test '] }, false, true],
+        ['leading-space admin', { ownerId: 'other', adminEmails: [' owner@example.test'] }, false, true],
+        ['trailing-space admin', { ownerId: 'other', adminEmails: ['owner@example.test '] }, false, true],
+        ['exact mixed-case Auth admin', { ownerId: 'other', adminEmails: ['Owner@example.test'] }, true, true, { email: 'Owner@example.test' }],
+        ['lowercase grant mixed-case Auth admin', { ownerId: 'other', adminEmails: ['owner@example.test'] }, true, true, { email: 'Owner@example.test' }],
+        ['leading-space exact mixed-case admin', { ownerId: 'other', adminEmails: [' Owner@example.test'] }, false, true, { email: 'Owner@example.test' }],
+        ['trailing-space exact mixed-case admin', { ownerId: 'other', adminEmails: ['Owner@example.test '] }, false, true, { email: 'Owner@example.test' }],
+        ['both-spaces exact mixed-case admin', { ownerId: 'other', adminEmails: [' Owner@example.test '] }, false, true, { email: 'Owner@example.test' }],
+        ['global-admin-only actor', { ownerId: 'other' }, false, true, { user: { isAdmin: true } }],
+        ['unverified owner actor', { ownerId: 'owner' }, false, true, { emailVerified: false }],
+        ['phone-only owner actor', { ownerId: 'owner' }, false, true, { email: null, emailVerified: false }],
+        ['owner without user profile', { ownerId: 'owner' }, false, true, { user: null }]
+    ])('keeps canonical manager authority within actual rules: %s', async (_label, team, expectedManager, expectedRules, options = {}) => {
+        const email = Object.hasOwn(options, 'email') ? options.email : 'owner@example.test';
+        const emailVerified = options.emailVerified ?? true;
+        const user = Object.hasOwn(options, 'user') ? options.user : { isAdmin: false };
         await env.withSecurityRulesDisabled(async (context) => {
             await setDoc(doc(context.firestore(), 'teams/team-1'), team);
-            await setDoc(doc(context.firestore(), 'users/owner'), { isAdmin: false });
+            if (user) await setDoc(doc(context.firestore(), 'users/owner'), user);
+            const backend = { doc: (path) => ({ get: async () => { const snap = await getDoc(doc(context.firestore(), path)); return { exists: snap.exists(), data: () => snap.data() }; } }), collection: () => ({}) };
+            const canonical = createCanonicalScheduleMembership({ firestore: backend, auth: { getUser: async (uid) => ({ uid, email, emailVerified, disabled: false }), getUserByEmail: async () => { throw new Error('Not used by manager authorization'); } } });
+            expect(await canonical.authorizeActor({ uid: 'owner' }, 'team-1')).toBe(expectedManager);
         });
-        expect(canonicalScheduleRoles({ teamId: 'team-1', team, user: {}, uid: 'owner', email: 'owner@example.test', emailVerified: true }).includes('staff')).toBe(expectedManager);
-        const write = setDoc(doc(userDb(), 'teams/team-1/practiceTemplates/authority-check'), { title: 'Synthetic authority check' });
+        const rulesDb = env.authenticatedContext('owner', { ...(email === null ? {} : { email }), email_verified: emailVerified }).firestore();
+        const write = setDoc(doc(rulesDb, 'teams/team-1/practiceTemplates/authority-check'), { title: 'Synthetic authority check' });
         if (expectedRules) await assertSucceeds(write); else await assertFails(write);
         expect(expectedManager && !expectedRules).toBe(false);
     });

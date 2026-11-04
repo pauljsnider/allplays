@@ -97,16 +97,16 @@ eligibility for each exact effect. `schedule-effect-eligibility.cjs` resolves a
 private evidence reference, verifies the durable committed approval, and rereads
 the exact event version/content. Only a bounded ordinary game/practice shape
 may select journal. Imported, recurring, linked, live, special-engine or unknown
-shapes remain legacy; ordinary legacy writes without private proof also remain
-legacy. Lookup/verification errors assign no owner, rather than guessing.
+shapes remain legacy; ordinary legacy writes without a pre-armed private producer fence remain
+legacy. A matching pending producer must wait for proof or durable closure. Lookup/verification errors assign no owner, rather than guessing.
 Client event fields and completion receipts cannot select an owner. Journal
 ownership records retain the eligibility evidence ID; a journal record without
 that binding fails closed. Cutover or rollback affects only new effects; existing
 ownership never fails over automatically. This selects a consumer, not a second
 replacement for that consumer's durable per-recipient delivery deduplication.
 
-The private effect-to-evidence index, deployment-gate verifier and integration
-into both consumers are **not implemented or deployed**. If an effect is reserved
+The production effect-to-evidence index adapters, deployment-gate verifier and
+integration into both consumers are **not implemented or deployed**. If an effect is reserved
 for legacy before its private proof exists, later proof must not reassign it.
 The producer/trigger proof-ordering race must be resolved in the activation
 review; this model deliberately preserves existing ownership. Required rollout order:
@@ -124,7 +124,7 @@ The gate reader must use authoritative deployment provenance, not user-writable
 configuration or an unverified boolean. Partial deployments or unreadable gate
 state must block activation. No live gate, security rule or consumer changed.
 
-## Validation
+## Validation at `770afef7`
 
 The combined backend suite passes 209 tests, including 40 channel/HTTP cases,
 20 canonical-membership, 13 consumer-ownership and 33 per-effect eligibility cases. It tests signature
@@ -145,3 +145,11 @@ now pass. Fifteen paired emulator cases compare the canonical manager decision
 against actual rules, including padded IDs, tabs, null IDs/aliases, valid owner
 email fallback and the intentionally stricter spaced-admin case. No Firestore
 rules or production entry point changed.
+
+## Follow-up ordering and compatibility model
+
+The [proof/trigger ordering review](PROOF_TRIGGER_ORDERING_REVIEW.md) supersedes
+the earlier missing-proof routing assumption. It models pre-write private fences,
+retryable pending triggers and atomic proof-versus-legacy closure, and evaluates
+manager compatibility against actual emulator rules. The production hooks,
+durable payload/recovery worker and audience-readiness gate remain open.
