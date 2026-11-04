@@ -70,8 +70,10 @@ describe('opaque form-bound schedule signing', () => {
     it('does not promote a user-writable completed receipt into backend commit proof', async () => {
         const f = fixture(); await f.broker.commands.prepare(input); const path = `users/owner/privateAiPendingActions/direct_${proposalId}`;
         f.put(path, { ...f.records.get(path).data, status: 'completed' });
-        expect(await f.broker.commands.status({ proposalId })).toMatchObject({ status: 'unverified', businessStatus: 'completed' });
-        expect(f.sendEnvelope).not.toHaveBeenCalled();
+        f.sendEnvelope.mockResolvedValueOnce({ operationId: fingerprint({ kind: 'broker-command-v1', uid: 'owner', teamId: 'team-1', proposalId }), status: 'unverified' });
+        expect(await f.broker.commands.status({ proposalId })).toMatchObject({ status: 'unverified' });
+        const payload = JSON.parse(Buffer.from(f.sendEnvelope.mock.calls[0][0].payload, 'base64url').toString());
+        expect(payload.purpose).toBe('schedule.recover'); expect(payload.command).toEqual({ teamId: 'team-1', proposalId }); expect(payload).not.toHaveProperty('approval');
     });
     it('bounds retained submissions and clears capability use on close', async () => {
         const f = fixture({ maxSubmissions: 1 }); await f.broker.commands.prepare(input); await f.broker.commands.confirm({ proposalId }, f.approve);

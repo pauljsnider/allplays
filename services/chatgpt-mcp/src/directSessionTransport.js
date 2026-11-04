@@ -122,7 +122,7 @@ export function createDirectSessionRouter({
             || !['uid', 'sessionId'].every((key) => typeof input[key] === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(input[key]))
             || typeof input.clientId !== 'string' || !/^[A-Za-z0-9._~-]{1,256}$/.test(input.clientId)
             || typeof input.grantKey !== 'string' || !/^[a-f0-9]{64}$/.test(input.grantKey)
-            || !['schedule.execute', 'schedule.status'].includes(input.purpose) || !Number.isSafeInteger(input.expiresAt)
+            || !['schedule.execute', 'schedule.status', 'schedule.recover'].includes(input.purpose) || !Number.isSafeInteger(input.expiresAt)
             || input.expiresAt <= now() || input.expiresAt - now() > 120000) throw new DomainError('unauthenticated', 'The bound session is unavailable.');
         const session = sessions.get(input.sessionId);
         if (!session || session.closed || binding(input) !== session.binding) throw new DomainError('unauthenticated', 'The bound session is unavailable.');

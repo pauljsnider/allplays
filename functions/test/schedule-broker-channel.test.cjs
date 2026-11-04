@@ -248,3 +248,65 @@ describe('private HTTP ingress contract', () => {
         } finally { finish(); server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
     });
 });
+
+const { signBrokerStatusQuery } = require('../schedule-broker-channel.cjs');
+describe('read-only replacement-session recovery', () => {
+    const query = (f, changes = {}) => signBrokerStatusQuery({ ...f.input, actor: { ...f.input.actor, sessionId: 'replacement-session' },
+        teamId: f.input.command.teamId, proposalId: f.input.command.proposalId, ...changes });
+    const live = (f) => { f.dependencies.verifyLiveSession = async (input) => ({ ...input, connected: true, reviewRequests: true, expiresAt: 200000 }); };
+    it('reads committed status from a new session on the original grant without mutating or executing', async () => {
+        const f = fixture(); await f.create().handle(f.envelope()); live(f);
+        const rows = structuredClone([...f.firestore.documents]); const transactions = f.firestore.transactionCount;
+        const result = await f.create().handle(query(f)); assert.equal(result.status, 'committed'); assert.equal(f.calls(), 1);
+        assert.deepEqual([...f.firestore.documents], rows); assert.equal(f.firestore.transactionCount, transactions);
+        assert.deepEqual(Object.keys(result).sort(), ['operationId', 'status']);
+    });
+    it('returns not_started for a missing attempt without creating an execution reservation', async () => {
+        const f = fixture(); live(f); assert.equal((await f.create().handle(query(f))).status, 'not_started');
+        assert.equal(f.calls(), 0); assert.equal(f.firestore.documents.size, 0);
+    });
+    for (const state of ['reserved', 'unverified']) it(`preserves ${state} uncertainty after restart without replay`, async () => {
+        const f = fixture(); await f.create().handle(f.envelope()); live(f);
+        const [path, row] = [...f.firestore.documents][0]; f.firestore.documents.set(path, { ...row, state });
+        assert.equal((await f.create().handle(query(f))).status, 'unverified'); assert.equal(f.calls(), 1);
+        assert.equal(f.firestore.documents.get(path).state, state);
+    });
+    for (const field of ['clientId', 'grantKey']) it(`rejects a different ${field} even when the account can currently manage the team`, async () => {
+        const f = fixture(); await f.create().handle(f.envelope()); live(f);
+        const actor = { ...f.input.actor, sessionId: 'new', [field]: field === 'grantKey' ? 'b'.repeat(64) : 'another-client' };
+        await assert.rejects(f.create().handle(query(f, { actor })), { code: 'broker_command_conflict' }); assert.equal(f.calls(), 1);
+    });
+    it('does not retrofit recovery authority onto a historical row missing grant lineage', async () => {
+        const f = fixture(); await f.create().handle(f.envelope()); live(f);
+        const [path, row] = [...f.firestore.documents][0]; delete row.recoveryActorHash; f.firestore.documents.set(path, row);
+        await assert.rejects(f.create().handle(query(f)), { code: 'broker_command_conflict' }); assert.equal(f.calls(), 1);
+    });
+    it('cannot promote a read-only recovery envelope into an execute or original-session status command', async () => {
+        const f = fixture(); live(f);
+        for (const purpose of ['schedule.execute', 'schedule.status']) {
+            const envelope = query(f); const value = JSON.parse(Buffer.from(envelope.payload, 'base64url').toString()); value.purpose = purpose;
+            envelope.payload = Buffer.from(JSON.stringify(value)).toString('base64url');
+            const { sign } = require('node:crypto'); envelope.signature = sign(null, Buffer.from(`${envelope.keyId}.${envelope.payload}`), f.input.privateKey).toString('base64url');
+            await assert.rejects(f.create().handle(envelope));
+        }
+        assert.equal(f.calls(), 0); assert.equal(f.firestore.documents.size, 0);
+    });
+    it('refuses executable approval fields on the recovery-only purpose', async () => {
+        const f = fixture(); live(f); await assert.rejects(f.create().handle(f.envelope({ purpose: 'schedule.recover' })));
+        assert.equal(f.calls(), 0); assert.equal(f.firestore.documents.size, 0);
+    });
+    for (const phase of ['session', 'permission', 'read']) it(`rechecks current permission and expiry around recovery ${phase} awaits`, async () => {
+        const f = fixture(); await f.create().handle(f.envelope()); live(f);
+        if (phase === 'session') f.dependencies.verifyLiveSession = async (input) => { f.advance(150001); return { ...input, connected: true, reviewRequests: true, expiresAt: 200000 }; };
+        if (phase === 'permission') f.dependencies.authorizeActor = async () => { f.advance(150001); return true; };
+        if (phase === 'read') {
+            const get = f.dependencies.store.get; f.dependencies.store.get = async (...args) => { const result = await get(...args); f.advance(150001); return result; };
+        }
+        await assert.rejects(f.create().handle(query(f))); assert.equal(f.calls(), 1);
+    });
+    it('never resumes execution when a new session presents another explicit execute envelope for the same attempt', async () => {
+        const f = fixture(); await f.create().handle(f.envelope()); live(f);
+        await assert.rejects(f.create().handle(f.envelope({ actor: { ...f.input.actor, sessionId: 'replacement-session' } })), { code: 'broker_command_conflict' });
+        assert.equal(f.calls(), 1);
+    });
+});

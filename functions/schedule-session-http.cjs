@@ -8,7 +8,7 @@ function checkBinding(value, now) {
         || !['uid', 'sessionId'].every((key) => typeof value[key] === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value[key]))
         || typeof value.clientId !== 'string' || !/^[A-Za-z0-9._~-]{1,256}$/.test(value.clientId)
         || typeof value.grantKey !== 'string' || !/^[a-f0-9]{64}$/.test(value.grantKey)
-        || !['schedule.execute', 'schedule.status'].includes(value.purpose) || !Number.isSafeInteger(value.expiresAt)
+        || !['schedule.execute', 'schedule.status', 'schedule.recover'].includes(value.purpose) || !Number.isSafeInteger(value.expiresAt)
         || value.expiresAt <= now() || value.expiresAt - now() > 120000) fail();
     return value;
 }

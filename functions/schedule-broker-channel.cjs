@@ -20,6 +20,16 @@ function signBrokerCommand({ keyId, privateKey, audience, actor, command, approv
     return { keyId, payload, signature, idToken };
 }
 
+// Read-only replacement-session lookup. No approval or executable command is
+// accepted; the backend still authenticates the fresh session and original grant.
+function signBrokerStatusQuery({ keyId, privateKey, audience, actor, teamId, proposalId, idToken, issuedAt, expiresAt, nonce = randomUUID() }) {
+    if (privateKey?.asymmetricKeyType !== 'ed25519' || typeof idToken !== 'string') fail();
+    const payload = Buffer.from(JSON.stringify({ version: 1, audience, purpose: 'schedule.recover', actor, command: { teamId, proposalId }, issuedAt, expiresAt, nonce, tokenHash: tokenHash(idToken) })).toString('base64url');
+    const signature = sign(null, Buffer.from(`${keyId}.${payload}`), privateKey).toString('base64url');
+    return { keyId, payload, signature, idToken };
+}
+const recoveryActorHash = (actor) => hash(Object.fromEntries(['uid', 'clientId', 'grantKey'].map((key) => [key, actor[key]])));
+
 // Unmounted backend protocol core. HTTPS/IAM, parser bounds and rate limits are
 // additional host requirements. It verifies a pinned broker signature AND the
 // current user token/session. The injected executor is trusted backend code and
@@ -35,17 +45,19 @@ function createScheduleBrokerChannel({ audience, publicKeys, store, verifyUserTo
         const key = publicKeys.get(envelope.keyId);
         if (key?.asymmetricKeyType !== 'ed25519' || !verify(null, Buffer.from(`${envelope.keyId}.${envelope.payload}`), key, Buffer.from(envelope.signature, 'base64url'))) fail();
         const payload = JSON.parse(Buffer.from(envelope.payload, 'base64url').toString('utf8'));
-        if (!exact(payload, ['version', 'audience', 'purpose', 'actor', 'command', 'approval', 'issuedAt', 'expiresAt', 'nonce', 'tokenHash'])
-            || payload.version !== 1 || payload.audience !== audience || !['schedule.execute', 'schedule.status'].includes(payload.purpose)
+        const recovery = payload?.purpose === 'schedule.recover';
+        if (!exact(payload, ['version', 'audience', 'purpose', 'actor', 'command', ...(recovery ? [] : ['approval']), 'issuedAt', 'expiresAt', 'nonce', 'tokenHash'])
+            || payload.version !== 1 || payload.audience !== audience || !['schedule.execute', 'schedule.status', 'schedule.recover'].includes(payload.purpose)
             || !UUID.test(payload.nonce || '') || payload.tokenHash !== tokenHash(envelope.idToken)
             || ![payload.issuedAt, payload.expiresAt].every(Number.isSafeInteger) || payload.issuedAt < 0 || payload.issuedAt > now()
             || payload.expiresAt <= now() || payload.expiresAt - payload.issuedAt > 120000
             || !exact(payload.actor, actorKeys) || !['uid', 'sessionId'].every((key) => ID.test(payload.actor[key] || ''))
             || !isBrokerClientId(payload.actor.clientId) || !HASH.test(payload.actor.grantKey || '')
-            || !exact(payload.command, ['proposalId', 'teamId', 'eventId', 'mode', 'eventType', 'changes'])
-            || !['proposalId', 'teamId', 'eventId'].every((key) => ID.test(payload.command[key] || ''))
-            || !['create', 'update'].includes(payload.command.mode) || !['game', 'practice'].includes(payload.command.eventType)
-            || !exact(payload.approval, ['preview', 'approve', 'notifyTeam']) || payload.approval.approve !== true || payload.approval.notifyTeam !== true) fail();
+            || (recovery ? !exact(payload.command, ['teamId', 'proposalId']) || !['teamId', 'proposalId'].every((key) => typeof payload.command[key] === 'string' && ID.test(payload.command[key]))
+                : !exact(payload.command, ['proposalId', 'teamId', 'eventId', 'mode', 'eventType', 'changes'])
+                    || !['proposalId', 'teamId', 'eventId'].every((key) => ID.test(payload.command[key] || ''))
+                    || !['create', 'update'].includes(payload.command.mode) || !['game', 'practice'].includes(payload.command.eventType)
+                    || !exact(payload.approval, ['preview', 'approve', 'notifyTeam']) || payload.approval.approve !== true || payload.approval.notifyTeam !== true)) fail();
         const assertDispatchReady = () => {
             if (publicKeys.get(envelope.keyId) !== key || now() >= payload.expiresAt) fail();
         };
@@ -80,6 +92,16 @@ function createScheduleBrokerChannel({ audience, publicKeys, store, verifyUserTo
                 // Stable across new transport nonces/token refreshes: replay,
                 // parallel calls and restarts cannot repeat the same mutation.
                 const operationId = hash({ kind: 'broker-command-v1', uid: actor.uid, teamId: command.teamId, proposalId: command.proposalId });
+                if (payload.purpose === 'schedule.recover') {
+                    const row = await store.get(command.teamId, operationId);
+                    // Historical rows without explicit grant lineage remain
+                    // unavailable; never infer it from client-writable receipts.
+                    if (row && (row.kind !== 'broker-command-attempt' || row.recoveryActorHash !== recoveryActorHash(actor)
+                        || !HASH.test(row.actorHash || '') || !HASH.test(row.requestHash || '')
+                        || !['reserved', 'committed', 'unverified'].includes(row.state))) fail('broker_command_conflict');
+                    (await checkCurrent())();
+                    return { operationId, status: !row ? 'not_started' : row.state === 'committed' ? 'committed' : 'unverified' };
+                }
                 const binding = { actorHash: hash(actor), requestHash: hash({ actor, command, approval }) };
                 if (payload.purpose === 'schedule.status') {
                     const row = checkedRow(await store.get(command.teamId, operationId), binding);
@@ -93,7 +115,7 @@ function createScheduleBrokerChannel({ audience, publicKeys, store, verifyUserTo
                     claimed = false;
                     if (existing) return checkedRow(existing, binding);
                     claimed = true;
-                    return { kind: 'broker-command-attempt', ...binding, state: 'reserved', reservedAt: now() };
+                    return { kind: 'broker-command-attempt', ...binding, recoveryActorHash: recoveryActorHash(actor), state: 'reserved', reservedAt: now() };
                 });
                 checkedRow(row, binding);
                 if (!row || (claimed && row.state !== 'reserved')) fail('broker_outcome_unknown');
@@ -126,4 +148,4 @@ function createScheduleBrokerChannel({ audience, publicKeys, store, verifyUserTo
         }
     };
 }
-module.exports = { signBrokerCommand, createScheduleBrokerChannel };
+module.exports = { signBrokerCommand, signBrokerStatusQuery, createScheduleBrokerChannel };

@@ -146,17 +146,21 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('signed channel with actua
     // Actual OAuth grant resolution, SDK form elicitation, signed private HTTP,
     // live session introspection, credentialed Firestore and private evidence.
     // Only identity/provider platform adapters are synthetic; no live accounts.
-    async function signedConnection(f, { answer, loseResponse = false, tamperSession = false } = {}) {
-        const oauth = createOAuthBroker({ now: f.now }); let revoked = false;
-        const authenticate = createDirectSessionAuthenticator({ oauth, now: f.now, resolveIdentity: async (_authorization, options) => {
-            expect(options.forceRefresh).toBe(true); if (revoked) throw new Error('Synthetic revoked identity');
-            return { uid: 'owner', email: 'owner@example.test', idToken: f.idToken, via: 'refresh-token' };
-        } });
-        const redirectUri = 'https://chatgpt.com/connector/oauth/isolated';
-        const clientId = oauth.registerClient({ redirect_uris: [redirectUri] }).client_id;
-        const verifier = 'isolated-verifier-with-at-least-forty-three-characters';
-        const code = await oauth.approveAuthorization({ clientId, redirectUri, codeChallenge: s256Challenge(verifier), firebaseRefreshToken: 'synthetic-refresh', scope: 'allplays.read allplays.review', reviewApproved: true });
-        const bearer = (await oauth.exchange({ grant_type: 'authorization_code', code, code_verifier: verifier })).access_token;
+    async function signedConnection(f, { answer, loseResponse = false, tamperSession = false, login } = {}) {
+        if (!login) {
+            const oauth = createOAuthBroker({ now: f.now }); let revoked = false;
+            const authenticate = createDirectSessionAuthenticator({ oauth, now: f.now, resolveIdentity: async (_authorization, options) => {
+                expect(options.forceRefresh).toBe(true); if (revoked) throw new Error('Synthetic revoked identity');
+                return { uid: 'owner', email: 'owner@example.test', idToken: f.idToken, via: 'refresh-token' };
+            } });
+            const redirectUri = 'https://chatgpt.com/connector/oauth/isolated';
+            const clientId = oauth.registerClient({ redirect_uris: [redirectUri] }).client_id;
+            const verifier = 'isolated-verifier-with-at-least-forty-three-characters';
+            const code = await oauth.approveAuthorization({ clientId, redirectUri, codeChallenge: s256Challenge(verifier), firebaseRefreshToken: 'synthetic-refresh', scope: 'allplays.read allplays.review', reviewApproved: true });
+            const bearer = (await oauth.exchange({ grant_type: 'authorization_code', code, code_verifier: verifier })).access_token;
+            login = { authenticate, bearer, revoke: () => { revoked = true; } };
+        }
+        const { authenticate, bearer } = login;
         let sendEnvelope; let localWrites = 0; let forms = 0; let attempts = 0; const purposes = [];
         const service = createDirectSessionRouter({ authenticate, now: f.now,
             createDependencies: (actor, current) => {
@@ -199,11 +203,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('signed channel with actua
         sendEnvelope = createScheduleBrokerCommandClient({ ...network(audience), url: 'https://isolated.test/internal/v1/schedule-command' });
         const client = new Client({ name: 'isolated-signed-client', version: '1' }, { capabilities: { elicitation: { form: {} } } });
         client.onerror = () => {};
-        client.setRequestHandler(ElicitRequestSchema, async (request) => { forms++; return answer ? answer(request, { revoke: () => { revoked = true; } }) : { action: 'accept', content: { approve: true, notifyTeam: true } }; });
+        client.setRequestHandler(ElicitRequestSchema, async (request) => { forms++; return answer ? answer(request, { revoke: login.revoke }) : { action: 'accept', content: { approve: true, notifyTeam: true } }; });
         const transport = new StreamableHTTPClientTransport(new URL(`http://${host}/direct`), { requestInit: { headers: { Authorization: `Bearer ${bearer}` } },
             reconnectionOptions: { maxRetries: 0, maxReconnectionDelay: 1, initialReconnectionDelay: 1, reconnectionDelayGrowFactor: 1 } });
         try { await client.connect(transport); } catch (error) { await service.close(); http.closeAllConnections(); await new Promise((resolve) => http.close(resolve)); throw error; }
-        return { client, service, localWrites: () => localWrites, forms: () => forms, purposes,
+        return { client, service, login, localWrites: () => localWrites, forms: () => forms, purposes,
             prepare: () => client.callTool({ name: `prepare_${f.command.mode}_schedule_event`, arguments: { proposalId, teamId: 'team-1', eventType: f.command.eventType, changes: f.command.changes, ...(f.command.mode === 'update' ? { eventId } : {}) } }),
             confirm: () => client.callTool({ name: 'confirm_schedule_event', arguments: { proposalId } }, undefined, { timeout: 3000 }),
             status: () => client.callTool({ name: 'get_schedule_event_action', arguments: { proposalId } }),
@@ -222,6 +226,28 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('signed channel with actua
                 const again = await connection.confirm(); expect(again.structuredContent?.status, JSON.stringify(again.content)).toBe('completed');
                 expect(connection.purposes).toEqual(['schedule.execute', 'schedule.status']); expect(connection.forms()).toBe(1); expect(f.commits()).toBe(1);
             } finally { await connection.close(); }
+        });
+    });
+    for (const fault of [null, 'lost-response', 'proof-failure']) it(`recovers read-only status in a replacement MCP session after ${fault || 'success'}`, async () => {
+        await withFixture({ signedSession: true, fault }, async (f) => {
+            const first = await signedConnection(f); const login = first.login;
+            try { await first.prepare(); await first.confirm(); expect(f.commits()).toBe(1); }
+            finally { await first.close(); }
+            const replacement = await signedConnection(f, { login });
+            try {
+                const status = await replacement.status(); expect(status.structuredContent?.status, JSON.stringify(status.content)).toBe(fault ? 'unverified' : 'completed');
+                expect(replacement.purposes).toEqual(['schedule.recover']); expect(replacement.forms()).toBe(0); expect(f.commits()).toBe(1); expect(f.executions()).toBe(1);
+                expect(JSON.stringify(status)).not.toContain(f.idToken);
+            } finally { await replacement.close(); }
+        });
+    });
+    it('denies replacement-session recovery through a different OAuth grant', async () => {
+        await withFixture({ signedSession: true }, async (f) => {
+            const first = await signedConnection(f);
+            try { await first.prepare(); await first.confirm(); } finally { await first.close(); }
+            const different = await signedConnection(f);
+            try { expect((await different.status()).isError).toBe(true); expect(f.commits()).toBe(1); expect(f.executions()).toBe(1); expect(different.forms()).toBe(0); }
+            finally { await different.close(); }
         });
     });
     it('queries status after a lost private response and never resubmits execution', async () => {

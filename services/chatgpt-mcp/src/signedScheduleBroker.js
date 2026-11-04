@@ -4,7 +4,7 @@ import { fingerprint } from './directRevisionCommand.js';
 import { createDirectScheduleCommands } from './directSchedule.js';
 import { approvedContent } from './directConfirmation.js';
 const require = createRequire(import.meta.url);
-const { signBrokerCommand } = require('../../../functions/schedule-broker-channel.cjs');
+const { signBrokerCommand, signBrokerStatusQuery } = require('../../../functions/schedule-broker-channel.cjs');
 const identityKeys = ['uid', 'clientId', 'grantKey', 'sessionId'];
 const deny = () => { throw new DomainError('confirmation_unavailable', 'The exact session-bound schedule approval is unavailable.'); };
 const sameActor = (one, two) => identityKeys.every((key) => one?.[key] === two?.[key]);
@@ -58,7 +58,14 @@ export function createSignedScheduleBroker({ dependencies, getActor, sessionId, 
         const record = submissions.get(proposalId);
         if (record) return send(record, 'schedule.status');
         const result = await local.status({ proposalId });
-        return result.status === 'completed' ? { ...result, businessStatus: 'completed', status: 'unverified', message: 'No bound backend status is available in this session. Check the app; do not repeat the save.' } : result;
+        const actor = await current(); const issuedAt = now(); const expiresAt = Math.min(actor.expiresAt, issuedAt + 120000);
+        const envelope = signBrokerStatusQuery({ keyId, privateKey, audience, actor: Object.fromEntries(identityKeys.map((key) => [key, actor[key]])),
+            teamId: result.teamId, proposalId, idToken: actor.idToken, issuedAt, expiresAt });
+        if (now() >= expiresAt) deny();
+        const response = await sendEnvelope(envelope);
+        const operationId = fingerprint({ kind: 'broker-command-v1', uid: actor.uid, teamId: result.teamId, proposalId });
+        if (response?.operationId !== operationId || !['not_started', 'committed', 'unverified'].includes(response.status)) deny();
+        return report(proposalId, response);
     };
     return { captureForm, close: () => { closed = true; submissions.clear(); }, commands: {
         prepare: async (args) => {
