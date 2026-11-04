@@ -57,6 +57,21 @@ describe('canonical schedule audience adapters', () => {
         delete f.rows.get('teams/team').ownerId; f.rows.get('teams/team').ownerEmailLower = 'other@example.test';
         await assert.rejects(f.membership.listCanonicalMembers('team'));
     });
+    for (const [label, team] of [
+        ['padded owner ID', { ownerId: ' owner ' }], ['tabbed owner ID', { ownerId: '\towner\t' }],
+        ['null owner ID', { ownerId: null, ownerEmail: 'owner@example.test' }],
+        ['numeric owner ID', { ownerId: 0, ownerEmail: 'owner@example.test' }],
+        ['boolean owner ID', { ownerId: false, ownerEmail: 'owner@example.test' }],
+        ['blank owner ID', { ownerId: ' ', ownerEmail: 'owner@example.test' }],
+        ['padded owner email', { ownerId: '', ownerEmail: ' owner@example.test ' }],
+        ['tabbed owner email', { ownerId: '', ownerEmail: '\towner@example.test\t' }],
+        ['null owner email alias', { ownerId: '', ownerEmail: 'owner@example.test', ownerEmailLower: null }],
+        ['tabbed admin email', { ownerId: 'other', adminEmails: ['\towner@example.test\t'] }],
+        ['uppercase admin mismatch', { ownerId: 'other', adminEmails: ['OWNER@example.test'] }]
+    ]) it(`does not normalize ${label} into manager access`, async () => {
+        const f = fixture(); f.rows.set('teams/team', team);
+        assert.equal(await f.membership.authorizeActor({ uid: 'owner' }, 'team'), false);
+    });
     it('fails closed on incomplete queries, too many candidates or failed Auth lookups', async () => {
         const f = fixture(); f.overflow(); await assert.rejects(f.audience.resolve({ teamId: 'team', actorUid: 'owner' }));
         const g = fixture(); g.failQuery(); await assert.rejects(g.audience.resolve({ teamId: 'team', actorUid: 'owner' }));

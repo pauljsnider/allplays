@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
-import { initializeTestEnvironment, assertFails } from '@firebase/rules-unit-testing';
+import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { doc, getDoc, setDoc, runTransaction, collection, query, where, limit, getDocs } from 'firebase/firestore';
 import { createMockUserToken } from '@firebase/util';
 import { compactFirestoreRules } from '../../scripts/compact-firestore-rules.mjs';
@@ -22,7 +22,7 @@ const { createScheduleEvidenceAuthority } = require('../../functions/schedule-de
 const { createFirestoreNotificationJournalStore } = require('../../functions/notification-attempt-journal.cjs');
 const { createScheduleDeliveryCoordinator } = require('../../functions/schedule-delivery-coordinator.cjs');
 const { createScheduleDeliveryProviders } = require('../../functions/schedule-delivery-providers.cjs');
-const { createCanonicalScheduleMembership } = require('../../functions/schedule-canonical-membership.cjs');
+const { createCanonicalScheduleMembership, canonicalScheduleRoles } = require('../../functions/schedule-canonical-membership.cjs');
 const { createScheduleDeliveryAudience, createFirestoreScheduleRecipientLoader } = require('../../functions/schedule-delivery-audience.cjs');
 const projectId = 'demo-allplays-mcp-review';
 const proposalId = '00112233-4455-4677-8899-aabbccddeeff';
@@ -120,6 +120,32 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('actual broker, form proto
             setAcknowledge: (value) => { acknowledge = value; }, revoke: () => { revoked = true; }, localFetch,
             close: async () => { await client.close().catch(() => {}); await service.close(); http.closeAllConnections(); await new Promise((resolve) => http.close(resolve)); } };
     }
+    it.each([
+        ['exact owner', { ownerId: 'owner' }, true, true],
+        ['padded owner', { ownerId: ' owner ' }, false, false],
+        ['tabbed owner', { ownerId: '\towner\t' }, false, false],
+        ['null owner', { ownerId: null, ownerEmail: 'owner@example.test' }, false, false],
+        ['numeric owner', { ownerId: 0, ownerEmail: 'owner@example.test' }, false, false],
+        ['blank owner', { ownerId: ' ', ownerEmail: 'owner@example.test' }, false, false],
+        ['exact owner email', { ownerId: '', ownerEmail: 'OWNER@example.test' }, true, true],
+        ['missing owner ID', { ownerEmail: 'OWNER@example.test' }, true, true],
+        ['padded owner email', { ownerId: '', ownerEmail: ' owner@example.test ' }, false, false],
+        ['tabbed owner email', { ownerId: '', ownerEmail: '\towner@example.test\t' }, false, false],
+        ['null owner alias', { ownerId: '', ownerEmail: 'owner@example.test', ownerEmailLower: null }, false, false],
+        ['exact admin', { ownerId: 'other', adminEmails: ['owner@example.test'] }, true, true],
+        ['tabbed admin', { ownerId: 'other', adminEmails: ['\towner@example.test\t'] }, false, false],
+        ['uppercase stored admin', { ownerId: 'other', adminEmails: ['OWNER@example.test'] }, false, false],
+        ['single-space admin', { ownerId: 'other', adminEmails: [' owner@example.test '] }, false, true]
+    ])('keeps canonical manager authority within actual rules: %s', async (_label, team, expectedManager, expectedRules) => {
+        await env.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), 'teams/team-1'), team);
+            await setDoc(doc(context.firestore(), 'users/owner'), { isAdmin: false });
+        });
+        expect(canonicalScheduleRoles({ teamId: 'team-1', team, user: {}, uid: 'owner', email: 'owner@example.test', emailVerified: true }).includes('staff')).toBe(expectedManager);
+        const write = setDoc(doc(userDb(), 'teams/team-1/practiceTemplates/authority-check'), { title: 'Synthetic authority check' });
+        if (expectedRules) await assertSucceeds(write); else await assertFails(write);
+        expect(expectedManager && !expectedRules).toBe(false);
+    });
     it('resolves canonical audience records and rechecks revoked membership using the emulator', async () => {
         await env.withSecurityRulesDisabled(async (context) => {
             const database = context.firestore();

@@ -1,6 +1,16 @@
 "use strict";
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
-const email = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
+// A deliberately stricter subset of firestore.rules: never trim identifiers
+// or email grants, and never case-fold stored admin-list entries into access.
+const email = (value) => typeof value === 'string' && value.length <= 320 && /^[^\s@]+@[^\s@]+$/.test(value) ? value.toLowerCase() : '';
+const ownerEmail = (team) => {
+    const one = Object.hasOwn(team, 'ownerEmail') ? team.ownerEmail : '';
+    const two = Object.hasOwn(team, 'ownerEmailLower') ? team.ownerEmailLower : '';
+    if (typeof one !== 'string' || typeof two !== 'string' || (one && !email(one)) || (two && !email(two))
+        || (one && two && email(one) !== email(two))) return '';
+    return email(one || two);
+};
+const missingOwner = (team) => !Object.hasOwn(team, 'ownerId') || team.ownerId === '';
 const fail = () => { throw new Error('Canonical schedule membership is unavailable.'); };
 
 // Mirrors the current notification role sources: owner identity, team admin
@@ -9,11 +19,10 @@ const fail = () => { throw new Error('Canonical schedule membership is unavailab
 function canonicalScheduleRoles({ teamId, team, user, uid, email: authEmail, emailVerified }) {
     if (!ID.test(teamId || '') || !ID.test(uid || '') || !team || !user) return [];
     const roles = new Set();
-    const ownerId = typeof team.ownerId === 'string' ? team.ownerId.trim() : '';
+    const ownerId = team.ownerId;
     const verifiedEmail = emailVerified === true ? email(authEmail) : '';
-    const ownerEmails = [...new Set([team.ownerEmail, team.ownerEmailLower].map(email).filter(Boolean))];
-    if (ownerId ? ownerId === uid : verifiedEmail && ownerEmails.length === 1 && ownerEmails[0] === verifiedEmail) roles.add('staff');
-    if (verifiedEmail && Array.isArray(team.adminEmails) && team.adminEmails.some((value) => email(value) === verifiedEmail)) roles.add('staff');
+    if (ownerId === uid || (missingOwner(team) && verifiedEmail && ownerEmail(team) === verifiedEmail)) roles.add('staff');
+    if (verifiedEmail && Array.isArray(team.adminEmails) && (team.adminEmails.includes(authEmail) || team.adminEmails.includes(verifiedEmail))) roles.add('staff');
     if (Array.isArray(user.parentTeamIds) && user.parentTeamIds.includes(teamId)) roles.add('parent');
     return [...roles];
 }
@@ -30,12 +39,14 @@ function createCanonicalScheduleMembership({ firestore, auth }) {
         resolveCanonicalRoles: canonicalScheduleRoles,
         async listCanonicalMembers(teamId) {
             const team = await teamFor(teamId); const uids = new Set();
-            if (team.ownerId) { if (!ID.test(team.ownerId)) fail(); uids.add(team.ownerId); }
+            if (!missingOwner(team)) { if (typeof team.ownerId !== 'string' || !ID.test(team.ownerId)) fail(); uids.add(team.ownerId); }
             if (team.adminEmails !== undefined && !Array.isArray(team.adminEmails)) fail();
             const addresses = [...new Set((team.adminEmails || []).map(email))];
-            const owners = [...new Set([team.ownerEmail, team.ownerEmailLower].map(email).filter(Boolean))];
-            if (!team.ownerId && owners.length > 1) fail();
-            if (!team.ownerId) addresses.push(...owners);
+            if (missingOwner(team)) {
+                const owner = ownerEmail(team);
+                if (!owner && [team.ownerEmail, team.ownerEmailLower].some((value) => value !== undefined && value !== '')) fail();
+                if (owner) addresses.push(owner);
+            }
             if (addresses.length > 100 || addresses.some((value) => !value || value.length > 320 || !/^[^\s@]+@[^\s@]+$/.test(value))) fail();
             // A bounded query must fail on overflow; never silently truncate the
             // family audience. No reliance on eventually consistent token indexes.
