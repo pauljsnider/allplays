@@ -35,11 +35,12 @@ providers or MCP status reads. See [write workflows](WRITE_WORKFLOWS.md) for the
 exact remaining integration work and [review slices](REVIEW_SLICES.md) for the
 proposed dependency stack. No new PRs or handoff were created for that plan.
 
-The latest [draft block editing checkpoint](PRACTICE_BLOCK_CONTENT_REVIEW.md)
-adds explicitly approved replacement/removal of selected practice blocks while
-preserving recorded notes and unrelated state. Coverage remains 19 of 46
-workflow names partially direct. Earlier checkpoints cover RSVP notes, team
-setup, incentives, roster and schedule work; full parity and activation remain open.
+The latest [linked-parent profile checkpoint](PLAYER_PROFILE_REVIEW.md) adds
+explicitly approved creation and selected-field updates for private emergency
+contact and medical text. Coverage is now 20 of 46 workflow names partially
+direct, with 26 app-review-only. Pending private-text cleanup remains a privacy
+gate. Earlier checkpoints cover draft blocks, RSVP notes, team setup, incentives,
+roster and schedule work; full parity and activation remain open.
 
 Spec: `/spec/chatgpt-app-integration/` · Plan: `AllPlays_ChatGPT_App_Integration_Plan.docx`
 

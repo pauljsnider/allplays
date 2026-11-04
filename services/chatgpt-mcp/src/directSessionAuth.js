@@ -10,6 +10,7 @@ import { createDirectRosterBatchStore } from './directRosterBatch.js';
 import { createDirectTrackingStatusStore } from './directTrackingStatus.js';
 import { createDirectAssignmentStore } from './directAssignments.js';
 import { createDirectAssignmentClaimStore } from './directAssignmentClaims.js';
+import { createDirectPlayerProfileStore } from './directPlayerProfile.js';
 import { createDirectFamilyRsvpStore } from './directFamilyRsvp.js';
 import { createDirectPracticeAttendanceStore } from './directPracticeAttendance.js';
 import { createDirectIncentiveStore } from './directIncentives.js';
@@ -51,6 +52,7 @@ export function directFavoriteDependencies({ projectId, fetchImpl = fetch }) {
         trackingStatusStore: createDirectTrackingStatusStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
         assignmentStore: createDirectAssignmentStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
         assignmentClaimStore: createDirectAssignmentClaimStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
+        playerProfileStore: createDirectPlayerProfileStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
         familyRsvpStore: createDirectFamilyRsvpStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
         familyRsvpNoteStore: createDirectFamilyRsvpStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }, { staffNotes: true }),
         practiceAttendanceStore: createDirectPracticeAttendanceStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),

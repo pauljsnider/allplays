@@ -12,6 +12,7 @@ import { createDirectRosterBatchCommands } from './directRosterBatch.js';
 import { createDirectTrackingStatusCommands } from './directTrackingStatus.js';
 import { ASSIGNMENT_ROLE, createDirectAssignmentCommands } from './directAssignments.js';
 import { createDirectAssignmentClaimCommands } from './directAssignmentClaims.js';
+import { createDirectPlayerProfileCommands } from './directPlayerProfile.js';
 import { createDirectFamilyRsvpCommands } from './directFamilyRsvp.js';
 import { createDirectPracticeAttendanceCommands } from './directPracticeAttendance.js';
 import { createDirectIncentiveCommands } from './directIncentives.js';
@@ -132,6 +133,16 @@ export function createDirectFavoriteMcpSession(dependencies) {
                 changes: z.array(z.object({ playerId: resourceId, status: z.enum(['present', 'late', 'absent']) }).strict()).min(1).max(20) }).strict(), annotations: mutation
         }, run(commands.prepare));
         registerOutcome('practice_attendance', commands);
+    }
+    if (dependencies.playerProfileStore) {
+        const commands = createDirectPlayerProfileCommands({ ...dependencies, store: dependencies.playerProfileStore });
+        server.registerTool('prepare_linked_player_private_profile', {
+            description: 'Prepare selected emergency contact name/phone or medical text for one exactly linked active child. Explicit empty text clears only that field. Separate confirmation discloses access by all linked parents and authorized team owners/admins. Prior private text is never returned. Photos, household contacts and access changes require app review.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, playerId: resourceId, changes: z.object({
+                emergencyContactName: z.string().max(120).optional(), emergencyContactPhone: z.string().max(60).optional(), medicalInfo: z.string().max(2000).optional()
+            }).strict() }).strict(), annotations: mutation
+        }, run(commands.prepare));
+        registerOutcome('linked_player_private_profile', commands, { ...mutation, destructiveHint: true });
     }
     if (dependencies.familyRsvpNoteStore) {
         const commands = createDirectFamilyRsvpCommands({ ...dependencies, store: dependencies.familyRsvpNoteStore }, { staffNotes: true });

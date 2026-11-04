@@ -1,6 +1,7 @@
 import { DomainError } from './core.js';
 
-const labels = Object.freeze({ notifyTeam: 'I also approve the team notification effects described above',
+const labels = Object.freeze({ privatePlayerProfile: 'I approve saving or clearing this exact private text, readable by authorized team owners/admins and all parents linked to this player',
+    notifyTeam: 'I also approve the team notification effects described above',
     practiceBlockContent: 'I approve replacing or removing only the displayed draft blocks; recorded coaching notes cannot be discarded here',
     staffRsvpNote: 'I approve replacing or clearing this exact note for every selected child, visible to me and authorized team staff',
     publicConfiguration: 'I approve the publicly readable configuration metadata and possible automatic analytics display changes described above',
