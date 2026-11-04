@@ -666,8 +666,8 @@ export function PrivateAiChat({ auth, launchSearch }: { auth: AuthState; launchS
     return (
       <div className="messages-page messages-page-web private-ai-page">
         <PrivateAiHeader loading={loading || conversationLoading} onRefresh={refreshAiView} />
-        {showDesktopConversationManagement ? (
-          <section className="messages-two-pane private-ai-two-pane mt-4">
+        <section className={showDesktopConversationManagement ? 'messages-two-pane private-ai-two-pane mt-4' : 'private-ai-first-run mt-4'}>
+          {showDesktopConversationManagement ? (
             <aside className="messages-list-pane private-ai-rail">
               <section className="app-card p-3">
                 <div className="flex items-center gap-3">
@@ -725,19 +725,14 @@ export function PrivateAiChat({ auth, launchSearch }: { auth: AuthState; launchS
                 )}
               </section>
             </aside>
-            <div className="messages-chat-pane min-w-0">
-              <div className="chat-window chat-window-embedded private-ai-window">
-                {thread}
-              </div>
-            </div>
-          </section>
-        ) : (
-          <section className="private-ai-first-run mt-4">
+          ) : null}
+          {/* Keep the file input mounted while asynchronous history adds the rail. */}
+          <div className={showDesktopConversationManagement ? 'messages-chat-pane min-w-0' : 'min-w-0 w-full max-w-[900px]'}>
             <div className="chat-window chat-window-embedded private-ai-window">
               {thread}
             </div>
-          </section>
-        )}
+          </div>
+        </section>
       </div>
     );
   }
