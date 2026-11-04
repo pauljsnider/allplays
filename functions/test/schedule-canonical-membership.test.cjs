@@ -1,7 +1,7 @@
 "use strict";
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
-const { canonicalScheduleRoles, createCanonicalScheduleMembership } = require('../schedule-canonical-membership.cjs');
+const { canonicalScheduleRoles, createCanonicalScheduleMembership, createCanonicalScheduleReadiness } = require('../schedule-canonical-membership.cjs');
 const { createScheduleDeliveryAudience, createFirestoreScheduleRecipientLoader } = require('../schedule-delivery-audience.cjs');
 function fixture() {
     const rows = new Map([
@@ -24,6 +24,19 @@ function fixture() {
     return { rows, accounts, devices, membership, audience, auth, overflow: () => { overflow = true; }, failQuery: () => { queryFailed = true; } };
 }
 describe('canonical schedule audience adapters', () => {
+    for (const team of [{ ownerId: ' owner ' }, { ownerId: null }, { adminEmails: [' admin@example.test '] }, { adminEmails: 'admin@example.test' }, { ownerEmail: ' owner@example.test ' }]) {
+        it(`keeps incompatible metadata on legacy before discovering an audience: ${JSON.stringify(team)}`, async () => {
+            const ready = createCanonicalScheduleReadiness({ readTeam: async () => team, resolveAudience: async () => { assert.fail('Must not discover an incompatible audience'); } });
+            assert.equal((await ready({ teamId: 'team', actorUid: 'owner' })).state, 'legacy_required');
+        });
+    }
+    it('does not turn temporary readiness failures or invalid identifiers into a legacy decision', async () => {
+        const f = fixture();
+        const ready = createCanonicalScheduleReadiness({ readTeam: async (id) => { assert.equal(id, 'team'); return f.rows.get('teams/team'); }, resolveAudience: f.audience.resolve });
+        assert.equal((await ready({ teamId: 'team', actorUid: 'owner' })).state, 'ready');
+        f.failQuery(); await assert.rejects(ready({ teamId: 'team', actorUid: 'owner' }));
+        await assert.rejects(ready({ teamId: '../team', actorUid: 'owner' }));
+    });
     it('uses current canonical records, preferences and Auth-owned devices', async () => {
         const f = fixture(); assert.deepEqual(await f.membership.listCanonicalMembers('team'), { complete: true, uids: ['admin', 'owner', 'parent'] });
         assert.equal(await f.membership.authorizeActor({ uid: 'admin' }, 'team'), true);

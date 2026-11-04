@@ -73,3 +73,20 @@ function createCanonicalScheduleMembership({ firestore, auth }) {
     };
 }
 module.exports = { canonicalScheduleRoles, createCanonicalScheduleMembership };
+
+// Readiness is separate from granting manager access. A known incompatible
+// metadata shape routes through the existing legacy adapter; read/Auth failures
+// remain retryable and never select ownership with an incomplete audience.
+function createCanonicalScheduleReadiness({ readTeam, resolveAudience }) {
+    if ([readTeam, resolveAudience].some((fn) => typeof fn !== 'function')) throw new Error('Current team and complete audience readers are required.');
+    return async ({ teamId, actorUid }) => {
+        if (!validId(teamId) || !validId(actorUid)) fail();
+        const team = await readTeam(teamId); if (!team) fail();
+        const invalidOwner = !missingOwner(team) && !validId(team.ownerId);
+        const invalidLegacyOwner = missingOwner(team) && !ownerEmail(team) && [team.ownerEmail, team.ownerEmailLower].some((value) => value !== undefined && value !== '');
+        const invalidAdmins = team.adminEmails !== undefined && (!Array.isArray(team.adminEmails) || team.adminEmails.length > 100 || team.adminEmails.some((value) => !email(value)));
+        if (invalidOwner || invalidLegacyOwner || invalidAdmins) return { state: 'legacy_required', reason: 'canonical_metadata_incompatible' };
+        return { state: 'ready', targets: await resolveAudience({ teamId, actorUid }) };
+    };
+}
+module.exports.createCanonicalScheduleReadiness = createCanonicalScheduleReadiness;
