@@ -35,6 +35,11 @@ providers or MCP status reads. See [write workflows](WRITE_WORKFLOWS.md) for the
 exact remaining integration work and [review slices](REVIEW_SLICES.md) for the
 proposed dependency stack. No new PRs or handoff were created for that plan.
 
+The latest [private incentive checkpoint](INCENTIVE_PARITY_REVIEW.md) records
+bounded direct coverage for 18 of the 46 app write workflow names, including
+private rule creation/versioning, explicit active state, retirement and cap
+settings. It lists the remaining gaps, validation and activation gates.
+
 Spec: `/spec/chatgpt-app-integration/` · Plan: `AllPlays_ChatGPT_App_Integration_Plan.docx`
 
 ## How authorization works
