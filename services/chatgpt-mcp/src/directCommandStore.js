@@ -36,15 +36,16 @@ export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, 
         if (row.found?.name !== name(path) || !row.found.updateTime) throw new DomainError('unavailable', 'Document revision unavailable.');
         return { exists: true, data: decodeFields(row.found.fields), version: row.found.updateTime };
     }
-    async function list(path, transaction) {
-        const query = policy.query?.(path);
+    async function list(path, transaction, queryArgs = {}) {
+        const query = policy.query?.(path, queryArgs);
         if (!query) throw new DomainError('permission_denied', 'This query is outside the command domain.');
         const segments = path.split('/');
         const collectionId = segments.pop();
         const parent = segments.join('/');
         const rows = await request(`/${parent}:runQuery`, { method: 'POST', body: JSON.stringify({
             structuredQuery: { from: [{ collectionId }], select: { fields: query.fields.map((fieldPath) => ({ fieldPath })) },
-                orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }], limit: query.limit },
+                orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }], limit: query.limit,
+                ...(query.where ? { where: { fieldFilter: { field: { fieldPath: query.where.field }, op: 'EQUAL', value: encodeValue(query.where.value) } } } : {}) },
             ...(transaction ? { transaction } : {})
         }) });
         if (!Array.isArray(rows) || rows.some((row) => !row || row.error || (!row.document && typeof row.readTime !== 'string'))) {
@@ -63,7 +64,7 @@ export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, 
     };
     return {
         get,
-        list,
+        list: (path, queryArgs) => list(path, undefined, queryArgs),
         async create(path, data, companions = []) {
             if (!proposal.test(path)) throw new DomainError('permission_denied', 'Only proposals may be prepared.');
             if (companions.length > 1 || companions.some((entry) => !policy.prepare?.(entry.path))) throw new DomainError('permission_denied', 'The proposal companion is outside this domain.');
@@ -78,11 +79,16 @@ export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, 
             try {
                 const result = await callback({
                     get: (path) => get(path, transaction),
-                    list: (path) => list(path, transaction),
+                    list: (path, queryArgs) => list(path, transaction, queryArgs),
                     set: (path, data) => writes.push(write(path, data)),
                     patch: (path, data) => {
                         if (!policy.patch?.(path, data)) throw new DomainError('permission_denied', 'This patch is outside the command domain.');
                         writes.push({ ...write(path, data), updateMask: { fieldPaths: Object.keys(data) }, currentDocument: { exists: true } });
+                    },
+                    append: (path, field, values, data) => {
+                        if (!policy.append?.(path, field, values, data)) throw new DomainError('permission_denied', 'This array append is outside the command domain.');
+                        writes.push({ ...write(path, data), updateMask: { fieldPaths: Object.keys(data) }, currentDocument: { exists: true },
+                            updateTransforms: [{ fieldPath: field, appendMissingElements: { values: values.map(encodeValue) } }] });
                     },
                     delete: (path) => {
                         assertPath(path, true);

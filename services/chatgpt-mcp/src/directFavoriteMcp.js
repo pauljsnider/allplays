@@ -5,6 +5,7 @@ import { createDirectFavoriteCommands } from './directFavorite.js';
 import { createDirectStatConfigurationCommands } from './directStatConfiguration.js';
 import { createDirectDiscovery } from './directDiscovery.js';
 import { createDirectRosterCommands } from './directRoster.js';
+import { createDirectPracticeTimelineCommands } from './directPracticeTimeline.js';
 
 // The authenticated router composes bounded domains here. Production server.js
 // never imports it. No generic document writer or model-controlled approval.
@@ -77,8 +78,40 @@ export function createDirectFavoriteMcpSession(dependencies) {
         }, run((args) => commands.prepare({ ...args, mode: 'update' })));
         registerOutcome('roster_player', commands);
     }
+    if (dependencies.practiceTimelineStore) {
+        const commands = createDirectPracticeTimelineCommands({ ...dependencies, store: dependencies.practiceTimelineStore });
+        const block = z.object({ drillId: resourceId.optional(), title: z.string().min(1).max(120).optional(),
+            duration: z.number().int().min(1).max(120), type: z.string().min(1).max(60).optional(), description: z.string().max(2000).optional() }).strict();
+        const blocks = z.array(block).min(1).max(30);
+        server.registerTool('prepare_create_practice_timeline', {
+            description: 'Prepare a draft timeline for one existing non-recurring practice event without a timeline. Supply custom block titles or exact drill IDs and explicit durations. Does not create schedule events, packets, messages or attendance.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, eventId: resourceId,
+                changes: z.object({ title: z.string().min(1).max(120), location: z.string().max(200).optional(), blocks }).strict() }).strict(), annotations: mutation
+        }, run(({ proposalId, ...args }) => commands.prepare({ ...args, proposalId, mode: 'create', sessionId: `mcp_${proposalId}` })));
+        server.registerTool('prepare_update_practice_timeline', {
+            description: 'Prepare a draft timeline title/location change or append blocks. Exact event/session IDs required. Existing blocks, notes and attendance are preserved. Packet-assigned and recurring practices require app review.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, eventId: resourceId, sessionId: resourceId,
+                changes: z.object({ title: z.string().min(1).max(120).optional(), location: z.string().max(200).optional(), appendBlocks: blocks.optional() }).strict() }).strict(), annotations: mutation
+        }, run((args) => commands.prepare({ ...args, mode: 'update' })));
+        registerOutcome('practice_timeline', commands);
+    }
     if (dependencies.getDb) {
         const discovery = createDirectDiscovery(dependencies);
+        if (dependencies.practiceTimelineStore) {
+            const paging = { teamId: resourceId, cursor: resourceId.optional(), limit: z.number().int().min(1).max(50).optional() };
+            server.registerTool('list_team_practices', {
+                description: 'Page through managed-team practice event IDs, titles and dates, indicating eligibility for a direct draft timeline. Schedule changes remain in the app.',
+                inputSchema: z.object(paging).strict(), annotations: { readOnlyHint: true }
+            }, run(discovery.practices));
+            server.registerTool('list_practice_timelines', {
+                description: 'Find timeline IDs linked to an exact managed-team event. Multiple matches require app review; notes and attendance are excluded.',
+                inputSchema: z.object({ teamId: resourceId, eventId: resourceId }).strict(), annotations: { readOnlyHint: true }
+            }, run(discovery.timelines));
+            server.registerTool('list_practice_drill_options', {
+                description: 'Page through community, published or team drill IDs, titles, types and suggested durations. Fetch needed pages and choose exact IDs; prepare shows current descriptions.',
+                inputSchema: z.object({ ...paging, scope: z.enum(['community', 'published', 'team']) }).strict(), annotations: { readOnlyHint: true }
+            }, run(discovery.drills));
+        }
         if (dependencies.rosterStore) server.registerTool('get_team_roster', {
             description: 'Discover exact active/inactive player IDs, names, numbers and positions before preparing a player update. Fetch all pages before matching names. Private contact/profile fields are excluded.',
             inputSchema: z.object({ teamId: resourceId, cursor: resourceId.optional(), limit: z.number().int().min(1).max(100).optional() }).strict(), annotations: { readOnlyHint: true }

@@ -5,6 +5,7 @@ import { createUserDb } from './firestoreRest.js';
 import { createDirectFavoriteStore } from './directFavoriteStore.js';
 import { createDirectStatConfigurationStore } from './directStatConfiguration.js';
 import { createDirectRosterStore } from './directRoster.js';
+import { createDirectPracticeTimelineStore } from './directPracticeTimeline.js';
 
 // Review consent permits preparation only. The separate, one-action approval
 // in directFavoriteMcp is required for execution; no grant is upgraded here.
@@ -36,6 +37,7 @@ export function directFavoriteDependencies({ projectId, fetchImpl = fetch }) {
         store: createDirectFavoriteStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
         statConfigurationStore: createDirectStatConfigurationStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
         rosterStore: createDirectRosterStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
+        practiceTimelineStore: createDirectPracticeTimelineStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
         getDb: async () => createUserDb({ projectId, idToken: (await getCurrentActor()).idToken, fetchImpl }),
         getContext: async () => {
             const current = await getCurrentActor();

@@ -139,11 +139,13 @@ session does not authorize deployment, merge, or real team/game writes.
 
 ## Remaining work for direct MCP mutations
 
-An isolated, unregistered direct-command prototype supports five bounded
+An isolated, unregistered direct-command prototype supports seven bounded
 operations: adding/removing a managed team's drill favorite, creating a stat
 configuration by cloning an existing configuration in the same team, and
 renaming a configuration, creating one basic roster player, and updating one
-player’s name/number/position. It is exercised only with synthetic clients and data;
+player’s name/number/position, creating a draft practice timeline, and updating
+a draft timeline’s title/location or appending blocks. It is exercised only with
+synthetic clients and data;
 the production server does not import it or advertise its tools. It does not
 grant persistent access or widen an OAuth scope. The 46 normal write-request
 tools still require app confirmation.
@@ -151,13 +153,13 @@ tools still require app confirmation.
 `directRevisionCommand.js` shares proposal identity, actor checks, five-minute
 expiry, exact-preview/revision comparison, atomic receipts, and uncertain-outcome
 reconciliation. Domain definitions in `directFavorite.js` and
-`directStatConfiguration.js`, plus `directRoster.js`, specify the allowed arguments, targets, preview and
+`directStatConfiguration.js`, `directRoster.js` and `directPracticeTimeline.js` specify the allowed arguments, targets, preview and
 write. `directCommandStore.js` shares user-credentialed REST transactions, while
 separate adapters allow only the relevant domain paths. The factory in
 `directFavoriteMcp.js` composes the domains and their common confirmation flow;
 its historical filename remains for compatibility.
 
-The complete prototype composition advertises fourteen tools:
+The complete prototype composition advertises twenty-one tools:
 
 | Tools | Bounded behavior |
 | --- | --- |
@@ -169,6 +171,9 @@ The complete prototype composition advertises fourteen tools:
 | prepare_create_roster_player, prepare_update_roster_player | Prepare one basic player create/update with only name, number and position. |
 | confirm_roster_player, get_roster_player_action | Approve one roster change and read its opaque completion receipt. |
 | get_team_roster | Discover active/inactive roster IDs and public display fields, using the existing manager-only paginated reader. |
+| prepare_create_practice_timeline, prepare_update_practice_timeline | Prepare a draft timeline or a title/location change and appended blocks, linked to an existing non-recurring practice. |
+| confirm_practice_timeline, get_practice_timeline_action | Explicitly approve a timeline change and check its opaque completion receipt. |
+| list_team_practices, list_practice_timelines, list_practice_drill_options | Discover exact practice/timeline IDs and paginated community, published or team drill options. |
 
 Clone preparation displays the exact copied schema, including stat visibility,
 formulas and scoring settings. Unknown schema extensions or oversized previews
@@ -212,6 +217,41 @@ Expired abandoned payloads are not automatically deleted by this prototype;
 storage cleanup remains a rollout consideration, even though the rules deny
 reads. Lost successful commits reconcile from the durable receipt and do not
 create a replacement player.
+
+Practice timeline creation targets an existing active, non-recurring practice
+with a valid date and no linked timeline. It creates an app-compatible draft
+with empty attendance/history and no generated packet. The session ID derives
+from the proposal UUID. Update targets an exact, unambiguous draft session and
+changes only title/location or appends blocks; it never replaces existing blocks,
+notes, attendance, schedule fields or delivery settings. Packet-assigned,
+completed, cancelled, recurring and ambiguous event/session states fail to the
+app. Creation inherits the event date and, unless explicitly provided, location.
+
+Each new block names a custom title or exact drill ID and explicit duration.
+Selected library drills are read with the user's credentials and their revisions
+are checked along with the event/session/link query. New blocks use the app's
+stored order/drill/title/type/duration/description/notes contract. Limits are 30
+new blocks per action, 100 total blocks and 600 total minutes. Existing malformed
+block ordering/durations require app review before appending. Firestore array
+transforms append only the new blocks while retaining existing values in place,
+including legacy references and timestamps; an update mask changes only the
+reviewed metadata and derived duration. The transaction queries event-linked
+sessions to detect duplicate creation and commits the session change, opaque
+receipt and pending-payload removal together. Concurrent same-event creation
+and lost responses are covered by emulator tests.
+
+`directTeamProposalStore.js` now shares the private-content/opaque-receipt split
+between roster and practice domains. Coaching text remains behind the existing
+team-manager and expiry rules. Discovery returns only selected event/timeline
+summaries and drill options, excluding attendance and existing notes. It marks
+unsupported practice events and reports multiple linked timelines as ambiguous.
+This adds scoped drill discovery useful for both planning and favorites.
+
+The existing `notifyPracticePacketAssigned` handler was executed against actual
+prototype-generated create/update payloads in the test harness. It performed no
+target lookup or delivery: create sets packet content to null, and update refuses
+packet-assigned sessions and never writes packet fields. This is evidence for
+the current code paths, not live provider validation or permission to send.
 
 Confirmation requests a default-false approval through negotiated MCP form
 elicitation; an arbitrary confirmed argument is rejected. Decline, cancellation,
@@ -268,8 +308,9 @@ credentials, access settings,
 persistent grant, or production registration is included here.
 
 1. Extend the shared command engine with additional domain schemas, current
-   authorization and discovery. Full stat-schema editing, drill discovery, RSVP,
-   practice timelines, full roster/schedule batches, attachments and editable previews
+   authorization and discovery. Full stat-schema editing, RSVP, recurring or
+   packet-assigned practices, editing/removing existing timeline blocks, full
+   roster/schedule batches, attachments and editable previews
    are still absent from the direct prototype; the 46 app-review tools cover the
    canonical writes through existing browser handlers.
 2. Review execution authorization for each additional command. If a persistent
@@ -342,14 +383,15 @@ grant validation.
 
 Validated with isolated fixtures, without production team/game writes:
 
-- 401 focused tests across MCP core, OAuth, review requests, roster discovery,
+- 433 focused tests across MCP core, OAuth, review requests, roster discovery,
   direct-command protocol and state transitions, authenticated HTTP sessions,
   one-action expiry/consumption, configuration clone/rename/discovery, single-player
-  roster create/update and safe receipts, and the
+  roster create/update and safe receipts, draft practice creation/append,
+  discovery and actual notification-handler suppression, and the
   existing private AI action service.
 - 11 app review service/component tests, including stale previews, concurrent
   confirmation, and explicit confirmation of only remaining partial-import rows.
-- 27 Firestore emulator tests against the existing rules, including review
+- 35 Firestore emulator tests against the existing rules, including review
   ownership, enforced verified-email policy, real REST roster pagination, and
   denied roster queries after manager revocation, actual direct-favorite REST
   transactions, revocation during approval, lost commit responses, and
@@ -359,7 +401,10 @@ Validated with isolated fixtures, without production team/game writes:
   revision conflicts and lost configuration-creation commit responses; roster
   creation/update over authenticated HTTP, pending-payload access loss/expiry,
   legacy restricted-field preservation, lost creation responses and concurrent
-  same-name additions.
+  same-name additions; practice discovery/create/append through authenticated
+  HTTP, exact event/drill revision conflicts, packet/access guards, preserved
+  Firestore reference/timestamp values, lost responses and concurrent same-event
+  timeline creation.
 - Production app build, production artifact guard, and cold-start budget check.
 - Built-app signed-out browser smoke preserving the review destination.
 - Synthetic browser preview exercising the actual review component's prepare
