@@ -7,6 +7,7 @@ import { createMockUserToken } from '@firebase/util';
 import { createUserDb } from '../../services/chatgpt-mcp/src/firestoreRest.js';
 import { getManagedTeamRoster } from '../../services/chatgpt-mcp/src/rosterDiscovery.js';
 import { createDirectFavoriteCommands } from '../../services/chatgpt-mcp/src/directFavorite.js';
+import { createDirectStatConfigurationCommands, createDirectStatConfigurationStore } from '../../services/chatgpt-mcp/src/directStatConfiguration.js';
 import { createDirectFavoriteStore } from '../../services/chatgpt-mcp/src/directFavoriteStore.js';
 import { createDirectFavoriteMcpSession } from '../../services/chatgpt-mcp/src/directFavoriteMcp.js';
 import { Client } from '../../services/chatgpt-mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
@@ -141,6 +142,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
     });
     it('connects broker-bound HTTP approvals to real Firestore transactions using isolated emulator accounts', async () => {
         const dependencies = await favoriteDependencies();
+        const source = { name: 'Synthetic source', baseType: 'Basketball', columns: ['PTS'], scoringColumn: 'PTS', statDefinitions: [{ id: 'pts', visibility: 'private' }] };
+        await setDoc(doc(userDb('owner'), 'teams/team-1/statTrackerConfigs/source'), source);
+        await setDoc(doc(userDb('owner'), 'teams/team-1/statTrackerConfigs/source2'), { ...source, privateExtension: 'not in discovery' });
         const oauth = createOAuthBroker();
         const issue = async (uid) => {
             const redirectUri = 'https://chatgpt.com/connector/oauth/synthetic-emulator';
@@ -156,6 +160,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
         const service = createDirectSessionRouter({ authenticate, createDependencies: (actor, current) => ({
             ...dependencies, uid: actor.uid,
             store: createDirectFavoriteStore({ projectId: 'demo-allplays-mcp-review', uid: actor.uid, getIdToken: async () => (await current()).idToken, fetchImpl: localFetch }),
+            statConfigurationStore: createDirectStatConfigurationStore({ projectId: 'demo-allplays-mcp-review', uid: actor.uid, getIdToken: async () => (await current()).idToken, fetchImpl: localFetch }),
+            getDb: async () => createUserDb({ projectId: 'demo-allplays-mcp-review', idToken: (await current()).idToken, fetchImpl: localFetch }),
             getContext: async () => { await current(); return dependencies.getContext(); }
         }) });
         const app = express(); app.use('/direct', service.router);
@@ -175,11 +181,74 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
             const result = await client.callTool({ name: 'confirm_team_drill_favorite', arguments: { proposalId } });
             expect(result.structuredContent?.status, JSON.stringify(result.content)).toBe('completed');
             expect((await getDoc(doc(userDb('owner'), 'teams/team-1/drillFavorites/drill-1'))).data().addedBy).toBe('owner');
+            const page = (await client.callTool({ name: 'list_team_stat_configurations', arguments: { teamId: 'team-1', limit: 1 } })).structuredContent;
+            expect(page).toMatchObject({ hasMore: true, nextCursor: 'source', configurations: [{ id: 'source', name: source.name, baseType: source.baseType }] });
+            const next = (await client.callTool({ name: 'list_team_stat_configurations', arguments: { teamId: 'team-1', cursor: page.nextCursor } })).structuredContent;
+            expect(next.configurations).toEqual([{ id: 'source2', name: source.name, baseType: source.baseType }]);
+            const cloneId = '00112233-4455-4677-8899-aabbccddeeaa';
+            const renameId = '00112233-4455-4677-8899-aabbccddeebb';
+            const clone = await client.callTool({ name: 'prepare_clone_stat_configuration', arguments: { proposalId: cloneId, teamId: 'team-1', sourceConfigId: 'source', name: 'Synthetic clone' } });
+            expect(clone.structuredContent?.preview.configuration, JSON.stringify(clone.content)).toEqual({ ...source, name: 'Synthetic clone' });
+            expect((await client.callTool({ name: 'confirm_stat_configuration', arguments: { proposalId: cloneId } })).structuredContent.status).toBe('completed');
+            const cloned = doc(userDb('owner'), `teams/team-1/statTrackerConfigs/mcp_${cloneId}`);
+            expect((await getDoc(cloned)).data()).toMatchObject({ ...source, name: 'Synthetic clone' });
+            // An extension unknown to the clone schema must survive a narrow rename.
+            await updateDoc(cloned, { futureSetting: { retained: true } });
+            expect((await client.callTool({ name: 'prepare_rename_stat_configuration', arguments: { proposalId: renameId, teamId: 'team-1', configId: `mcp_${cloneId}`, name: 'Renamed clone' } })).isError).not.toBe(true);
+            expect((await client.callTool({ name: 'confirm_stat_configuration', arguments: { proposalId: renameId } })).structuredContent.status).toBe('completed');
+            expect((await getDoc(cloned)).data()).toMatchObject({ ...source, name: 'Renamed clone', futureSetting: { retained: true } });
+            expect((await getDoc(doc(userDb('owner'), 'teams/team-1/statTrackerConfigs/source'))).data()).toEqual(source);
+
         } finally {
             await client.close(); await service.close(); http.closeAllConnections();
             await new Promise((resolve) => http.close(resolve));
         }
     }, 15000);
+    it('enforces configuration manager access and rejects target revisions changed during approval', async () => {
+        const dependencies = await favoriteDependencies();
+        const configPath = 'teams/team-1/statTrackerConfigs/source';
+        const source = { name: 'Synthetic', baseType: 'Custom', columns: [], statDefinitions: [] };
+        await setDoc(doc(userDb('owner'), configPath), source);
+        const storeFor = (uid) => createDirectStatConfigurationStore({ projectId: 'demo-allplays-mcp-review', uid, idToken: createMockUserToken({ sub: uid, email: `${uid}@example.test`, email_verified: true }, 'demo-allplays-mcp-review'), fetchImpl: localFetch });
+        const commands = createDirectStatConfigurationCommands({ ...dependencies, store: storeFor('owner') });
+        const proposalId = id.slice(4);
+        await commands.prepare({ proposalId, mode: 'rename', teamId: 'team-1', configId: 'source', name: 'Renamed' });
+        await expect(commands.confirm({ proposalId }, async () => {
+            await updateDoc(doc(userDb('owner'), configPath), { scoringColumn: 'Concurrent update' });
+            return { action: 'accept', content: { approve: true } };
+        })).rejects.toMatchObject({ code: 'conflict' });
+        expect((await getDoc(doc(userDb('owner'), configPath))).data().name).toBe('Synthetic');
+        await expect(storeFor('other').transaction(async (tx) => tx.patch(configPath, { name: 'Denied', updatedAt: new Date() }))).rejects.toMatchObject({ code: 'permission_denied' });
+        const next = '00112233-4455-4677-8899-aabbccddeeaa';
+        await commands.prepare({ proposalId: next, mode: 'rename', teamId: 'team-1', configId: 'source', name: 'Revoked' });
+        await expect(commands.confirm({ proposalId: next }, async () => {
+            await env.withSecurityRulesDisabled(async (context) => updateDoc(doc(context.firestore(), 'teams/team-1'), { ownerId: 'replacement' }));
+            return { action: 'accept', content: { approve: true } };
+        })).rejects.toThrow();
+        await env.withSecurityRulesDisabled(async (context) => expect((await getDoc(doc(context.firestore(), configPath))).data().name).toBe('Synthetic'));
+    });
+    it('recovers a lost configuration creation commit without duplicating the created object', async () => {
+        const dependencies = await favoriteDependencies();
+        await setDoc(doc(userDb('owner'), 'teams/team-1/statTrackerConfigs/source'), { name: 'Synthetic', baseType: 'Custom', columns: [], statDefinitions: [] });
+        let loseResponse = false;
+        let commits = 0;
+        const store = createDirectStatConfigurationStore({ projectId: 'demo-allplays-mcp-review', uid: 'owner', idToken: createMockUserToken({ sub: 'owner', email: 'owner@example.test', email_verified: true }, 'demo-allplays-mcp-review'), fetchImpl: async (url, options) => {
+            const response = await localFetch(url, options);
+            if (url.endsWith(':commit') && JSON.parse(options.body).transaction) {
+                commits++;
+                if (loseResponse && response.ok) { loseResponse = false; throw new Error('Synthetic lost successful commit'); }
+            }
+            return response;
+        } });
+        const commands = createDirectStatConfigurationCommands({ ...dependencies, store });
+        const proposalId = id.slice(4);
+        await commands.prepare({ proposalId, mode: 'clone', teamId: 'team-1', configId: `mcp_${proposalId}`, sourceConfigId: 'source', name: 'Synthetic clone' });
+        loseResponse = true;
+        expect(await commands.confirm({ proposalId }, async () => ({ action: 'accept', content: { approve: true } }))).toMatchObject({ status: 'completed' });
+        expect(await commands.confirm({ proposalId }, async () => { throw new Error('Must not re-approve or re-create'); })).toMatchObject({ status: 'completed' });
+        expect(commits).toBe(1);
+        expect((await getDoc(doc(userDb('owner'), `teams/team-1/statTrackerConfigs/mcp_${proposalId}`))).data().name).toBe('Synthetic clone');
+    });
     it('reconciles a lost successful REST commit and fails closed on concurrent transaction conflicts', async () => {
         const dependencies = await favoriteDependencies();
         const proposalId = id.slice(4);

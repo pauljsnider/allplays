@@ -3,6 +3,7 @@ import { DomainError, loadManagedTeamsFromCallable, resolveUserContext } from '.
 import { extractBearerToken } from './identity.js';
 import { createUserDb } from './firestoreRest.js';
 import { createDirectFavoriteStore } from './directFavoriteStore.js';
+import { createDirectStatConfigurationStore } from './directStatConfiguration.js';
 
 // Review consent permits preparation only. The separate, one-action approval
 // in directFavoriteMcp is required for execution; no grant is upgraded here.
@@ -32,6 +33,8 @@ export function directFavoriteDependencies({ projectId, fetchImpl = fetch }) {
     return (actor, getCurrentActor) => ({
         uid: actor.uid,
         store: createDirectFavoriteStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
+        statConfigurationStore: createDirectStatConfigurationStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
+        getDb: async () => createUserDb({ projectId, idToken: (await getCurrentActor()).idToken, fetchImpl }),
         getContext: async () => {
             const current = await getCurrentActor();
             const managed = await loadManagedTeamsFromCallable({ projectId, idToken: current.idToken, fetchImpl });

@@ -10,10 +10,12 @@ validation and explicit confirmation happen in the signed-in app; these are
 not direct in-chat mutation tools. See [write workflows](WRITE_WORKFLOWS.md) for
 the catalog, retry contract, limitations, and rollout order.
 
-An isolated direct favorite-command prototype exercises prepare, explicit MCP
-form approval, and transactional execution through authenticated HTTP sessions
-with synthetic data and emulator accounts. It is not
-registered in the production server and grants no ongoing write capability.
+An isolated direct-command prototype supports team drill favorites, creating a
+stat configuration by cloning an existing one, and renaming a configuration.
+Managed-team and configuration discovery support the prepare → explicit MCP form
+approval → transaction flow through authenticated HTTP sessions. Tests use
+synthetic data and emulator accounts. The router is unmounted in production and
+grants no ongoing write capability.
 See the write-workflow document for its tests and required integration decision.
 
 Spec: `/spec/chatgpt-app-integration/` · Plan: `AllPlays_ChatGPT_App_Integration_Plan.docx`

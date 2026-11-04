@@ -139,31 +139,61 @@ session does not authorize deployment, merge, or real team/game writes.
 
 ## Remaining work for direct MCP mutations
 
-An isolated, unregistered direct-command prototype now exists for one bounded
-workflow: adding/removing a managed team's drill favorite. It is exercised only
-with synthetic clients and data; the production server does not import it or
-advertise its tools. It does not grant persistent access or widen an OAuth scope.
-The 46 normal write-request tools still require app confirmation.
+An isolated, unregistered direct-command prototype supports three bounded
+operations: adding/removing a managed team's drill favorite, creating a stat
+configuration by cloning an existing configuration in the same team, and
+renaming a configuration. It is exercised only with synthetic clients and data;
+the production server does not import it or advertise its tools. It does not
+grant persistent access or widen an OAuth scope. The 46 normal write-request
+tools still require app confirmation.
 
-The prototype modules are `directFavorite.js` (command),
-`directFavoriteStore.js` (user-credentialed REST transactions), and
-`directFavoriteMcp.js` (transport-bound MCP session factory). Its three tools are
-prepare_team_drill_favorite, confirm_team_drill_favorite, and
-get_team_drill_favorite_action. Preparation records a five-minute proposal with
-exact team/drill IDs, desired boolean, labels, and current document revisions.
+`directRevisionCommand.js` shares proposal identity, actor checks, five-minute
+expiry, exact-preview/revision comparison, atomic receipts, and uncertain-outcome
+reconciliation. Domain definitions in `directFavorite.js` and
+`directStatConfiguration.js` specify the allowed arguments, targets, preview and
+write. `directCommandStore.js` shares user-credentialed REST transactions, while
+separate adapters allow only the relevant domain paths. The factory in
+`directFavoriteMcp.js` composes the domains and their common confirmation flow;
+its historical filename remains for compatibility.
+
+The complete prototype composition advertises nine tools:
+
+| Tools | Bounded behavior |
+| --- | --- |
+| prepare_team_drill_favorite, confirm_team_drill_favorite, get_team_drill_favorite_action | Review, apply, and check one favorite add/remove. |
+| prepare_clone_stat_configuration | Prepare copying one existing same-team configuration with a new name. The new document ID is deterministically derived from the proposal UUID. |
+| prepare_rename_stat_configuration | Prepare changing only a configuration's name. |
+| confirm_stat_configuration, get_stat_configuration_action | Explicitly approve either configuration operation and check its durable receipt. |
+| list_managed_teams, list_team_stat_configurations | Discover current managed-team IDs/names and paginated configuration IDs/names/base types. |
+
+Clone preparation displays the exact copied schema, including stat visibility,
+formulas and scoring settings. Unknown schema extensions or oversized previews
+fail closed to the app editor; fields are never silently discarded. Cloning
+preserves schema semantics, creates a fresh creation timestamp and does not
+assign the result to any game. Rename uses a Firestore update mask for `name`
+and `updatedAt`, preserving all other fields, including unknown extensions and
+private stat definitions. Both operations recheck source/target/team revisions
+and manager permissions before execution. A lost successful create response is
+resolved from the atomic receipt, never by generating another document ID.
+
+Discovery requires current manager access even though configuration metadata is
+publicly readable under existing rules. It projects only summaries, handles
+duplicate names through exact IDs and pagination, and propagates read failures.
+It is not a frozen snapshot: preparation and confirmation re-read the target.
+
 Confirmation requests a default-false approval through negotiated MCP form
 elicitation; an arbitrary confirmed argument is rejected. Decline, cancellation,
 missing client support, changed actor, expired/edited proposal, changed targets,
 or revoked manager access prevent execution. The command checks current access
 again after approval. One Firestore transaction reads target revisions and
-atomically applies the reversible favorite change and completion receipt.
+atomically applies the reviewed domain change and its completion receipt.
 Repeated calls return that receipt, and a lost commit response is reconciled
 without automatically replaying the write. An unverified outcome is reported
 as unknown and must retain the same proposal ID. Concurrent transactions can
 both abort; a known conflict requires a new explicit approval of the still-valid
 proposal instead of an automatic execution retry.
 
-The prototype matches the existing favorite document contract (`addedBy`,
+The favorite domain matches the existing document contract (`addedBy`,
 `addedAt`) and immutable add/remove Firestore rules. It does not update the drill
 itself, invite anyone, send communications, change financial records, or expose
 arbitrary document writes. RSVP was deferred because its actual write path also
@@ -200,12 +230,16 @@ activation, review user-facing consent wording, test a designated isolated live
 account, set explicit allowed hosts/origins, and decide single-instance/affinity
 or distributed session routing. Current sessions fail closed on another
 instance. Repeated fresh credential checks also require latency/rate-limit
-validation. No designated live test account was identified in the MCP docs or
-available read-only connector tools. No deployment, credentials, access settings,
+validation. The account assessment below identifies a possible existing smoke
+fixture, but no approved disposable ChatGPT test connection. No deployment,
+credentials, access settings,
 persistent grant, or production registration is included here.
 
-1. Extract shared server command schemas, complete domain authorization, and
-   read capabilities from the browser registry; avoid copying browser writes.
+1. Extend the shared command engine with additional domain schemas, current
+   authorization and discovery. Full stat-schema editing, drill discovery, RSVP,
+   practice timelines, roster/schedule batches, attachments and editable previews
+   are still absent from the direct prototype; the 46 app-review tools cover the
+   canonical writes through existing browser handlers.
 2. Review execution authorization for each additional command. If a persistent
    execution capability is introduced, require a distinct explicitly consented
    scope. The bounded prototype instead requires a separate one-action approval;
@@ -216,6 +250,33 @@ persistent grant, or production registration is included here.
    revocation, permission, replay, and live isolated-account integration tests.
 
 This bridge can remain as a fallback while those domains move server-side.
+
+### Existing test-account assessment
+
+The repository's [production smoke runbook](../../docs/production-smoke-and-email-acceptance.md)
+documents dedicated `SMOKE_STAFF`, `SMOKE_PARENT` and `SMOKE_ADMIN` accounts and a
+synthetic team. The role-specific environment variables are wired into the
+protected `production-smoke` environment in the scheduled/post-deploy workflows.
+This is evidence of an established fixture contract, not proof that credentials
+are currently accessible or that the fixture is isolated enough for this test.
+
+The verified staff account is the only plausible candidate for positive manager
+workflows: it should have least-privilege owner/admin access to the synthetic
+team. The parent could support negative authorization checks. The global-admin
+account is unsuitable for validating least-privilege manager behavior. These are
+persistent release-smoke fixtures, not documented disposable ChatGPT accounts;
+connecting one to ChatGPT would create a persistent OAuth grant requiring
+separate approval. Current fixture ownership, absence of real recipients/data,
+concurrent smoke use, provider credential state, and cleanup arrangements have
+not been verified. Do not rename a preseeded tracker configuration used by smoke
+games; a future authorized run should operate on a separately designated
+synthetic configuration and reconcile cleanup by stable proposal/document IDs.
+
+No credentials were retrieved, accounts created, grants issued to live clients,
+write gates changed, or fixture maintenance scripts run. The current task
+prohibits production activation/data writes, so live end-to-end testing remains
+pending an explicitly designated fixture/connection and authorized test route.
+Emulator accounts remain the validated isolated environment for this draft.
 
 ### Direct confirmation transport findings
 
@@ -249,17 +310,20 @@ grant validation.
 
 Validated with isolated fixtures, without production team/game writes:
 
-- 359 focused tests across MCP core, OAuth, review requests, roster discovery,
+- 381 focused tests across MCP core, OAuth, review requests, roster discovery,
   direct-command protocol and state transitions, authenticated HTTP sessions,
-  one-action expiry/consumption, and the existing private AI action service.
+  one-action expiry/consumption, configuration clone/rename/discovery, and the
+  existing private AI action service.
 - 11 app review service/component tests, including stale previews, concurrent
   confirmation, and explicit confirmation of only remaining partial-import rows.
-- 22 Firestore emulator tests against the existing rules, including review
+- 24 Firestore emulator tests against the existing rules, including review
   ownership, enforced verified-email policy, real REST roster pagination, and
   denied roster queries after manager revocation, actual direct-favorite REST
   transactions, revocation during approval, lost commit responses, and
   concurrent confirmations, and broker-bound HTTP approval through an actual
-  REST transaction with isolated emulator accounts.
+  REST transaction with isolated emulator accounts, configuration clone/rename
+  through authenticated HTTP, projected pagination, field-mask preservation,
+  revision conflicts and lost configuration-creation commit responses.
 - Production app build, production artifact guard, and cold-start budget check.
 - Built-app signed-out browser smoke preserving the review destination.
 - Synthetic browser preview exercising the actual review component's prepare
