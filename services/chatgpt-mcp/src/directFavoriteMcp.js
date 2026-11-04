@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { DomainError } from './core.js';
 import { confirmationFields } from './directConfirmation.js';
 import { createDirectFavoriteCommands } from './directFavorite.js';
+import { createDirectStatPresentationCommands } from './directStatPresentation.js';
 import { createDirectStatConfigurationCommands } from './directStatConfiguration.js';
 import { createDirectDiscovery } from './directDiscovery.js';
 import { createDirectScheduleCommands } from './directSchedule.js';
@@ -70,6 +71,23 @@ export function createDirectFavoriteMcpSession(dependencies) {
     }, run(favorite.prepare));
     registerOutcome('team_drill_favorite', favorite);
 
+    if (dependencies.statPresentationStore) {
+        const commands = createDirectStatPresentationCommands({ ...dependencies, store: dependencies.statPresentationStore });
+        const changes = z.array(z.object({ statId: resourceId, format: z.enum(['number', 'percentage']).optional(), precision: z.number().int().min(0).max(6).optional(), rankingOrder: z.enum(['asc', 'desc']).optional() }).strict()).min(1).max(20);
+        server.registerTool('prepare_customized_stat_preset', {
+            description: 'Prepare a new reviewed sport preset with selected display format, precision and ranking changes. Requires public-metadata and historical-display acknowledgements. No formulas, IDs, visibility, scoring or game references change.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, presetId: z.enum(TEAM_SETUP_PRESET_IDS), name: z.string().min(1).max(120), changes }).strict(), annotations: mutation
+        }, run((args) => commands.prepare({ ...args, mode: 'create', configId: `mcp_${args.proposalId}` })));
+        server.registerTool('prepare_stat_presentation_update', {
+            description: 'Prepare selected display format, precision or ranking changes on an existing reviewed preset schema. Public metadata and historical displays may change; formulas, stat identities and visibility are preserved. Extended/custom/Diamond schemas require app review.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, configId: resourceId, changes }).strict(), annotations: mutation
+        }, run((args) => commands.prepare({ ...args, mode: 'update' })));
+        registerOutcome('stat_presentation', commands);
+        server.registerTool('get_stat_presentation_options', {
+            description: 'Read supported stat IDs, labels and current display settings from either an exact managed-team config or one reviewed preset. Choose exactly one configId or presetId.',
+            inputSchema: z.object({ teamId: resourceId, configId: resourceId.optional(), presetId: z.enum(TEAM_SETUP_PRESET_IDS).optional() }).strict(), annotations: { readOnlyHint: true }
+        }, run(commands.discover));
+    }
     if (dependencies.statConfigurationStore) {
         const commands = createDirectStatConfigurationCommands({ ...dependencies, store: dependencies.statConfigurationStore });
         const name = z.string().min(1).max(120);

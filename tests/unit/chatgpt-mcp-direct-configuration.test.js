@@ -14,7 +14,7 @@ const input = { proposalId, mode: 'clone', teamId: 'team-1', sourceConfigId: 'so
 const sourcePath = 'teams/team-1/statTrackerConfigs/source';
 const targetPath = `teams/team-1/statTrackerConfigs/${input.configId}`;
 const proposalPath = `users/owner/privateAiPendingActions/direct_${proposalId}`;
-const accepted = () => ({ action: 'accept', content: { approve: true }, consume: vi.fn() });
+const accepted = () => ({ action: 'accept', content: { approve: true, publicConfiguration: true }, consume: vi.fn() });
 const source = {
     name: 'Synthetic source', baseType: 'Basketball', columns: ['PTS', 'PRIVATE'], scoringColumn: 'PTS',
     statDefinitions: [{ id: 'pts', label: 'Points', scope: 'player', visibility: 'public', type: 'base', formula: null, topStat: true },
@@ -55,6 +55,11 @@ describe('bounded configuration create and update', () => {
         expect([...f.records.keys()].some((path) => path.includes('/games/'))).toBe(false);
         expect(await f.commands.confirm({ proposalId }, approve)).toMatchObject({ status: 'completed' });
         expect(approve).toHaveBeenCalledTimes(1); expect(f.store.transaction).toHaveBeenCalledTimes(1);
+    });
+    it.each(['clone', 'rename'])('requires public-metadata acknowledgement for existing %s tools', async (mode) => {
+        const f = fixture(); const args = mode === 'clone' ? input : { proposalId, mode, teamId: 'team-1', configId: 'source', name: 'Renamed' };
+        const prepared = await f.commands.prepare(args); expect(prepared.preview.requiredAcknowledgements).toEqual(['publicConfiguration']); expect(prepared.preview.effect).toMatch(/publicly readable/);
+        expect(await f.commands.confirm({ proposalId }, async () => ({ action: 'accept', content: { approve: true }, consume: vi.fn() }))).toMatchObject({ applied: false }); expect(f.store.transaction).not.toHaveBeenCalled();
     });
     it('renames using a patch that preserves unknown extensions, private definitions and timestamps', async () => {
         const f = fixture(); f.put(sourcePath, { ...source, futureSetting: { opaque: true } });
@@ -133,7 +138,7 @@ describe('bounded configuration create and update', () => {
             expect((await client.callTool({ name: 'confirm_stat_configuration', arguments: { proposalId } })).structuredContent.status).toBe('completed');
             expect((await client.callTool({ name: 'prepare_rename_stat_configuration', arguments: { proposalId: renameId, teamId: 'team-1', configId: input.configId, name: 'Renamed clone' } })).isError).not.toBe(true);
             expect((await client.callTool({ name: 'confirm_stat_configuration', arguments: { proposalId: renameId } })).structuredContent.status).toBe('completed');
-            expect(approvals).toHaveLength(2); expect(approvals[0].requestedSchema.properties.approve.default).toBe(false);
+            expect(approvals).toHaveLength(2); expect(approvals.every((request) => request.requestedSchema.required.includes('publicConfiguration'))).toBe(true); expect(approvals[0].requestedSchema.properties.approve.default).toBe(false);
             expect(f.records.get(targetPath).data.name).toBe('Renamed clone');
         } finally { await client.close(); await server.close(); }
     });

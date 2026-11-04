@@ -64,9 +64,10 @@ export function createDirectStatConfigurationCommands(dependencies) {
         preview: ({ team, source }, args) => ({
             action: args.mode === 'clone' ? 'Create a stat configuration by cloning' : 'Rename a stat configuration',
             teamId: args.teamId, teamName: String(team.data.name || args.teamId), configId: args.configId,
+            requiredAcknowledgements: ['publicConfiguration'],
             sourceConfigId: args.sourceConfigId, previousName: String(source.data.name || ''), name: args.name,
             ...(args.mode === 'clone' ? { configuration: { ...cloneableConfiguration(source.data), name: args.name } } : {}),
-            effect: args.mode === 'clone' ? 'Creates one new configuration. No game is assigned to it.' : 'Changes only the name and updated timestamp. Existing scoring, visibility, formulas and game references remain unchanged.'
+            effect: args.mode === 'clone' ? 'Creates publicly readable configuration metadata even for a private team. It may be automatically selected for analytics and change displayed metrics. No game is assigned to it; recorded values remain unchanged.' : 'Changes only the publicly readable name and updated timestamp, even for a private team. Existing scoring, visibility, formulas and game references remain unchanged.'
         }),
         apply: (transaction, { source }, args, { now }) => {
             const path = configurationPath(args.teamId, args.configId);

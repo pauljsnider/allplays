@@ -173,7 +173,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
         const bearer = await issue('owner');
         const client = new Client({ name: 'isolated-emulator-client', version: '1' }, { capabilities: { elicitation: { form: {} } } });
         client.onerror = () => {};
-        client.setRequestHandler(ElicitRequestSchema, async () => ({ action: 'accept', content: { approve: true }, consume: async () => {} }));
+        client.setRequestHandler(ElicitRequestSchema, async () => ({ action: 'accept', content: { approve: true, publicConfiguration: true }, consume: async () => {} }));
         const transport = new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${bearer}` } } });
         try {
             await client.connect(transport);
@@ -297,7 +297,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
         await commands.prepare({ proposalId, mode: 'rename', teamId: 'team-1', configId: 'source', name: 'Renamed' });
         await expect(commands.confirm({ proposalId }, async () => {
             await updateDoc(doc(userDb('owner'), configPath), { scoringColumn: 'Concurrent update' });
-            return { action: 'accept', content: { approve: true }, consume: async () => {} };
+            return { action: 'accept', content: { approve: true, publicConfiguration: true }, consume: async () => {} };
         })).rejects.toMatchObject({ code: 'conflict' });
         expect((await getDoc(doc(userDb('owner'), configPath))).data().name).toBe('Synthetic');
         await expect(storeFor('other').transaction(async (tx) => tx.patch(configPath, { name: 'Denied', updatedAt: new Date() }))).rejects.toMatchObject({ code: 'permission_denied' });
@@ -305,7 +305,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
         await commands.prepare({ proposalId: next, mode: 'rename', teamId: 'team-1', configId: 'source', name: 'Revoked' });
         await expect(commands.confirm({ proposalId: next }, async () => {
             await env.withSecurityRulesDisabled(async (context) => updateDoc(doc(context.firestore(), 'teams/team-1'), { ownerId: 'replacement' }));
-            return { action: 'accept', content: { approve: true }, consume: async () => {} };
+            return { action: 'accept', content: { approve: true, publicConfiguration: true }, consume: async () => {} };
         })).rejects.toThrow();
         await env.withSecurityRulesDisabled(async (context) => expect((await getDoc(doc(context.firestore(), configPath))).data().name).toBe('Synthetic'));
     });
@@ -326,7 +326,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('MCP review envelopes unde
         const proposalId = id.slice(4);
         await commands.prepare({ proposalId, mode: 'clone', teamId: 'team-1', configId: `mcp_${proposalId}`, sourceConfigId: 'source', name: 'Synthetic clone' });
         loseResponse = true;
-        expect(await commands.confirm({ proposalId }, async () => ({ action: 'accept', content: { approve: true }, consume: async () => {} }))).toMatchObject({ status: 'completed' });
+        expect(await commands.confirm({ proposalId }, async () => ({ action: 'accept', content: { approve: true, publicConfiguration: true }, consume: async () => {} }))).toMatchObject({ status: 'completed' });
         expect(await commands.confirm({ proposalId }, async () => { throw new Error('Must not re-approve or re-create'); })).toMatchObject({ status: 'completed' });
         expect(commits).toBe(1);
         expect((await getDoc(doc(userDb('owner'), `teams/team-1/statTrackerConfigs/mcp_${proposalId}`))).data().name).toBe('Synthetic clone');

@@ -3,6 +3,7 @@ import { DomainError, loadManagedTeamsFromCallable, resolveUserContext } from '.
 import { extractBearerToken } from './identity.js';
 import { createUserDb } from './firestoreRest.js';
 import { createDirectFavoriteStore } from './directFavoriteStore.js';
+import { createDirectStatPresentationStore } from './directStatPresentation.js';
 import { createDirectStatConfigurationStore } from './directStatConfiguration.js';
 import { createDirectScheduleStore } from './directSchedule.js';
 import { createDirectRsvpStore } from './directRsvp.js';
@@ -50,6 +51,7 @@ export function directFavoriteDependencies({ projectId, fetchImpl = fetch }) {
     return (actor, getCurrentActor) => ({
         uid: actor.uid,
         store: createDirectFavoriteStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
+        statPresentationStore: createDirectStatPresentationStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
         statConfigurationStore: createDirectStatConfigurationStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
         trackingBatchStore: createDirectTrackingBatchStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),
         trackingLifecycleStore: createDirectTrackingLifecycleStore({ projectId, uid: actor.uid, fetchImpl, getIdToken: async () => (await getCurrentActor()).idToken }),

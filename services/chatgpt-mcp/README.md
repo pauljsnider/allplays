@@ -35,10 +35,10 @@ providers or MCP status reads. See [write workflows](WRITE_WORKFLOWS.md) for the
 exact remaining integration work and [review slices](REVIEW_SLICES.md) for the
 proposed dependency stack. No new PRs or handoff were created for that plan.
 
-The latest [roster lifecycle checkpoint](ROSTER_LIFECYCLE_REVIEW.md) adds
-confirmed single-player or atomic 20-player deactivation/reactivation, preserving
-history and family links while disclosing effects on active views, existing RSVP
-links and future communication eligibility. Coverage remains 20 of 46 workflow
+The latest [stat presentation checkpoint](STAT_PRESENTATION_REVIEW.md) adds
+customized preset creation and selected display/ranking updates, preserving stat
+identities, formulas and visibility. It also adds explicit public-metadata
+acknowledgement to older clone/rename tools. Coverage remains 20 of 46 workflow
 names partially direct, with 26 app-review-only. Profiles and RSVP notes retain
 hard pending-text cleanup and client/transcript retention gates. Full parity and
 production activation remain open.
