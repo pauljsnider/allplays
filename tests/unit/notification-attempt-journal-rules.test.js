@@ -11,6 +11,10 @@ const { createScheduleDeliveryProviders } = require('../../functions/schedule-de
 const { createScheduleEvidenceAuthority } = require('../../functions/schedule-delivery-evidence.cjs');
 const { createFirestoreStatusRateLimit } = require('../../functions/schedule-delivery-status.cjs');
 
+const { createScheduleProofOrdering } = require('../../functions/schedule-proof-ordering.cjs');
+const { createScheduleEffectEligibility } = require('../../functions/schedule-effect-eligibility.cjs');
+const { createScheduleConsumerOwnership } = require('../../functions/schedule-consumer-ownership.cjs');
+
 const projectId = 'demo-allplays-mcp-review';
 const request = { teamId: 'team-1', eventId: 'event-1', actorUid: 'owner', recipientUid: 'member', sourceVersion: '2060-01-01T10:00:00Z', channel: 'push', endpoint: 'synthetic-private-device', title: 'Synthetic update', body: 'Synthetic schedule changed.' };
 const accepted = (metadata) => ({ ...metadata, final: true, outcome: 'accepted', receiptId: 'synthetic-provider-receipt' });
@@ -179,6 +183,42 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('notification journal with
             await updateDoc(doc(context.firestore(), 'teams/team-1'), { ownerId: 'replacement' });
             await expect(f.authority.consume('synthetic-credential', f.evidenceRef)).rejects.toThrow();
         });
+    });
+    it('serializes proof/trigger recovery with real transactions and one journaled synthetic send', async () => {
+        let fencePath; let inboxPath;
+        await env.withSecurityRulesDisabled(async (context) => {
+            const store = serverStore(context.firestore()); let clock = 100000;
+            const fields = { type: { stringValue: 'game' }, status: { stringValue: 'scheduled' }, date: { timestampValue: '2060-01-01T10:00:00Z' } };
+            const event = { teamId: 'team-1', eventId: 'event-1', sourceVersion: '1970-01-01T00:01:40.001000000Z', category: 'schedule', beforeVersion: null, eventDigest: hash(fields) };
+            const intent = { teamId: event.teamId, eventId: event.eventId, uid: 'owner', beforeVersion: null, eventDigest: event.eventDigest, intentDigest: hash('synthetic-intent'), approvalId: hash('synthetic-proof'), approve: true, notifyTeam: true, consumed: true, expiresAt: 150000 };
+            const reference = { teamId: event.teamId, evidenceId: intent.approvalId };
+            const verifyCommit = async () => ({ ...intent, sourceVersion: event.sourceVersion, committed: true, mode: 'create', eventType: 'game' });
+            const create = () => createScheduleProofOrdering({ store, now: () => clock, verifyApprovedIntent: async () => intent, verifyCommit, verifyTrigger: async () => event });
+            const armed = await create().arm('synthetic-private-intent'); const effect = await create().captureTrigger('synthetic-platform-trigger');
+            fencePath = `teams/team-1/notificationSendLog/durable_${armed.fenceId}`;
+            inboxPath = `teams/team-1/notificationSendLog/durable_${hash({ kind: 'schedule-trigger-inbox-v1', ...effect })}`;
+            const decide = createScheduleConsumerOwnership({ store, readVerifiedDeploymentGate: async () => ({ mode: 'journal', legacyHead: 'a'.repeat(40), journalHead: 'b'.repeat(40), legacyCompatible: true, bothConsumersGated: true, compatibleProducersVerified: true }),
+                verifyEffectEligibility: createScheduleEffectEligibility({ resolveEffect: create().resolveEffect, verifyCommit, readEvent: async () => ({ version: event.sourceVersion, data: fields }) }) });
+            await expect(decide({ ...effect, consumer: 'legacy' })).rejects.toMatchObject({ code: 'proof_pending' });
+            clock = 150001;
+            await Promise.allSettled([create().publish(reference), create().closeForLegacy(effect)]);
+            const resolution = await create().resolveEffect(effect); expect(['legacy', 'proof']).toContain(resolution.state);
+            const owner = resolution.state === 'proof' ? 'journal' : 'legacy'; let sends = 0;
+            const deliver = async (consumer) => {
+                if (!(await decide({ ...effect, consumer })).mayConsume) return;
+                const journal = createNotificationAttemptJournal({ store, now: () => clock,
+                    authorize: async () => ({ actorAllowed: (await decide({ ...effect, consumer })).mayConsume, sourceCurrent: true, recipientAllowed: true }),
+                    send: async (_request, metadata) => { sends++; return accepted(metadata); } });
+                await journal.deliver({ ...request, sourceVersion: event.sourceVersion });
+            };
+            await Promise.all([deliver('legacy'), deliver('journal'), deliver(owner)]);
+            await deliver(owner); expect(sends).toBe(1);
+            expect((await decide({ ...effect, consumer: owner })).owner).toBe(owner);
+        });
+        for (const path of [fencePath, inboxPath]) for (const uid of ['owner', 'member']) {
+            await assertFails(getDoc(doc(db(uid), path)));
+            await assertFails(setDoc(doc(db(uid), path), { state: 'proof', eligible: true }));
+        }
     });
     it('keeps durable status counters server-private and shared across instances', async () => {
         const key = hash('synthetic-principal');

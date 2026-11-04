@@ -21,17 +21,20 @@ const supported = (fields) => fields && Object.keys(fields).every((key) => ordin
     && ['opponentTeamId', 'opponentTeamName', 'opponentTeamPhoto'].every((key) => unset(fields[key]))
     && (unset(fields.competitionType) || fields.competitionType.stringValue === 'league');
 
-// All three readers are server-owned. findEvidence must use a private index;
+// All three readers are server-owned. resolveEffect must use a private index;
 // verifyCommit must use the durable evidence authority, never a user receipt.
-// A missing proof means legacy. A read/verification error is unknown and must
-// retry without choosing either consumer. No production index is mounted here.
-function createScheduleEffectEligibility({ findEvidence, verifyCommit, readEvent }) {
-    if ([findEvidence, verifyCommit, readEvent].some((fn) => typeof fn !== 'function')) throw new Error('Server-owned evidence lookup, verification and exact event reads are required.');
+// Pending proof is retryable, never an implicit legacy decision. Only an
+// explicit terminal legacy resolution may choose legacy. No index is mounted.
+function createScheduleEffectEligibility({ resolveEffect, verifyCommit, readEvent }) {
+    if ([resolveEffect, verifyCommit, readEvent].some((fn) => typeof fn !== 'function')) throw new Error('Server-owned evidence lookup, verification and exact event reads are required.');
     return async (input) => {
         if (!input || !ID.test(input.teamId || '') || !ID.test(input.eventId || '') || input.category !== 'schedule') fail();
         const effect = { teamId: input.teamId, eventId: input.eventId, sourceVersion: canonicalScheduleVersion(input.sourceVersion), category: 'schedule' };
-        const reference = await findEvidence(structuredClone(effect));
-        if (reference === null) return { ...effect, eligible: false };
+        const resolution = await resolveEffect(structuredClone(effect));
+        if (resolution?.state === 'legacy') return { ...effect, eligible: false };
+        if (resolution?.state === 'pending') throw Object.assign(new Error('Schedule proof is pending; retain the trigger for retry.'), { code: 'proof_pending' });
+        if (resolution?.state !== 'proof') fail();
+        const reference = resolution.reference;
         if (!reference || reference.teamId !== effect.teamId || !HASH.test(reference.evidenceId || '')) fail();
         const commit = await verifyCommit(reference);
         if (!commit || commit.teamId !== effect.teamId || commit.eventId !== effect.eventId || canonicalScheduleVersion(commit.sourceVersion) !== effect.sourceVersion
