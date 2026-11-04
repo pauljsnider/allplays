@@ -10,13 +10,13 @@ export function rosterFixture() {
         get: vi.fn(async (key) => structuredClone(records.get(key) || { exists: false, version: null, data: null })),
         list: vi.fn(async (collection) => [...records].filter(([key]) => key.startsWith(`${collection}/`) && !key.slice(collection.length + 1).includes('/')).map(([key, value]) => ({ ...structuredClone(value), id: key.split('/').at(-1) }))),
         create: vi.fn(async (key, data) => { if (records.has(key)) throw new Error('exists'); put(key, data); }),
-        transaction: vi.fn(async (callback, { beforeCommit } = {}) => {
+        transaction: vi.fn(async (callback, { beforeCommit, beforeDispatch } = {}) => {
             const writes = [];
             const result = await callback({ get: store.get, list: store.list,
                 delete: (key) => writes.push(() => records.delete(key)),
                 set: (key, data) => writes.push(() => put(key, data)),
                 patch: (key, data) => writes.push(() => put(key, { ...records.get(key).data, ...data })) });
-            if (writes.length) await beforeCommit?.(); writes.forEach((write) => write()); return result;
+            if (writes.length) { await beforeCommit?.(); const assertReady = await beforeDispatch?.(); assertReady?.(); } writes.forEach((write) => write()); return result;
         })
     };
     const query = { select: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(), get: async () => ({ docs: (await store.list('teams/team-1/players')).map((row) => ({ id: row.id, data: () => row.data })) }) };

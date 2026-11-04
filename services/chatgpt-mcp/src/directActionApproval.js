@@ -22,11 +22,16 @@ export function createOneActionApproval({ getActor, now = Date.now, lifetimeMs =
         const answer = await elicit(preview, { signal, timeout: Math.max(1, expiresAt - now()) });
         const content = approvedContent(preview, answer);
         if (!content) return answer;
-        const assertCurrent = async () => {
-            const current = await getActor();
-            if (signal?.aborted || now() >= expiresAt || !validActor(current, now()) || key(current) !== binding || digest(preview) !== fingerprint) {
+        let currentActor = actor;
+        const assertReady = () => {
+            if (signal?.aborted || now() >= expiresAt || !validActor(currentActor, now()) || key(currentActor) !== binding || digest(preview) !== fingerprint) {
                 throw new DomainError('confirmation_expired', 'The approval expired or its connected account changed. No execution was authorized.');
             }
+        };
+        const assertCurrent = async () => {
+            const current = await getActor();
+            currentActor = { uid: current?.uid, clientId: current?.clientId, grantKey: current?.grantKey, expiresAt: current?.expiresAt };
+            assertReady();
         };
         await assertCurrent();
         const formEvidence = captureForm ? await captureForm({ actor, preview: structuredClone(preview), issuedAt, expiresAt, content }) : undefined;
@@ -38,6 +43,7 @@ export function createOneActionApproval({ getActor, now = Date.now, lifetimeMs =
                 if (consumed) throw new DomainError('confirmation_replayed', 'An approval can authorize only one commit attempt.');
                 consumed = true;
                 await assertCurrent();
+                return assertReady;
             }
         };
     };

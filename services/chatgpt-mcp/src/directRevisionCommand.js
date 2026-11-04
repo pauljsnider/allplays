@@ -98,7 +98,7 @@ export function createRevisionCommands({ uid, store, getContext, executionEviden
             }
             if (typeof approval.consume !== 'function') throw new DomainError('confirmation_unavailable', 'A one-use session-bound approval is required before execution.');
             await authorize(before.data);
-            let evidenceDescriptor; let evidenceAttempt;
+            let evidenceDescriptor; let evidenceAttempt; let assertApprovalReady;
             try {
                 return await store.transaction(async (transaction) => {
                     const current = await transaction.get(pathFor(proposalId));
@@ -117,11 +117,20 @@ export function createRevisionCommands({ uid, store, getContext, executionEviden
                     transaction.set(pathFor(proposalId), completed);
                     return result(proposalId, completed);
                 }, { beforeCommit: async (plan) => {
-                    await approval.consume();
+                    assertApprovalReady = await approval.consume();
                     if (Date.parse(before.data.expiresAt) <= now()) throw new DomainError('confirmation_expired', 'The proposal expired before execution.');
                     await domain.beforeCommit?.(targetBeforeApproval, before.data);
                     if (executionEvidence && evidenceDescriptor) evidenceAttempt = await executionEvidence.beforeCommit({ descriptor: evidenceDescriptor, formEvidence: approval.formEvidence, plan });
-                }, beforeDispatch: executionEvidence && domain.deliveryEvidence ? () => executionEvidence.beforeDispatch?.(evidenceAttempt) : undefined,
+                }, beforeDispatch: async () => {
+                    const assertEvidenceReady = executionEvidence && domain.deliveryEvidence ? await executionEvidence.beforeDispatch?.(evidenceAttempt) : undefined;
+                    // A synchronous domain deadline check runs after all awaited
+                    // dispatch preparation, immediately before the REST fetch.
+                    return () => {
+                        if (typeof assertApprovalReady === 'function') assertApprovalReady();
+                        if (Date.parse(before.data.expiresAt) <= now()) throw new DomainError('confirmation_expired', 'The proposal expired before dispatch.');
+                        assertEvidenceReady?.(); domain.assertBeforeDispatch?.(targetBeforeApproval, before.data);
+                    };
+                },
                 commitFailed: executionEvidence && domain.deliveryEvidence ? (failure) => executionEvidence.commitFailed?.(evidenceAttempt, failure) : undefined,
                 afterCommit: executionEvidence && domain.deliveryEvidence ? (observation) => executionEvidence.afterCommit(evidenceAttempt, observation) : undefined });
             } catch (error) {

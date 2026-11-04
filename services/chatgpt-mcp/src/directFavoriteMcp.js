@@ -12,6 +12,7 @@ import { createDirectRosterBatchCommands } from './directRosterBatch.js';
 import { createDirectTrackingStatusCommands } from './directTrackingStatus.js';
 import { ASSIGNMENT_ROLE, createDirectAssignmentCommands } from './directAssignments.js';
 import { createDirectAssignmentClaimCommands } from './directAssignmentClaims.js';
+import { createDirectFamilyRsvpCommands } from './directFamilyRsvp.js';
 import { createDirectTrackingItemCommands } from './directTrackingItem.js';
 import { createDirectRosterCommands } from './directRoster.js';
 import { createDirectPracticeTimelineCommands } from './directPracticeTimeline.js';
@@ -75,6 +76,23 @@ export function createDirectFavoriteMcpSession(dependencies) {
             inputSchema: z.object({ proposalId: id, teamId: resourceId, configId: resourceId, name }).strict(), annotations: mutation
         }, run((args) => commands.prepare({ ...args, mode: 'rename' })));
         registerOutcome('stat_configuration', commands);
+    }
+    if (dependencies.familyRsvpStore) {
+        const commands = createDirectFamilyRsvpCommands({ ...dependencies, store: dependencies.familyRsvpStore });
+        const response = z.enum(['going', 'maybe', 'not_going']);
+        server.registerTool('prepare_linked_child_rsvp', {
+            description: 'Prepare one currently linked active child’s response on an ordinary event. Preserves notes and other responders. Base/family RSVP reconciliation requires app review. Enforces cutoff; cached totals are not refreshed.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, eventId: resourceId, playerId: resourceId, response }).strict(), annotations: mutation
+        }, run(({ playerId, ...args }) => commands.prepare({ ...args, playerIds: [playerId] })));
+        server.registerTool('prepare_linked_children_rsvps', {
+            description: 'Prepare an atomic response for 1–10 explicitly selected currently linked active children on one ordinary event. Does not write a base family RSVP, change access, notes or other responders, send messages or refresh cached totals.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, eventId: resourceId, playerIds: z.array(resourceId).min(1).max(10), response }).strict(), annotations: mutation
+        }, run(commands.prepare));
+        registerOutcome('linked_children_rsvps', commands);
+        server.registerTool('list_my_linked_rsvp_children', {
+            description: 'Discover exact currently linked player IDs, names and active state for this account only. No contacts or unrelated roster players are returned.',
+            inputSchema: z.object({ teamId: resourceId }).strict(), annotations: { readOnlyHint: true }
+        }, run(commands.discover));
     }
     if (dependencies.assignmentStore) {
         const commands = createDirectAssignmentCommands({ ...dependencies, store: dependencies.assignmentStore });
