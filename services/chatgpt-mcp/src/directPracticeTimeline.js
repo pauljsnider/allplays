@@ -12,11 +12,25 @@ const description = (value) => typeof value === 'string' && value.length <= 2000
 const validBlocks = (blocks) => Array.isArray(blocks) && blocks.length > 0 && blocks.length <= 30 && blocks.every((block) =>
     block && typeof block === 'object' && !Array.isArray(block)
     && Object.keys(block).every((key) => ['drillId', 'title', 'duration', 'type', 'description'].includes(key))
-    && (block.drillId !== undefined ? ID.test(block.drillId) && block.title === undefined : text(block.title) && Boolean(block.title))
+    && (block.drillId !== undefined ? typeof block.drillId === 'string' && ID.test(block.drillId) && block.title === undefined : text(block.title) && Boolean(block.title))
     && Number.isInteger(block.duration) && block.duration >= 1 && block.duration <= 120
     && (block.type === undefined || text(block.type, 60) && Boolean(block.type))
     && (block.description === undefined || description(block.description)));
 const duration = (blocks) => blocks.reduce((sum, block) => sum + block.duration, 0);
+const structuralEdit = (changes) => changes.blockDurations || changes.blockOrder || changes.blockReplacements || changes.removeBlocks;
+const contentEdit = (changes) => changes.blockReplacements || changes.removeBlocks;
+const plannedBlock = ({ order, drillId, drillTitle, type, duration, description }) => ({ order, drillId, drillTitle, type, duration, description });
+function editableBlocks(session) {
+    const existing = session.blocks;
+    if (!Array.isArray(existing) || !existing.length || existing.length > 100 || existing.some((block, index) => !block || block.order !== index
+        || Object.keys(block).some((key) => !['order', 'drillId', 'drillTitle', 'type', 'duration', 'description', 'notes', 'notesLog'].includes(key))
+        || !(block.drillId === null || typeof block.drillId === 'string' && ID.test(block.drillId)) || !text(block.drillTitle) || !block.drillTitle
+        || !text(block.type, 60) || !description(block.description) || !description(block.notes) || !Array.isArray(block.notesLog) || block.notesLog.length
+        || !Number.isInteger(block.duration) || block.duration < 1 || block.duration > 120) || session.duration !== duration(existing)) {
+        throw new DomainError('unsupported_timeline', 'Structural edits require canonical blocks without historical notes-log entries. Extended records require app review.');
+    }
+    return existing;
+}
 export const isDirectPracticeEvent = (event) => event?.type === 'practice' && event.deleted !== true && event.cancelled !== true
     && !['cancelled', 'canceled', 'deleted'].includes(String(event.status || '').toLowerCase())
     && !['cancelled', 'canceled', 'deleted'].includes(String(event.liveStatus || '').toLowerCase())
@@ -77,19 +91,26 @@ function changesFor(target, args) {
         if (patch.duration > 600) throw new DomainError('invalid_argument', 'Use a timeline of at most 600 minutes.');
     }
     if (args.changes.blockDurations || args.changes.blockOrder) {
-        const existing = target.session.data.blocks;
-        if (!Array.isArray(existing) || !existing.length || existing.length > 100 || existing.some((block, index) => !block || block.order !== index
-            || Object.keys(block).some((key) => !['order', 'drillId', 'drillTitle', 'type', 'duration', 'description', 'notes', 'notesLog'].includes(key))
-            || !(block.drillId === null || typeof block.drillId === 'string' && ID.test(block.drillId)) || !text(block.drillTitle) || !block.drillTitle
-            || !text(block.type, 60) || !description(block.description) || !description(block.notes) || !Array.isArray(block.notesLog) || block.notesLog.length
-            || !Number.isInteger(block.duration) || block.duration < 1 || block.duration > 120) || target.session.data.duration !== duration(existing)) {
-            throw new DomainError('unsupported_timeline', 'Duration/order edits require canonical blocks without historical notes-log entries. Existing notes and extended records require preservation through app review.');
-        }
+        const existing = editableBlocks(target.session.data);
         const order = args.changes.blockOrder || existing.map((_, index) => index);
         if (order.length !== existing.length || new Set(order).size !== existing.length || order.some((index) => index >= existing.length)
             || args.changes.blockDurations?.some((entry) => entry.order >= existing.length)) throw new DomainError('invalid_argument', 'Use every current block index exactly once for order, and existing indices for durations.');
         patch.blocks = order.map((oldIndex, index) => ({ ...existing[oldIndex], order: index,
             duration: args.changes.blockDurations?.find((entry) => entry.order === oldIndex)?.duration ?? existing[oldIndex].duration }));
+        patch.duration = duration(patch.blocks);
+        if (patch.duration > 600) throw new DomainError('invalid_argument', 'Use a timeline of at most 600 minutes.');
+    }
+    if (contentEdit(args.changes)) {
+        const existing = editableBlocks(target.session.data);
+        const replacements = new Map((args.changes.blockReplacements || []).map((entry) => [entry.order, entry.block]));
+        const removed = new Set(args.changes.removeBlocks || []);
+        const affected = [...replacements.keys(), ...removed];
+        if (affected.some((index) => index >= existing.length) || [...removed].some((index) => replacements.has(index)) || removed.size >= existing.length) {
+            throw new DomainError('invalid_argument', 'Use distinct current indices for replacements/removals and retain at least one block. Indices refer to the original order.');
+        }
+        if (affected.some((index) => existing[index].notes !== '')) throw new DomainError('unsupported_timeline', 'A selected block contains coaching notes. Use app review; these commands cannot discard notes.');
+        patch.blocks = existing.filter((block) => !removed.has(block.order)).map((block, order) => replacements.has(block.order)
+            ? newBlocks({ changes: { blocks: [replacements.get(block.order)] } }, target.drills, order)[0] : { ...block, order });
         patch.duration = duration(patch.blocks);
         if (patch.duration > 600) throw new DomainError('invalid_argument', 'Use a timeline of at most 600 minutes.');
     }
@@ -100,13 +121,20 @@ export function createDirectPracticeTimelineCommands(dependencies) {
     return createRevisionCommands(dependencies, {
         toolName: TOOL,
         args: ({ mode, teamId, eventId, sessionId, changes }) => {
-            const allowed = mode === 'create' ? ['title', 'location', 'blocks'] : ['title', 'location', 'appendBlocks', 'blockDurations', 'blockOrder'];
+            const allowed = mode === 'create' ? ['title', 'location', 'blocks'] : ['title', 'location', 'appendBlocks', 'blockDurations', 'blockOrder', 'blockReplacements', 'removeBlocks'];
             if (!['create', 'update'].includes(mode) || ![teamId, eventId, sessionId].every((id) => ID.test(id || ''))
                 || !changes || typeof changes !== 'object' || Array.isArray(changes) || Object.keys(changes).length === 0
                 || Object.keys(changes).some((key) => !allowed.includes(key))
                 || (mode === 'create' && (!changes.title || !validBlocks(changes.blocks)))
                 || (changes.title !== undefined && (!text(changes.title) || !changes.title))
                 || (changes.location !== undefined && !text(changes.location, 200))
+                || (contentEdit(changes) && ['appendBlocks', 'blockDurations', 'blockOrder'].some((key) => changes[key] !== undefined))
+                || (changes.blockReplacements !== undefined && (!Array.isArray(changes.blockReplacements) || !changes.blockReplacements.length || changes.blockReplacements.length > 30
+                    || changes.blockReplacements.some((entry) => !entry || Object.keys(entry).sort().join(',') !== 'block,order' || !Number.isInteger(entry.order) || entry.order < 0 || entry.order > 99 || !validBlocks([entry.block]))
+                    || new Set(changes.blockReplacements.map((entry) => entry.order)).size !== changes.blockReplacements.length))
+                || (changes.removeBlocks !== undefined && (!Array.isArray(changes.removeBlocks) || !changes.removeBlocks.length || changes.removeBlocks.length > 30
+                    || changes.removeBlocks.some((index) => !Number.isInteger(index) || index < 0 || index > 99) || new Set(changes.removeBlocks).size !== changes.removeBlocks.length))
+                || ((changes.blockReplacements?.length || 0) + (changes.removeBlocks?.length || 0) > 30)
                 || (changes.appendBlocks !== undefined && (!validBlocks(changes.appendBlocks) || changes.blockDurations !== undefined || changes.blockOrder !== undefined))
                 || (changes.blockDurations !== undefined && (!Array.isArray(changes.blockDurations) || !changes.blockDurations.length || changes.blockDurations.length > 30
                     || changes.blockDurations.some((entry) => !entry || Object.keys(entry).sort().join(',') !== 'duration,order' || !Number.isInteger(entry.order) || entry.order < 0 || !Number.isInteger(entry.duration) || entry.duration < 1 || entry.duration > 120)
@@ -123,7 +151,7 @@ export function createDirectPracticeTimelineCommands(dependencies) {
             const team = await reader.get(`teams/${args.teamId}`);
             const event = await reader.get(`teams/${args.teamId}/games/${args.eventId}`);
             if (!team.exists || !team.version || !event.exists || !event.version || !isDirectPracticeEvent(event.data)
-                || ((args.changes.blockDurations || args.changes.blockOrder) && !ordinaryScheduleEvent(event.data))) {
+                || (structuralEdit(args.changes) && !ordinaryScheduleEvent(event.data))) {
                 throw new DomainError('unsupported_event', 'Choose an existing active, non-recurring practice event with a valid date. Schedule changes require app review.');
             }
             const linked = await reader.list(`teams/${args.teamId}/practiceSessions`, { eventId: args.eventId });
@@ -135,7 +163,7 @@ export function createDirectPracticeTimelineCommands(dependencies) {
                 throw new DomainError('unsupported_timeline', 'Select one unambiguous draft timeline without an assigned packet. Other timeline states require app review.');
             }
             const drills = new Map();
-            for (const block of args.changes.blocks || args.changes.appendBlocks || []) if (block.drillId && !drills.has(block.drillId)) {
+            for (const block of args.changes.blocks || args.changes.appendBlocks || (args.changes.blockReplacements || []).map((entry) => entry.block)) if (block.drillId && !drills.has(block.drillId)) {
                 const drill = await reader.get(`drillLibrary/${block.drillId}`);
                 if (!drill.exists || !drill.version || !(drill.data.source === 'community' || drill.data.publishedToCommunity === true || drill.data.teamId === args.teamId)) {
                     throw new DomainError('permission_denied', 'This drill is not available for the selected team.');
@@ -157,9 +185,14 @@ export function createDirectPracticeTimelineCommands(dependencies) {
                 after: { title: patch.title ?? old?.title ?? null, location: Object.hasOwn(patch, 'location') ? patch.location : old?.location ?? null,
                     blockCount: patch.blocks?.length ?? old?.blocks?.length ?? 0, duration: patch.duration ?? old?.duration ?? null },
                 blocksToAdd: added,
-                ...(args.changes.blockDurations || args.changes.blockOrder ? { blocksBefore: old.blocks.map(({ order, drillTitle, duration }) => ({ order, drillTitle, duration })),
+                ...(structuralEdit(args.changes) ? { blocksBefore: old.blocks.map(({ order, drillTitle, duration }) => ({ order, drillTitle, duration })),
                     blocksAfter: patch.blocks.map(({ order, drillTitle, duration }) => ({ order, drillTitle, duration })) } : {}),
-                effect: args.changes.blockDurations || args.changes.blockOrder ? 'Changes only the shown block durations/order and requested title/location. Preserves every block, its notes and drill content, attendance, packets and schedule. No messages are sent.'
+                ...(contentEdit(args.changes) ? { requiredAcknowledgements: ['practiceBlockContent'],
+                    replacements: (args.changes.blockReplacements || []).map((entry) => ({ originalOrder: entry.order, before: plannedBlock(old.blocks[entry.order]),
+                        after: plannedBlock(newBlocks({ changes: { blocks: [entry.block] } }, target.drills, entry.order - (args.changes.removeBlocks || []).filter((index) => index < entry.order).length)[0]) })),
+                    removals: (args.changes.removeBlocks || []).map((index) => plannedBlock(old.blocks[index])) } : {}),
+                effect: contentEdit(args.changes) ? 'Replaces/removes only the explicitly shown draft block content using original indices, then renumbers the remaining blocks. Selected blocks with coaching notes or any historical log require app review. Untouched block content/notes, attendance, packets and schedule remain unchanged. No messages are sent.'
+                    : args.changes.blockDurations || args.changes.blockOrder ? 'Changes only the shown block durations/order and requested title/location. Preserves every block, its notes and drill content, attendance, packets and schedule. No messages are sent.'
                     : 'Preserves existing blocks, notes, attendance and delivery settings. Does not change the schedule, generate a packet or send a message.' };
         },
         apply: (tx, target, args, { uid, now }) => {

@@ -248,6 +248,13 @@ export function createDirectFavoriteMcpSession(dependencies) {
         const block = z.object({ drillId: resourceId.optional(), title: z.string().min(1).max(120).optional(),
             duration: z.number().int().min(1).max(120), type: z.string().min(1).max(60).optional(), description: z.string().max(2000).optional() }).strict();
         const blocks = z.array(block).min(1).max(30);
+        server.registerTool('prepare_replace_or_remove_practice_blocks', {
+            description: 'Prepare replacing/removing up to 30 draft plan blocks using their original indices. Replacement is a complete custom block or an exact available drill plus duration. Shows all discarded/replacement content; requires separate confirmation. Selected coaching notes, historical logs and extended blocks require app review. At least one block must remain.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, eventId: resourceId, sessionId: resourceId,
+                blockReplacements: z.array(z.object({ order: z.number().int().min(0).max(99), block }).strict()).min(1).max(30).optional(),
+                removeBlocks: z.array(z.number().int().min(0).max(99)).min(1).max(30).optional() }).strict(), annotations: mutation
+        }, run(({ blockReplacements, removeBlocks, ...args }) => commands.prepare({ ...args, mode: 'update', changes: {
+            ...(blockReplacements ? { blockReplacements } : {}), ...(removeBlocks ? { removeBlocks } : {}) } })));
         server.registerTool('prepare_create_practice_timeline', {
             description: 'Prepare a draft timeline for one existing non-recurring practice event without a timeline. Supply custom block titles or exact drill IDs and explicit durations. Does not create schedule events, packets, messages or attendance.',
             inputSchema: z.object({ proposalId: id, teamId: resourceId, eventId: resourceId,
@@ -258,7 +265,7 @@ export function createDirectFavoriteMcpSession(dependencies) {
             inputSchema: z.object({ proposalId: id, teamId: resourceId, eventId: resourceId, sessionId: resourceId,
                 changes: z.object({ title: z.string().min(1).max(120).optional(), location: z.string().max(200).optional(), appendBlocks: blocks.optional() }).strict() }).strict(), annotations: mutation
         }, run((args) => commands.prepare({ ...args, mode: 'update' })));
-        registerOutcome('practice_timeline', commands);
+        registerOutcome('practice_timeline', commands, { ...mutation, destructiveHint: true });
     }
     if (dependencies.scheduleStore) {
         const commands = dependencies.scheduleCommands || createDirectScheduleCommands({ ...dependencies, store: dependencies.scheduleStore });
