@@ -1,5 +1,9 @@
 # Isolated signed-channel schedule executor
 
+Subsequent isolated session/form-to-signer work is documented in
+[SESSION_SIGNER_REVIEW.md](SESSION_SIGNER_REVIEW.md). Counts below describe this
+executor checkpoint; the subsequent review records current composition evidence.
+
 `src/backendScheduleExecutor.js` now composes the signed channel with the actual
 schedule command engine, user-credentialed REST store, private evidence authority
 and producer reservation. It is an unmounted backend factory, not an MCP tool or

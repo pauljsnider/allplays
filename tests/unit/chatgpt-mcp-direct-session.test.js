@@ -102,6 +102,30 @@ describe('authenticated direct-command HTTP sessions', () => {
         expect(a.uid).toBe(b.uid); expect(a.clientId).not.toBe(b.clientId); expect(a.grantKey).not.toBe(b.grantKey);
         expect(a).not.toHaveProperty('firebaseRefreshToken');
     });
+    it('introspects only the exact current account/client/grant/session without credentials', async () => {
+        const f = await fixture(); const bearer = await f.token();
+        const actor = await f.authenticate(`Bearer ${bearer}`); const { transport } = await f.connect(bearer);
+        const input = { uid: actor.uid, clientId: actor.clientId, grantKey: actor.grantKey, sessionId: transport.sessionId, expiresAt: Date.now() + 1000, purpose: 'schedule.execute' };
+        const result = await f.service.introspectSession(input);
+        expect(Object.keys(result).sort()).toEqual(['uid', 'clientId', 'grantKey', 'sessionId', 'expiresAt', 'connected', 'reviewRequests'].sort());
+        expect(result).toMatchObject({ uid: actor.uid, sessionId: transport.sessionId, connected: true, reviewRequests: true });
+        expect(result.expiresAt).toBeLessThan(actor.expiresAt);
+        for (const change of [{ uid: 'other' }, { clientId: 'other' }, { grantKey: 'b'.repeat(64) }, { sessionId: 'other' }, { extra: true }, { purpose: 'arbitrary' }, { expiresAt: Date.now() + 20000 }]) {
+            await expect(f.service.introspectSession({ ...input, ...change })).rejects.toThrow();
+        }
+        f.revoked.add('owner'); await expect(f.service.introspectSession(input)).rejects.toThrow();
+        f.revoked.clear(); await f.service.close(); await expect(f.service.introspectSession(input)).rejects.toThrow();
+    });
+    it('rechecks the requested deadline after session reauthentication awaits', async () => {
+        const f = await fixture(); const bearer = await f.token(); const actor = await f.authenticate(`Bearer ${bearer}`);
+        const { transport } = await f.connect(bearer);
+        const input = { uid: actor.uid, clientId: actor.clientId, grantKey: actor.grantKey, sessionId: transport.sessionId, expiresAt: Date.now() + 500, purpose: 'schedule.status' };
+        f.resolveIdentity.mockImplementationOnce(async () => { f.advance(1000); return { uid: actor.uid, idToken: 'synthetic-owner', via: 'refresh-token' }; });
+        await expect(f.service.introspectSession(input)).rejects.toThrow();
+    });
+    it('rejects simultaneous local-evidence and signed-backend execution modes', () => {
+        expect(() => createDirectSessionRouter({ createExecutionEvidence: () => ({}), createScheduleBroker: () => ({}) })).toThrow();
+    });
     it('runs prepare → user approval → execute over HTTP and ignores a replayed approval response', async () => {
         const f = await fixture(); const bearer = await f.token(); const captured = [];
         const { client, transport } = await f.connect(bearer, accepted, captured);

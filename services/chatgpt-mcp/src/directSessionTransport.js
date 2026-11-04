@@ -14,10 +14,13 @@ const validActor = (actor, now) => typeof actor?.uid === 'string' && typeof acto
 // Opt-in composition module only: server.js never mounts this router. Sessions
 // are bounded, in memory, and never represent a persistent execution grant.
 export function createDirectSessionRouter({
-    authenticate, createDependencies, createExecutionEvidence, now = Date.now, sessionLifetimeMs = 600000,
+    authenticate, createDependencies, createExecutionEvidence, createScheduleBroker, now = Date.now, sessionLifetimeMs = 600000,
     approvalLifetimeMs = 120000, maxSessions = 100, maxSessionsPerActor = 5,
     allowedHosts = ['localhost', '127.0.0.1'], allowedOrigins = []
 }) {
+    if ((createExecutionEvidence && createScheduleBroker) || (createScheduleBroker !== undefined && typeof createScheduleBroker !== 'function')) {
+        throw new Error('Choose one schedule execution path with an explicit broker factory.');
+    }
     if (![sessionLifetimeMs, approvalLifetimeMs, maxSessions, maxSessionsPerActor].every((value) => Number.isInteger(value) && value > 0)
         || sessionLifetimeMs > 1800000 || approvalLifetimeMs > 120000 || maxSessions > 1000) {
         throw new Error('Use bounded session/approval lifetimes and session capacity.');
@@ -29,6 +32,7 @@ export function createDirectSessionRouter({
     async function dispose(session) {
         if (session.closed) return;
         session.closed = true;
+        session.scheduleBroker?.close();
         clearTimeout(session.timer);
         sessions.delete(session.id);
         await session.server.close().catch(() => {});
@@ -61,18 +65,26 @@ export function createDirectSessionRouter({
                     if (session.closed || session.expiresAt <= now() || !validActor(current, now()) || binding(current) !== session.binding) {
                         throw new DomainError('unauthenticated', 'The authenticated connection changed.');
                     }
-                    return current;
+                    return { ...current, expiresAt: Math.min(current.expiresAt, session.expiresAt) };
                 };
+                session.getCurrentActor = getCurrentActor;
+                const dependencies = createDependencies(actor, getCurrentActor);
+                const scheduleBroker = createScheduleBroker?.({ dependencies, getActor: getCurrentActor, sessionId: session.id });
+                if (createScheduleBroker && (!scheduleBroker || !['captureForm', 'close'].every((key) => typeof scheduleBroker[key] === 'function')
+                    || !['prepare', 'confirm', 'status'].every((key) => typeof scheduleBroker.commands?.[key] === 'function'))) throw new Error('A complete signed schedule broker is required.');
+                session.scheduleBroker = scheduleBroker;
                 const executionEvidence = createExecutionEvidence?.({ getActor: getCurrentActor, sessionId: session.id });
                 session.server = createDirectFavoriteMcpSession({
-                    ...createDependencies(actor, getCurrentActor),
+                    ...dependencies,
+                    ...(scheduleBroker ? { scheduleCommands: scheduleBroker.commands } : {}),
                     ...(executionEvidence ? { executionEvidence } : {}),
-                    authorizeAction: createOneActionApproval({ getActor: getCurrentActor, now, lifetimeMs: approvalLifetimeMs, captureForm: executionEvidence?.captureForm })
+                    authorizeAction: createOneActionApproval({ getActor: getCurrentActor, now, lifetimeMs: approvalLifetimeMs, captureForm: scheduleBroker?.captureForm || executionEvidence?.captureForm })
                 });
                 session.transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => session.id });
                 const currentSession = session;
                 session.transport.onclose = () => {
                     currentSession.closed = true;
+                    currentSession.scheduleBroker?.close();
                     clearTimeout(currentSession.timer);
                     sessions.delete(currentSession.id);
                 };
@@ -102,5 +114,23 @@ export function createDirectSessionRouter({
     router.post('/', handle);
     router.get('/', handle);
     router.delete('/', handle);
-    return { router, close: async () => { await Promise.all([...sessions.values()].map(dispose)); }, sessionCount: () => sessions.size };
+    // Host-only callback for an independently workload-authenticated endpoint.
+    // Never registered as an MCP tool or exposed by the public session router.
+    const introspectSession = async (input) => {
+        const keys = ['uid', 'clientId', 'grantKey', 'sessionId', 'expiresAt', 'purpose'];
+        if (!input || Object.keys(input).length !== keys.length || !keys.every((key) => Object.hasOwn(input, key))
+            || !['uid', 'sessionId'].every((key) => typeof input[key] === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(input[key]))
+            || typeof input.clientId !== 'string' || !/^[A-Za-z0-9._~-]{1,256}$/.test(input.clientId)
+            || typeof input.grantKey !== 'string' || !/^[a-f0-9]{64}$/.test(input.grantKey)
+            || !['schedule.execute', 'schedule.status'].includes(input.purpose) || !Number.isSafeInteger(input.expiresAt)
+            || input.expiresAt <= now() || input.expiresAt - now() > 120000) throw new DomainError('unauthenticated', 'The bound session is unavailable.');
+        const session = sessions.get(input.sessionId);
+        if (!session || session.closed || binding(input) !== session.binding) throw new DomainError('unauthenticated', 'The bound session is unavailable.');
+        const current = await session.getCurrentActor();
+        const expiresAt = Math.min(current.expiresAt, session.expiresAt);
+        if (session.closed || sessions.get(input.sessionId) !== session || current.reviewRequests !== true || binding(current) !== session.binding
+            || now() >= input.expiresAt || expiresAt < input.expiresAt) throw new DomainError('unauthenticated', 'The bound session is unavailable.');
+        return { uid: current.uid, clientId: current.clientId, grantKey: current.grantKey, sessionId: session.id, reviewRequests: true, connected: true, expiresAt };
+    };
+    return { router, introspectSession, close: async () => { await Promise.all([...sessions.values()].map(dispose)); }, sessionCount: () => sessions.size };
 }

@@ -16,6 +16,9 @@ import { createDirectPracticeTimelineCommands } from './directPracticeTimeline.j
 // never imports it. No generic document writer or model-controlled approval.
 export function createDirectFavoriteMcpSession(dependencies) {
     if (typeof dependencies?.authorizeAction !== 'function') throw new DomainError('confirmation_unavailable', 'A session-bound one-action approval authority is required.');
+    if (dependencies.scheduleCommands && (!dependencies.scheduleStore || !['prepare', 'confirm', 'status'].every((key) => typeof dependencies.scheduleCommands[key] === 'function'))) {
+        throw new DomainError('confirmation_unavailable', 'An explicit complete schedule execution path is required.');
+    }
     const server = new McpServer({ name: 'allplays-direct-command-prototype', version: '0.2.0' });
     const id = z.string().uuid();
     const resourceId = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
@@ -112,7 +115,7 @@ export function createDirectFavoriteMcpSession(dependencies) {
         registerOutcome('practice_timeline', commands);
     }
     if (dependencies.scheduleStore) {
-        const commands = createDirectScheduleCommands({ ...dependencies, store: dependencies.scheduleStore });
+        const commands = dependencies.scheduleCommands || createDirectScheduleCommands({ ...dependencies, store: dependencies.scheduleStore });
         const changes = z.object({ startDate: z.string().optional(), endDate: z.string().optional(), arrivalTime: z.string().optional(),
             location: z.string().max(200).optional(), title: z.string().min(1).max(120).optional(), opponent: z.string().min(1).max(120).optional(), isHome: z.boolean().optional() }).strict();
         server.registerTool('prepare_create_schedule_event', {

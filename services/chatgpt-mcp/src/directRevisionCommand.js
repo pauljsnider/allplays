@@ -40,6 +40,17 @@ export function createRevisionCommands({ uid, store, getContext, executionEviden
         await authorize(snapshot.data);
         return snapshot;
     }
+    async function review(id) {
+        const before = await load(id);
+        if (before.data.status === 'completed') return { before, targetBeforeApproval: null };
+        if (before.data.status !== 'prepared' || Date.parse(before.data.expiresAt) <= now()) throw new DomainError('conflict', 'Prepare a fresh proposal before confirming.');
+        const targetBeforeApproval = await domain.readTarget(store, before.data);
+        if (fingerprint(before.data.revisions) !== fingerprint(domain.revisions(targetBeforeApproval))
+            || fingerprint(before.data.preview) !== fingerprint(domain.preview(targetBeforeApproval, before.data))) {
+            throw new DomainError('conflict', 'The displayed proposal no longer matches current data. Prepare it again.');
+        }
+        return { before, targetBeforeApproval };
+    }
 
     return {
         async prepare({ proposalId, ...input }) {
@@ -73,17 +84,13 @@ export function createRevisionCommands({ uid, store, getContext, executionEviden
         async status({ proposalId }) {
             return result(proposalId, (await load(proposalId)).data);
         },
+        // Internal broker composition only, not registered as a public tool.
+        async review({ proposalId }) { return structuredClone((await review(proposalId)).before.data); },
 
         // approve is supplied only by the MCP protocol adapter, never by tool args.
         async confirm({ proposalId }, approve) {
-            const before = await load(proposalId);
+            const { before, targetBeforeApproval } = await review(proposalId);
             if (before.data.status === 'completed') return result(proposalId, before.data);
-            if (before.data.status !== 'prepared' || Date.parse(before.data.expiresAt) <= now()) throw new DomainError('conflict', 'Prepare a fresh proposal before confirming.');
-            const targetBeforeApproval = await domain.readTarget(store, before.data);
-            if (fingerprint(before.data.revisions) !== fingerprint(domain.revisions(targetBeforeApproval))
-                || fingerprint(before.data.preview) !== fingerprint(domain.preview(targetBeforeApproval, before.data))) {
-                throw new DomainError('conflict', 'The displayed proposal no longer matches current data. Prepare it again.');
-            }
             if (typeof approve !== 'function') throw new DomainError('confirmation_unavailable', 'A bound approval authority is required.');
             const approval = await approve(before.data.preview);
             if (!approvedContent(before.data.preview, approval)) {

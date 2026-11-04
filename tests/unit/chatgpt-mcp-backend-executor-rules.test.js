@@ -3,6 +3,14 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { generateKeyPairSync } from 'node:crypto';
 import { createServer } from 'node:http';
+import express from '../../services/chatgpt-mcp/node_modules/express/index.js';
+import { Client } from '../../services/chatgpt-mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
+import { StreamableHTTPClientTransport } from '../../services/chatgpt-mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/client/streamableHttp.js';
+import { ElicitRequestSchema } from '../../services/chatgpt-mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js';
+import { createDirectSessionRouter } from '../../services/chatgpt-mcp/src/directSessionTransport.js';
+import { createDirectSessionAuthenticator } from '../../services/chatgpt-mcp/src/directSessionAuth.js';
+import { createOAuthBroker, s256Challenge } from '../../services/chatgpt-mcp/src/oauth.js';
+import { createSignedScheduleBroker } from '../../services/chatgpt-mcp/src/signedScheduleBroker.js';
 import { initializeTestEnvironment, assertFails } from '@firebase/rules-unit-testing';
 import { doc, getDoc, setDoc, runTransaction, collection, getDocs } from 'firebase/firestore';
 import { createMockUserToken } from '@firebase/util';
@@ -11,7 +19,8 @@ import { createBackendScheduleExecutor } from '../../services/chatgpt-mcp/src/ba
 import { createDirectScheduleCommands, createDirectScheduleStore } from '../../services/chatgpt-mcp/src/directSchedule.js';
 const require = createRequire(import.meta.url);
 const { signBrokerCommand, createScheduleBrokerChannel } = require('../../functions/schedule-broker-channel.cjs');
-const { createScheduleBrokerHttpHandler } = require('../../functions/schedule-broker-http.cjs');
+const { createScheduleBrokerHttpHandler, createScheduleBrokerCommandClient } = require('../../functions/schedule-broker-http.cjs');
+const { createScheduleSessionHttpHandler, createScheduleSessionIntrospector } = require('../../functions/schedule-session-http.cjs');
 const { createScheduleEvidenceAuthority } = require('../../functions/schedule-delivery-evidence.cjs');
 const { createFirestoreNotificationJournalStore } = require('../../functions/notification-attempt-journal.cjs');
 const { createScheduleRecoveryPipeline } = require('../../functions/schedule-recovery-pipeline.cjs');
@@ -49,7 +58,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('signed channel with actua
     afterAll(async () => env?.cleanup());
     beforeEach(async () => { await env.clearFirestore(); });
     const ownerDb = () => env.authenticatedContext('owner', { email: 'owner@example.test', email_verified: true }).firestore();
-    async function fixture(database, { mode = 'create', eventType = 'game', fault = null } = {}) {
+    async function fixture(database, { mode = 'create', eventType = 'game', fault = null, signedSession = false } = {}) {
         const host = process.env.FIRESTORE_EMULATOR_HOST;
         if (!/^(127\.0\.0\.1|localhost):\d+$/.test(host)) throw new Error('Only the isolated loopback emulator is allowed');
         await setDoc(doc(database, 'securityPolicies/verifiedEmail'), { mode: 'enforce', exemptUserIds: [] });
@@ -88,8 +97,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('signed channel with actua
         const changes = mode === 'create' ? { startDate: '2060-12-01T17:00Z', ...(eventType === 'game' ? { opponent: 'Approved Visitors' } : { title: 'Approved Practice', endDate: '2060-12-01T18:00Z' }) }
             : { location: 'Approved field' };
         const commands = createDirectScheduleCommands({ uid: 'owner', store, getContext, now });
-        await commands.prepare({ proposalId, mode, teamId: 'team-1', eventId, eventType, changes });
-        const prepared = (await store.get(headerPath)).data;
+        if (!signedSession) await commands.prepare({ proposalId, mode, teamId: 'team-1', eventId, eventType, changes });
+        const prepared = signedSession ? { changes, preview: null } : (await store.get(headerPath)).data;
         const command = { proposalId, mode, teamId: 'team-1', eventId, eventType, changes: prepared.changes };
         const approval = { preview: prepared.preview, approve: true, notifyTeam: true };
         preparing = false;
@@ -121,7 +130,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('signed channel with actua
         };
         const envelope = () => { const issuedAt = now(); return signBrokerCommand({ keyId: 'synthetic', privateKey: signing.privateKey, audience, actor, command, approval, idToken, issuedAt, expiresAt: issuedAt + 120000 }); };
         const rows = async () => (await getDocs(collection(database, 'teams/team-1/notificationSendLog'))).docs;
-        return { command, approval, execute, actor, idToken, envelope, create: () => createScheduleBrokerChannel(dependencies), commits: () => commits, executions: () => executions, rows,
+        return { command, approval, execute, actor, idToken, envelope, dependencies, signing, now, getContext, localFetch, create: () => createScheduleBrokerChannel(dependencies), commits: () => commits, executions: () => executions, rows,
             close: async () => {
                 // Test-only cleanup after revocation deliberately prevents the
                 // application from obtaining credentials for normal rollback.
@@ -133,6 +142,123 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('signed channel with actua
     const withFixture = (options, run) => env.withSecurityRulesDisabled(async (context) => {
         const f = await fixture(context.firestore(), options);
         try { await run(f, context.firestore()); } finally { await f.close(); }
+    });
+    // Actual OAuth grant resolution, SDK form elicitation, signed private HTTP,
+    // live session introspection, credentialed Firestore and private evidence.
+    // Only identity/provider platform adapters are synthetic; no live accounts.
+    async function signedConnection(f, { answer, loseResponse = false, tamperSession = false } = {}) {
+        const oauth = createOAuthBroker({ now: f.now }); let revoked = false;
+        const authenticate = createDirectSessionAuthenticator({ oauth, now: f.now, resolveIdentity: async (_authorization, options) => {
+            expect(options.forceRefresh).toBe(true); if (revoked) throw new Error('Synthetic revoked identity');
+            return { uid: 'owner', email: 'owner@example.test', idToken: f.idToken, via: 'refresh-token' };
+        } });
+        const redirectUri = 'https://chatgpt.com/connector/oauth/isolated';
+        const clientId = oauth.registerClient({ redirect_uris: [redirectUri] }).client_id;
+        const verifier = 'isolated-verifier-with-at-least-forty-three-characters';
+        const code = await oauth.approveAuthorization({ clientId, redirectUri, codeChallenge: s256Challenge(verifier), firebaseRefreshToken: 'synthetic-refresh', scope: 'allplays.read allplays.review', reviewApproved: true });
+        const bearer = (await oauth.exchange({ grant_type: 'authorization_code', code, code_verifier: verifier })).access_token;
+        let sendEnvelope; let localWrites = 0; let forms = 0; let attempts = 0; const purposes = [];
+        const service = createDirectSessionRouter({ authenticate, now: f.now,
+            createDependencies: (actor, current) => {
+                const brokerFetch = async (target, init) => {
+                    if (target.endsWith(':commit') && JSON.parse(init.body).transaction) { localWrites++; throw new Error('Broker business commits forbidden'); }
+                    return f.localFetch(target, { ...init, redirect: 'error' });
+                };
+                const scheduleStore = createDirectScheduleStore({ projectId, uid: actor.uid, getIdToken: async () => (await current()).idToken, fetchImpl: brokerFetch });
+                return { uid: actor.uid, store: {}, scheduleStore, now: f.now, getContext: async () => { await current(); return f.getContext(); } };
+            },
+            createScheduleBroker: (options) => createSignedScheduleBroker({ ...options, keyId: 'synthetic', privateKey: f.signing.privateKey, audience, now: f.now,
+                sendEnvelope: async (envelope) => {
+                    attempts++; purposes.push(JSON.parse(Buffer.from(envelope.payload, 'base64url').toString('utf8')).purpose);
+                    const result = await sendEnvelope(envelope);
+                    if (loseResponse && attempts === 1) throw new Error('Synthetic lost private HTTP response');
+                    return result;
+                } })
+        });
+        let sessionHandler; let commandHandler;
+        const app = express(); app.use('/direct', service.router);
+        const http = createServer((req, res) => {
+            if (req.url === '/internal/v1/schedule-session') return sessionHandler(req, res);
+            if (req.url === '/internal/v1/schedule-command') return commandHandler(req, res);
+            return app(req, res);
+        });
+        await new Promise((resolve) => http.listen(0, '127.0.0.1', resolve));
+        const host = `127.0.0.1:${http.address().port}`;
+        const policy = (targetAudience) => ({ now: f.now, audience: targetAudience, allowedHosts: [host], allowedPrincipals: ['synthetic-workload'], takeRateLimit: async () => true,
+            verifyWorkloadIdentity: async (value, request) => {
+                if (value !== `synthetic-${targetAudience}`) throw new Error('Untrusted workload');
+                expect(request.audience).toBe(targetAudience); return { principal: 'synthetic-workload', audience: targetAudience, expiresAt: f.now() + 60000 };
+            } });
+        const network = (targetAudience) => ({ now: f.now, audience: targetAudience,
+            getWorkloadToken: async ({ audience: requested }) => { expect(requested).toBe(targetAudience); return `synthetic-${targetAudience}`; },
+            fetchImpl: (target, init) => { expect(init.redirect).toBe('error'); return fetch(target.replace('https://isolated.test', `http://${host}`), init); } });
+        sessionHandler = createScheduleSessionHttpHandler({ ...policy('isolated-session'), introspectSession: service.introspectSession });
+        const introspect = createScheduleSessionIntrospector({ ...network('isolated-session'), url: 'https://isolated.test/internal/v1/schedule-session' });
+        f.dependencies.verifyLiveSession = (input) => introspect(tamperSession ? { ...input, sessionId: 'another-session' } : input);
+        commandHandler = createScheduleBrokerHttpHandler({ ...policy(audience), channel: f.create() });
+        sendEnvelope = createScheduleBrokerCommandClient({ ...network(audience), url: 'https://isolated.test/internal/v1/schedule-command' });
+        const client = new Client({ name: 'isolated-signed-client', version: '1' }, { capabilities: { elicitation: { form: {} } } });
+        client.onerror = () => {};
+        client.setRequestHandler(ElicitRequestSchema, async (request) => { forms++; return answer ? answer(request, { revoke: () => { revoked = true; } }) : { action: 'accept', content: { approve: true, notifyTeam: true } }; });
+        const transport = new StreamableHTTPClientTransport(new URL(`http://${host}/direct`), { requestInit: { headers: { Authorization: `Bearer ${bearer}` } },
+            reconnectionOptions: { maxRetries: 0, maxReconnectionDelay: 1, initialReconnectionDelay: 1, reconnectionDelayGrowFactor: 1 } });
+        try { await client.connect(transport); } catch (error) { await service.close(); http.closeAllConnections(); await new Promise((resolve) => http.close(resolve)); throw error; }
+        return { client, service, localWrites: () => localWrites, forms: () => forms, purposes,
+            prepare: () => client.callTool({ name: `prepare_${f.command.mode}_schedule_event`, arguments: { proposalId, teamId: 'team-1', eventType: f.command.eventType, changes: f.command.changes, ...(f.command.mode === 'update' ? { eventId } : {}) } }),
+            confirm: () => client.callTool({ name: 'confirm_schedule_event', arguments: { proposalId } }, undefined, { timeout: 3000 }),
+            status: () => client.callTool({ name: 'get_schedule_event_action', arguments: { proposalId } }),
+            close: async () => { await client.close().catch(() => {}); await service.close(); http.closeAllConnections(); await new Promise((resolve) => http.close(resolve)); }
+        };
+    }
+    for (const mode of ['create', 'update']) for (const eventType of ['game', 'practice']) it(`runs actual session form → signer → private HTTP → live session → ${mode} ${eventType}`, async () => {
+        await withFixture({ signedSession: true, mode, eventType }, async (f) => {
+            const connection = await signedConnection(f);
+            try {
+                const prepared = await connection.prepare(); expect(prepared.isError, JSON.stringify(prepared.content)).not.toBe(true);
+                expect(f.commits()).toBe(0);
+                const result = await connection.confirm(); expect(result.structuredContent?.status, JSON.stringify(result.content)).toBe('completed');
+                expect(f.commits()).toBe(1); expect(connection.localWrites()).toBe(0); expect(connection.forms()).toBe(1);
+                expect(JSON.stringify(result)).not.toContain(f.idToken); expect(result.structuredContent.notificationDelivery).toBe('unverified');
+                const again = await connection.confirm(); expect(again.structuredContent?.status, JSON.stringify(again.content)).toBe('completed');
+                expect(connection.purposes).toEqual(['schedule.execute', 'schedule.status']); expect(connection.forms()).toBe(1); expect(f.commits()).toBe(1);
+            } finally { await connection.close(); }
+        });
+    });
+    it('queries status after a lost private response and never resubmits execution', async () => {
+        await withFixture({ signedSession: true }, async (f) => {
+            const connection = await signedConnection(f, { loseResponse: true });
+            try {
+                await connection.prepare(); expect((await connection.confirm()).isError).toBe(true); expect(f.commits()).toBe(1);
+                expect((await connection.confirm()).structuredContent.status).toBe('completed');
+                expect(connection.purposes).toEqual(['schedule.execute', 'schedule.status']); expect(f.commits()).toBe(1); expect(connection.forms()).toBe(1);
+            } finally { await connection.close(); }
+        });
+    });
+    for (const action of ['decline', 'cancel', 'missing-notify']) it(`does not sign or write after ${action}`, async () => {
+        await withFixture({ signedSession: true }, async (f) => {
+            const connection = await signedConnection(f, { answer: async () => action === 'missing-notify' ? { action: 'accept', content: { approve: true, notifyTeam: false } } : { action } });
+            try {
+                await connection.prepare(); const result = await connection.confirm(); expect(result.structuredContent?.status).not.toBe('completed');
+                expect(connection.purposes).toEqual([]); expect(f.commits()).toBe(0); expect(connection.localWrites()).toBe(0);
+            } finally { await connection.close(); }
+        });
+    });
+    it('denies a different live session even with an otherwise valid signed command', async () => {
+        await withFixture({ signedSession: true }, async (f) => {
+            const connection = await signedConnection(f, { tamperSession: true });
+            try { await connection.prepare(); expect((await connection.confirm()).isError).toBe(true); expect(f.commits()).toBe(0); expect(f.executions()).toBe(0); }
+            finally { await connection.close(); }
+        });
+    });
+    it('rereads after the form and refuses a changed target before signing', async () => {
+        await withFixture({ signedSession: true, mode: 'update' }, async (f, database) => {
+            const connection = await signedConnection(f, { answer: async () => {
+                await setDoc(doc(database, eventPath), { location: 'Changed during review' }, { merge: true });
+                return { action: 'accept', content: { approve: true, notifyTeam: true } };
+            } });
+            try { await connection.prepare(); expect((await connection.confirm()).isError).toBe(true); expect(connection.purposes).toEqual([]); expect(f.commits()).toBe(0); }
+            finally { await connection.close(); }
+        });
     });
     for (const mode of ['create', 'update']) for (const eventType of ['game', 'practice']) it(`executes ${mode} ${eventType} through the signed channel with private proof`, async () => {
         await withFixture({ mode, eventType }, async (f) => {
