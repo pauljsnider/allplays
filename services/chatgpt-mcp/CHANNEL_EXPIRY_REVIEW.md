@@ -1,5 +1,8 @@
 # Signed-channel and workload-ingress expiry boundaries
 
+The subsequent [backend executor review](BACKEND_EXECUTOR_REVIEW.md) documents
+the isolated real-domain executor that enforces these supplied guards at fetch.
+
 This fixes two independently reproduced pre-activation races in the unmounted
 channel. No production route, access grant, credential, rule or data changes.
 

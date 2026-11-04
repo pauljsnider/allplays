@@ -3,6 +3,8 @@
 The subsequent [channel expiry review](CHANNEL_EXPIRY_REVIEW.md) records
 post-authorization key/deadline checks, the executor's final synchronous guard,
 and workload expiry/allowlist checks after bounded body reads.
+The [backend executor review](BACKEND_EXECUTOR_REVIEW.md) records the subsequent
+signed-channel-to-domain-engine implementation and its remaining host prerequisites.
 
 This checkpoint adds unmounted backend identity adapters and tightens the final
 REST dispatch guard. It creates no credentials, grants, routes, live data or
