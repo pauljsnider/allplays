@@ -40,6 +40,7 @@ const TeamRegistrationReview = lazyNamedPage(() => import('./pages/TeamRegistrat
 const TeamRegistrationForms = lazyNamedPage(() => import('./pages/TeamRegistrationForms'), 'TeamRegistrationForms');
 const PlayerDetail = lazyNamedPage(() => import('./pages/PlayerDetail'), 'PlayerDetail');
 const PrivateAiChat = lazyNamedPage(() => import('./pages/PrivateAiChat'), 'PrivateAiChat');
+const McpActionReview = lazyNamedPage(() => import('./pages/McpActionReview'), 'McpActionReview');
 const Profile = lazyNamedPage(() => import('./pages/Profile'), 'Profile');
 const FriendProfile = lazyNamedPage(() => import('./pages/FriendProfile'), 'FriendProfile');
 const PublicTeamsBrowse = lazyNamedPage(() => import('./pages/PublicTeamsBrowse'), 'PublicTeamsBrowse');
@@ -381,6 +382,14 @@ export default function App() {
           }
         />
         <Route
+          path="/ai/mcp/:requestId"
+          element={
+            <Protected auth={auth}>
+              <McpActionReview key={auth.user?.uid} auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
           path="/ai"
           element={
             <Protected auth={auth}>
@@ -665,7 +674,9 @@ function Protected({ auth, children }: { auth: AuthState; children: ReactNode })
   }
 
   if (!auth.user) {
-    const assignmentDestination = location.pathname === '/practice-resources' || /^\/players\/[^/]+\/[^/]+\/resources$/.test(location.pathname);
+    const assignmentDestination = location.pathname === '/practice-resources'
+      || /^\/players\/[^/]+\/[^/]+\/resources$/.test(location.pathname)
+      || /^\/ai\/mcp\/[a-f0-9-]{36}$/.test(location.pathname);
     if (assignmentDestination) return <Navigate to={`/auth?next=${encodeURIComponent(location.pathname + location.search)}`} replace />;
     return <Navigate to="/auth" replace />;
   }

@@ -1,0 +1,232 @@
+[
+  {
+    "name": "apply_roster_import",
+    "teamScoped": true,
+    "description": "Prepare a grouped roster import for a managed team. Supports name-only player adds plus update, deactivate/reactivate, all roster fields, address, and optional family contacts. Supplied family-contact emails create invitations; player adds do not require contact details. Args: teamId/teamName and operations."
+  },
+  {
+    "name": "apply_schedule_import",
+    "teamScoped": true,
+    "description": "Prepare one grouped schedule import from an image, CSV, PDF, or pasted text. Supports reviewed game and practice rows. Args: teamId/teamName and rows."
+  },
+  {
+    "name": "cancel_ride_request",
+    "teamScoped": false,
+    "description": "Cancel a ride request. Args: eventId, teamId, offerId, requestId."
+  },
+  {
+    "name": "cancel_schedule_event",
+    "teamScoped": true,
+    "description": "Cancel a managed-team game or practice without deleting history. Args: teamId, eventId, eventType."
+  },
+  {
+    "name": "claim_assignment",
+    "teamScoped": false,
+    "description": "Claim a volunteer/task assignment slot. Args: eventId, teamId, role."
+  },
+  {
+    "name": "complete_game_wrapup",
+    "teamScoped": true,
+    "description": "Complete a managed game wrap-up with final report payload. Args: teamId, gameId/eventId, payload."
+  },
+  {
+    "name": "create_family_share_link",
+    "teamScoped": false,
+    "description": "Create a family share link. Args: label, extraCalendarUrls."
+  },
+  {
+    "name": "create_household_invite",
+    "teamScoped": false,
+    "description": "Invite a household contact for a linked player. Args: playerKey or teamId+playerId, email, displayName, relation."
+  },
+  {
+    "name": "create_ride_offer",
+    "teamScoped": false,
+    "description": "Create a rideshare offer. Args: eventId, teamId, seatCapacity, direction to|from|round-trip, note."
+  },
+  {
+    "name": "create_schedule_event",
+    "teamScoped": true,
+    "description": "Create a managed-team game or practice. Args: teamId/teamName, eventType game|practice, and input with startDate as an ISO 8601 date-time including the requested time and UTC offset, location, opponent/title, notifications, recurrence, and tracker config. If date, time, and timeZone are supplied separately, they are combined without dropping the time."
+  },
+  {
+    "name": "create_team",
+    "teamScoped": false,
+    "description": "Create a new team owned by the signed-in user and add its default sport stat template. Args: name/teamName, sport, zip optional, isPublic optional."
+  },
+  {
+    "name": "create_team_fee",
+    "teamScoped": true,
+    "description": "Create a managed-team fee for the whole roster or selected player IDs. Args: teamId, title, amount, dueDate, recipientIds, applyToWholeRoster, installmentPlan."
+  },
+  {
+    "name": "invite_roster_parent",
+    "teamScoped": true,
+    "description": "Invite a parent or guardian to one player on a managed team using the normal acceptance email. Args: playerId/playerName, email, relation, and optional teamId/teamName. A unique managed-roster player match resolves the team automatically."
+  },
+  {
+    "name": "invite_team_admin",
+    "teamScoped": true,
+    "description": "Invite an administrator to a managed team. Args: teamId/teamName and email."
+  },
+  {
+    "name": "manage_schedule_assignment",
+    "teamScoped": true,
+    "description": "Create, update, or remove a managed event assignment. Args: teamId, eventId, action create|update|remove, role/currentRole, assignment."
+  },
+  {
+    "name": "mark_player_incentive_paid",
+    "teamScoped": false,
+    "description": "Mark player incentive earnings paid for a game. Args: teamId, playerId/playerName, gameId, amountCents or amount."
+  },
+  {
+    "name": "mark_practice_packet_complete",
+    "teamScoped": false,
+    "description": "Mark a practice/home packet complete for a linked child. Args: eventId, teamId, childId/playerId optional, playerName optional."
+  },
+  {
+    "name": "prepare_resource_packet",
+    "teamScoped": true,
+    "description": "Prepare a staff resource, packet draft, or publication for explicit confirmation. Args teamId, action=saveResource|saveDraft|publish. Resources need title,url and optional teachingPoint and optional resourceId/drillId. Drafts need title,resourceIds,playerIds and optional matching resourceVersions,notes,practiceId,dueAt ISO,timeZone,assignmentId. Omit resourceVersions to preserve versions from an existing assignment and select current versions for newly added resources; pass current versions to explicitly adopt updated media. Publish needs assignmentId and explicit notify boolean. Never invent video content or report an open on behalf of someone."
+  },
+  {
+    "name": "release_assignment",
+    "teamScoped": false,
+    "description": "Release a volunteer/task assignment claim. Args: eventId, teamId, role."
+  },
+  {
+    "name": "request_ride_spot",
+    "teamScoped": false,
+    "description": "Request a seat for a linked child. Args: eventId, teamId, offerId, childId/playerId optional."
+  },
+  {
+    "name": "resend_roster_parent_invite",
+    "teamScoped": true,
+    "description": "Retry the email for an existing pending or auto-linked parent invitation. Args: playerId/playerName, email, and optional teamId/teamName. A unique managed-roster player match resolves the team automatically."
+  },
+  {
+    "name": "retire_player_incentive_rule",
+    "teamScoped": false,
+    "description": "Retire/remove a player incentive rule. Args: teamId, playerId/playerName, ruleId."
+  },
+  {
+    "name": "review_registration",
+    "teamScoped": true,
+    "description": "Approve, reject, extend, or accept a managed-team registration/waitlist offer. Args: teamId, formId, registrationId, action, playerId, decisionNote."
+  },
+  {
+    "name": "revoke_family_share_link",
+    "teamScoped": false,
+    "description": "Revoke a family share link. Args: tokenId."
+  },
+  {
+    "name": "save_player_incentive_rule",
+    "teamScoped": false,
+    "description": "Create or update a parent player incentive rule. Args: teamId, playerId/playerName, statKey, amountCents or amount, type per_unit|threshold, threshold, thresholdOp."
+  },
+  {
+    "name": "save_practice_attendance",
+    "teamScoped": true,
+    "description": "Save player attendance for a managed practice. Args: teamId, eventId, attendance with player statuses and notes."
+  },
+  {
+    "name": "save_practice_packet",
+    "teamScoped": true,
+    "description": "Save the home/practice packet for a managed practice. Args: teamId, eventId, packet with title, due date, notes, and blocks."
+  },
+  {
+    "name": "save_practice_timeline",
+    "teamScoped": true,
+    "description": "Save a managed practice timeline with ordered drill blocks. Args: teamId, eventId, sessionId optional, title, date, location, blocks."
+  },
+  {
+    "name": "save_stat_configuration",
+    "teamScoped": true,
+    "description": "Create or update a team stat-tracker configuration. Args: teamId/teamName, configId optional, config."
+  },
+  {
+    "name": "save_team_tracking_item",
+    "teamScoped": true,
+    "description": "Create or update a managed-team tracking requirement. Args: teamId/teamName, itemId optional, title, description, type, dueDate, required."
+  },
+  {
+    "name": "send_rsvp_reminder",
+    "teamScoped": true,
+    "description": "Send the normal staff RSVP reminder for a managed-team event. Args: teamId, eventId."
+  },
+  {
+    "name": "send_team_email",
+    "teamScoped": true,
+    "description": "Send a managed-team email using the normal team email service. Args: teamId/teamName, subject, body, targetType full_team|staff|individuals, recipientIds."
+  },
+  {
+    "name": "send_team_message",
+    "teamScoped": false,
+    "description": "Send a team chat message. Args: teamId or teamName, text/message, target full_team|staff."
+  },
+  {
+    "name": "set_player_incentive_cap",
+    "teamScoped": false,
+    "description": "Set or clear a per-game incentive cap. Args: teamId, playerId/playerName, maxPerGameCents or maxPerGameAmount."
+  },
+  {
+    "name": "set_player_tracking_status",
+    "teamScoped": true,
+    "description": "Mark a team tracking item complete or incomplete for a roster player. Args: teamId/teamName, playerId/playerName, itemId, complete."
+  },
+  {
+    "name": "set_ride_offer_status",
+    "teamScoped": false,
+    "description": "Close or reopen a ride offer. Args: eventId, teamId, offerId, status open|closed|cancelled."
+  },
+  {
+    "name": "set_team_drill_favorite",
+    "teamScoped": true,
+    "description": "Add or remove a drill from a managed team\u2019s favorites. Args: teamId, drillId, favorite."
+  },
+  {
+    "name": "submit_access_request",
+    "teamScoped": false,
+    "description": "Request parent access to a team/player. Args: teamId, playerId, relation."
+  },
+  {
+    "name": "toggle_player_incentive_rule",
+    "teamScoped": false,
+    "description": "Activate or deactivate a player incentive rule. Args: teamId, playerId/playerName, ruleId, active true|false."
+  },
+  {
+    "name": "update_family_share_calendars",
+    "teamScoped": false,
+    "description": "Update extra calendar URLs attached to a family share link. Args: tokenId, extraCalendarUrls."
+  },
+  {
+    "name": "update_game_score",
+    "teamScoped": true,
+    "description": "Update the score for a managed game. Args: teamId, eventId/gameId, homeScore, awayScore."
+  },
+  {
+    "name": "update_player_profile",
+    "teamScoped": false,
+    "description": "Update parent-editable private player profile fields. Args: teamId, playerId, emergencyContactName, emergencyContactPhone, medicalInfo."
+  },
+  {
+    "name": "update_rsvp",
+    "teamScoped": false,
+    "description": "Update one linked child RSVP. Args: eventId, teamId, childId/playerId optional, response going|maybe|not_going, note."
+  },
+  {
+    "name": "update_rsvps_for_children",
+    "teamScoped": false,
+    "description": "Update multiple linked children on the same event. Args: eventId, teamId, response going|maybe|not_going, note."
+  },
+  {
+    "name": "update_schedule_event",
+    "teamScoped": true,
+    "description": "Update a managed-team game or practice. Args: teamId, eventId, eventType, partial input fields to change, and practice scope occurrence|series. After Diamond activation, home/away, tracker config, and linked opponent fields are locked."
+  },
+  {
+    "name": "update_team_settings",
+    "teamScoped": true,
+    "description": "Update managed team name, sport, ZIP, public visibility, league URL, or livestream URL. Args: teamId/teamName and settings."
+  }
+]

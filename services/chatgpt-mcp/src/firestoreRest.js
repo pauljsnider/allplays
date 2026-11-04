@@ -104,6 +104,23 @@ export function createUserDb({ projectId, idToken, fetchImpl = fetch }) {
     };
 
     return {
+        // Atomic, create-only review envelopes. No arbitrary business-data writer
+        // is exposed to tools; Firestore still evaluates the user's rules.
+        async createReviewRequest(documents) {
+            const writes = documents.map(({ path, data }) => {
+                if (!/^(users|teams)\/[^/]+\/privateAiPendingActions\/mcp_[a-f0-9-]{36}$/.test(path)) {
+                    throw new DomainError('invalid_argument', 'Invalid review request path.');
+                }
+                return {
+                    update: { name: `${baseUrl.slice('https://firestore.googleapis.com/v1/'.length)}/${path}`, fields: encodeValue(data).mapValue.fields },
+                    currentDocument: { exists: false }
+                };
+            });
+            const response = await fetchImpl(`${baseUrl}:commit`, {
+                method: 'POST', headers, body: JSON.stringify({ writes })
+            });
+            if (!response.ok) throwForStatus(response.status, 'review request');
+        },
         doc(path) {
             return {
                 async get() {
