@@ -7,14 +7,20 @@ const { createScheduleConsumerOwnership } = require('../schedule-consumer-owners
 function fixture() {
     const db = new FakeFirestore(); const gate = { mode: 'legacy-only', legacyHead: 'a'.repeat(40), legacyCompatible: true, journalHead: 'b'.repeat(40), bothConsumersGated: true, compatibleProducersVerified: true };
     const input = { teamId: 'team', eventId: 'event', sourceVersion: '2060-01-01T12:00:00.123456789Z' };
-    const decide = createScheduleConsumerOwnership({ store: createFirestoreNotificationJournalStore(db), readVerifiedDeploymentGate: async () => gate });
-    return { db, gate, input, decide };
+    const eligibility = { eligible: true, evidenceId: 'c'.repeat(64) };
+    const decide = createScheduleConsumerOwnership({ store: createFirestoreNotificationJournalStore(db), readVerifiedDeploymentGate: async () => gate, verifyEffectEligibility: async (effect) => ({ ...effect, ...eligibility }) });
+    return { db, gate, input, decide, eligibility };
 }
 describe('isolated single-consumer rollout ownership', () => {
     it('allows only the legacy consumer in shadow mode despite a client marker', async () => {
         const f = fixture(); f.gate.mode = 'shadow';
         assert.deepEqual(await f.decide({ ...f.input, consumer: 'journal', notificationOwner: 'journal' }), { owner: 'legacy', mayConsume: false });
         assert.equal((await f.decide({ ...f.input, consumer: 'legacy' })).mayConsume, true);
+    });
+    for (const kind of ['ordinary legacy', 'imported', 'unsupported']) it(`retains legacy ownership for an unreserved ${kind} effect in journal mode`, async () => {
+        const f = fixture(); f.gate.mode = 'journal'; f.eligibility.eligible = false;
+        assert.equal((await f.decide({ ...f.input, consumer: 'journal', eligible: true, notificationOwner: 'journal' })).mayConsume, false);
+        assert.deepEqual(await f.decide({ ...f.input, consumer: 'legacy' }), { owner: 'legacy', mayConsume: true });
     });
     it('chooses exactly one owner when both consumers race', async () => {
         const f = fixture(); f.gate.mode = 'journal';
