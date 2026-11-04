@@ -1,6 +1,7 @@
 import { DomainError } from './core.js';
 
 const labels = Object.freeze({ notifyTeam: 'I also approve the team notification effects described above',
+    publicConfiguration: 'I approve the publicly readable configuration metadata and possible automatic analytics display changes described above',
     incentiveTerms: 'I also approve the incentive calculation changes described above; this does not transfer money or record a payment' });
 export function confirmationFields(preview) {
     const required = preview?.requiredAcknowledgements ?? [];

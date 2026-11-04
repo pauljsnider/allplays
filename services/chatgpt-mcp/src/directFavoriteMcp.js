@@ -15,6 +15,7 @@ import { createDirectAssignmentClaimCommands } from './directAssignmentClaims.js
 import { createDirectFamilyRsvpCommands } from './directFamilyRsvp.js';
 import { createDirectPracticeAttendanceCommands } from './directPracticeAttendance.js';
 import { createDirectIncentiveCommands } from './directIncentives.js';
+import { createDirectTeamSetupCommands, TEAM_SETUP_PRESET_IDS } from './directTeamSetup.js';
 import { createDirectTrackingItemCommands } from './directTrackingItem.js';
 import { createDirectRosterCommands } from './directRoster.js';
 import { createDirectPracticeTimelineCommands } from './directPracticeTimeline.js';
@@ -78,6 +79,22 @@ export function createDirectFavoriteMcpSession(dependencies) {
             inputSchema: z.object({ proposalId: id, teamId: resourceId, configId: resourceId, name }).strict(), annotations: mutation
         }, run((args) => commands.prepare({ ...args, mode: 'rename' })));
         registerOutcome('stat_configuration', commands);
+    }
+    if (dependencies.teamSetupStore) {
+        const commands = createDirectTeamSetupCommands({ ...dependencies, store: dependencies.teamSetupStore });
+        server.registerTool('prepare_team_details', {
+            description: 'Prepare changing only a managed team name and/or ZIP. Preserves visibility, sport, access, links and media. Names may appear with shared games. ZIP is five/nine digits or explicit empty to clear.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, changes: z.object({ name: z.string().min(1).max(120).optional(), zip: z.string().regex(/^(?:[0-9]{5}|[0-9]{9})?$/).optional() }).strict() }).strict(), annotations: mutation
+        }, run((args) => commands.prepare({ ...args, mode: 'details' })));
+        server.registerTool('prepare_stat_configuration_preset', {
+            description: 'Prepare a new configuration from an exact reviewed app preset. Requires distinct approval of public metadata and possible automatic analytics display changes, even for private teams. Does not attach it to games, change recorded stats or enable Diamond.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, presetId: z.enum(TEAM_SETUP_PRESET_IDS), name: z.string().min(1).max(120) }).strict(), annotations: mutation
+        }, run((args) => commands.prepare({ ...args, mode: 'preset', configId: `mcp_${args.proposalId}` })));
+        registerOutcome('team_setup', commands);
+        server.registerTool('list_team_setup_options', {
+            description: 'Read the current manager-visible name/ZIP, supported preset IDs and existing configuration IDs/names. No contacts, credentials or membership lists are returned.',
+            inputSchema: z.object({ teamId: resourceId }).strict(), annotations: { readOnlyHint: true }
+        }, run(commands.discover));
     }
     if (dependencies.incentiveStore) {
         const commands = createDirectIncentiveCommands({ ...dependencies, store: dependencies.incentiveStore });
