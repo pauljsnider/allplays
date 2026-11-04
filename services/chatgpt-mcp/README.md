@@ -255,3 +255,8 @@ The [broker boundary review](BROKER_EVIDENCE_REVIEW.md) describes fail-closed
 composition hardening and the actual isolated broker/form/credentialed-write
 adapter. Feature expansion is paused; production transport and single-consumer
 activation remain open security/integration work.
+
+The [isolated transport and rollout contract](BROKER_TRANSPORT_REVIEW.md) adds
+signed-command/HTTP tests, concrete canonical audience readers and an immutable
+consumer-ownership model. Production identity verifiers, signer/executor wiring
+and consumer cutover remain unmounted and unapproved.

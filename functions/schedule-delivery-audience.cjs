@@ -74,7 +74,7 @@ function createFirestoreScheduleRecipientLoader({ firestore, auth, resolveCanoni
         ]);
         if (!Array.isArray(devices.docs) || devices.docs.length > 20) fail();
         return { uid, complete: true, authEnabled: !authUser.disabled,
-            roles: team.exists && user.exists ? resolveCanonicalRoles({ teamId, team: team.data(), user: user.data(), uid, email: authUser.email || '' }) : [],
+            roles: team.exists && user.exists ? resolveCanonicalRoles({ teamId, team: team.data(), user: user.data(), uid, email: authUser.email || '', emailVerified: authUser.emailVerified === true }) : [],
             preferences: prefs.exists ? prefs.data() : null,
             devices: devices.docs.map((snapshot) => ({ ownerUid: uid, token: snapshot.data()?.token })) };
     };

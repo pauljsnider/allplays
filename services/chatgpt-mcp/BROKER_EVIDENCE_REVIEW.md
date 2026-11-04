@@ -119,3 +119,8 @@ Before activation, the selected schedule effect must have exactly one consumer,
 with reviewed producer-before-consumer rollout and old/new writer compatibility.
 Do not run the legacy trigger and new dispatcher side by side. Live client,
 provider/native, deployment and independent security validation remain open.
+
+The next [transport and rollout checkpoint](BROKER_TRANSPORT_REVIEW.md) tests a
+signed private wire protocol, durable command admission, canonical audience
+adapters and consumer ownership. It does not close the production integration
+gates above or replace actual semantic/commit verification with a receipt.

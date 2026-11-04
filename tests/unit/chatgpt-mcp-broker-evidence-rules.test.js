@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
 import { initializeTestEnvironment, assertFails } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, runTransaction } from 'firebase/firestore';
+import { doc, getDoc, setDoc, runTransaction, collection, query, where, limit, getDocs } from 'firebase/firestore';
 import { createMockUserToken } from '@firebase/util';
 import { compactFirestoreRules } from '../../scripts/compact-firestore-rules.mjs';
 import { createOAuthBroker, s256Challenge } from '../../services/chatgpt-mcp/src/oauth.js';
@@ -22,6 +22,8 @@ const { createScheduleEvidenceAuthority } = require('../../functions/schedule-de
 const { createFirestoreNotificationJournalStore } = require('../../functions/notification-attempt-journal.cjs');
 const { createScheduleDeliveryCoordinator } = require('../../functions/schedule-delivery-coordinator.cjs');
 const { createScheduleDeliveryProviders } = require('../../functions/schedule-delivery-providers.cjs');
+const { createCanonicalScheduleMembership } = require('../../functions/schedule-canonical-membership.cjs');
+const { createScheduleDeliveryAudience, createFirestoreScheduleRecipientLoader } = require('../../functions/schedule-delivery-audience.cjs');
 const projectId = 'demo-allplays-mcp-review';
 const proposalId = '00112233-4455-4677-8899-aabbccddeeff';
 const secondId = '00112233-4455-4677-8899-aabbccddeeaa';
@@ -118,6 +120,35 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('actual broker, form proto
             setAcknowledge: (value) => { acknowledge = value; }, revoke: () => { revoked = true; }, localFetch,
             close: async () => { await client.close().catch(() => {}); await service.close(); http.closeAllConnections(); await new Promise((resolve) => http.close(resolve)); } };
     }
+    it('resolves canonical audience records and rechecks revoked membership using the emulator', async () => {
+        await env.withSecurityRulesDisabled(async (context) => {
+            const database = context.firestore();
+            for (const [path, data] of [
+                ['users/owner', {}], ['users/member', { parentTeamIds: ['team-1'] }], ['users/fan', { favoriteTeams: ['team-1'], coachOf: ['team-1'] }],
+                ['users/member/notificationDevices/device', { token: 'synthetic-canonical-device' }]
+            ]) await setDoc(doc(database, path), data);
+            const backend = { doc: (path) => ({ get: async () => { const snap = await getDoc(doc(database, path)); return { exists: snap.exists(), data: () => snap.data() }; } }),
+                collection: (path) => {
+                    const builder = (constraints = []) => ({ where: (field, op, value) => builder([...constraints, where(field, op, value)]),
+                        limit: (count) => builder([...constraints, limit(count)]), get: () => getDocs(query(collection(database, path), ...constraints)) });
+                    return builder();
+                }
+            };
+            const auth = { getUser: async (uid) => ({ uid, disabled: false, emailVerified: true, email: `${uid}@example.test` }),
+                getUserByEmail: async () => { throw new Error('No email administrators in this isolated fixture'); } };
+            const canonical = createCanonicalScheduleMembership({ firestore: backend, auth });
+            const audience = createScheduleDeliveryAudience({ ...canonical, loadRecipient: createFirestoreScheduleRecipientLoader({ firestore: backend, auth, resolveCanonicalRoles: canonical.resolveCanonicalRoles }) });
+            expect(await audience.resolve({ teamId: 'team-1', actorUid: 'owner' })).toEqual([
+                { recipientUid: 'member', channel: 'inbox', endpoint: 'member' },
+                { recipientUid: 'member', channel: 'push', endpoint: 'synthetic-canonical-device' }
+            ]);
+            const check = { actor: { uid: 'owner' }, binding: { teamId: 'team-1' }, request: { teamId: 'team-1', actorUid: 'owner', recipientUid: 'member', channel: 'push', endpoint: 'synthetic-canonical-device' } };
+            expect((await audience.authorize(check)).recipientAllowed).toBe(true);
+            await setDoc(doc(database, 'users/member'), { parentTeamIds: [] });
+            expect((await audience.authorize(check)).recipientAllowed).toBe(false);
+            expect(await canonical.authorizeActor({ uid: 'fan' }, 'team-1')).toBe(false);
+        });
+    });
     it('binds real broker/form/write evidence and reconciles isolated partial delivery exactly once', async () => {
         await env.withSecurityRulesDisabled(async (context) => {
             const f = await fixture(context.firestore());
