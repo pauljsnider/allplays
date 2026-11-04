@@ -1,5 +1,8 @@
 # Linked-family availability batch
 
+Historical checkpoint; see the subsequent [practice operations batch](PRACTICE_OPERATIONS_REVIEW.md)
+for expanded attendance/timeline coverage and preservation architecture.
+
 This follows the [assignment lifecycle checkpoint](ASSIGNMENT_PARITY_REVIEW.md).
 It adds direct counterparts for `update_rsvp` and
 `update_rsvps_for_children`: one currently linked child's response, or an atomic
