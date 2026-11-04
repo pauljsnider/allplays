@@ -78,7 +78,7 @@ export function createDirectDiscovery({ uid, getContext, getDb }) {
                 const data = doc.data();
                 return { id: doc.id, name: String(data.name || data.title || data.label || ''), visibility: typeof data.visibility === 'string' ? data.visibility : null,
                     status: typeof data.status === 'string' ? data.status : null, active: data.active === true && data.archived === false };
-            }), message: 'Choose exact IDs. Only supported private active items can be changed directly; preparation verifies the full current schema.' };
+            }), message: 'Choose exact IDs. Completion and text updates require supported private active items. Lifecycle commands can also reactivate supported private archived items; preparation verifies the full current schema.' };
         },
         async roster(args) {
             const context = await getContext();

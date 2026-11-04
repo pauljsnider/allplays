@@ -9,6 +9,7 @@ import { createDirectScheduleCommands } from './directSchedule.js';
 import { createDirectRsvpCommands } from './directRsvp.js';
 import { createScheduleReviewCommands } from './scheduleReview.js';
 import { createDirectRosterBatchCommands } from './directRosterBatch.js';
+import { createDirectTrackingBatchCommands, createDirectTrackingLifecycleCommands } from './directTrackingOperations.js';
 import { createDirectTrackingStatusCommands } from './directTrackingStatus.js';
 import { ASSIGNMENT_ROLE, createDirectAssignmentCommands } from './directAssignments.js';
 import { createDirectAssignmentClaimCommands } from './directAssignmentClaims.js';
@@ -201,6 +202,22 @@ export function createDirectFavoriteMcpSession(dependencies) {
             inputSchema: z.object({ teamId: resourceId, eventId: resourceId }).strict(), annotations: { readOnlyHint: true }
         }, run(commands.discover));
     }
+    if (dependencies.trackingBatchStore) {
+        const commands = createDirectTrackingBatchCommands({ ...dependencies, store: dependencies.trackingBatchStore });
+        server.registerTool('prepare_player_tracking_batch', {
+            description: 'Prepare one atomic private tracking update for 1–20 explicitly selected active players. Use mixed complete booleans if needed. Refuses legacy/extended status records, preserves other players and sends no messages.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, itemId: resourceId, changes: z.array(z.object({ playerId: resourceId, complete: z.boolean() }).strict()).min(1).max(20) }).strict(), annotations: mutation
+        }, run(commands.prepare));
+        registerOutcome('player_tracking_batch', commands);
+    }
+    if (dependencies.trackingLifecycleStore) {
+        const commands = createDirectTrackingLifecycleCommands({ ...dependencies, store: dependencies.trackingLifecycleStore });
+        server.registerTool('prepare_private_tracking_active', {
+            description: 'Prepare archiving (active false) or reactivating (active true) one private tracking requirement. Separate confirmation explains that all completion records are retained, including later authorized edits. No deletion, publication, access change or messages.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, itemId: resourceId, active: z.boolean() }).strict(), annotations: mutation
+        }, run(commands.prepare));
+        registerOutcome('private_tracking_active', commands, { ...mutation, destructiveHint: true });
+    }
     if (dependencies.trackingStatusStore) {
         const commands = createDirectTrackingStatusCommands({ ...dependencies, store: dependencies.trackingStatusStore });
         server.registerTool('prepare_player_tracking_status', {
@@ -337,7 +354,7 @@ export function createDirectFavoriteMcpSession(dependencies) {
             }, run(discovery.drills));
         }
         if (dependencies.trackingItemStore) server.registerTool('list_team_tracking_items', {
-            description: 'Page through managed-team tracking item IDs, names, visibility and status before selecting an exact item. Descriptions and player completions are excluded. Preparation verifies supported private active state and current revisions.',
+            description: 'Page through managed-team tracking item IDs, names, visibility and status before selecting an exact item. Descriptions and player completions are excluded. Preparation verifies private state and current revisions for the selected text, completion or lifecycle workflow.',
             inputSchema: z.object({ teamId: resourceId, cursor: resourceId.optional(), limit: z.number().int().min(1).max(50).optional() }).strict(), annotations: { readOnlyHint: true }
         }, run(discovery.trackingItems));
         if (dependencies.rosterStore) server.registerTool('get_team_roster', {

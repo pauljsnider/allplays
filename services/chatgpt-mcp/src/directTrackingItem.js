@@ -10,11 +10,15 @@ const itemFields = ['teamId', 'name', 'description', 'visibility', 'status', 'ac
 const text = (value, max, required = false) => typeof value === 'string' && value.length <= max && value === value.trim()
     && (!required || value.length > 0) && !/[\u0000-\u001f\u007f]/.test(value);
 const label = (value) => typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').toLowerCase() : '';
-export function editablePrivateTrackingItem(data, teamId) {
+export function canonicalPrivateTrackingItem(data, teamId) {
     return Boolean(data && !Array.isArray(data) && Object.keys(data).every((key) => itemFields.includes(key))
         && data.teamId === teamId && text(data.name, 120, true) && (data.description === undefined || text(data.description, 2000))
-        && data.visibility === 'private' && data.status === 'active' && data.active === true && data.archived === false
+        && data.visibility === 'private' && ['active', 'archived'].includes(data.status)
+        && data.active === (data.status === 'active') && data.archived === (data.status === 'archived')
         && typeof data.createdBy === 'string' && ID.test(data.createdBy) && data.createdAt instanceof Date && Number.isFinite(data.createdAt.getTime()));
+}
+export function editablePrivateTrackingItem(data, teamId) {
+    return canonicalPrivateTrackingItem(data, teamId) && data.status === 'active';
 }
 export function createDirectTrackingItemStore(options) {
     return createTeamProposalStore(options, { toolName: TOOL, receiptFields: ['teamId', 'itemId', 'mode'], policy: {

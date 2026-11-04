@@ -9,7 +9,7 @@ const statusPath = (args) => `teams/${args.teamId}/trackingItems/${args.itemId}/
 const statusPattern = /^teams\/[A-Za-z0-9_-]{1,128}\/trackingItems\/[A-Za-z0-9_-]{1,128}\/memberTracking\/[A-Za-z0-9_-]{1,128}$/;
 const fields = ['teamId', 'trackingItemId', 'playerId', 'playerName', 'playerNumber', 'memberType', 'status', 'complete', 'updatedBy', 'updatedByEmail', 'updatedAt'];
 const text = (value, max) => typeof value === 'string' && value === value.trim() && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value);
-const canonicalStatus = (data, args) => data && !Array.isArray(data) && Object.keys(data).every((key) => fields.includes(key))
+export const canonicalStatus = (data, args) => data && !Array.isArray(data) && Object.keys(data).every((key) => fields.includes(key))
     && data.teamId === args.teamId && data.trackingItemId === args.itemId && data.playerId === args.playerId && data.memberType === 'player'
     && typeof data.complete === 'boolean' && data.status === (data.complete ? 'complete' : 'incomplete')
     && text(data.playerName, 120) && text(data.playerNumber, 20)
@@ -17,14 +17,17 @@ const canonicalStatus = (data, args) => data && !Array.isArray(data) && Object.k
     && (data.updatedByEmail === null || text(data.updatedByEmail, 320))
     && data.updatedAt instanceof Date && Number.isFinite(data.updatedAt.getTime());
 
-export function createDirectTrackingStatusStore(options) {
-    return createTeamProposalStore(options, { toolName: TOOL, receiptFields: ['teamId', 'itemId', 'playerId'], policy: {
+export function createTrackingStatusDomainStore(options, toolName, receiptFields) {
+    return createTeamProposalStore(options, { toolName, receiptFields, policy: {
         read: (path) => statusPattern.test(path) || /^teams\/[A-Za-z0-9_-]{1,128}(\/(trackingItems|players)\/[A-Za-z0-9_-]{1,128})?$/.test(path),
         write: (path) => statusPattern.test(path),
         patch: (path, data) => statusPattern.test(path) && data.updatedBy === options.uid && data.updatedByEmail === null
             && data.updatedAt instanceof Date && typeof data.complete === 'boolean' && data.status === (data.complete ? 'complete' : 'incomplete')
             && Object.keys(data).every((key) => fields.includes(key))
     } });
+}
+export function createDirectTrackingStatusStore(options) {
+    return createTrackingStatusDomainStore(options, TOOL, ['teamId', 'itemId', 'playerId']);
 }
 export function createDirectTrackingStatusCommands(dependencies) {
     return createRevisionCommands(dependencies, {
