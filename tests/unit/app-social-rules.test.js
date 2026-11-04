@@ -249,6 +249,7 @@ describe('React app social Firestore rules', () => {
             ['email', 'author@example.com'],
             ['phone', '+15555550100'],
             ['phoneNumber', '+15555550100'],
+            ['authorPhone', '+15555550100'],
             ['contactEmail', 'author@example.com'],
             ['contactPhone', '+15555550100']
         ])('denies an authorized team post create containing private contact field %s', async (field, value) => {
@@ -268,6 +269,7 @@ describe('React app social Firestore rules', () => {
             ['email', 'author@example.com'],
             ['phone', '+15555550100'],
             ['phoneNumber', '+15555550100'],
+            ['authorPhone', '+15555550100'],
             ['contactEmail', 'author@example.com'],
             ['contactPhone', '+15555550100']
         ])('denies an authorized author update that adds private contact field %s', async (field, value) => {
