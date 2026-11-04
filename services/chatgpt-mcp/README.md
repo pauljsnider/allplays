@@ -245,3 +245,8 @@ instance-local grants and invalidates the multi-instance guarantee.
 Focused OAuth tests:
 `npx vitest run tests/unit/chatgpt-mcp-oauth.test.js --reporter=verbose`
 from the repo root.
+
+The unmounted [delivery coordinator and provider interfaces](DELIVERY_INTEGRATION.md)
+add exact event/approval binding, pinned inbox/FCM requests and bounded status
+reconciliation. Trusted durable evidence issuance and live integration remain
+unimplemented; this does not activate direct schedule notifications.

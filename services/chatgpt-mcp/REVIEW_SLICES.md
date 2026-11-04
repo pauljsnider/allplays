@@ -35,7 +35,7 @@ factories, discovery and transaction helpers.
 | G: Configuration, roster and practice domains | Configuration clone/rename; single and batch roster edits; draft timelines; matching discovery, fixtures and rules tests. | E + F. Split by domain if necessary; add only that domain's registrations/dependencies in each branch. |
 | H: Schedule and RSVP domains | Ordinary schedule create/update, separate notification acknowledgment, schedule app-review fallback, manager RSVP overrides and cutoff tests. | E + F; uses roster/schedule discovery from G/D. Unmounted. Notification delivery still unverified by MCP; RSVP aggregate/family gaps remain explicit. |
 | I: Durable delivery journal | `functions/notification-attempt-journal.cjs`, isolated state-machine tests, real-rule privacy tests. | Independently reviewable server-only core; no `functions/index.js` import. It is not a provider adapter or deployed trigger. |
-| J: Delivery and client integration | Verified event/version-to-intent binding; frozen audience resolver; inbox/push adapters; authenticated bounded status endpoint; MCP receipt lookup. | H + I and explicit security/integration approval. Must ship before direct schedule activation; not implemented by the journal alone. |
+| J: Delivery and client integration | Event/version binding coordinator; pinned inbox/push adapters; bounded status functions; future trusted evidence authority, audience resolver and status endpoint. | H + I and explicit security/integration approval. Coordinator/adapter interfaces now have isolated tests. Durable evidence issuance, live audience/status transport and MCP receipt lookup are unfinished. |
 
 Each branch must contain only its intended factory registrations and dependencies.
 Copying the final `directFavoriteMcp.js` or `directSessionAuth.js` into E/F would
@@ -55,12 +55,12 @@ tests; do not declare a stack reviewable from the final integration tests alone.
 3. Replace the ordinary notification path for the selected source only after
    the new consumer is ready. Do not run both paths or wrap the current
    five-minute pre-send dedup claim and interpret its `null` return as delivery.
-4. Pin the provider serialization version and persist the complete resolved
-   provider parameters, including routing/delivery options, before dispatch. The
-   journal currently freezes the bounded schedule request envelope; concrete
-   provider adapters are not implemented. Give inbox writes a stable document
-   key and an authoritative reconciliation adapter. Push acceptance is not device delivery. If the provider cannot
-   reconcile a timed-out request, retain `uncertain` and do not resend it.
+4. Review the now-implemented versioned provider envelopes and injected
+   inbox/FCM adapters against the actual clients. Complete parameters, routing,
+   channel options and stable identifiers are persisted before dispatch.
+   Deterministic inbox content supports reconciliation. Push acceptance is not
+   device delivery; unknown push outcomes remain `uncertain` without resending.
+   Provider/native compatibility and historical serializer support need review.
 5. Keep exact parameters and provider evidence server-private. Current rules
    deny all client access to `notificationSendLog`; do not weaken them or give
    the MCP service an Admin application-data client. A future authenticated
@@ -76,3 +76,32 @@ publish exact source-head test evidence for each slice. Freeze each head before
 any landing handoff. Do not refresh the denied metadata operation as part of
 this work. This plan does not create additional PRs or authorize production
 activation, new credentials, access grants, provider calls or data writes.
+
+## Materialized local slices
+
+`scripts/prepare-review-slices.mjs` creates patch artifacts from exact Git
+commits without creating branches or publishing PRs. It verifies application
+against a clean archive of the base and runs the dependency-free Node suites
+after each journal layer:
+
+- A: the independent practice reminder fix and its app regression tests.
+- I1: the journal state machine, unit tests and emulator privacy suite at
+  `30c7453082f175dbc0d69f833d6b63c9d24a394e`.
+- I2: the versioned request extension, binding coordinator, provider adapters,
+  shared fixture, and expanded unit/emulator tests. Depends on I1.
+
+Each artifact has a SHA-256 digest and exact source commits in `manifest.json`.
+App tests and emulator suites still need to run on eventual branch trees;
+the script's Node checks are explicitly narrower. It verifies that neither
+`functions/index.js` nor `firestore.rules` changes in these slices. The earlier
+B–H slices remain a dependency-aware assembly plan, not materialized branches.
+The coordinator/adapter layer is still larger than the preferred review target;
+its trust-boundary tests should accompany implementation in the same review.
+
+Run from the repository root with a fresh output directory:
+
+```sh
+node services/chatgpt-mcp/scripts/prepare-review-slices.mjs \
+  ed4d65e77d5417fd42239139c29b2684912be3a9 \
+  30c7453082f175dbc0d69f833d6b63c9d24a394e HEAD /tmp/allplays-review-slices
+```

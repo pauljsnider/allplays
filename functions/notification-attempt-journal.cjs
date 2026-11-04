@@ -16,9 +16,26 @@ const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value
 const hash = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 const bounded = (value, max) => typeof value === 'string' && value.length > 0 && value.length <= max && value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value);
 
+function normalizeProviderEnvelope(value) {
+    if (!value || Object.getPrototypeOf(value) !== Object.prototype
+        || Object.keys(value).some((key) => !['adapter', 'parameters'].includes(key))
+        || !/^[a-z][a-z0-9-]{0,63}-v[1-9][0-9]*$/.test(value.adapter || '')
+        || !value.parameters || Object.getPrototypeOf(value.parameters) !== Object.prototype) fail('invalid_request', 'Use a versioned provider request.');
+    const visit = (item, depth = 0) => {
+        if (depth > 12) fail('invalid_request', 'Provider request nesting exceeds the bound.');
+        if (item === null || typeof item === 'boolean' || typeof item === 'string' || (typeof item === 'number' && Number.isFinite(item))) return;
+        if (Array.isArray(item)) { item.forEach((entry) => visit(entry, depth + 1)); return; }
+        if (!item || Object.getPrototypeOf(item) !== Object.prototype || Object.keys(item).some((key) => ['__proto__', 'prototype', 'constructor'].includes(key))) fail('invalid_request', 'Provider parameters must be plain JSON.');
+        Object.values(item).forEach((entry) => visit(entry, depth + 1));
+    };
+    visit(value.parameters);
+    if (Buffer.byteLength(JSON.stringify(value)) > 16384) fail('invalid_request', 'Provider request exceeds the bound.');
+    return structuredClone(value);
+}
+
 function normalizeNotificationAttempt(input) {
     const keys = ['teamId', 'eventId', 'actorUid', 'recipientUid', 'sourceVersion', 'channel', 'endpoint', 'title', 'body'];
-    if (!input || Object.keys(input).some((key) => !keys.includes(key)) || !keys.every((key) => Object.hasOwn(input, key))
+    if (!input || Object.keys(input).some((key) => !keys.includes(key) && key !== 'provider') || !keys.every((key) => Object.hasOwn(input, key))
         || !['teamId', 'eventId', 'actorUid', 'recipientUid'].every((key) => ID.test(input[key] || ''))
         || !['inbox', 'push'].includes(input.channel) || !bounded(input.endpoint, 4096)
         || (input.channel === 'inbox' && input.endpoint !== input.recipientUid)
@@ -28,6 +45,7 @@ function normalizeNotificationAttempt(input) {
         fail('invalid_request', 'Use a bounded, verified schedule revision and one exact recipient/channel.');
     }
     const request = Object.fromEntries(keys.map((key) => [key, input[key]]));
+    if (Object.hasOwn(input, 'provider')) request.provider = normalizeProviderEnvelope(input.provider);
     const effectId = hash({ teamId: request.teamId, eventId: request.eventId, sourceVersion: request.sourceVersion,
         recipientUid: request.recipientUid, channel: request.channel, endpointHash: hash(request.endpoint) });
     return { request, effectId, requestHash: hash(request) };

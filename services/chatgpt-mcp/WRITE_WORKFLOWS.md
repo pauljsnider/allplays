@@ -463,8 +463,8 @@ grant validation.
 
 `functions/notification-attempt-journal.cjs` now implements a server-only
 notification attempt journal and Firestore storage adapter. It is **not imported
-by `functions/index.js`**, has no deployed trigger/callable or real provider
-adapter, and is not consulted by MCP schedule receipts. Those receipts continue
+by `functions/index.js`**, has no deployed trigger/callable or configured provider
+client, and is not consulted by MCP schedule receipts. Those receipts continue
 to report delivery as unverified.
 
 The ordinary notification path currently writes a five-minute dedup claim before
@@ -504,13 +504,21 @@ The `reconcile` adapter is optional: providers without an authoritative lookup
 leave uncertain attempts unresolved. No exactly-once device-delivery claim is
 made.
 
-Remaining integration work is concrete: bind an approved schedule transaction
-to its immutable event revision; implement a trusted frozen audience resolver;
-provide inbox/push adapters with pinned serialization versions, persisted exact
-provider parameters and provider-specific evidence validation; expose
-only authorized bounded status via a backend; and replace the selected legacy
-trigger path without double delivery. No new client rule, MCP Admin credential,
-persistent grant, production registration or live provider call is included.
+The unmounted `schedule-delivery-coordinator.cjs` now checks independently
+verified approval/commit claims against an exact event version and digest,
+reserves a private binding, and exposes authenticated bounded status functions.
+Its required trusted evidence callbacks have isolated implementations in tests;
+the current MCP transport does **not** produce durable signed evidence yet.
+`schedule-delivery-providers.cjs` pins complete versioned inbox/FCM requests,
+reconciles deterministic inbox writes and leaves unknown push outcomes uncertain.
+No real provider client or HTTP status endpoint is configured.
+
+See [delivery interface contracts and activation prerequisites](DELIVERY_INTEGRATION.md).
+Remaining work includes the trusted approval/commit authority, real audience and
+endpoint authorization, authenticated status transport, provider/native review,
+and replacing the selected legacy trigger path without double delivery. No new
+client rule, MCP Admin credential, persistent grant, production registration or
+live provider call is included.
 
 See [the proposed dependent review slices](REVIEW_SLICES.md) for how to review
 this server-only core independently while keeping one producer and the existing
@@ -532,7 +540,7 @@ Validated with isolated fixtures, without production team/game writes:
   explicit reminder settings, stale previews, concurrent confirmation and explicit
   confirmation of only remaining partial-import rows. The new omission regressions
   failed on both web/native before the fix and pass after it.
-- 61 Firestore emulator tests against the existing rules, including review
+- 64 Firestore emulator tests against the existing rules, including review
   ownership, enforced verified-email policy, real REST roster pagination, and
   denied roster queries after manager revocation, actual direct-favorite REST
   transactions, revocation during approval, lost commit responses, and
@@ -553,11 +561,13 @@ Validated with isolated fixtures, without production team/game writes:
   reconciliation; scoped RSVP records, preserved private notes, base-response
   rejection and cutoff checks immediately before commit; server-only notification
   journal privacy, independent-worker leases, frozen plans, restart reconciliation
-  and actor/recipient revocation.
-- 42 Node tests for the new journal and the existing Diamond notification sender,
+  and actor/recipient revocation; real event updateTime binding, concurrent
+  delivery, private approval/provider records and recipient-only inbox reads.
+- 72 Node tests for the journal, approval binding/provider adapters and existing Diamond notification sender,
   covering lost journal responses, uncertain provider outcomes, bounded retries,
   concurrent workers, late evidence, frozen/empty audiences, channel isolation
-  and provider-error privacy.
+  provider-error privacy, mismatched/expired approval evidence, pinned provider
+  payloads, false persistence results and authenticated bounded status.
 - 145 existing notification tests across category dispatch, load, triggers and
   media batches.
 - Production app build, production artifact guard, and cold-start budget check.
