@@ -2,7 +2,7 @@ import { DomainError } from './core.js';
 import { decodeFields, encodeValue } from './firestoreRest.js';
 
 // Domain-limited user-credentialed adapter; no Admin SDK or generic MCP writer.
-export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, fetchImpl = fetch }, policy) {
+export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, fetchImpl = fetch, preserveTimestampPrecision = false }, policy) {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) throw new Error('A verified actor is required.');
     const base = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`;
     const name = (path) => `${base.slice('https://firestore.googleapis.com/v1/'.length)}/${path}`;
@@ -36,7 +36,7 @@ export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, 
         observations?.set(path, structuredClone(row));
         if (row.missing === name(path)) return { exists: false, data: null, version: null };
         if (row.found?.name !== name(path) || !row.found.updateTime) throw new DomainError('unavailable', 'Document revision unavailable.');
-        return { exists: true, data: decodeFields(row.found.fields), version: row.found.updateTime };
+        return { exists: true, data: decodeFields(row.found.fields, { preserveTimestampPrecision }), version: row.found.updateTime };
     }
     async function list(path, transaction, queryArgs = {}) {
         const query = policy.query?.(path, queryArgs);
@@ -88,6 +88,10 @@ export function createDirectCommandStore({ projectId, uid, idToken, getIdToken, 
                     patch: (path, data) => {
                         if (!policy.patch?.(path, data)) throw new DomainError('permission_denied', 'This patch is outside the command domain.');
                         writes.push({ ...write(path, data), updateMask: { fieldPaths: Object.keys(data) }, currentDocument: { exists: true } });
+                    },
+                    patchFields: (path, data, fieldPaths) => {
+                        if (!policy.patchFields?.(path, data, fieldPaths)) throw new DomainError('permission_denied', 'This field-mask patch is outside the command domain.');
+                        writes.push({ ...write(path, data), updateMask: { fieldPaths }, currentDocument: { exists: true } });
                     },
                     append: (path, field, values, data) => {
                         if (!policy.append?.(path, field, values, data)) throw new DomainError('permission_denied', 'This array append is outside the command domain.');

@@ -36,23 +36,33 @@ export function encodeValue(value) {
     throw new Error(`Cannot encode Firestore value of type ${typeof value}`);
 }
 
-export function decodeValue(value) {
+// Opt-in for domains that rewrite a timestamp-containing array. Ordinary Date
+// conversion truncates Firestore micro/nanoseconds; preserve the original wire
+// instant while it is unchanged. Callers must not structuredClone these Dates
+// before re-encoding (the structured-clone Date algorithm drops subclasses).
+class PreciseTimestamp extends Date {
+    #wire;
+    #epoch;
+    constructor(wire) { super(wire); this.#wire = wire; this.#epoch = this.getTime(); }
+    toISOString() { return this.getTime() === this.#epoch ? this.#wire : super.toISOString(); }
+}
+export function decodeValue(value, options = {}) {
     if (!value || typeof value !== 'object') return null;
     if ('nullValue' in value) return null;
     if ('stringValue' in value) return value.stringValue;
     if ('booleanValue' in value) return value.booleanValue;
     if ('integerValue' in value) return Number(value.integerValue);
     if ('doubleValue' in value) return value.doubleValue;
-    if ('timestampValue' in value) return new Date(value.timestampValue);
+    if ('timestampValue' in value) return options.preserveTimestampPrecision ? new PreciseTimestamp(value.timestampValue) : new Date(value.timestampValue);
     if ('referenceValue' in value) return value.referenceValue;
     if ('geoPointValue' in value) return value.geoPointValue;
-    if ('mapValue' in value) return decodeFields(value.mapValue?.fields);
-    if ('arrayValue' in value) return (value.arrayValue?.values || []).map(decodeValue);
+    if ('mapValue' in value) return decodeFields(value.mapValue?.fields, options);
+    if ('arrayValue' in value) return (value.arrayValue?.values || []).map((entry) => decodeValue(entry, options));
     return null;
 }
 
-export function decodeFields(fields) {
-    return Object.fromEntries(Object.entries(fields || {}).map(([key, value]) => [key, decodeValue(value)]));
+export function decodeFields(fields, options = {}) {
+    return Object.fromEntries(Object.entries(fields || {}).map(([key, value]) => [key, decodeValue(value, options)]));
 }
 
 function throwForStatus(status, path) {

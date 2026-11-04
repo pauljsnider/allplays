@@ -13,6 +13,7 @@ import { createDirectTrackingStatusCommands } from './directTrackingStatus.js';
 import { ASSIGNMENT_ROLE, createDirectAssignmentCommands } from './directAssignments.js';
 import { createDirectAssignmentClaimCommands } from './directAssignmentClaims.js';
 import { createDirectFamilyRsvpCommands } from './directFamilyRsvp.js';
+import { createDirectPracticeAttendanceCommands } from './directPracticeAttendance.js';
 import { createDirectTrackingItemCommands } from './directTrackingItem.js';
 import { createDirectRosterCommands } from './directRoster.js';
 import { createDirectPracticeTimelineCommands } from './directPracticeTimeline.js';
@@ -76,6 +77,15 @@ export function createDirectFavoriteMcpSession(dependencies) {
             inputSchema: z.object({ proposalId: id, teamId: resourceId, configId: resourceId, name }).strict(), annotations: mutation
         }, run((args) => commands.prepare({ ...args, mode: 'rename' })));
         registerOutcome('stat_configuration', commands);
+    }
+    if (dependencies.practiceAttendanceStore) {
+        const commands = createDirectPracticeAttendanceCommands({ ...dependencies, store: dependencies.practiceAttendanceStore });
+        server.registerTool('prepare_practice_attendance', {
+            description: 'Prepare present/late/absent changes for 1–20 active players in an ordinary draft practice session without a packet. Preserves existing notes and other players; refreshes attendance totals. Notes, clearing records and legacy attendance require app review.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, eventId: resourceId, sessionId: resourceId,
+                changes: z.array(z.object({ playerId: resourceId, status: z.enum(['present', 'late', 'absent']) }).strict()).min(1).max(20) }).strict(), annotations: mutation
+        }, run(commands.prepare));
+        registerOutcome('practice_attendance', commands);
     }
     if (dependencies.familyRsvpStore) {
         const commands = createDirectFamilyRsvpCommands({ ...dependencies, store: dependencies.familyRsvpStore });
@@ -169,6 +179,13 @@ export function createDirectFavoriteMcpSession(dependencies) {
     }
     if (dependencies.practiceTimelineStore) {
         const commands = createDirectPracticeTimelineCommands({ ...dependencies, store: dependencies.practiceTimelineStore });
+        server.registerTool('prepare_edit_practice_blocks', {
+            description: 'Prepare draft timeline duration/order edits using current block indices. Durations refer to indices before reordering. Order must include every existing index exactly once. Preserves drill content and notes; historical logs or extended blocks require app review.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, eventId: resourceId, sessionId: resourceId,
+                blockDurations: z.array(z.object({ order: z.number().int().min(0), duration: z.number().int().min(1).max(120) }).strict()).min(1).max(30).optional(),
+                blockOrder: z.array(z.number().int().min(0)).min(1).max(100).optional() }).strict(), annotations: mutation
+        }, run(({ blockDurations, blockOrder, ...args }) => commands.prepare({ ...args, mode: 'update', changes: {
+            ...(blockDurations ? { blockDurations } : {}), ...(blockOrder ? { blockOrder } : {}) } })));
         const block = z.object({ drillId: resourceId.optional(), title: z.string().min(1).max(120).optional(),
             duration: z.number().int().min(1).max(120), type: z.string().min(1).max(60).optional(), description: z.string().max(2000).optional() }).strict();
         const blocks = z.array(block).min(1).max(30);
@@ -224,6 +241,10 @@ export function createDirectFavoriteMcpSession(dependencies) {
             inputSchema: z.object({ requestId: id }).strict(), annotations: { readOnlyHint: true }
         }, run(schedule.status));
         if (dependencies.practiceTimelineStore) {
+            server.registerTool('list_practice_block_outline', {
+                description: 'Read a managed practice session’s block indices, titles and durations for explicit edits. Notes, descriptions and attendance are omitted.',
+                inputSchema: z.object({ teamId: resourceId, sessionId: resourceId }).strict(), annotations: { readOnlyHint: true }
+            }, run(discovery.practiceBlocks));
             const paging = { teamId: resourceId, cursor: resourceId.optional(), limit: z.number().int().min(1).max(50).optional() };
             server.registerTool('list_team_practices', {
                 description: 'Page through managed-team practice event IDs, titles and dates, indicating eligibility for a direct draft timeline. Schedule changes remain in the app.',

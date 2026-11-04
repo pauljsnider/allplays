@@ -46,7 +46,7 @@ export function createTeamProposalStore(options, { toolName, receiptFields, poli
             data: { ...record, status: 'pending', expiresAtAt: new Date(record.expiresAt) }
         }]),
         transaction: (callback, settings) => base.transaction((tx) => callback({
-            get: (path) => read(tx, path), list: tx.list, patch: tx.patch, append: tx.append, delete: tx.delete,
+            get: (path) => read(tx, path), list: tx.list, patch: tx.patch, patchFields: tx.patchFields, append: tx.append, delete: tx.delete,
             set: (path, record) => {
                 if (!userProposal.test(path)) return tx.set(path, record);
                 if (record.status !== 'completed' || record.toolName !== toolName || record.userId !== uid) throw new DomainError('invalid_argument', 'Only a completed domain receipt may be saved.');

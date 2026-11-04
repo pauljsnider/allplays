@@ -19,13 +19,21 @@ export function directPracticeFixture() {
         list: vi.fn(async (path, args = {}) => [...records].filter(([key, row]) => key.startsWith(`${path}/`) && (!args.eventId || row.data.eventId === args.eventId))
             .map(([key, row]) => ({ ...structuredClone(row), id: key.split('/').at(-1) }))),
         create: vi.fn(async (path, data) => { if (records.has(path)) throw new Error('exists'); put(path, data); }),
-        transaction: vi.fn(async (callback, { beforeCommit } = {}) => {
+        transaction: vi.fn(async (callback, { beforeCommit, beforeDispatch } = {}) => {
             const writes = [];
             const result = await callback({ get: store.get, list: store.list,
                 set: (path, data) => writes.push(() => put(path, data)),
                 patch: (path, data) => writes.push(() => put(path, { ...records.get(path).data, ...data })),
+                patchFields: (path, data, fields) => writes.push(() => {
+                    const result = structuredClone(records.get(path).data);
+                    for (const field of fields) {
+                        const parts = field.split('.'); const leaf = parts.pop(); let target = result; let source = data;
+                        for (const key of parts) { target = target[key] ||= {}; source = source[key]; } target[leaf] = source[leaf];
+                    }
+                    put(path, result);
+                }),
                 append: (path, field, values, data) => writes.push(() => put(path, { ...records.get(path).data, ...data, [field]: [...records.get(path).data[field], ...values] })) });
-            if (writes.length) await beforeCommit?.(); writes.forEach((write) => write()); return result;
+            if (writes.length) { await beforeCommit?.(); const guard = await beforeDispatch?.(); guard?.(); } writes.forEach((write) => write()); return result;
         })
     };
     const getDb = async () => ({ collection: (path) => {

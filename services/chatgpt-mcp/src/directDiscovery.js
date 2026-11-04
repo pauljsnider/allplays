@@ -23,6 +23,15 @@ export function createDirectDiscovery({ uid, getContext, getDb }) {
         return { items: docs.map(map), hasMore, nextCursor: hasMore ? docs.at(-1).id : null };
     };
     return {
+        async practiceBlocks({ teamId, sessionId }) {
+            if (!ID.test(sessionId || '')) throw new DomainError('invalid_argument', 'Use an exact session ID.');
+            const db = await managedDb(teamId); const snapshot = await db.doc(`teams/${teamId}/practiceSessions/${sessionId}`).get();
+            const data = snapshot.exists ? snapshot.data() : null;
+            if (!data || !Array.isArray(data.blocks) || data.blocks.length > 100) throw new DomainError('unsupported_timeline', 'Review this timeline in the app.');
+            validateManager(await getContext(), uid, teamId);
+            return { teamId, sessionId, blocks: data.blocks.map((block, index) => ({ index, title: typeof block?.drillTitle === 'string' ? block.drillTitle : '', duration: Number.isInteger(block?.duration) ? block.duration : null })),
+                message: 'Use exact current indices. Preparation verifies all blocks and session revisions; notes and drill descriptions are omitted from this outline.' };
+        },
         async schedule(args) {
             const db = await managedDb(args.teamId);
             const query = db.collection(`teams/${args.teamId}/games`).select(...scheduleFields);

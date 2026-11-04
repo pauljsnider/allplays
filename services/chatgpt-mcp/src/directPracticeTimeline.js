@@ -2,6 +2,7 @@ import { DomainError } from './core.js';
 import { ID, fingerprint, createRevisionCommands } from './directRevisionCommand.js';
 import { validateManager } from './directCommandAccess.js';
 import { createTeamProposalStore } from './directTeamProposalStore.js';
+import { ordinaryScheduleEvent } from './scheduleReview.js';
 
 const TOOL = 'mcp_direct_practice_timeline';
 const sessionPath = (teamId, sessionId) => `teams/${teamId}/practiceSessions/${sessionId}`;
@@ -30,7 +31,8 @@ export function createDirectPracticeTimelineStore(options) {
                 || /^teams\/[A-Za-z0-9_-]{1,128}\/games\/[A-Za-z0-9_-]{1,128}$/.test(path),
             write: (path) => sessionPattern.test(path),
             patch: (path, data) => sessionPattern.test(path) && data.updatedAt instanceof Date
-                && Object.keys(data).every((key) => ['title', 'location', 'updatedAt'].includes(key)),
+                && Object.keys(data).every((key) => ['title', 'location', 'blocks', 'duration', 'updatedAt'].includes(key))
+                && (data.blocks === undefined || Array.isArray(data.blocks) && Number.isInteger(data.duration)),
             append: (path, field, values, data) => sessionPattern.test(path) && field === 'blocks' && Array.isArray(values)
                 && values.length > 0 && values.length <= 30 && data.updatedAt instanceof Date && Number.isInteger(data.duration)
                 && Object.keys(data).every((key) => ['title', 'location', 'duration', 'updatedAt'].includes(key)),
@@ -74,6 +76,23 @@ function changesFor(target, args) {
         patch.duration = duration(patch.blocks);
         if (patch.duration > 600) throw new DomainError('invalid_argument', 'Use a timeline of at most 600 minutes.');
     }
+    if (args.changes.blockDurations || args.changes.blockOrder) {
+        const existing = target.session.data.blocks;
+        if (!Array.isArray(existing) || !existing.length || existing.length > 100 || existing.some((block, index) => !block || block.order !== index
+            || Object.keys(block).some((key) => !['order', 'drillId', 'drillTitle', 'type', 'duration', 'description', 'notes', 'notesLog'].includes(key))
+            || !(block.drillId === null || typeof block.drillId === 'string' && ID.test(block.drillId)) || !text(block.drillTitle) || !block.drillTitle
+            || !text(block.type, 60) || !description(block.description) || !description(block.notes) || !Array.isArray(block.notesLog) || block.notesLog.length
+            || !Number.isInteger(block.duration) || block.duration < 1 || block.duration > 120) || target.session.data.duration !== duration(existing)) {
+            throw new DomainError('unsupported_timeline', 'Duration/order edits require canonical blocks without historical notes-log entries. Existing notes and extended records require preservation through app review.');
+        }
+        const order = args.changes.blockOrder || existing.map((_, index) => index);
+        if (order.length !== existing.length || new Set(order).size !== existing.length || order.some((index) => index >= existing.length)
+            || args.changes.blockDurations?.some((entry) => entry.order >= existing.length)) throw new DomainError('invalid_argument', 'Use every current block index exactly once for order, and existing indices for durations.');
+        patch.blocks = order.map((oldIndex, index) => ({ ...existing[oldIndex], order: index,
+            duration: args.changes.blockDurations?.find((entry) => entry.order === oldIndex)?.duration ?? existing[oldIndex].duration }));
+        patch.duration = duration(patch.blocks);
+        if (patch.duration > 600) throw new DomainError('invalid_argument', 'Use a timeline of at most 600 minutes.');
+    }
     return patch;
 }
 
@@ -81,14 +100,18 @@ export function createDirectPracticeTimelineCommands(dependencies) {
     return createRevisionCommands(dependencies, {
         toolName: TOOL,
         args: ({ mode, teamId, eventId, sessionId, changes }) => {
-            const allowed = mode === 'create' ? ['title', 'location', 'blocks'] : ['title', 'location', 'appendBlocks'];
+            const allowed = mode === 'create' ? ['title', 'location', 'blocks'] : ['title', 'location', 'appendBlocks', 'blockDurations', 'blockOrder'];
             if (!['create', 'update'].includes(mode) || ![teamId, eventId, sessionId].every((id) => ID.test(id || ''))
                 || !changes || typeof changes !== 'object' || Array.isArray(changes) || Object.keys(changes).length === 0
                 || Object.keys(changes).some((key) => !allowed.includes(key))
                 || (mode === 'create' && (!changes.title || !validBlocks(changes.blocks)))
                 || (changes.title !== undefined && (!text(changes.title) || !changes.title))
                 || (changes.location !== undefined && !text(changes.location, 200))
-                || (changes.appendBlocks !== undefined && !validBlocks(changes.appendBlocks))) {
+                || (changes.appendBlocks !== undefined && (!validBlocks(changes.appendBlocks) || changes.blockDurations !== undefined || changes.blockOrder !== undefined))
+                || (changes.blockDurations !== undefined && (!Array.isArray(changes.blockDurations) || !changes.blockDurations.length || changes.blockDurations.length > 30
+                    || changes.blockDurations.some((entry) => !entry || Object.keys(entry).sort().join(',') !== 'duration,order' || !Number.isInteger(entry.order) || entry.order < 0 || !Number.isInteger(entry.duration) || entry.duration < 1 || entry.duration > 120)
+                    || new Set(changes.blockDurations.map((entry) => entry.order)).size !== changes.blockDurations.length))
+                || (changes.blockOrder !== undefined && (!Array.isArray(changes.blockOrder) || !changes.blockOrder.length || changes.blockOrder.length > 100 || changes.blockOrder.some((index) => !Number.isInteger(index) || index < 0)))) {
                 throw new DomainError('invalid_argument', 'Use exact IDs and a title/location or explicit bounded drill blocks. Only draft timelines are supported; schedule, packets, attendance and existing notes require the app.');
             }
             return { mode, teamId, eventId, sessionId, changes: structuredClone(changes) };
@@ -99,7 +122,8 @@ export function createDirectPracticeTimelineCommands(dependencies) {
         readTarget: async (reader, args) => {
             const team = await reader.get(`teams/${args.teamId}`);
             const event = await reader.get(`teams/${args.teamId}/games/${args.eventId}`);
-            if (!team.exists || !team.version || !event.exists || !event.version || !isDirectPracticeEvent(event.data)) {
+            if (!team.exists || !team.version || !event.exists || !event.version || !isDirectPracticeEvent(event.data)
+                || ((args.changes.blockDurations || args.changes.blockOrder) && !ordinaryScheduleEvent(event.data))) {
                 throw new DomainError('unsupported_event', 'Choose an existing active, non-recurring practice event with a valid date. Schedule changes require app review.');
             }
             const linked = await reader.list(`teams/${args.teamId}/practiceSessions`, { eventId: args.eventId });
@@ -133,7 +157,10 @@ export function createDirectPracticeTimelineCommands(dependencies) {
                 after: { title: patch.title ?? old?.title ?? null, location: Object.hasOwn(patch, 'location') ? patch.location : old?.location ?? null,
                     blockCount: patch.blocks?.length ?? old?.blocks?.length ?? 0, duration: patch.duration ?? old?.duration ?? null },
                 blocksToAdd: added,
-                effect: 'Preserves existing blocks, notes, attendance and delivery settings. Does not change the schedule, generate a packet or send a message.' };
+                ...(args.changes.blockDurations || args.changes.blockOrder ? { blocksBefore: old.blocks.map(({ order, drillTitle, duration }) => ({ order, drillTitle, duration })),
+                    blocksAfter: patch.blocks.map(({ order, drillTitle, duration }) => ({ order, drillTitle, duration })) } : {}),
+                effect: args.changes.blockDurations || args.changes.blockOrder ? 'Changes only the shown block durations/order and requested title/location. Preserves every block, its notes and drill content, attendance, packets and schedule. No messages are sent.'
+                    : 'Preserves existing blocks, notes, attendance and delivery settings. Does not change the schedule, generate a packet or send a message.' };
         },
         apply: (tx, target, args, { uid, now }) => {
             const patch = changesFor(target, args); const timestamp = new Date(now());
