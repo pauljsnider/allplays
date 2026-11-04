@@ -47,6 +47,27 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('notification journal with
             await setDoc(doc(context.firestore(), 'teams/team-1'), { ownerId: 'owner', name: 'Synthetic Team', recipientEnabled: true });
         });
     });
+    it.each(['actor', 'recipient', 'expiry'])('blocks a provider call after %s changes during durable dispatch acknowledgment', async (kind) => {
+        await env.withSecurityRulesDisabled(async (context) => {
+            const database = context.firestore(); const store = serverStore(database); const change = store.change;
+            let clock = Date.now(); let sends = 0;
+            store.change = async (...args) => {
+                const row = await change(...args);
+                if (row.status === 'dispatching') {
+                    if (kind === 'actor') await updateDoc(doc(database, 'teams/team-1'), { ownerId: 'other' });
+                    if (kind === 'recipient') await updateDoc(doc(database, 'teams/team-1'), { recipientEnabled: false });
+                    if (kind === 'expiry') clock += 1001;
+                }
+                return row;
+            };
+            const journal = createNotificationAttemptJournal({ store, now: () => clock, leaseMs: 1000, authorize,
+                send: async (_request, metadata) => { sends++; return accepted(metadata); } });
+            await journal.deliver(request).catch(() => null); expect(sends).toBe(0);
+            const row = (await getDoc(doc(database, journalPath()))).data(); expect(row.status).toBe('uncertain'); expect(row.dispatch.attemptId).toBeTruthy();
+            await updateDoc(doc(database, 'teams/team-1'), { ownerId: 'owner', recipientEnabled: true });
+            expect((await journal.deliver(request)).status).toBe('uncertain'); expect(sends).toBe(0);
+        });
+    });
     it('keeps recovery cursor leases private and coordinates actual concurrent Firestore workers', async () => {
         const workerId = hash({ kind: 'schedule-recovery-worker-v1', teamId: 'team-1' });
         const path = `teams/team-1/notificationSendLog/durable_${workerId}`;

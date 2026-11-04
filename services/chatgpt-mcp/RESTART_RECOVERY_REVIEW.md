@@ -1,5 +1,9 @@
 # Isolated restart and notification recovery
 
+Subsequent dispatch-acknowledgment hardening and current validation are documented
+in [NOTIFICATION_DISPATCH_REVIEW.md](NOTIFICATION_DISPATCH_REVIEW.md). Counts below
+describe the preceding recovery checkpoint.
+
 This checkpoint extends the unmounted session/signer composition with read-only
 replacement-session status and a durable notification recovery runner. No public
 route, production trigger, scheduled job, credential, permission or deployment

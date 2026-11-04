@@ -57,7 +57,13 @@ describe('unmounted durable notification attempt journal', () => {
         f.advance(1001); assert.equal((await f.sender.deliver(request())).status, 'uncertain'); assert.equal(f.calls(), 0);
     });
     it('recovers an unreadable committed success after restart without resending', async () => {
-        const f = fixture(); f.firestore.failAfterTransactions.add(4); f.firestore.failReads = 2;
+        const f = fixture(); f.firestore.failAfterTransactions.add(4);
+        const get = f.store.get; let unavailable = 2;
+        // Fail reads only after the success commit, not the new pre-send reread.
+        f.store.get = async (...args) => {
+            if (f.firestore.transactionCount >= 4 && unavailable-- > 0) throw new Error('Synthetic unavailable committed success');
+            return get(...args);
+        };
         await assert.rejects(f.sender.deliver(request()), { code: 'journal_unavailable' });
         assert.equal(f.calls(), 1);
         assert.equal((await f.sender.deliver(request())).status, 'accepted'); assert.equal(f.calls(), 1);
@@ -129,6 +135,45 @@ describe('unmounted durable notification attempt journal', () => {
         }
         const denied = fixture({ authorize: async () => ({ ...allow, actorAllowed: false }) });
         await assert.rejects(denied.sender.status(request()), { code: 'permission_denied' });
+    });
+    for (const field of ['actorAllowed', 'sourceCurrent', 'recipientAllowed']) it(`rejects ${field} revocation after dispatch acknowledgment without sending`, async () => {
+        let permission = { ...allow }; const phases = [];
+        const f = fixture({ authorize: async (_value, phase) => { phases.push(phase); return permission; } });
+        const change = f.store.change;
+        f.store.change = async (...args) => { const row = await change(...args); if (row.status === 'dispatching') permission = { ...allow, [field]: false }; return row; };
+        await assert.rejects(f.sender.deliver(request()), { code: 'permission_denied' }); assert.equal(f.calls(), 0);
+        assert.ok(phases.includes('after_dispatch_ack')); assert.equal(f.firestore.read(f.path()).status, 'uncertain');
+        assert.ok(f.firestore.read(f.path()).dispatch); permission = allow;
+        assert.equal((await f.sender.deliver(request())).status, 'uncertain'); assert.equal(f.calls(), 0);
+    });
+    for (const phase of ['marker-ack', 'authorization']) it(`rejects lease expiry during ${phase} after dispatch acknowledgment`, async () => {
+        const f = fixture({ authorize: async (_value, boundary) => { if (phase === 'authorization' && boundary === 'after_dispatch_ack') f.advance(1001); return allow; } });
+        if (phase === 'marker-ack') {
+            const change = f.store.change;
+            f.store.change = async (...args) => { const row = await change(...args); if (row.status === 'dispatching') f.advance(1001); return row; };
+        }
+        assert.equal((await f.sender.deliver(request())).status, 'uncertain'); assert.equal(f.calls(), 0);
+        assert.ok(f.firestore.read(f.path()).dispatch); await f.sender.deliver(request()); assert.equal(f.calls(), 0);
+    });
+    for (const kind of ['revocation', 'expiry']) it(`rechecks ${kind} after recovering a lost dispatch-marker acknowledgment`, async () => {
+        let permitted = true; const f = fixture({ authorize: async () => ({ ...allow, actorAllowed: permitted }) });
+        f.firestore.failAfterTransactions.add(3); const get = f.store.get;
+        f.store.get = async (...args) => { const row = await get(...args); if (row?.status === 'dispatching') { if (kind === 'revocation') permitted = false; else f.advance(1001); } return row; };
+        const result = await f.sender.deliver(request()).catch((error) => error);
+        assert.equal(f.calls(), 0); assert.equal(f.firestore.read(f.path()).status, 'uncertain');
+        if (kind === 'revocation') assert.equal(result.code, 'permission_denied');
+    });
+    it('rereads the durable dispatch state instead of trusting a stale marker acknowledgment', async () => {
+        const f = fixture(); const change = f.store.change;
+        f.store.change = async (...args) => { const row = await change(...args); if (row.status === 'dispatching') {
+            const current = f.firestore.documents.get(f.path()); f.firestore.documents.set(f.path(), { ...current, status: 'uncertain', lease: null });
+        } return row; };
+        assert.equal((await f.sender.deliver(request())).status, 'uncertain'); assert.equal(f.calls(), 0);
+    });
+    it('retains uncertainty after an unavailable post-marker authorization check', async () => {
+        const f = fixture({ authorize: async (_value, phase) => { if (phase === 'after_dispatch_ack') throw new Error('Synthetic authorization outage'); return allow; } });
+        await assert.rejects(f.sender.deliver(request()), { code: 'authorization_unavailable' });
+        assert.equal(f.calls(), 0); assert.equal(f.firestore.read(f.path()).status, 'uncertain');
     });
     it('retries a known pre-dispatch authorization service failure only after fresh authorization', async () => {
         let failed = false;

@@ -169,6 +169,19 @@ function createNotificationAttemptJournal({ store, authorize, send, reconcile, n
                 if (current.status !== 'leased' || current.lease?.id !== leaseId || current.lease.until <= time()) fail('lease_lost', 'The attempt lease expired before provider dispatch.');
                 return { ...current, status: 'dispatching', dispatch: { attemptId: leaseId, requestHash: expected.requestHash, startedAt: time() } };
             });
+            // Persistence acknowledgment (or its recovery read) may outlive
+            // authorization or the lease. The marker is not permission to send.
+            record = await read(expected);
+            const assertDispatchReady = () => {
+                if (!record || record.status !== 'dispatching' || record.lease?.id !== leaseId
+                    || record.dispatch?.attemptId !== leaseId || record.lease.until <= time()) {
+                    fail('lease_lost', 'The exact durable dispatch lease is no longer current.');
+                }
+            };
+            assertDispatchReady();
+            if (!await access(expected, 'after_dispatch_ack')) fail('permission_denied', 'The current source or recipient no longer permits this delivery.');
+            // No awaited work between the final lease check and provider call.
+            assertDispatchReady();
             dispatched = true;
             const result = await send(structuredClone(record.request), { effectId: expected.effectId, requestHash: expected.requestHash, attemptId: leaseId, idempotencyKey: expected.effectId });
             if (!proof(result, expected, leaseId)) return project(await finish(expected, leaseId, 'uncertain'));
