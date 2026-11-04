@@ -8,7 +8,7 @@ export function rosterFixture() {
     const context = { uid: 'owner', teams: new Map([['team-1', { team: { name: 'Synthetic Team' }, roles: new Set(['owner']) }]]) };
     const store = {
         get: vi.fn(async (key) => structuredClone(records.get(key) || { exists: false, version: null, data: null })),
-        list: vi.fn(async (collection) => [...records].filter(([key]) => key.startsWith(`${collection}/`)).map(([key, value]) => ({ ...structuredClone(value), id: key.split('/').at(-1) }))),
+        list: vi.fn(async (collection) => [...records].filter(([key]) => key.startsWith(`${collection}/`) && !key.slice(collection.length + 1).includes('/')).map(([key, value]) => ({ ...structuredClone(value), id: key.split('/').at(-1) }))),
         create: vi.fn(async (key, data) => { if (records.has(key)) throw new Error('exists'); put(key, data); }),
         transaction: vi.fn(async (callback, { beforeCommit } = {}) => {
             const writes = [];
@@ -20,5 +20,5 @@ export function rosterFixture() {
     };
     const query = { select: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(), get: async () => ({ docs: (await store.list('teams/team-1/players')).map((row) => ({ id: row.id, data: () => row.data })) }) };
     const dependencies = { uid: 'owner', store, rosterStore: store, getContext: async () => context, getDb: async () => ({ collection: () => query }), now: () => clock };
-    return { records, put, context, store, dependencies, commands: createDirectRosterCommands(dependencies), expire: () => { clock += 300001; } };
+    return { records, put, context, store, dependencies, commands: createDirectRosterCommands(dependencies), advance: (ms) => { clock += ms; }, expire: () => { clock += 300001; } };
 }

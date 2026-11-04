@@ -22,13 +22,17 @@ export function normalizeScheduleInstant(value) {
 }
 
 export const scheduleFields = ['type', 'title', 'opponent', 'date', 'end', 'arrivalTime', 'location', 'isHome', 'status', 'liveStatus',
-    'trackingEngine', 'source', 'sourceMetadata', 'opponentTeamId', 'sharedMatchupId', 'sharedScheduleId', 'sharedScheduleOpponentGameId', 'isSeriesMaster', 'seriesId', 'recurrence', 'deleted', 'cancelled'];
+    'trackingEngine', 'source', 'sourceMetadata', 'opponentTeamId', 'sharedMatchupId', 'sharedScheduleId', 'sharedScheduleOpponentGameId',
+    'sharedScheduleSourceTeamId', 'sharedScheduleOpponentTeamId', 'tournament', 'competitionType', 'diamondSourceTeamId', 'diamondSourceGameId',
+    'isSeriesMaster', 'seriesId', 'recurrence', 'deleted', 'cancelled'];
 const instant = (date) => date instanceof Date && Number.isFinite(date.getTime()) ? date.toISOString() : null;
 export function ordinaryScheduleEvent(data) {
     return data && ['game', 'practice'].includes(data.type || 'game') && (!data.status || data.status === 'scheduled')
         && (!data.liveStatus || data.liveStatus === 'scheduled')
         && !data.deleted && !data.cancelled && !data.trackingEngine && !data.source && !data.sourceMetadata
         && !data.opponentTeamId && !data.sharedMatchupId && !data.sharedScheduleId && !data.sharedScheduleOpponentGameId && !data.isSeriesMaster && !data.seriesId && !data.recurrence
+        && !data.sharedScheduleSourceTeamId && !data.sharedScheduleOpponentTeamId && !data.tournament && data.competitionType !== 'tournament'
+        && !data.diamondSourceTeamId && !data.diamondSourceGameId
         && Boolean(instant(data.date));
 }
 export function scheduleSummary(id, data) {
@@ -38,24 +42,44 @@ export function scheduleSummary(id, data) {
         isHome: typeof data.isHome === 'boolean' ? data.isHome : null, supportsOrdinaryAppReview: Boolean(ordinaryScheduleEvent(data)) };
 }
 
+export function normalizeScheduleFields(eventType, changes) {
+    if (!['game', 'practice'].includes(eventType) || !changes || typeof changes !== 'object' || Array.isArray(changes) || !Object.keys(changes).length) return invalid('Provide an event type and supported changes.');
+    const input = {};
+    const fields = ['startDate', 'endDate', 'location', ...(eventType === 'game' ? ['opponent', 'isHome', 'arrivalTime'] : ['title'])];
+    for (const [key, value] of Object.entries(changes)) {
+        if (!fields.includes(key)) return invalid('Only ordinary date/time, location, title/opponent and home/away fields are supported. Use the app for other fields.');
+        if (['startDate', 'endDate', 'arrivalTime'].includes(key)) input[key] = value === '' && key !== 'startDate' ? '' : normalizeScheduleInstant(value);
+        else if (key === 'isHome') { if (typeof value !== 'boolean') return invalid('isHome must be a boolean.'); input[key] = value; }
+        else {
+            if (typeof value !== 'string' || value !== value.trim() || value.length > (key === 'location' ? 200 : 120)
+                || /[\u0000-\u001f\u007f]/.test(value) || (key !== 'location' && !value)) return invalid('Use a bounded, trimmed title/opponent/location.');
+            input[key] = value;
+        }
+    }
+    return input;
+}
+
+export function scheduleAfter(before, eventType, input) {
+    const after = { ...(before || { eventType, title: eventType === 'practice' ? 'Practice' : '', opponent: '', endDate: null, arrivalTime: null, location: '', isHome: null }), ...input };
+    // The app shifts omitted end/arrival times by the start-time delta.
+    // Persist only requested fields so its final prepare preserves current
+    // notes, configs and all unrequested fields, even if they change later.
+    if (before && input.startDate) {
+        const shift = Date.parse(input.startDate) - Date.parse(before.startDate);
+        for (const key of ['endDate', 'arrivalTime']) if (!(key in input) && before[key]) after[key] = new Date(Date.parse(before[key]) + shift).toISOString();
+    }
+    if (!after.startDate || (eventType === 'game' && !after.opponent) || (eventType === 'practice' && !after.endDate)
+        || (after.endDate && Date.parse(after.endDate) <= Date.parse(after.startDate))) return invalid('Supply a start time, a game opponent or practice end time, and an end time after the start.');
+    return after;
+}
+
 export function createScheduleReviewCommands({ uid, getContext, getDb, now = Date.now }) {
     return {
         async prepare({ requestId, mode, teamId, eventId, eventType, changes }) {
             if (!['create', 'update'].includes(mode) || !ID.test(teamId || '') || !['game', 'practice'].includes(eventType)
                 || (mode === 'update' ? !ID.test(eventId || '') : eventId !== undefined)
                 || !changes || typeof changes !== 'object' || Array.isArray(changes) || !Object.keys(changes).length) return invalid('Provide a create or update request with exact IDs, event type and changes.');
-            const input = {};
-            const fields = ['startDate', 'endDate', 'location', ...(eventType === 'game' ? ['opponent', 'isHome', 'arrivalTime'] : ['title'])];
-            for (const [key, value] of Object.entries(changes)) {
-                if (!fields.includes(key)) return invalid('Only ordinary date/time, location, title/opponent and home/away fields are supported. Use the app for other fields.');
-                if (['startDate', 'endDate', 'arrivalTime'].includes(key)) input[key] = value === '' && key !== 'startDate' ? '' : normalizeScheduleInstant(value);
-                else if (key === 'isHome') { if (typeof value !== 'boolean') return invalid('isHome must be a boolean.'); input[key] = value; }
-                else {
-                    if (typeof value !== 'string' || value !== value.trim() || value.length > (key === 'location' ? 200 : 120)
-                        || /[\u0000-\u001f\u007f]/.test(value) || (key !== 'location' && !value)) return invalid('Use a bounded, trimmed title/opponent/location.');
-                    input[key] = value;
-                }
-            }
+            const input = normalizeScheduleFields(eventType, changes);
             const context = await getContext(); validateManager(context, uid, teamId);
             const db = await getDb(); let before = null;
             if (mode === 'update') {
@@ -64,16 +88,7 @@ export function createScheduleReviewCommands({ uid, getContext, getDb, now = Dat
                 if (!ordinaryScheduleEvent(data) || (data.type || 'game') !== eventType) throw new DomainError('unsupported_event', 'Select an ordinary scheduled event with the exact type. Recurring, imported, linked, active or special-engine events require the app.');
                 before = scheduleSummary(eventId, data);
             }
-            const after = { ...(before || { eventType, title: eventType === 'practice' ? 'Practice' : '', opponent: '', endDate: null, arrivalTime: null, location: '', isHome: null }), ...input };
-            // The app shifts omitted end/arrival times by the start-time delta.
-            // Persist only requested fields so its final prepare preserves current
-            // notes, configs and all unrequested fields, even if they change later.
-            if (before && input.startDate) {
-                const shift = Date.parse(input.startDate) - Date.parse(before.startDate);
-                for (const key of ['endDate', 'arrivalTime']) if (!(key in input) && before[key]) after[key] = new Date(Date.parse(before[key]) + shift).toISOString();
-            }
-            if (!after.startDate || (eventType === 'game' && !after.opponent) || (eventType === 'practice' && !after.endDate)
-                || (after.endDate && Date.parse(after.endDate) <= Date.parse(after.startDate))) return invalid('Supply a start time, a game opponent or practice end time, and an end time after the start.');
+            const after = scheduleAfter(before, eventType, input);
             const result = await prepareWriteReview(db, context, { requestId,
                 action: mode === 'create' ? 'create_schedule_event' : 'update_schedule_event',
                 arguments: { teamId, eventType, ...(mode === 'update' ? { eventId } : {}), input }

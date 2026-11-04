@@ -139,10 +139,11 @@ session does not authorize deployment, merge, or real team/game writes.
 
 ## Remaining work for direct MCP mutations
 
-An isolated, unregistered direct-command prototype supports eight bounded
+An isolated, unregistered direct-command prototype supports eleven bounded
 operations: team-drill favorite changes, stat-configuration cloning and renaming,
 single-player roster creation and updates, draft practice timeline creation and
-updates, and atomic basic-roster batches. It is exercised only with synthetic
+updates, atomic basic-roster batches, ordinary schedule creation and updates,
+and single-player manager RSVP overrides. It is exercised only with synthetic
 clients and data. The production server does not import it or advertise its
 tools. It does not grant persistent access or widen an OAuth scope. The 46 normal
 write-request tools still require app confirmation.
@@ -151,13 +152,13 @@ write-request tools still require app confirmation.
 expiry, exact-preview/revision comparison, atomic receipts, and uncertain-outcome
 reconciliation. Domain definitions in `directFavorite.js` and
 `directStatConfiguration.js`, `directRoster.js`, `directRosterBatch.js` and
-`directPracticeTimeline.js` specify the allowed arguments, targets, preview and
+`directPracticeTimeline.js`, `directSchedule.js` and `directRsvp.js` specify the allowed arguments, targets, preview and
 write. `directCommandStore.js` shares user-credentialed REST transactions, while
 separate adapters allow only the relevant domain paths. The factory in
 `directFavoriteMcp.js` composes the domains and their common confirmation flow;
 its historical filename remains for compatibility.
 
-The complete prototype composition advertises twenty-seven tools, including
+The complete prototype composition advertises thirty-four tools, including
 three schedule app-review/discovery tools:
 
 | Tools | Bounded behavior |
@@ -171,6 +172,8 @@ three schedule app-review/discovery tools:
 | confirm_roster_player, get_roster_player_action | Approve one roster change and read its opaque completion receipt. |
 | prepare_roster_batch, confirm_roster_batch, get_roster_batch_action | Prepare, explicitly approve and check one atomic batch of 1–20 basic player creates/updates. |
 | list_team_schedule_events, prepare_schedule_event_review, get_schedule_event_review | Discover ordinary event IDs, stage a normalized create/update request with an advisory preview, and check its app outcome. No direct schedule execution. |
+| prepare_create_schedule_event, prepare_update_schedule_event, confirm_schedule_event, get_schedule_event_action | Prepare and save an ordinary event with separate explicit approval of potential team notifications. The receipt confirms the save, not delivery. |
+| prepare_staff_rsvp_override, confirm_staff_rsvp_override, get_staff_rsvp_override_action | Save the current manager’s response for one exact active player/event. No notes, base/family cleanup, messages or cached-total refresh. |
 | get_team_roster | Discover active/inactive roster IDs and public display fields, using the existing manager-only paginated reader. |
 | prepare_create_practice_timeline, prepare_update_practice_timeline | Prepare a draft timeline or a title/location change and appended blocks, linked to an existing non-recurring practice. |
 | confirm_practice_timeline, get_practice_timeline_action | Explicitly approve a timeline change and check its opaque completion receipt. |
@@ -227,15 +230,57 @@ update preview shift with the requested start time, matching the app handler.
 The bridge stores only requested fields; its preview is advisory, and the app
 rebuilds the authoritative preview from current data before explicit approval.
 
-Schedule writes remain app-confirmed: ordinary creation and date/location/title
-updates can trigger team notifications independently of pre-event reminder
-settings. No source markers, notification bypass or direct schedule execution
-were added. The actual notification-handler regression proves that disabling
-reminders does not suppress ordinary creation announcements. The shared app
-practice payload builder now omits `scheduleNotifications` from edits when the
-caller did not supply it. This preserves current reminder settings and delivery
-history through both web SDK and native field-masked updates, while explicit
-settings and new-practice defaults retain their existing behavior.
+The separate direct schedule domain uses the same normalized inputs but freezes
+an exact revision/preview for one atomic save. Creation is limited to teams with
+fewer than 200 stored schedule records so a complete transactional duplicate
+check is possible. Matching type, start time and opponent/title require app
+review, including competing creation proposals. Updates use field masks to
+preserve notes, scores, reminder history and extensions. Tournament, linked,
+imported, recurring, active and special-engine events remain excluded.
+
+Ordinary creation and date/location/title updates can trigger team notifications
+independently of pre-event reminder settings. Direct schedule confirmation
+therefore requires **two separate default-false boolean acknowledgments**:
+`approve` for the displayed save and `notifyTeam` for its stated communication
+effects. A conversational yes, an argument supplied by the model, a missing
+checkbox or a truthy string cannot substitute. `directConfirmation.js` defines
+the known acknowledgment fields; the session approval object binds their exact
+preview to one actor/client/grant and one commit attempt. The schedule confirm
+tool advertises external effects through `openWorldHint`.
+
+No notification bypass or source marker is added. Tests pass generated game and
+practice payloads through the actual notification handler with mocked delivery,
+and prove that disabling reminders does not suppress creation announcements.
+The atomic receipt and same-proposal reconciliation prevent repeating a
+successful business save after a lost response. They **do not establish
+exactly-once provider delivery**: the existing asynchronous notification pipeline
+can retry, suppress or fail delivery independently. Completed receipts explicitly
+report `notificationDelivery: unverified`; never repeat a schedule save to resend
+notifications. A durable delivery/outbox contract and provider integration review
+remain requirements before activating this path.
+
+The shared app practice payload builder omits `scheduleNotifications` from edits
+when the caller did not supply it. This preserves current reminder settings and
+delivery history through both web SDK and native field-masked updates, while
+explicit settings and new-practice defaults retain their existing behavior.
+
+The RSVP domain saves only `rsvps/{currentUid}__{playerId}` for a currently
+managed team, active player and ordinary event. It rechecks the team's normalized
+availability cutoff before approval, inside the transaction and immediately
+before commit; no staff bypass is exposed. The adapter cannot write another
+responder's record, base/family response or private note. Any existing own base
+response requires app reconciliation, because base responses also participate
+in confirmed-member access rules. Malformed or inline-note legacy overrides
+fail closed. Existing restricted notes are preserved rather than cleared.
+
+This bounded RSVP path is not full parent/family parity. It does not recompute
+cached aggregate totals, resolve all responders' effective availability, manage
+private notes or reconcile legacy documents. Its receipt reports only the saved
+manager override and `summaryRefresh: not_performed`. The preview discloses that
+it may supersede other responses, and ordinary explicit approval is required.
+No invitation, message or access-grant operation is performed. Family responses,
+notes and reconciliation remain app-confirmed until their shared contracts are
+implemented with privacy and access-effect review.
 
 Roster proposal content is stored only in the team's expiring
 `privateAiPendingActions` collection under existing current-manager rules.
@@ -301,8 +346,9 @@ proposal instead of an automatic execution retry.
 The favorite domain matches the existing document contract (`addedBy`,
 `addedAt`) and immutable add/remove Firestore rules. It does not update the drill
 itself, invite anyone, send communications, change financial records, or expose
-arbitrary document writes. RSVP was deferred because its actual write path also
-coordinates private notes, legacy records, and availability cutoffs.
+arbitrary document writes. The separate bounded RSVP domain described above
+adds current-manager overrides while leaving private-note and family workflows
+in app review.
 
 The opt-in transport composition is now implemented in
 `directSessionTransport.js`, with `directSessionAuth.js` and
@@ -341,10 +387,10 @@ credentials, access settings,
 persistent grant, or production registration is included here.
 
 1. Extend the shared command engine with additional domain schemas, current
-   authorization and discovery. Full stat-schema editing, RSVP, recurring or
+   authorization and discovery. Full stat-schema editing, parent/family RSVP, recurring or
    packet-assigned practices, editing/removing existing timeline blocks,
-   contact/access roster imports, larger or partial roster batches, direct schedule
-   writes/batches, attachments and editable previews
+   contact/access roster imports, larger or partial roster batches, complex or batch schedule
+   writes, attachments and editable previews
    are still absent from the direct prototype; the 46 app-review tools cover the
    canonical writes through existing browser handlers.
 2. Review execution authorization for each additional command. If a persistent
@@ -417,18 +463,19 @@ grant validation.
 
 Validated with isolated fixtures, without production team/game writes:
 
-- 498 focused tests across MCP core, OAuth, review requests, roster discovery,
+- 540 focused tests across MCP core, OAuth, review requests, roster discovery,
   direct-command protocol and state transitions, authenticated HTTP sessions,
   one-action expiry/consumption, configuration clone/rename/discovery, single-player
   roster create/update, atomic roster batches and safe receipts, draft practice creation/append,
   discovery and actual notification-handler suppression, offset-normalized schedule
-  review requests and notification semantics, and the
+  review requests and notification semantics, direct schedule saves with distinct
+  notification acknowledgment, bounded manager RSVP and cutoff parity, and the
   existing private AI action service.
 - 289 app schedule/review tests, including web/native reminder preservation,
   explicit reminder settings, stale previews, concurrent confirmation and explicit
   confirmation of only remaining partial-import rows. The new omission regressions
   failed on both web/native before the fix and pass after it.
-- 46 Firestore emulator tests against the existing rules, including review
+- 57 Firestore emulator tests against the existing rules, including review
   ownership, enforced verified-email policy, real REST roster pagination, and
   denied roster queries after manager revocation, actual direct-favorite REST
   transactions, revocation during approval, lost commit responses, and
@@ -443,7 +490,11 @@ Validated with isolated fixtures, without production team/game writes:
   Firestore reference/timestamp values, lost responses and concurrent same-event
   timeline creation; maximum mixed roster batches, opaque array receipts, declined
   batches, rejected-commit atomicity, companion tampering and duplicate-name races;
-  broker-bound batch approval and schedule staging without event writes.
+  broker-bound batch approval and schedule staging without event writes; direct
+  game/practice saves, field preservation, separate notification approval over
+  authenticated HTTP, duplicate schedule races, rejected commits and lost-response
+  reconciliation; scoped RSVP records, preserved private notes, base-response
+  rejection and cutoff checks immediately before commit.
 - Production app build, production artifact guard, and cold-start budget check.
 - Two local module-mocked browser checks for the schedule editor and practice hub.
 - Built-app signed-out browser smoke preserving the review destination.

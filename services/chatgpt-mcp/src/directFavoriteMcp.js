@@ -1,9 +1,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { DomainError } from './core.js';
+import { confirmationFields } from './directConfirmation.js';
 import { createDirectFavoriteCommands } from './directFavorite.js';
 import { createDirectStatConfigurationCommands } from './directStatConfiguration.js';
 import { createDirectDiscovery } from './directDiscovery.js';
+import { createDirectScheduleCommands } from './directSchedule.js';
+import { createDirectRsvpCommands } from './directRsvp.js';
 import { createScheduleReviewCommands } from './scheduleReview.js';
 import { createDirectRosterBatchCommands } from './directRosterBatch.js';
 import { createDirectRosterCommands } from './directRoster.js';
@@ -30,17 +33,17 @@ export function createDirectFavoriteMcpSession(dependencies) {
         const elicit = (approvedPreview, options = {}) => server.server.elicitInput({
             mode: 'form',
             message: `Approve this one change only? No ongoing write permission is granted.\n${JSON.stringify(approvedPreview, null, 2)}`,
-            requestedSchema: { type: 'object', properties: { approve: { type: 'boolean', title: 'Apply this exact displayed change once', default: false } }, required: ['approve'] }
+            requestedSchema: { type: 'object', properties: confirmationFields(approvedPreview), required: Object.keys(confirmationFields(approvedPreview)) }
         }, { timeout: 120000, ...options });
         return dependencies.authorizeAction
             ? dependencies.authorizeAction(preview, elicit, extra.signal)
             : elicit(preview, { signal: extra.signal });
     };
     const mutation = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
-    const registerOutcome = (suffix, commands) => {
+    const registerOutcome = (suffix, commands, annotations = mutation) => {
         server.registerTool(`confirm_${suffix}`, {
             description: 'Request explicit form approval of this exact prepared change, reauthorize and apply once. A conversational yes or confirmed argument cannot substitute. Decline/cancel has no effect. After an uncertain outcome, check this same proposal ID.',
-            inputSchema: z.object({ proposalId: id }).strict(), annotations: mutation
+            inputSchema: z.object({ proposalId: id }).strict(), annotations
         }, run((args, extra) => commands.confirm(args, approval(extra))));
         server.registerTool(`get_${suffix}_action`, {
             description: 'Read this account’s durable proposal outcome. Prepared does not mean applied.',
@@ -108,6 +111,28 @@ export function createDirectFavoriteMcpSession(dependencies) {
                 changes: z.object({ title: z.string().min(1).max(120).optional(), location: z.string().max(200).optional(), appendBlocks: blocks.optional() }).strict() }).strict(), annotations: mutation
         }, run((args) => commands.prepare({ ...args, mode: 'update' })));
         registerOutcome('practice_timeline', commands);
+    }
+    if (dependencies.scheduleStore) {
+        const commands = createDirectScheduleCommands({ ...dependencies, store: dependencies.scheduleStore });
+        const changes = z.object({ startDate: z.string().optional(), endDate: z.string().optional(), arrivalTime: z.string().optional(),
+            location: z.string().max(200).optional(), title: z.string().min(1).max(120).optional(), opponent: z.string().min(1).max(120).optional(), isHome: z.boolean().optional() }).strict();
+        server.registerTool('prepare_create_schedule_event', {
+            description: 'Prepare one ordinary scheduled game/practice with explicit UTC offsets. Does not save yet. Execution requires separate approval of the save and possible team notifications; delivery cannot be verified. Reuse the proposal UUID after interruptions.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, eventType: z.enum(['game', 'practice']), changes }).strict(), annotations: mutation
+        }, run(({ proposalId, ...args }) => commands.prepare({ ...args, proposalId, eventId: `mcp_${proposalId}`, mode: 'create' })));
+        server.registerTool('prepare_update_schedule_event', {
+            description: 'Prepare only ordinary date/time, location, opponent/title or home/away changes. Exact IDs required; recurrence, linked games, imports, active games and special engines require app review. Explicit separate notification approval is required.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, eventId: resourceId, eventType: z.enum(['game', 'practice']), changes }).strict(), annotations: mutation
+        }, run((args) => commands.prepare({ ...args, mode: 'update' })));
+        registerOutcome('schedule_event', commands, { ...mutation, openWorldHint: true });
+    }
+    if (dependencies.rsvpStore) {
+        const commands = createDirectRsvpCommands({ ...dependencies, store: dependencies.rsvpStore });
+        server.registerTool('prepare_staff_rsvp_override', {
+            description: 'Prepare this manager’s going/maybe/not_going override for one exact active player and ordinary event. Rechecks availability cutoff. Does not edit notes, family/base responses or access; no messages. Cached aggregate totals are not refreshed.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, eventId: resourceId, playerId: resourceId, response: z.enum(['going', 'maybe', 'not_going']) }).strict(), annotations: mutation
+        }, run(commands.prepare));
+        registerOutcome('staff_rsvp_override', commands);
     }
     if (dependencies.getDb) {
         const discovery = createDirectDiscovery(dependencies);

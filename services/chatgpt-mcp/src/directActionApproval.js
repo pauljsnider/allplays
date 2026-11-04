@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { DomainError } from './core.js';
+import { approvedContent } from './directConfirmation.js';
 
 const key = (actor) => JSON.stringify([actor.uid, actor.clientId, actor.grantKey]);
 const digest = (preview) => createHash('sha256').update(JSON.stringify(preview)).digest('hex');
@@ -14,7 +15,8 @@ export function createOneActionApproval({ getActor, now = Date.now, lifetimeMs =
         const expiresAt = Math.min(actor.expiresAt, now() + lifetimeMs);
         if (signal?.aborted || !Number.isFinite(expiresAt) || expiresAt <= now()) throw new DomainError('confirmation_expired', 'Start a fresh confirmation.');
         const answer = await elicit(preview, { signal, timeout: Math.max(1, expiresAt - now()) });
-        if (answer?.action !== 'accept' || answer.content?.approve !== true) return answer;
+        const content = approvedContent(preview, answer);
+        if (!content) return answer;
         const assertCurrent = async () => {
             const current = await getActor();
             if (signal?.aborted || now() >= expiresAt || key(current) !== binding || digest(preview) !== fingerprint) {
@@ -24,7 +26,7 @@ export function createOneActionApproval({ getActor, now = Date.now, lifetimeMs =
         await assertCurrent();
         let consumed = false;
         return {
-            action: 'accept', content: { approve: true },
+            action: 'accept', content,
             consume: async () => {
                 if (consumed) throw new DomainError('confirmation_replayed', 'An approval can authorize only one commit attempt.');
                 consumed = true;

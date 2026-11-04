@@ -18,9 +18,12 @@ practice timelines for existing non-recurring events. Roster and coaching
 proposals keep content behind current team authorization and store only opaque
 user receipts. Practice updates append blocks while preserving existing notes
 and attendance; packet delivery remains outside this path. Ordinary schedule
-create/update requests have exact-ID discovery and offset-normalized advisory
-previews, then require final app confirmation because changes may notify the
-team. A shared app fix preserves omitted practice reminder settings on web and
+create/update tools now support a direct prototype path with exact-ID discovery,
+explicit time offsets, and separate default-false approvals for the save and
+possible team notifications. Receipts confirm saving, never notification delivery.
+An app-review fallback remains available. Manager RSVP overrides support one
+active player on one ordinary event, preserving private notes and refusing
+base/family reconciliation; cached RSVP totals are not refreshed. A shared app fix preserves omitted practice reminder settings on web and
 native updates.
 Managed-team and configuration discovery support the prepare → explicit MCP form
 approval → transaction flow through authenticated HTTP sessions. Tests use

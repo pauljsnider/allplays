@@ -1,6 +1,7 @@
 // Isolated direct-command prototype. Not registered by the production server.
 import { createHash } from 'node:crypto';
 import { DomainError } from './core.js';
+import { approvedContent } from './directConfirmation.js';
 
 export const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -84,7 +85,7 @@ export function createRevisionCommands({ uid, store, getContext, now = Date.now 
                 throw new DomainError('conflict', 'The displayed proposal no longer matches current data. Prepare it again.');
             }
             const approval = await approve(before.data.preview);
-            if (approval?.action !== 'accept' || approval.content?.approve !== true) {
+            if (!approvedContent(before.data.preview, approval)) {
                 return { proposalId, status: approval?.action === 'decline' ? 'declined' : 'cancelled', applied: false };
             }
             await authorize(before.data);
@@ -107,6 +108,7 @@ export function createRevisionCommands({ uid, store, getContext, now = Date.now 
                 }, { beforeCommit: async () => {
                     await approval.consume?.();
                     if (Date.parse(before.data.expiresAt) <= now()) throw new DomainError('confirmation_expired', 'The proposal expired before execution.');
+                    await domain.beforeCommit?.(targetBeforeApproval, before.data);
                 } });
             } catch (error) {
                 // A lost commit response is reconciled from the atomic receipt.
