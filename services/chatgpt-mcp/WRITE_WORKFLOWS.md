@@ -507,15 +507,20 @@ made.
 The unmounted `schedule-delivery-coordinator.cjs` now checks independently
 verified approval/commit claims against an exact event version and digest,
 reserves a private binding, and exposes authenticated bounded status functions.
-Its required trusted evidence callbacks have isolated implementations in tests;
-the current MCP transport does **not** produce durable signed evidence yet.
+A durable evidence authority now stores broker-verified approval, consumes it
+once and records independently verified commit observations. Its verifier
+callbacks remain isolated test adapters; the MCP transport and Firestore writer
+are **not** connected to this authority yet.
 `schedule-delivery-providers.cjs` pins complete versioned inbox/FCM requests,
 reconciles deterministic inbox writes and leaves unknown push outcomes uncertain.
-No real provider client or HTTP status endpoint is configured.
+An unmounted authenticated HTTP status handler now checks broker identity,
+App Check/replay, host/origin, bounded payloads and durable rate limits. A bounded
+audience resolver and Firestore/Auth loader check current preferences, roles
+and endpoints. No real provider client or status endpoint is configured.
 
 See [delivery interface contracts and activation prerequisites](DELIVERY_INTEGRATION.md).
-Remaining work includes the trusted approval/commit authority, real audience and
-endpoint authorization, authenticated status transport, provider/native review,
+Remaining work includes real broker/form/commit verifier integration, canonical
+member/role adapters, status route and App Check client integration, provider/native review,
 and replacing the selected legacy trigger path without double delivery. No new
 client rule, MCP Admin credential, persistent grant, production registration or
 live provider call is included.
@@ -540,7 +545,7 @@ Validated with isolated fixtures, without production team/game writes:
   explicit reminder settings, stale previews, concurrent confirmation and explicit
   confirmation of only remaining partial-import rows. The new omission regressions
   failed on both web/native before the fix and pass after it.
-- 64 Firestore emulator tests against the existing rules, including review
+- 66 Firestore emulator tests against the existing rules, including review
   ownership, enforced verified-email policy, real REST roster pagination, and
   denied roster queries after manager revocation, actual direct-favorite REST
   transactions, revocation during approval, lost commit responses, and
@@ -563,11 +568,12 @@ Validated with isolated fixtures, without production team/game writes:
   journal privacy, independent-worker leases, frozen plans, restart reconciliation
   and actor/recipient revocation; real event updateTime binding, concurrent
   delivery, private approval/provider records and recipient-only inbox reads.
-- 72 Node tests for the journal, approval binding/provider adapters and existing Diamond notification sender,
+- 102 Node tests for the journal, evidence/status/audience integration, provider adapters and existing Diamond notification sender,
   covering lost journal responses, uncertain provider outcomes, bounded retries,
   concurrent workers, late evidence, frozen/empty audiences, channel isolation
   provider-error privacy, mismatched/expired approval evidence, pinned provider
-  payloads, false persistence results and authenticated bounded status.
+  payloads, false persistence results authenticated bounded status, one-use durable evidence under concurrent workers,
+  replayed App Check, token-rotation-safe rate limits and complete canonical audiences.
 - 145 existing notification tests across category dispatch, load, triggers and
   media batches.
 - Production app build, production artifact guard, and cold-start budget check.

@@ -35,7 +35,7 @@ factories, discovery and transaction helpers.
 | G: Configuration, roster and practice domains | Configuration clone/rename; single and batch roster edits; draft timelines; matching discovery, fixtures and rules tests. | E + F. Split by domain if necessary; add only that domain's registrations/dependencies in each branch. |
 | H: Schedule and RSVP domains | Ordinary schedule create/update, separate notification acknowledgment, schedule app-review fallback, manager RSVP overrides and cutoff tests. | E + F; uses roster/schedule discovery from G/D. Unmounted. Notification delivery still unverified by MCP; RSVP aggregate/family gaps remain explicit. |
 | I: Durable delivery journal | `functions/notification-attempt-journal.cjs`, isolated state-machine tests, real-rule privacy tests. | Independently reviewable server-only core; no `functions/index.js` import. It is not a provider adapter or deployed trigger. |
-| J: Delivery and client integration | Event/version binding coordinator; pinned inbox/push adapters; bounded status functions; future trusted evidence authority, audience resolver and status endpoint. | H + I and explicit security/integration approval. Coordinator/adapter interfaces now have isolated tests. Durable evidence issuance, live audience/status transport and MCP receipt lookup are unfinished. |
+| J: Delivery and client integration | Event/version binding coordinator; pinned inbox/push adapters; bounded status functions; future trusted evidence authority, audience resolver and status endpoint. | H + I and explicit security/integration approval. Coordinator/adapter interfaces now have isolated tests. Durable evidence, status routing and audience interfaces now exist unmounted; real broker/writer/client adapters and MCP receipt lookup remain unfinished. |
 
 Each branch must contain only its intended factory registrations and dependencies.
 Copying the final `directFavoriteMcp.js` or `directSessionAuth.js` into E/F would
@@ -88,7 +88,10 @@ after each journal layer:
 - I1: the journal state machine, unit tests and emulator privacy suite at
   `30c7453082f175dbc0d69f833d6b63c9d24a394e`.
 - I2: the versioned request extension, binding coordinator, provider adapters,
-  shared fixture, and expanded unit/emulator tests. Depends on I1.
+  shared fixture, and expanded unit/emulator tests at
+  `cae0a9637909f764ace760ab6ac6ffd0af43e9d9`. Depends on I1.
+- I3: durable actor-bound evidence, authenticated status/rate limits, canonical
+  audience interfaces and integration tests. Depends on I2.
 
 Each artifact has a SHA-256 digest and exact source commits in `manifest.json`.
 App tests and emulator suites still need to run on eventual branch trees;
@@ -103,5 +106,6 @@ Run from the repository root with a fresh output directory:
 ```sh
 node services/chatgpt-mcp/scripts/prepare-review-slices.mjs \
   ed4d65e77d5417fd42239139c29b2684912be3a9 \
-  30c7453082f175dbc0d69f833d6b63c9d24a394e HEAD /tmp/allplays-review-slices
+  30c7453082f175dbc0d69f833d6b63c9d24a394e \
+  cae0a9637909f764ace760ab6ac6ffd0af43e9d9 HEAD /tmp/allplays-review-slices
 ```

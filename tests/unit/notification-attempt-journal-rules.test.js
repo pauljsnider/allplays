@@ -8,6 +8,8 @@ const require = createRequire(import.meta.url);
 const { createNotificationAttemptJournal, createFirestoreNotificationJournalStore, normalizeNotificationAttempt } = require('../../functions/notification-attempt-journal.cjs');
 const { createScheduleDeliveryCoordinator, scheduleDeliveryFingerprint: hash } = require('../../functions/schedule-delivery-coordinator.cjs');
 const { createScheduleDeliveryProviders } = require('../../functions/schedule-delivery-providers.cjs');
+const { createScheduleEvidenceAuthority } = require('../../functions/schedule-delivery-evidence.cjs');
+const { createFirestoreStatusRateLimit } = require('../../functions/schedule-delivery-status.cjs');
 
 const projectId = 'demo-allplays-mcp-review';
 const request = { teamId: 'team-1', eventId: 'event-1', actorUid: 'owner', recipientUid: 'member', sourceVersion: '2060-01-01T10:00:00Z', channel: 'push', endpoint: 'synthetic-private-device', title: 'Synthetic update', body: 'Synthetic schedule changed.' };
@@ -102,19 +104,27 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('notification journal with
         };
         const event = await readEvent();
         const committedAt = Date.parse(event.version);
-        const actor = { uid: 'owner', clientId: 'synthetic-client', grantKey: hash('synthetic-grant'), reviewRequests: true, expiresAt: committedAt + 200000 };
+        const actor = { uid: 'owner', clientId: 'synthetic-client', sessionId: 'synthetic-session', grantKey: hash('synthetic-grant'), reviewRequests: true, expiresAt: committedAt + 200000 };
         const approval = { ...actor, sessionId: 'synthetic-session', approvalId: 'synthetic-approval', proposalId: 'synthetic-proposal', teamId: 'team-1', eventId: 'event-1',
-            intentDigest: hash('synthetic-intent'), eventDigest: hash(event.data), beforeVersion: null, mode: 'create', eventType: 'practice',
+            intentDigest: hash('synthetic-intent'), previewDigest: hash('synthetic-preview'), eventDigest: hash(event.data), beforeVersion: null, mode: 'create', eventType: 'practice',
             approve: true, notifyTeam: true, consumed: true, issuedAt: committedAt - 1000, expiresAt: committedAt + 60000, consumedAt: committedAt - 1 };
         const store = serverStore(database); let sends = 0; let pushThrows = false;
+        let evidenceClock = committedAt - 1; let observation;
+        const authority = createScheduleEvidenceAuthority({ store, now: () => evidenceClock, authenticate: async () => actor,
+            resolveCommand: async () => approval, verifyForm: async () => ({ ...approval, disconnected: false }),
+            verifyCommitObservation: async () => observation, authorize: async () => (await getDoc(doc(database, 'teams/team-1'))).data().ownerId === actor.uid });
+        const evidenceRef = await authority.issue('synthetic-credential', { formHandle: 'test-authority', commandHandle: 'test-authority' });
+        const dispatch = await authority.consume('synthetic-credential', evidenceRef); evidenceClock = committedAt + 1;
+        observation = { ...approval, sourceVersion: event.version, committed: true, committedAt, dispatchId: dispatch.dispatchId };
+        await authority.recordCommit('synthetic-credential', evidenceRef, dispatch.dispatchId, 'test-observer');
         const providers = createScheduleDeliveryProviders({ firestore: serverDatabase(database), messaging: { send: async () => { sends++; if (pushThrows) throw new Error('Synthetic lost push response'); return 'projects/synthetic/messages/emulator'; } } });
-        const dependencies = { store, providers, now: () => committedAt + 1, authenticate: async () => actor, verifyApproval: async () => approval,
-            verifyCommit: async () => ({ ...approval, sourceVersion: event.version, committed: true, committedAt }), readEvent,
+        const dependencies = { store, providers, now: () => committedAt + 1, authenticate: async () => actor, verifyApproval: authority.verifyApproval,
+            verifyCommit: authority.verifyCommit, readEvent,
             authorize: async () => { const team = (await getDoc(doc(database, 'teams/team-1'))).data(); return { actorAllowed: team.ownerId === actor.uid, recipientAllowed: team.recipientEnabled !== false }; },
             resolveRecipients: async () => [{ recipientUid: 'member', channel: 'inbox', endpoint: 'member' }, { recipientUid: 'member', channel: 'push', endpoint: 'synthetic-device' }] };
         const coordinator = createScheduleDeliveryCoordinator(dependencies);
-        const reference = await coordinator.bind('synthetic-credential', { approvalHandle: 'test-authority', commitHandle: 'test-authority' });
-        return { coordinator, reference, store, restart: () => createScheduleDeliveryCoordinator(dependencies), sends: () => sends, losePush: () => { pushThrows = true; } };
+        const reference = await coordinator.bind('synthetic-credential', { approvalHandle: evidenceRef, commitHandle: evidenceRef });
+        return { coordinator, reference, store, authority, evidenceRef, restart: () => createScheduleDeliveryCoordinator(dependencies), sends: () => sends, losePush: () => { pushThrows = true; } };
     }
     it('binds the actual emulator updateTime, coordinates two workers, and keeps approval/provider records private', async () => {
         let privatePaths; let inboxPath;
@@ -127,7 +137,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('notification journal with
             const binding = (await getDoc(doc(database, bindingPath))).data();
             const planId = hash({ plan: true, teamId: 'team-1', eventId: 'event-1', sourceVersion: binding.sourceVersion });
             const plan = await f.store.get('team-1', planId);
-            privatePaths = [bindingPath, `teams/team-1/notificationSendLog/durable_${planId}`, ...plan.requests.map((value) => journalPath(value))];
+            privatePaths = [bindingPath, `teams/team-1/notificationSendLog/durable_${f.evidenceRef.evidenceId}`, `teams/team-1/notificationSendLog/durable_${planId}`, ...plan.requests.map((value) => journalPath(value))];
             inboxPath = plan.requests.find((value) => value.channel === 'inbox').provider.parameters.path;
             const inbox = (await getDoc(doc(database, inboxPath))).data();
             expect(inbox.createdAt.toDate()).toBeInstanceOf(Date);
@@ -160,5 +170,28 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('notification journal with
             await expect(f.coordinator.deliver('synthetic-credential', f.reference)).rejects.toMatchObject({ code: 'source_changed' });
             expect(f.sends()).toBe(0);
         });
+    });
+    it('retains consumed approval evidence after restart and denies repeat execution', async () => {
+        await env.withSecurityRulesDisabled(async (context) => {
+            const f = await coordinatorFixture(context.firestore());
+            await expect(f.authority.consume('synthetic-credential', f.evidenceRef)).rejects.toMatchObject({ code: 'approval_replayed' });
+            expect((await f.authority.verifyCommit(f.evidenceRef)).committed).toBe(true);
+            await updateDoc(doc(context.firestore(), 'teams/team-1'), { ownerId: 'replacement' });
+            await expect(f.authority.consume('synthetic-credential', f.evidenceRef)).rejects.toThrow();
+        });
+    });
+    it('keeps durable status counters server-private and shared across instances', async () => {
+        const key = hash('synthetic-principal');
+        await env.withSecurityRulesDisabled(async (context) => {
+            const first = createFirestoreStatusRateLimit({ firestore: serverDatabase(context.firestore()), now: () => 100000 });
+            const second = createFirestoreStatusRateLimit({ firestore: serverDatabase(context.firestore()), now: () => 100000 });
+            const input = { key, limit: 30, windowMs: 60000 };
+            for (let i = 0; i < 30; i++) expect(await first(input)).toBe(true);
+            expect(await second(input)).toBe(false);
+        });
+        for (const uid of ['owner', 'member', 'other']) {
+            await assertFails(getDoc(doc(db(uid), `mcpStatusRateLimits/${key}`)));
+            await assertFails(setDoc(doc(db(uid), `mcpStatusRateLimits/${key}`), { count: 0, window: 1 }));
+        }
     });
 });

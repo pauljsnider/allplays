@@ -248,5 +248,5 @@ from the repo root.
 
 The unmounted [delivery coordinator and provider interfaces](DELIVERY_INTEGRATION.md)
 add exact event/approval binding, pinned inbox/FCM requests and bounded status
-reconciliation. Trusted durable evidence issuance and live integration remain
-unimplemented; this does not activate direct schedule notifications.
+reconciliation. Durable evidence, status routing and audience interfaces now have isolated
+implementations; live broker/writer/client integration remains unfinished; this does not activate direct schedule notifications.

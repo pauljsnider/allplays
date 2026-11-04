@@ -123,7 +123,7 @@ function createScheduleDeliveryCoordinator({ store, authenticate, verifyApproval
             if (!frozen && !await sourceCurrent(binding)) fail('source_changed');
             let requests = frozen?.requests;
             if (!requests) {
-                const targets = await safely(() => resolveRecipients({ teamId: binding.teamId, eventId: binding.eventId, sourceVersion: binding.sourceVersion }));
+                const targets = await safely(() => resolveRecipients({ teamId: binding.teamId, eventId: binding.eventId, sourceVersion: binding.sourceVersion, actorUid: binding.uid }));
                 if (!Array.isArray(targets) || targets.length > 100) fail();
                 requests = targets.map((target) => {
                     if (!target || Object.keys(target).some((key) => !['recipientUid', 'channel', 'endpoint'].includes(key))) fail();
