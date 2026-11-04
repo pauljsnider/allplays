@@ -9,6 +9,7 @@ import { createDirectScheduleCommands } from './directSchedule.js';
 import { createDirectRsvpCommands } from './directRsvp.js';
 import { createScheduleReviewCommands } from './scheduleReview.js';
 import { createDirectRosterBatchCommands } from './directRosterBatch.js';
+import { createDirectTrackingItemCommands } from './directTrackingItem.js';
 import { createDirectRosterCommands } from './directRoster.js';
 import { createDirectPracticeTimelineCommands } from './directPracticeTimeline.js';
 
@@ -71,6 +72,19 @@ export function createDirectFavoriteMcpSession(dependencies) {
             inputSchema: z.object({ proposalId: id, teamId: resourceId, configId: resourceId, name }).strict(), annotations: mutation
         }, run((args) => commands.prepare({ ...args, mode: 'rename' })));
         registerOutcome('stat_configuration', commands);
+    }
+    if (dependencies.trackingItemStore) {
+        const commands = createDirectTrackingItemCommands({ ...dependencies, store: dependencies.trackingItemStore });
+        const changes = z.object({ name: z.string().min(1).max(120).optional(), description: z.string().max(2000).optional() }).strict();
+        server.registerTool('prepare_create_tracking_item', {
+            description: 'Prepare one private active staff tracking item with a name and optional description. Checks all bounded tracking items for duplicate names. No publication, completion statuses, invitations or messages. Reuse the proposal UUID after interruption.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, changes: changes.extend({ name: z.string().min(1).max(120) }) }).strict(), annotations: mutation
+        }, run(({ proposalId, ...args }) => commands.prepare({ ...args, proposalId, itemId: `mcp_${proposalId}`, mode: 'create' })));
+        server.registerTool('prepare_update_tracking_item', {
+            description: 'Prepare only name/description changes to an exact private active tracking item. Missing fields are preserved; an empty description clears it. Public, archived and legacy items require app review. No player status changes.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, itemId: resourceId, changes }).strict(), annotations: mutation
+        }, run((args) => commands.prepare({ ...args, mode: 'update' })));
+        registerOutcome('tracking_item', commands);
     }
     if (dependencies.rosterStore) {
         const commands = createDirectRosterCommands({ ...dependencies, store: dependencies.rosterStore });
@@ -168,6 +182,10 @@ export function createDirectFavoriteMcpSession(dependencies) {
                 inputSchema: z.object({ ...paging, scope: z.enum(['community', 'published', 'team']) }).strict(), annotations: { readOnlyHint: true }
             }, run(discovery.drills));
         }
+        if (dependencies.trackingItemStore) server.registerTool('list_team_tracking_items', {
+            description: 'Page through managed-team tracking item IDs, names, visibility and status before selecting an exact item. Descriptions and player completions are excluded. Preparation verifies supported private active state and current revisions.',
+            inputSchema: z.object({ teamId: resourceId, cursor: resourceId.optional(), limit: z.number().int().min(1).max(50).optional() }).strict(), annotations: { readOnlyHint: true }
+        }, run(discovery.trackingItems));
         if (dependencies.rosterStore) server.registerTool('get_team_roster', {
             description: 'Discover exact active/inactive player IDs, names, numbers and positions before preparing a player update. Fetch all pages before matching names. Private contact/profile fields are excluded.',
             inputSchema: z.object({ teamId: resourceId, cursor: resourceId.optional(), limit: z.number().int().min(1).max(100).optional() }).strict(), annotations: { readOnlyHint: true }

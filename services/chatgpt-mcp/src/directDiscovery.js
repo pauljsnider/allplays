@@ -62,6 +62,15 @@ export function createDirectDiscovery({ uid, getContext, getDb }) {
                     suggestedMinutes: Number.isInteger(minutes) && minutes > 0 && minutes <= 120 ? minutes : null };
             }), message: 'Choose exact drill IDs and explicit durations. Preparation reads the description and current revision for approval.' };
         },
+        async trackingItems(args) {
+            const db = await managedDb(args.teamId);
+            const query = db.collection(`teams/${args.teamId}/trackingItems`).select('name', 'title', 'label', 'visibility', 'status', 'active', 'archived');
+            return { teamId: args.teamId, ...await page(query, args, (doc) => {
+                const data = doc.data();
+                return { id: doc.id, name: String(data.name || data.title || data.label || ''), visibility: typeof data.visibility === 'string' ? data.visibility : null,
+                    status: typeof data.status === 'string' ? data.status : null, active: data.active === true && data.archived === false };
+            }), message: 'Choose exact IDs. Only supported private active items can be changed directly; preparation verifies the full current schema.' };
+        },
         async roster(args) {
             const context = await getContext();
             if (context.uid !== uid) throw new DomainError('permission_denied', 'The connected account changed.');
