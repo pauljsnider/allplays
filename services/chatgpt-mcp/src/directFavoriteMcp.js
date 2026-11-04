@@ -10,6 +10,8 @@ import { createDirectRsvpCommands } from './directRsvp.js';
 import { createScheduleReviewCommands } from './scheduleReview.js';
 import { createDirectRosterBatchCommands } from './directRosterBatch.js';
 import { createDirectTrackingStatusCommands } from './directTrackingStatus.js';
+import { ASSIGNMENT_ROLE, createDirectAssignmentCommands } from './directAssignments.js';
+import { createDirectAssignmentClaimCommands } from './directAssignmentClaims.js';
 import { createDirectTrackingItemCommands } from './directTrackingItem.js';
 import { createDirectRosterCommands } from './directRoster.js';
 import { createDirectPracticeTimelineCommands } from './directPracticeTimeline.js';
@@ -73,6 +75,33 @@ export function createDirectFavoriteMcpSession(dependencies) {
             inputSchema: z.object({ proposalId: id, teamId: resourceId, configId: resourceId, name }).strict(), annotations: mutation
         }, run((args) => commands.prepare({ ...args, mode: 'rename' })));
         registerOutcome('stat_configuration', commands);
+    }
+    if (dependencies.assignmentStore) {
+        const commands = createDirectAssignmentCommands({ ...dependencies, store: dependencies.assignmentStore });
+        const role = z.string().regex(ASSIGNMENT_ROLE);
+        server.registerTool('prepare_manage_schedule_assignment', {
+            description: 'Prepare creating, replacing or removing one ordinary event assignment. Update uses the exact current role and a complete replacement slot. Shows any claims to remove atomically. Other slots and event fields are preserved; no messages are sent.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, eventId: resourceId, action: z.enum(['create', 'update', 'remove']), role,
+                assignment: z.object({ role, value: z.string().max(100), claimable: z.boolean() }).strict().optional() }).strict(), annotations: mutation
+        }, run(commands.prepare));
+        registerOutcome('schedule_assignment', commands, { ...mutation, destructiveHint: true });
+        server.registerTool('list_managed_event_assignments', {
+            description: 'List supported ordinary-event slots for a current manager. Does not return event notes or unrelated fields.',
+            inputSchema: z.object({ teamId: resourceId, eventId: resourceId }).strict(), annotations: { readOnlyHint: true }
+        }, run(commands.discover));
+    }
+    if (dependencies.assignmentClaimStore) {
+        const commands = createDirectAssignmentClaimCommands({ ...dependencies, store: dependencies.assignmentClaimStore });
+        for (const action of ['claim', 'release']) server.registerTool(`prepare_${action}_schedule_assignment`, {
+            description: action === 'claim' ? 'Prepare claiming one open slot for the connected linked parent. Publishes the current profile display name and account ID to the team; no messages or access changes.'
+                : 'Prepare releasing only this connected linked parent’s own claim. Other people’s claims cannot be released.',
+            inputSchema: z.object({ proposalId: id, teamId: resourceId, eventId: resourceId, role: z.string().regex(ASSIGNMENT_ROLE) }).strict(), annotations: mutation
+        }, run((args) => commands.prepare({ ...args, action })));
+        registerOutcome('own_schedule_assignment', commands, { ...mutation, destructiveHint: true });
+        server.registerTool('list_my_event_assignment_slots', {
+            description: 'List supported slots as open, mine, claimed or fixed for a current linked parent. Does not expose other claimant names or profile contacts.',
+            inputSchema: z.object({ teamId: resourceId, eventId: resourceId }).strict(), annotations: { readOnlyHint: true }
+        }, run(commands.discover));
     }
     if (dependencies.trackingStatusStore) {
         const commands = createDirectTrackingStatusCommands({ ...dependencies, store: dependencies.trackingStatusStore });

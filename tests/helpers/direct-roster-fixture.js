@@ -13,6 +13,7 @@ export function rosterFixture() {
         transaction: vi.fn(async (callback, { beforeCommit } = {}) => {
             const writes = [];
             const result = await callback({ get: store.get, list: store.list,
+                delete: (key) => writes.push(() => records.delete(key)),
                 set: (key, data) => writes.push(() => put(key, data)),
                 patch: (key, data) => writes.push(() => put(key, { ...records.get(key).data, ...data })) });
             if (writes.length) await beforeCommit?.(); writes.forEach((write) => write()); return result;
