@@ -41,9 +41,58 @@ function isGuardian(profile, teamId, playerId) {
 }
 function accountBarrierId(uid) { return digest(uid); }
 function taskId(assignmentId, playerId) { return digest(`${assignmentId}:${playerId}`); }
+function resolveCompletionPolicy(inputValue, priorValue) {
+  if (inputValue !== undefined && !['link_opened_legacy', 'practice_ack'].includes(inputValue)) {
+    fail('invalid-argument', 'Choose a valid completion policy.');
+  }
+  if (priorValue === 'practice_ack' || inputValue === 'practice_ack') return 'practice_ack';
+  return 'link_opened_legacy';
+}
+function youtubeVideoId(value) {
+  let url;
+  try { url = new URL(value); } catch { return null; }
+  if (url.protocol !== 'https:' || url.username || url.password || url.port) return null;
+  const host = url.hostname.toLowerCase();
+  const candidate = host === 'youtu.be'
+    ? url.pathname.slice(1)
+    : ['youtube.com', 'www.youtube.com', 'm.youtube.com'].includes(host)
+      ? url.searchParams.get('v') || url.pathname.match(/^\/(?:shorts|embed)\/([^/]+)$/)?.[1]
+      : '';
+  return candidate && /^[A-Za-z0-9_-]{11}$/.test(candidate) ? candidate : null;
+}
+async function youtubeMetadata(fetcher, value) {
+  const videoId = youtubeVideoId(value);
+  if (!videoId) fail('invalid-argument', 'Paste a valid HTTPS YouTube video link.');
+  const fallback = {
+    videoId,
+    title: '',
+    authorName: '',
+    thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+    source: 'url_fallback'
+  };
+  try {
+    const endpoint = new URL('https://www.youtube.com/oembed');
+    endpoint.searchParams.set('url', `https://www.youtube.com/watch?v=${videoId}`);
+    endpoint.searchParams.set('format', 'json');
+    const response = await fetcher(endpoint, { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) return fallback;
+    const payload = await response.json();
+    return {
+      ...fallback,
+      title: typeof payload.title === 'string' ? payload.title.slice(0, 160) : '',
+      authorName: typeof payload.author_name === 'string' ? payload.author_name.slice(0, 160) : '',
+      thumbnailUrl: typeof payload.thumbnail_url === 'string' && payload.thumbnail_url.startsWith('https://')
+        ? payload.thumbnail_url
+        : fallback.thumbnailUrl,
+      source: 'youtube_oembed'
+    };
+  } catch {
+    return fallback;
+  }
+}
 
 /** All persistent feature state is server-only. Never put evidence in legacy completions. */
-function createResourcePacketsService({ db, auth, enabled = () => false, now = () => new Date() }) {
+function createResourcePacketsService({ db, auth, enabled = () => false, now = () => new Date(), fetcher = globalThis.fetch }) {
   const ref = (teamId, collection, key) => db.doc(`${ROOT}/${teamId}/${collection}/${key}`);
   async function caller(context) {
     if (!enabled()) fail('failed-precondition', 'Resource packets are not available yet.');
@@ -180,7 +229,8 @@ function createResourcePacketsService({ db, auth, enabled = () => false, now = (
             timeZone = text(input.timeZone, 80, 'time zone');
             try { new Intl.DateTimeFormat('en', { timeZone }).format(); } catch { fail('invalid-argument', 'Choose a valid time zone.'); }
           }
-          const assignment = { schemaVersion: 1, assignmentId, revision: prior.revision + 1, publishedVersion: prior.publishedVersion, title: text(input.title, 160, 'packet title'), notes: input.notes ? text(input.notes, 2000, 'packet notes') : '', items, playerIds: players.map((p) => p.id), practiceId, dueAt, timeZone, updatedAt: at, updatedBy: principal.uid };
+          const completionPolicy = resolveCompletionPolicy(input.completionPolicy, prior.completionPolicy);
+          const assignment = { schemaVersion: 1, assignmentId, revision: prior.revision + 1, publishedVersion: prior.publishedVersion, title: text(input.title, 160, 'packet title'), notes: input.notes ? text(input.notes, 2000, 'packet notes') : '', items, playerIds: players.map((p) => p.id), practiceId, dueAt, timeZone, completionPolicy, updatedAt: at, updatedBy: principal.uid };
           tx.set(assignmentRef, assignment);
           remember(assignmentRef);
           result = assignment;
@@ -209,7 +259,7 @@ function createResourcePacketsService({ db, auth, enabled = () => false, now = (
               const priorItem = previousTask?.items.find((prior) => prior.resourceId === item.resourceId && prior.url === item.url);
               if (priorItem && previousTask.signals?.[item.resourceId]) signals[item.resourceId] = previousTask.signals[item.resourceId];
             }
-            tx.set(ref(teamId, 'tasks', taskId(assignmentId, player.id)), { schemaVersion: 1, teamId, assignmentId, version, playerId: player.id, playerName: player.name, title: draft.title, notes: draft.notes, items: draft.items, practiceId: draft.practiceId, dueAt: draft.dueAt, timeZone: draft.timeZone, signals, withdrawn: false, publishedAt: at, updatedAt: at });
+            tx.set(ref(teamId, 'tasks', taskId(assignmentId, player.id)), { schemaVersion: 1, teamId, assignmentId, version, playerId: player.id, playerName: player.name, title: draft.title, notes: draft.notes, items: draft.items, practiceId: draft.practiceId, dueAt: draft.dueAt, timeZone: draft.timeZone, completionPolicy: draft.completionPolicy || 'link_opened_legacy', signals, withdrawn: false, publishedAt: at, updatedAt: at });
           }
           const deliveryId = digest(`${teamId}:${assignmentId}:${version}`);
           if (input.notify) tx.create(ref(teamId, 'outbox', deliveryId), { teamId, assignmentId, version, playerIds: draft.playerIds, actorUid: principal.uid, state: 'pending', createdAt: at });
@@ -255,8 +305,24 @@ function createResourcePacketsService({ db, auth, enabled = () => false, now = (
       return { players };
     }, { readOnly: true });
     const teamId = id(input.teamId);
+    if (input.view === 'youtubeMetadata') {
+      const scope = await db.runTransaction((tx) => access(tx, teamId, principal), { readOnly: true });
+      if (!scope.staff) fail('permission-denied', 'Team staff access is required.');
+      return youtubeMetadata(fetcher, input.url);
+    }
     return db.runTransaction(async (tx) => {
     const scope = await access(tx, teamId, principal);
+    if (input.view === 'openLink') {
+      const playerId = id(input.playerId);
+      const assignmentId = id(input.assignmentId);
+      const resourceId = id(input.resourceId);
+      await family(tx, scope.profile, principal, teamId, playerId);
+      const task = (await tx.get(ref(teamId, 'tasks', taskId(assignmentId, playerId)))).data();
+      if (!task || task.withdrawn || task.version !== revision(input.version)) fail('failed-precondition', 'This packet changed. Refresh before opening.');
+      const item = task.items.find((entry) => entry.resourceId === resourceId);
+      if (!item) fail('invalid-argument', 'This resource is not assigned to this player.');
+      return { url: item.url };
+    }
     async function page(name, source, size = 100) {
       const cursors = input.cursors || {};
       if (Object.hasOwn(cursors, name) && cursors[name] === null) return { docs: [], cursor: null };
@@ -295,4 +361,4 @@ function createResourcePacketsService({ db, auth, enabled = () => false, now = (
   return { command, query };
 }
 
-module.exports = { createResourcePacketsService, externalUrl, PacketError, ROOT, taskId, isGuardian, isStaff, active, accountBarrierId };
+module.exports = { createResourcePacketsService, externalUrl, resolveCompletionPolicy, youtubeVideoId, youtubeMetadata, PacketError, ROOT, taskId, isGuardian, isStaff, active, accountBarrierId };

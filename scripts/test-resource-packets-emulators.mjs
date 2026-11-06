@@ -6,6 +6,9 @@ import { spawnSync } from 'node:child_process';
 // This disposable wrapper loads only the exact feature core, never production
 // triggers, provider credentials or production Firebase configuration.
 const root = resolve(import.meta.dirname, '..');
+const portOffset = Number.parseInt(process.env.RESOURCE_PACKETS_EMULATOR_PORT_OFFSET || '0', 10);
+if (!Number.isSafeInteger(portOffset) || portOffset < 0 || portOffset > 1000) throw new Error('Choose a port offset from 0 to 1000.');
+const ports = { auth: 9299 + portOffset, firestore: 8280 + portOffset, functions: 5201 + portOffset };
 const dir = mkdtempSync(join(tmpdir(), 'allplays-resource-emulators-'));
 try {
   symlinkSync(join(root, 'functions/node_modules'), join(dir, 'node_modules'));
@@ -55,11 +58,11 @@ if (${JSON.stringify(process.argv.includes('--triggers'))}) {
   writeFileSync(join(dir, 'firebase.json'), JSON.stringify({
     functions: { source: '.', ignore: ['node_modules', 'firebase.json'] },
     firestore: { rules: join(root, 'firestore.rules') },
-    emulators: { auth: { host: '127.0.0.1', port: 9299 }, firestore: { host: '127.0.0.1', port: 8280 }, functions: { host: '127.0.0.1', port: 5201 }, ui: { enabled: false }, singleProjectMode: true }
+    emulators: { auth: { host: '127.0.0.1', port: ports.auth }, firestore: { host: '127.0.0.1', port: ports.firestore }, functions: { host: '127.0.0.1', port: ports.functions }, ui: { enabled: false }, singleProjectMode: true }
   }));
   const testCommand = process.argv.includes('--browser')
     ? `node ${JSON.stringify(join(root, 'scripts/test-resource-packets-browser.mjs'))}`
     : `node --test ${JSON.stringify(join(root, process.argv.includes('--triggers') ? 'functions/test/resource-packets.trigger.cjs' : 'functions/test/resource-packets.emulator.cjs'))}`;
-  const result = spawnSync(join(root, 'node_modules/.bin/firebase'), ['emulators:exec', '--config', join(dir, 'firebase.json'), '--project', 'demo-allplays-resource', '--only', 'auth,firestore,functions', testCommand], { cwd: root, stdio: 'inherit', env: { ...process.env, GCLOUD_PROJECT: 'demo-allplays-resource', FIREBASE_CLI_DISABLE_TELEMETRY: '1' } });
+  const result = spawnSync(join(root, 'node_modules/.bin/firebase'), ['emulators:exec', '--config', join(dir, 'firebase.json'), '--project', 'demo-allplays-resource', '--only', 'auth,firestore,functions', testCommand], { cwd: root, stdio: 'inherit', env: { ...process.env, GCLOUD_PROJECT: 'demo-allplays-resource', FIREBASE_CLI_DISABLE_TELEMETRY: '1', RESOURCE_PACKETS_FUNCTIONS_PORT: String(ports.functions), RESOURCE_PACKETS_APP_PORT: String(4179 + portOffset) } });
   process.exitCode = result.status ?? 1;
 } finally { rmSync(dir, { recursive: true, force: true }); }

@@ -7,9 +7,19 @@ describe('assignment presentation', () => {
       items: [{ resourceId: 'a' }, { resourceId: 'b' }],
       signals: { a: { opened: { value: true } }, b: { watched: { value: true } } }
     } as unknown as PacketTask;
-    expect(assignmentProgress(task)).toEqual({ opened: 1, total: 2, complete: false });
+    expect(assignmentProgress(task)).toEqual({ opened: 1, practiced: 0, total: 2, legacy: true, complete: false });
     task.signals.b.opened = { value: true, at: 'now', actorUid: 'guardian' };
     expect(assignmentProgress(task).complete).toBe(true);
+  });
+  it('requires explicit practice acknowledgment for new assignments', () => {
+    const task = {
+      completionPolicy: 'practice_ack',
+      items: [{ resourceId: 'a' }],
+      signals: { a: { opened: { value: true }, practiced: { value: false } } }
+    } as unknown as PacketTask;
+    expect(assignmentProgress(task).complete).toBe(false);
+    task.signals.a.practiced = { value: true, at: 'now', actorUid: 'guardian' };
+    expect(assignmentProgress(task)).toMatchObject({ opened: 1, practiced: 1, legacy: false, complete: true });
   });
   it('uses only recognized YouTube IDs for a thumbnail; other HTTPS sites get an honest placeholder', () => {
     expect(videoPreview('https://youtu.be/abcdefghijk')?.thumbnail).toBe('https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg');

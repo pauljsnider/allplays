@@ -2,6 +2,9 @@ import { Browser } from '@capacitor/browser';
 import { Capacitor } from '@capacitor/core';
 import { isNativeRuntime } from './nativeRuntime';
 import { toAppServiceError } from './appErrors';
+import type { YouTubeMetadata } from './youtubeMetadata';
+
+export type PacketCompletionPolicy = 'link_opened_legacy' | 'practice_ack';
 
 export type PacketResource = { resourceId: string; version: number; title: string; teachingPoint: string; url: string; drillId?: string };
 export type PacketItem = Omit<PacketResource, 'version'> & { resourceVersion: number };
@@ -16,6 +19,7 @@ export type PacketAssignment = {
   practiceId: string | null;
   dueAt: string | null;
   timeZone: string | null;
+  completionPolicy?: PacketCompletionPolicy;
 };
 export type PacketSignal = { value: boolean; at: string; actorUid: string };
 export type PacketTask = {
@@ -29,6 +33,7 @@ export type PacketTask = {
   items: PacketItem[];
   dueAt: string | null;
   timeZone: string | null;
+  completionPolicy?: PacketCompletionPolicy;
   signals: Record<string, Partial<Record<'opened' | 'watched' | 'practiced', PacketSignal>>>;
 };
 export type PacketStaffView = {
@@ -63,6 +68,9 @@ async function invoke(name: string, data: Record<string, unknown>, expectedUid?:
 export async function loadResourcePacketStaff(teamId: string, cursors?: Record<string, string | null>): Promise<PacketStaffView> {
   return (await invoke('resourcePacketsQuery', { teamId, view: 'staff', ...(cursors ? { cursors } : {}) })) as PacketStaffView;
 }
+export async function loadResourcePacketYouTubeMetadata(teamId: string, url: string): Promise<YouTubeMetadata> {
+  return (await invoke('resourcePacketsQuery', { teamId, view: 'youtubeMetadata', url })) as YouTubeMetadata;
+}
 export async function loadResourcePacketFamily(
   teamId: string,
   playerId: string,
@@ -86,58 +94,66 @@ export async function resourcePacketCommand(uid: string, data: Record<string, un
   pending.delete(key);
   return result;
 }
+export async function authorizeResourcePacketLink(task: PacketTask, item: PacketItem, expectedUid?: string): Promise<string> {
+  const result = (await invoke('resourcePacketsQuery', {
+    teamId: task.teamId,
+    view: 'openLink',
+    assignmentId: task.assignmentId,
+    version: task.version,
+    playerId: task.playerId,
+    resourceId: item.resourceId
+  }, expectedUid)) as { url: string };
+  const url = new URL(result.url);
+  const assignedUrl = new URL(item.url);
+  if (
+    url.protocol !== 'https:' || url.username || url.password ||
+    assignedUrl.protocol !== 'https:' || assignedUrl.username || assignedUrl.password ||
+    url.href !== assignedUrl.href
+  ) throw new Error('This link is unavailable or changed. Reload before opening it.');
+  return url.href;
+}
+async function recordResourcePacketOpen(uid: string, task: PacketTask, item: PacketItem) {
+  await resourcePacketCommand(uid, {
+    teamId: task.teamId,
+    action: 'report',
+    assignmentId: task.assignmentId,
+    version: task.version,
+    playerId: task.playerId,
+    resourceId: item.resourceId,
+    kind: 'opened'
+  });
+}
 export async function openResourcePacketLink(uid: string, task: PacketTask, item: PacketItem) {
   if (isNativeRuntime()) {
     if (!resourcePacketsAvailable() || !Capacitor.isPluginAvailable('Browser'))
       throw new Error('Video opening is unavailable in this app.');
-    // Reauthorize and resolve the current destination without recording an open.
-    // A stale/replaced assignment must never launch or complete another item.
-    const page = (await invoke('resourcePacketsQuery', {
-      teamId: task.teamId, playerId: task.playerId, assignmentId: task.assignmentId, view: 'family'
-    }, uid)) as { tasks: PacketTask[] };
+    const url = await authorizeResourcePacketLink(task, item, uid);
     const { getNativeAuthUserId } = await import('./authService');
     if (getNativeAuthUserId() !== uid) throw new Error('Account changed. Reload before opening this video.');
-    const current = page.tasks.find((entry) => entry.assignmentId === task.assignmentId && entry.version === task.version);
-    const resource = current?.items.find((entry) => entry.resourceId === item.resourceId && entry.resourceVersion === item.resourceVersion && entry.url === item.url);
-    if (!resource) throw new Error('This assignment changed or is unavailable. Reload before opening it.');
-    const url = new URL(resource.url);
-    if (url.protocol !== 'https:' || url.username || url.password)
-      throw new Error('This link is unavailable.');
     // Browser.open resolves when the native browser opens, not when playback starts.
     // A rejected launch must not write completion. Returning to the app needs no
     // browser redirect and never creates another signal.
-    await Browser.open({ url: url.href });
+    await Browser.open({ url });
     try {
-      await resourcePacketCommand(uid, {
-        teamId: task.teamId, action: 'report', assignmentId: task.assignmentId,
-        version: task.version, playerId: task.playerId, resourceId: item.resourceId, kind: 'opened'
-      });
+      await recordResourcePacketOpen(uid, task, item);
     } catch {
-      throw new Error('The video link opened, but progress could not be confirmed. Retry Watch to confirm it. Playback is not verified.');
+      throw new Error('The video link opened, but progress could not be confirmed. Retry Open video to confirm it. Playback is not verified.');
     }
     return;
   }
-
   // No href, preload, hover or AI read calls this function. Reserve a new tab
   // during the deliberate gesture, before the authenticated command resolves.
   const tab = window.open('about:blank', '_blank');
   if (!tab) throw new Error('Allow this link to open in a new tab, then try again.');
   tab.opener = null;
+  let navigated = false;
   try {
-    const result = (await resourcePacketCommand(uid, {
-      teamId: task.teamId,
-      action: 'report',
-      assignmentId: task.assignmentId,
-      version: task.version,
-      playerId: task.playerId,
-      resourceId: item.resourceId,
-      kind: 'opened'
-    })) as { url: string };
-    const url = new URL(result.url);
-    if (url.protocol !== 'https:') throw new Error('This link is unavailable.');
-    tab.location.replace(url.href);
+    const url = await authorizeResourcePacketLink(task, item);
+    tab.location.replace(url);
+    navigated = true;
+    await recordResourcePacketOpen(uid, task, item);
   } catch (error) {
-    tab.close();
+    if (!navigated) tab.close();
     throw error;
   }
 }
@@ -148,4 +164,23 @@ export async function loadResourcePacketLinkedPlayers(): Promise<{
   return (await invoke('resourcePacketsQuery', { view: 'linkedPlayers' })) as {
     players: { teamId: string; playerId: string; teamName: string; playerName: string }[];
   };
+}
+
+export type PacketHomeTask = PacketTask & { teamName: string };
+
+/** Load the complete linked-family task set without fanning requests out in parallel. */
+export async function loadResourcePacketHomeTasks(): Promise<PacketHomeTask[]> {
+  const { players } = await loadResourcePacketLinkedPlayers();
+  const tasks: PacketHomeTask[] = [];
+  for (const player of players) {
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      if (++pages > 100) throw new Error('Unable to load the complete practice list.');
+      const page = await loadResourcePacketFamily(player.teamId, player.playerId, cursor);
+      tasks.push(...page.tasks.map((task) => ({ ...task, teamName: player.teamName })));
+      cursor = page.cursors.tasks || undefined;
+    } while (cursor);
+  }
+  return tasks;
 }

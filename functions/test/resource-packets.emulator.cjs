@@ -7,13 +7,16 @@ const { ROOT } = require('../resource-packets-core.cjs');
 const { createResourcePacketDelivery } = require('../resource-packets-delivery.cjs');
 const { cleanupResourcePacketAccount } = require('../resource-packets-deletion.cjs');
 const projectId = 'demo-allplays-resource';
-if (process.env.GCLOUD_PROJECT !== projectId || process.env.FIRESTORE_EMULATOR_HOST !== '127.0.0.1:8280' || process.env.FIREBASE_AUTH_EMULATOR_HOST !== '127.0.0.1:9299') throw new Error('Real isolated emulator stack required; tests must not skip');
+const firestoreHost = process.env.FIRESTORE_EMULATOR_HOST || '';
+const authHost = process.env.FIREBASE_AUTH_EMULATOR_HOST || '';
+const functionsPort = Number(process.env.RESOURCE_PACKETS_FUNCTIONS_PORT || 5201);
+if (process.env.GCLOUD_PROJECT !== projectId || !/^127\.0\.0\.1:\d+$/.test(firestoreHost) || !/^127\.0\.0\.1:\d+$/.test(authHost) || !Number.isSafeInteger(functionsPort)) throw new Error('Real isolated emulator stack required; tests must not skip');
 admin.initializeApp({ projectId, credential: { getAccessToken: async () => ({ access_token: 'local-emulator-only', expires_in: 3600 }) } });
 const db = new (require('firebase-admin/firestore').Firestore)({ projectId });
 const tokens = {};
 let sequence = 0;
 async function call(uid, data, method = 'command') {
-  const response = await fetch(`http://127.0.0.1:5201/${projectId}/us-central1/${method}`, {
+  const response = await fetch(`http://127.0.0.1:${functionsPort}/${projectId}/us-central1/${method}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', ...(tokens[uid] ? { Authorization: `Bearer ${tokens[uid]}` } : {}) },
     body: JSON.stringify({ data })
   });
@@ -29,7 +32,7 @@ test('real Auth, callable and Firestore isolation with separate households', asy
     const email = `${uid}@example.invalid`; const password = 'OnlyLocalFixture-123!';
     await admin.auth().createUser({ uid, email, password, emailVerified: true });
     await db.doc(`users/${uid}`).set({ active: true, isAdmin: uid === 'admin', parentPlayerKeys: ['parent-a', 'co-guardian'].includes(uid) ? ['team-a::child-a', 'team-a::sibling'] : uid === 'parent-b' ? ['team-a::child-b'] : [] });
-    const response = await fetch('http://127.0.0.1:9299/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=local-only', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, returnSecureToken: true }) });
+    const response = await fetch(`http://${authHost}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=local-only`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, returnSecureToken: true }) });
     const result = await response.json(); assert.ok(result.idToken); tokens[uid] = result.idToken;
   }
   await db.doc('teams/team-a').set({ ownerId: 'staff', active: true });
@@ -50,6 +53,7 @@ test('real Auth, callable and Firestore isolation with separate households', asy
   });
   await t.test('staff authors, unrelated and family cannot author', async () => {
     await denied(command('parent-a', resource)); await denied(command('outsider', resource));
+    await denied(call('parent-a', { teamId: 'team-a', view: 'youtubeMetadata', url: 'https://youtu.be/abcdefghijk' }, 'query'));
     await denied(command('missing', resource), 'UNAUTHENTICATED');
     const saved = await command('staff', resource); assert.equal(saved.version, 1);
   });
@@ -57,7 +61,7 @@ test('real Auth, callable and Firestore isolation with separate households', asy
     for (const url of ['javascript:alert(1)', 'http://example.com', 'https://localhost/x', 'https://127.0.0.1', 'https://user:pass@example.com', 'https://example.com:444']) await denied(command('staff', { ...resource, expectedRevision: 1, url }), 'INVALID_ARGUMENT');
     await denied(command('staff', resource), 'ABORTED');
   });
-  await command('staff', { action: 'saveDraft', assignmentId: 'packet-1', expectedRevision: 0, title: 'Practice at home', resourceIds: ['resource-1'], playerIds: ['child-a', 'sibling'] });
+  await command('staff', { action: 'saveDraft', assignmentId: 'packet-1', expectedRevision: 0, title: 'Practice at home', resourceIds: ['resource-1'], playerIds: ['child-a', 'sibling'], completionPolicy: 'practice_ack' });
   await t.test('drafts invisible, explicit publish, durable duplicate protection', async () => {
     assert.deepEqual((await call('parent-a', { teamId: 'team-a', view: 'family', playerId: 'child-a' }, 'query')).tasks, []);
     await denied(command('staff', { action: 'publish', assignmentId: 'packet-1', expectedRevision: 1, notify: true }), 'FAILED_PRECONDITION');
@@ -72,11 +76,17 @@ test('real Auth, callable and Firestore isolation with separate households', asy
     const query = { teamId: 'team-a', view: 'family', playerId: 'child-a' };
     assert.equal((await call('parent-a', query, 'query')).tasks.length, 1);
     assert.equal((await db.collection(`${ROOT}/team-a/evidence`).get()).size, 0);
+    const openLink = { teamId: 'team-a', view: 'openLink', assignmentId: 'packet-1', version: 1, playerId: 'child-a', resourceId: 'resource-1' };
+    assert.equal((await call('parent-a', openLink, 'query')).url, resource.url);
+    assert.equal((await db.collection(`${ROOT}/team-a/evidence`).get()).size, 0);
+    await denied(call('parent-b', openLink, 'query'));
+    await denied(call('parent-a', { ...openLink, version: 2 }, 'query'), 'FAILED_PRECONDITION');
     const report = { action: 'report', assignmentId: 'packet-1', version: 1, playerId: 'child-a', resourceId: 'resource-1', kind: 'opened', requestId: 'open-once' };
     assert.equal((await command('parent-a', report)).url, resource.url);
     await command('parent-a', report);
     await command('co-guardian', { ...report, kind: 'practiced', value: true, requestId: 'practice-once' });
     const task = (await call('parent-a', query, 'query')).tasks[0];
+    assert.equal(task.completionPolicy, 'practice_ack');
     assert.equal(task.signals['resource-1'].opened.actorUid, 'parent-a');
     assert.equal(task.signals['resource-1'].practiced.actorUid, 'co-guardian');
     assert.equal(task.signals['resource-1'].watched, undefined);
@@ -126,12 +136,12 @@ test('real Auth, callable and Firestore isolation with separate households', asy
     const evidence = (await db.collection(`${ROOT}/team-a/evidence`).get()).docs[0];
     for (const uid of ['staff', 'parent-a', 'parent-b', 'outsider', 'admin', 'missing']) {
       const headers = tokens[uid] ? { Authorization: `Bearer ${tokens[uid]}` } : {};
-      const response = await fetch(`http://127.0.0.1:8280/v1/projects/${projectId}/databases/(default)/documents/${evidence.ref.path}`, { headers });
+      const response = await fetch(`http://${firestoreHost}/v1/projects/${projectId}/databases/(default)/documents/${evidence.ref.path}`, { headers });
       assert.equal(response.status, 403, `direct evidence read denied: ${uid}`);
-      const write = await fetch(`http://127.0.0.1:8280/v1/projects/${projectId}/databases/(default)/documents/${evidence.ref.path}`, { method: 'PATCH', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { forged: { booleanValue: true } } }) });
+      const write = await fetch(`http://${firestoreHost}/v1/projects/${projectId}/databases/(default)/documents/${evidence.ref.path}`, { method: 'PATCH', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { forged: { booleanValue: true } } }) });
       assert.equal(write.status, 403, `direct evidence write denied: ${uid}`);
       for (const collectionId of ['evidence', 'tasks', 'operations', 'assignments', 'resources', 'outbox', 'versions', 'records']) {
-        const query = await fetch(`http://127.0.0.1:8280/v1/projects/${projectId}/databases/(default)/documents:runQuery`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ structuredQuery: { from: [{ collectionId, allDescendants: true }] } }) });
+        const query = await fetch(`http://${firestoreHost}/v1/projects/${projectId}/databases/(default)/documents:runQuery`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ structuredQuery: { from: [{ collectionId, allDescendants: true }] } }) });
         assert.equal(query.status, 403, `collection group denied: ${uid}/${collectionId}`);
       }
     }
