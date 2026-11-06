@@ -3,7 +3,7 @@ import {
     sanitizeTelemetryProperties,
     sanitizeTelemetryRoute
 } from './telemetry-utils.js?v=3';
-import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
+import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=2';
 
 const TELEMETRY_VERSION = '2.0.0';
 const DEFAULT_ENDPOINT = 'https://us-central1-game-flow-c6311.cloudfunctions.net/collectTelemetry';

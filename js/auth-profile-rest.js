@@ -1,4 +1,4 @@
-import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
+import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=2';
 
 function decodeFirestoreValue(value) {
     if (!value || typeof value !== 'object') return null;

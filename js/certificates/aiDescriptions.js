@@ -1,4 +1,4 @@
-import { getAI, getGenerativeModel, GoogleAIBackend } from '../vendor/firebase-ai.js';
+import { getAI, getGenerativeModel, GoogleAIBackend } from '../firebase-ai.js?v=1';
 import { getApp } from '../vendor/firebase-app.js';
 
 export const CERTIFICATE_DESCRIPTION_CHAR_LIMIT = 350;

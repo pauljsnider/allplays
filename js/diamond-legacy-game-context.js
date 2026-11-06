@@ -42,7 +42,7 @@ async function defaultLoadPublicDocuments({ collectionPath }) {
         getDocs,
         limit: limitQuery,
         query
-    } = await import('./firebase.js?v=33');
+    } = await import('./firebase.js?v=4433197');
     const snapshot = await getDocs(query(
         collection(db, collectionPath),
         limitQuery(MAX_PUBLIC_PLAYER_DOCUMENTS + 1)
@@ -57,7 +57,7 @@ async function defaultLoadPublicDocuments({ collectionPath }) {
 }
 
 async function defaultLoadCanonicalGame({ teamId, gameId }) {
-    const { db, doc, getDoc } = await import('./firebase.js?v=33');
+    const { db, doc, getDoc } = await import('./firebase.js?v=4433197');
     const snapshot = await getDoc(doc(db, `teams/${teamId}/games`, gameId));
     return {
         game: snapshot.exists()
@@ -68,7 +68,7 @@ async function defaultLoadCanonicalGame({ teamId, gameId }) {
 }
 
 async function defaultCallableInvoker(name, payload) {
-    const { functions, httpsCallable } = await import('./firebase.js?v=33');
+    const { functions, httpsCallable } = await import('./firebase.js?v=4433197');
     const response = await httpsCallable(functions, name)(payload);
     return response?.data;
 }

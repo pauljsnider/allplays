@@ -82,6 +82,7 @@ describe('hosting cutover runbook contract', () => {
         const normalizedRollout = normalize(appCheckRollout);
         expect(normalizedRollout).toContain('[hosting cutover runbook](hosting-cutover-runbook.md)');
         expect(normalizedRollout).toMatch(/candidate-host validation and DNS cutover observation/i);
-        expect(normalizedRollout).toContain('every Firebase API remains **Unenforced**');
+        expect(normalizedRollout).toContain('Preserve the currently active protection policy during cutover.');
+        expect(normalizedRollout).not.toContain('every Firebase API remains **Unenforced**');
     });
 });

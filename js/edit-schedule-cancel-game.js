@@ -1,4 +1,4 @@
-import { buildScheduleNotificationTargets, postScheduleNotificationTargets } from './schedule-notifications.js?v=6';
+import { buildScheduleNotificationTargets, postScheduleNotificationTargets } from './schedule-notifications.js?v=7';
 
 function formatCancelledGameDate(value) {
     const gameDate = value?.toDate ? value.toDate() : new Date(value);

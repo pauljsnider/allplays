@@ -131,7 +131,7 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
         /import\s*\{(?=[\s\S]*\bwriteBatch\b)(?=[\s\S]*\bonSnapshot\b)[\s\S]*?\}\s*from\s*['"]\.\/firebase\.js(?:\?v=[^'"]+)?['"];?\s*/,
         ''
     );
-    rewritten = replaceNamedImportByModulePath(rewritten, './vendor/firebase-ai.js', 'const { getAI, getGenerativeModel, GoogleAIBackend } = deps.firebaseAi;');
+    rewritten = replaceNamedImportByModulePath(rewritten, './firebase-ai.js', 'const { getAI, getGenerativeModel, GoogleAIBackend } = deps.firebaseAi;');
     rewritten = replaceNamedImportByModulePath(rewritten, './vendor/firebase-app.js', 'const { getApp } = deps.firebaseApp;');
     rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-notes.js', 'const { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } = deps.liveTrackerNotes;');
     rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-integrity.js', 'const { canApplySubstitution, applySubstitution } = deps.liveTrackerIntegrity;');

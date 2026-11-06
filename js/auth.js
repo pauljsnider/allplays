@@ -11,18 +11,18 @@ import {
     isSignInWithEmailLink,
     signInWithEmailLink,
     updatePassword
-} from './firebase.js?v=33';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433210';
+} from './firebase.js?v=4433197';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433212';
 import { executeEmailPasswordSignup } from './signup-flow.js?v=16';
-import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=12';
+import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=14';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=3';
 import { createInviteProcessor } from './accept-invite-flow.js?v=443315';
 import {
     queueCurrentUserVerificationEmail,
     queueInviteSignInEmail,
     queuePasswordResetEmail
-} from './auth-email.js?v=8';
-import { loadAuthProfileViaRest } from './auth-profile-rest.js?v=1';
+} from './auth-email.js?v=10';
+import { loadAuthProfileViaRest } from './auth-profile-rest.js?v=2';
 import { raceFirstSuccessfulRead } from './hedged-read.js?v=1';
 
 const AUTH_PROFILE_REST_HEDGE_DELAY_MS = 750;

@@ -67,7 +67,7 @@ vi.mock('../../js/firebase.js', () => ({
 vi.mock('../../js/vendor/firebase-app.js', () => ({
     getApp: vi.fn(() => ({}))
 }));
-vi.mock('../../js/vendor/firebase-ai.js', () => ({
+vi.mock('../../js/firebase-ai.js', () => ({
     getAI: vi.fn(),
     getGenerativeModel: vi.fn(),
     GoogleAIBackend: {}

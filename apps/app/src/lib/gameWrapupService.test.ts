@@ -25,7 +25,7 @@ vi.mock('../../../../js/db.js', () => dbMocks);
 vi.mock('../../../../js/vendor/firebase-app.js', () => ({
   getApp: vi.fn(() => ({}))
 }));
-vi.mock('../../../../js/vendor/firebase-ai.js', () => ({
+vi.mock('../../../../js/firebase-ai.js', () => ({
   getAI: vi.fn(() => ({})),
   getGenerativeModel: aiMocks.getGenerativeModel,
   GoogleAIBackend: vi.fn()

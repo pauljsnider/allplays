@@ -17,7 +17,7 @@ window.__FIRE_RAW_AUTH__ = user => {
 export async function stubDelayedProfileAuth(page) {
     await page.route(/\/js\/auth\.js(?:\?.*)?$/, route => route.fulfill({
         contentType: 'application/javascript',
-        body: `import { auth, onAuthStateChanged } from './firebase.js?v=33';
+        body: `import { auth, onAuthStateChanged } from './firebase.js?v=4433197';
         export function checkAuth(callback) {
             return onAuthStateChanged(auth, async user => {
                 if (window.__HOLD_PROFILE__) {
@@ -74,7 +74,7 @@ export async function verifyRawReplayAuthIsolation(page, { selector, inFlight, r
     // observer. Its profile read can remain pending or fail after SDK identity
     // already changed; media invalidation must never wait for this callback.
     await page.evaluate(async () => {
-        const { checkAuth } = await import('/js/auth.js?v=4433215');
+        const { checkAuth } = await import('/js/auth.js?v=4433217');
         checkAuth(() => { window.__ENRICHED_AUTH_CALLS__ = (window.__ENRICHED_AUTH_CALLS__ || 0) + 1; });
     });
     if (inFlight) {

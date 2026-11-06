@@ -34,7 +34,7 @@ import {
     resolveSafeProfilePhotoWriteUrl
 } from './safe-image-url.js?v=1';
 import { buildGameWatchShareUrl } from './game-share-links.js?v=1';
-import { shareOrCopy } from './utils.js?v=443386';
+import { shareOrCopy } from './utils.js?v=443388';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import { DIAMOND_ENGINE, buildDiamondViewerUrl } from './diamond-scorebook-routing.js?v=2';
 
@@ -235,7 +235,7 @@ function usesCompactPanelLayout() {
 }
 
 function loadOverlayDatabase() {
-    return import('./db.js?v=4433210');
+    return import('./db.js?v=4433212');
 }
 
 function getTimestampMs(value) {
@@ -952,7 +952,7 @@ async function generateAiResponse(question) {
     if (elements.aiThinking) elements.aiThinking.hidden = false;
     try {
         const [aiTools, appTools] = await Promise.all([
-            import('./vendor/firebase-ai.js'),
+            import('./firebase-ai.js?v=1'),
             import('./vendor/firebase-app.js')
         ]);
         const ai = aiTools.getAI(appTools.getApp(), { backend: new aiTools.GoogleAIBackend() });
@@ -1138,7 +1138,7 @@ async function initializeChatComposer(database, teamId, gameId) {
 
     try {
         const [authTools, chatTools] = await Promise.all([
-            import('./auth.js?v=4433215'),
+            import('./auth.js?v=4433217'),
             import('./live-game-chat.js?v=4')
         ]);
         uiState.chatServices = {
@@ -1968,7 +1968,7 @@ async function startDemoReplayMode(params) {
         { controllableReplay: true }
     );
     uiState.videoDurationMs = 15_000;
-    const stateTools = await import('./live-game-state.js?v=58');
+    const stateTools = await import('./live-game-state.js?v=60');
     await loadReplaySnapshot({
         getLiveEvents: async () => replayEvents,
         getLiveChatHistory: async () => replayChat,
@@ -2123,7 +2123,7 @@ async function startRealMode(params) {
         const [database, videoTools, stateTools] = await Promise.all([
             loadOverlayDatabase(),
             import('./live-game-video.js?v=443319'),
-            import('./live-game-state.js?v=58')
+            import('./live-game-state.js?v=60')
         ]);
         uiState.optionalTeamStatus = 'pending';
         const teamPromise = loadWithBoundedRetry(
@@ -2203,7 +2203,7 @@ async function startRealMode(params) {
                     if (projection !== replayPlaybackProjection) showVideoFallback('Checking replay access…');
                     replayPlaybackProjection = projection;
                     if (!await playbackAuthReady || requestId !== uiState.videoRequestId) return false;
-                    const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=3');
+                    const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=5');
                     if (requestId !== uiState.videoRequestId) return false;
                     options = await resolveAuthorizedReplayPlayback({ teamId, gameId });
                     if (requestId !== uiState.videoRequestId) return false;
@@ -2231,7 +2231,7 @@ async function startRealMode(params) {
                         showReplayAccessGate({ state: 'unavailable' });
                         return true;
                     }
-                    const entitlements = await import('./team-entitlements.js?v=9');
+                    const entitlements = await import('./team-entitlements.js?v=11');
                     if (requestId !== uiState.videoRequestId) return false;
                     const gateEnabled = entitlements.isRecordedReplayTeamPassGateEnabled({
                         game: playbackGame,
@@ -2296,7 +2296,7 @@ async function startRealMode(params) {
             // Do not delay score/chat subscriptions on a video-only module.
             // Authorized playback itself waits until this observer is installed.
             playbackAuthReady = (async () => {
-                const { observeReplayPlaybackAuth, createReplayPlaybackRevalidator } = await import('./game-replay-playback.js?v=3');
+                const { observeReplayPlaybackAuth, createReplayPlaybackRevalidator } = await import('./game-replay-playback.js?v=5');
                 if (isReplay && game.hasRecordedReplay !== false && hasCompletedReplayLifecycle(game)) {
                     replayPlaybackRevalidator = createReplayPlaybackRevalidator({
                         refresh: renderVideoNow,

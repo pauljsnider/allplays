@@ -1,5 +1,5 @@
 import { getApp as legacyGetApp } from '@legacy/vendor/firebase-app.js';
-import { getAI as legacyGetAI, getGenerativeModel as legacyGetGenerativeModel, GoogleAIBackend as LegacyGoogleAIBackend } from '@legacy/vendor/firebase-ai.js';
+import { getAI as legacyGetAI, getGenerativeModel as legacyGetGenerativeModel, GoogleAIBackend as LegacyGoogleAIBackend } from '@legacy/firebase-ai.js';
 import { buildRotationPlanFromGamePlan as legacyBuildRotationPlanFromGamePlan, normalizeLineupsForGamePlanPlanner as legacyNormalizeLineupsForGamePlanPlanner } from '@legacy/game-plan-interop.js';
 import { buildGamePlanIntervals as legacyBuildGamePlanIntervals } from '@legacy/game-plan-intervals.js';
 

@@ -37,7 +37,7 @@ const mockStorage = () => {
 Object.defineProperty(window, 'localStorage', { value: mockStorage() });
 Object.defineProperty(window, 'sessionStorage', { value: mockStorage() });
 
-vi.mock('../../js/firebase-app-check-rest.js?v=1', () => ({
+vi.mock('../../js/firebase-app-check-rest.js?v=2', () => ({
     getPrimaryAppCheckHeaders: appCheckMocks.getPrimaryAppCheckHeaders
 }));
 

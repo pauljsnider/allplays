@@ -15,7 +15,7 @@ import {
   setDoc as legacySetDoc
 } from '@legacy/firebase.js';
 import { getApp as legacyGetApp } from '@legacy/vendor/firebase-app.js';
-import { getAI as legacyGetAI, getGenerativeModel as legacyGetGenerativeModel, GoogleAIBackend as LegacyGoogleAIBackend } from '@legacy/vendor/firebase-ai.js';
+import { getAI as legacyGetAI, getGenerativeModel as legacyGetGenerativeModel, GoogleAIBackend as LegacyGoogleAIBackend } from '@legacy/firebase-ai.js';
 
 /**
  * Typed adapter boundary for the legacy js/ + vendored Firebase imports used by
