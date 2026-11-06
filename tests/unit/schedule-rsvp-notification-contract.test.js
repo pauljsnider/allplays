@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
+import { rosterFixture } from '../helpers/direct-roster-fixture.js';
+import { createDirectScheduleCommands } from '../../services/chatgpt-mcp/src/directSchedule.js';
 
 const require = createRequire(import.meta.url);
 const { buildAppUrl } = require('../../functions/app-links-core.cjs');
@@ -38,6 +40,30 @@ function getSendCreatedScheduleEventNotification({ sendCategoryNotification }) {
 }
 
 describe('schedule and RSVP notification contract', () => {
+    it.each(['game', 'practice'])('routes an explicitly approved prototype %s through the ordinary notification handler', async (eventType) => {
+        const f = rosterFixture();
+        const commands = createDirectScheduleCommands(f.dependencies);
+        const proposalId = '00112233-4455-4677-8899-aabbccddeeff';
+        const eventId = `mcp_${proposalId}`;
+        const changes = { startDate: '2060-12-01T17:00Z', ...(eventType === 'game' ? { opponent: 'Synthetic Visitors' } : { title: 'Synthetic Practice', endDate: '2060-12-01T18:00Z' }) };
+        await commands.prepare({ proposalId, teamId: 'team-1', eventId, eventType, mode: 'create', changes });
+        await commands.confirm({ proposalId }, async () => ({ action: 'accept', content: { approve: true, notifyTeam: true } }));
+        const sent = [];
+        const notify = getSendCreatedScheduleEventNotification({ sendCategoryNotification: async (payload) => { sent.push(payload); } });
+        await notify({ teamId: 'team-1', gameId: eventId, game: f.records.get(`teams/team-1/games/${eventId}`).data });
+        expect(sent).toHaveLength(1);
+        expect(sent[0]).toMatchObject({ teamId: 'team-1', gameId: eventId, category: 'schedule', actorUid: 'owner' });
+    });
+    it('still announces ordinary event creation when pre-event reminders are disabled', async () => {
+        const sent = [];
+        const notify = getSendCreatedScheduleEventNotification({ sendCategoryNotification: async (payload) => { sent.push(payload); } });
+        await notify({ teamId: 'synthetic-team', gameId: 'synthetic-event', game: {
+            type: 'practice', title: 'Synthetic Practice', status: 'scheduled',
+            date: '2026-12-01T17:00:00Z', scheduleNotifications: { enabled: false }
+        } });
+        expect(sent).toHaveLength(1);
+        expect(sent[0].category).toBe('schedule');
+    });
     it('sends created-event notifications unless the event is draft or part of a large import batch', () => {
         expect(functionsSource).toContain('function buildCreatedScheduleEventNotificationPayload(game = {})');
         expect(functionsSource).toContain('async function sendCreatedScheduleEventNotification({ teamId, gameId, game })');

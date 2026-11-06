@@ -30,6 +30,14 @@ export class OAuthError extends Error {
     }
 }
 
+export function requestedReviewScope(scope) {
+    const scopes = String(scope || 'allplays.read').split(/\s+/).filter(Boolean);
+    if (scopes.some((value) => !['allplays.read', 'allplays.review'].includes(value))) {
+        throw new OAuthError('invalid_scope', 'Unsupported scope.');
+    }
+    return scopes.includes('allplays.review');
+}
+
 export function s256Challenge(verifier) {
     return createHash('sha256').update(verifier, 'utf8').digest('base64url');
 }
@@ -127,7 +135,7 @@ export function createOAuthBroker({
         return { clientId, redirectUri, codeChallenge };
     }
 
-    async function approveAuthorization({ clientId, redirectUri, codeChallenge, firebaseRefreshToken }) {
+    async function approveAuthorization({ clientId, redirectUri, codeChallenge, firebaseRefreshToken, scope, reviewApproved = false }) {
         if (!firebaseRefreshToken) throw new OAuthError('invalid_request', 'Sign-in did not produce a credential.');
         // Re-validate so a tampered approval form cannot bypass the checks.
         validateAuthorizeRequest({
@@ -144,21 +152,23 @@ export function createOAuthBroker({
             redirectUri,
             codeChallenge,
             firebaseRefreshToken,
+            reviewRequests: requestedReviewScope(scope) && reviewApproved === true,
             expiresAt: now() + CODE_TTL_MS
         });
         return code;
     }
 
-    function tokenResponse(accessToken, refreshToken) {
+    function tokenResponse(accessToken, refreshToken, reviewRequests = false) {
         return {
             access_token: accessToken,
             token_type: 'Bearer',
             expires_in: Math.floor(ACCESS_TOKEN_TTL_MS / 1000),
-            refresh_token: refreshToken
+            refresh_token: refreshToken,
+            scope: reviewRequests ? 'allplays.read allplays.review' : 'allplays.read'
         };
     }
 
-    async function issueTokens(firebaseRefreshToken, clientId) {
+    async function issueTokens(firebaseRefreshToken, clientId, reviewRequests = false) {
         const accessToken = randomId(32);
         const refreshToken = randomId(32);
         const issuedAt = now();
@@ -166,11 +176,12 @@ export function createOAuthBroker({
             accessToken,
             refreshToken,
             firebaseRefreshToken,
+            reviewRequests,
             clientId,
             accessExpiresAt: issuedAt + ACCESS_TOKEN_TTL_MS,
             refreshExpiresAt: issuedAt + REFRESH_TOKEN_TTL_MS
         });
-        return tokenResponse(accessToken, refreshToken);
+        return tokenResponse(accessToken, refreshToken, reviewRequests);
     }
 
     async function exchange(params = {}) {
@@ -189,7 +200,7 @@ export function createOAuthBroker({
             if (!params.code_verifier || s256Challenge(params.code_verifier) !== record.codeChallenge) {
                 throw new OAuthError('invalid_grant', 'PKCE verification failed.');
             }
-            return issueTokens(record.firebaseRefreshToken, record.clientId);
+            return issueTokens(record.firebaseRefreshToken, record.clientId, record.reviewRequests === true);
         }
         if (grantType === 'refresh_token') {
             const accessToken = randomId(32);
@@ -203,13 +214,13 @@ export function createOAuthBroker({
                 refreshExpiresAt: issuedAt + REFRESH_TOKEN_TTL_MS
             });
             if (!rotated) throw new OAuthError('invalid_grant', 'Unknown refresh token.');
-            return tokenResponse(accessToken, refreshToken);
+            return tokenResponse(accessToken, refreshToken, rotated.reviewRequests === true);
         }
         throw new OAuthError('invalid_request', 'Unsupported grant_type.');
     }
 
-    async function resolveAccessToken(token) {
-        return grantStore.resolveAccessToken(token);
+    async function resolveAccessToken(token, options) {
+        return grantStore.resolveAccessToken(token, options);
     }
 
     return { registerClient, validateAuthorizeRequest, approveAuthorization, exchange, resolveAccessToken };
@@ -226,13 +237,13 @@ export function metadataFor(baseUrl) {
             grant_types_supported: ['authorization_code', 'refresh_token'],
             code_challenge_methods_supported: ['S256'],
             token_endpoint_auth_methods_supported: ['none'],
-            scopes_supported: ['allplays.read']
+            scopes_supported: ['allplays.read', 'allplays.review']
         },
         protectedResource: {
             resource: `${baseUrl}/mcp`,
             authorization_servers: [baseUrl],
             bearer_methods_supported: ['header'],
-            scopes_supported: ['allplays.read']
+            scopes_supported: ['allplays.read', 'allplays.review']
         }
     };
 }

@@ -36,23 +36,33 @@ export function encodeValue(value) {
     throw new Error(`Cannot encode Firestore value of type ${typeof value}`);
 }
 
-export function decodeValue(value) {
+// Opt-in for domains that rewrite a timestamp-containing array. Ordinary Date
+// conversion truncates Firestore micro/nanoseconds; preserve the original wire
+// instant while it is unchanged. Callers must not structuredClone these Dates
+// before re-encoding (the structured-clone Date algorithm drops subclasses).
+class PreciseTimestamp extends Date {
+    #wire;
+    #epoch;
+    constructor(wire) { super(wire); this.#wire = wire; this.#epoch = this.getTime(); }
+    toISOString() { return this.getTime() === this.#epoch ? this.#wire : super.toISOString(); }
+}
+export function decodeValue(value, options = {}) {
     if (!value || typeof value !== 'object') return null;
     if ('nullValue' in value) return null;
     if ('stringValue' in value) return value.stringValue;
     if ('booleanValue' in value) return value.booleanValue;
     if ('integerValue' in value) return Number(value.integerValue);
     if ('doubleValue' in value) return value.doubleValue;
-    if ('timestampValue' in value) return new Date(value.timestampValue);
+    if ('timestampValue' in value) return options.preserveTimestampPrecision ? new PreciseTimestamp(value.timestampValue) : new Date(value.timestampValue);
     if ('referenceValue' in value) return value.referenceValue;
     if ('geoPointValue' in value) return value.geoPointValue;
-    if ('mapValue' in value) return decodeFields(value.mapValue?.fields);
-    if ('arrayValue' in value) return (value.arrayValue?.values || []).map(decodeValue);
+    if ('mapValue' in value) return decodeFields(value.mapValue?.fields, options);
+    if ('arrayValue' in value) return (value.arrayValue?.values || []).map((entry) => decodeValue(entry, options));
     return null;
 }
 
-export function decodeFields(fields) {
-    return Object.fromEntries(Object.entries(fields || {}).map(([key, value]) => [key, decodeValue(value)]));
+export function decodeFields(fields, options = {}) {
+    return Object.fromEntries(Object.entries(fields || {}).map(([key, value]) => [key, decodeValue(value, options)]));
 }
 
 function throwForStatus(status, path) {
@@ -104,6 +114,23 @@ export function createUserDb({ projectId, idToken, fetchImpl = fetch }) {
     };
 
     return {
+        // Atomic, create-only review envelopes. No arbitrary business-data writer
+        // is exposed to tools; Firestore still evaluates the user's rules.
+        async createReviewRequest(documents) {
+            const writes = documents.map(({ path, data }) => {
+                if (!/^(users|teams)\/[^/]+\/privateAiPendingActions\/mcp_[a-f0-9-]{36}$/.test(path)) {
+                    throw new DomainError('invalid_argument', 'Invalid review request path.');
+                }
+                return {
+                    update: { name: `${baseUrl.slice('https://firestore.googleapis.com/v1/'.length)}/${path}`, fields: encodeValue(data).mapValue.fields },
+                    currentDocument: { exists: false }
+                };
+            });
+            const response = await fetchImpl(`${baseUrl}:commit`, {
+                method: 'POST', headers, body: JSON.stringify({ writes })
+            });
+            if (!response.ok) throwForStatus(response.status, 'review request');
+        },
         doc(path) {
             return {
                 async get() {
@@ -140,15 +167,32 @@ export function createUserDb({ projectId, idToken, fetchImpl = fetch }) {
                 limit(count) {
                     return makeQuery({ ...options, limit: count });
                 },
+                startAfterDocumentId(id) {
+                    if (!/^[A-Za-z0-9_-]{1,128}$/.test(id || '') || options.orderBy?.field !== '__name__') {
+                        throw new DomainError('invalid_argument', 'Document cursors require a valid ID and document-name ordering.');
+                    }
+                    return makeQuery({ ...options, afterDocumentId: id });
+                },
                 async get() {
+                    const structuredQuery = buildStructuredQuery(collectionId, options);
+                    if (options.afterDocumentId) {
+                        if (options.orderBy?.field !== '__name__') throw new DomainError('invalid_argument', 'Document cursor ordering changed.');
+                        structuredQuery.startAt = {
+                            values: [{ referenceValue: `${baseUrl.slice('https://firestore.googleapis.com/v1/'.length)}/${path}/${options.afterDocumentId}` }],
+                            before: false
+                        };
+                    }
                     const response = await fetchImpl(queryUrl, {
                         method: 'POST',
                         headers,
-                        body: JSON.stringify({ structuredQuery: buildStructuredQuery(collectionId, options) })
+                        body: JSON.stringify({ structuredQuery })
                     });
                     if (!response.ok) throwForStatus(response.status, path);
                     const rows = await response.json();
-                    const docs = (Array.isArray(rows) ? rows : [])
+                    if (!Array.isArray(rows) || rows.some((row) => !row || typeof row !== 'object' || row.error || (!row.document && typeof row.readTime !== 'string'))) {
+                        throw new DomainError('unavailable', 'The query response could not be verified.');
+                    }
+                    const docs = rows
                         .filter((row) => row.document)
                         .map((row) => ({
                             id: row.document.name.split('/').pop(),

@@ -1806,6 +1806,33 @@ describe('scheduled practice writes', () => {
     vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', ownerId: 'coach-1', adminEmails: [], admins: [] } as any);
   });
 
+  it.each([false, true])('preserves omitted reminder settings during a practice edit (native fallback: %s)', async (native) => {
+    if (native) {
+      (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+      (globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) } as any);
+      vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+      vi.mocked(updateEvent).mockRejectedValueOnce(new Error('timed out'));
+    }
+    await updateScheduledPracticeForApp('team-1', {
+      title: 'Synthetic Practice', startDate: new Date('2026-12-01T17:00:00Z'), endDate: new Date('2026-12-01T18:00:00Z'),
+      location: 'Updated Field', scheduleNotifications: undefined
+    }, coachUser, { eventId: 'practice-1' });
+    const payload = vi.mocked(updateEvent).mock.calls.slice(-1)[0]?.[2];
+    expect(payload).not.toHaveProperty('scheduleNotifications');
+    if (native) {
+      const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+      expect(url).not.toContain('scheduleNotifications');
+      expect(JSON.parse(String(init.body)).fields).not.toHaveProperty('scheduleNotifications');
+    }
+  });
+
+  it.each([{ enabled: false, hoursBefore: 2 }, {}])('still writes explicitly supplied practice reminder settings %j', async (scheduleNotifications) => {
+    await updateScheduledPracticeForApp('team-1', {
+      title: 'Synthetic Practice', startDate: new Date('2026-12-01T17:00:00Z'), endDate: new Date('2026-12-01T18:00:00Z'), scheduleNotifications
+    }, coachUser, { eventId: 'practice-1' });
+    expect(vi.mocked(updateEvent).mock.calls.slice(-1)[0]?.[2]).toHaveProperty('scheduleNotifications', scheduleNotifications);
+  });
+
   it('creates recurring practice payloads with the legacy recurrence shape', async () => {
     vi.mocked(addPractice).mockResolvedValue('practice-1' as any);
     const { applyPracticeRecurrenceFields: applyLegacyPracticeRecurrenceFields } = await import('../../../../js/edit-schedule-practice-payload.js');
