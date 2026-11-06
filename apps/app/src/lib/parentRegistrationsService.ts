@@ -20,6 +20,7 @@ import {
     getTeamRegistrationForm,
     hasOnlineRegistrationCheckout,
     httpsCallable,
+    listParentRegistrationApplicationsPage,
     listPublishedTeamRegistrationForms,
     listTeamRegistrationReviewsPage,
     normalizeRegistrationForm,
@@ -57,6 +58,38 @@ export type ParentRegistrationCard = Record<string, any> & {
     discountRules?: RegistrationDiscountRule[];
     url: string;
     appUrl?: string;
+};
+
+export type ParentRegistrationApplication = {
+    id: string;
+    registrationKey: string;
+    teamId: string;
+    formId: string;
+    teamName: string;
+    programName: string;
+    playerName: string;
+    guardianEmail: string;
+    status: string;
+    statusLabel: string;
+    selectedOptionLabel: string;
+    submittedAt: unknown;
+};
+
+export type ParentRegistrationApplicationError = {
+    code?: string;
+    identity?: string;
+    retryable?: boolean;
+    message: string;
+    registrationId?: string;
+    registrationKey?: string;
+};
+
+export type ParentRegistrationApplicationsPage = {
+    applications: ParentRegistrationApplication[];
+    nextCursor: unknown;
+    retryCursor: unknown;
+    hasMore: boolean;
+    errors: ParentRegistrationApplicationError[];
 };
 
 export type ParentRegistrationDetailModel = {
@@ -113,6 +146,26 @@ export async function loadParentRegistrations(user: AuthUser | null): Promise<Pa
     return cards.flat()
         .filter((card): card is ParentRegistrationCard => Boolean(card))
         .sort((a, b) => a.teamName.localeCompare(b.teamName) || a.programName.localeCompare(b.programName));
+}
+
+export async function loadParentRegistrationApplicationsPage(
+    user: AuthUser | null,
+    options: { cursor?: unknown } = {}
+): Promise<ParentRegistrationApplicationsPage> {
+    if (!user?.uid) {
+        return {
+            applications: [],
+            nextCursor: null,
+            retryCursor: null,
+            hasMore: false,
+            errors: []
+        };
+    }
+
+    return listParentRegistrationApplicationsPage(
+        { uid: user.uid, email: user.email },
+        { cursor: options.cursor ?? null }
+    ) as Promise<ParentRegistrationApplicationsPage>;
 }
 
 export async function submitOfflineRegistration(teamId: string, formId: string, submission: Record<string, any>) {

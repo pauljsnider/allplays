@@ -150,6 +150,26 @@ const parentRegistrationsServiceMock = `
             url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
         }];
     }
+    export async function loadParentRegistrationApplicationsPage() {
+        return {
+            applications: [{
+                id: 'application-1',
+                registrationKey: 'teams/team-closed/registrationForms/form-closed/registrations/application-1',
+                teamId: 'team-closed',
+                formId: 'form-closed',
+                teamName: 'Falcons',
+                programName: 'Closed Fall League',
+                playerName: 'Alex Player',
+                status: 'enrolled',
+                statusLabel: 'Enrolled',
+                selectedOptionLabel: 'U12 Select'
+            }],
+            nextCursor: null,
+            retryCursor: null,
+            hasMore: false,
+            errors: []
+        };
+    }
     export async function submitOfflineRegistration() {
         return { status: 'pending', registrationId: 'registration-1' };
     }
@@ -653,6 +673,9 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
 
     await page.getByRole('navigation', { name: 'Family tools' }).getByRole('link', { name: 'Register' }).click();
     await expect(page.getByText('Summer Camp')).toBeVisible();
+    await expect(page.getByText('Alex Player')).toBeVisible();
+    await expect(page.getByText('Closed Fall League')).toBeVisible();
+    await expect(page.getByText('Enrolled')).toBeVisible();
     await expect(page.getByRole('link', { name: /Review/ })).toBeVisible();
     await page.getByRole('button', { name: /Legacy form/ }).click();
     await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://allplays.ai/registration.html?teamId=team-1&formId=form-1');
