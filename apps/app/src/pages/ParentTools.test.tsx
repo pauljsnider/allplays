@@ -40,6 +40,7 @@ const parentToolsServiceMocks = vi.hoisted(() => ({
     loadParentFeesForApp: vi.fn(),
     loadParentHouseholdInviteModel: vi.fn(),
     loadParentRegistrations: vi.fn(),
+    loadParentRegistrationApplicationsPage: vi.fn(),
     revokeParentFamilyShare: vi.fn(),
     updateParentFamilyShareCalendars: vi.fn()
 }));
@@ -84,7 +85,8 @@ vi.mock('../lib/parentHouseholdService', () => ({
     loadParentHouseholdInviteModel: parentToolsServiceMocks.loadParentHouseholdInviteModel
 }));
 vi.mock('../lib/parentRegistrationsService', () => ({
-    loadParentRegistrations: parentToolsServiceMocks.loadParentRegistrations
+    loadParentRegistrations: parentToolsServiceMocks.loadParentRegistrations,
+    loadParentRegistrationApplicationsPage: parentToolsServiceMocks.loadParentRegistrationApplicationsPage
 }));
 vi.mock('../lib/parentCertificatesService', () => ({
     loadParentCertificate: parentToolsServiceMocks.loadParentCertificate,
@@ -255,6 +257,7 @@ describe('ParentTools access', () => {
             events: [],
             teams: []
         });
+        parentToolsServiceMocks.loadParentRegistrationApplicationsPage.mockResolvedValue({ applications: [], nextCursor: null, retryCursor: null, hasMore: false, errors: [] });
         parentToolsServiceMocks.loadFamilyShareModel.mockResolvedValue({
             children: [],
             tokens: []

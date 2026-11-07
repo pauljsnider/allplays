@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ExternalLink, RefreshCw, Share2, Ticket } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { loadParentRegistrations, type ParentRegistrationCard } from '../../lib/parentRegistrationsService';
+import { loadParentRegistrationApplicationsPage, loadParentRegistrations, type ParentRegistrationApplication, type ParentRegistrationCard } from '../../lib/parentRegistrationsService';
 import { openPublicUrl, sharePublicUrl } from '../../lib/publicActions';
 import type { AuthState } from '../../lib/types';
 import { EmptyState, LoadingBlock, MetricCard, RetryableStatus, ToolHeader, useParentToolAsyncOperation } from './shared';
 
 export function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
     const [cards, setCards] = useState<ParentRegistrationCard[]>([]);
+    const [applications, setApplications] = useState<ParentRegistrationApplication[]>([]);
     const { loading, error, run: runLoad } = useParentToolAsyncOperation();
+    const { loading: applicationsLoading, error: applicationsError, run: runApplicationsLoad } = useParentToolAsyncOperation();
 
     const refresh = useCallback(async () => {
         return runLoad(
@@ -22,9 +24,22 @@ export function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; r
         );
     }, [auth.user, runLoad]);
 
+    const refreshApplications = useCallback(async () => {
+        return runApplicationsLoad(
+            () => loadParentRegistrationApplicationsPage(auth.user),
+            'Unable to load submitted applications.',
+            {
+                onSuccess: (result) => {
+                    setApplications(result?.applications || []);
+                }
+            }
+        );
+    }, [auth.user, runApplicationsLoad]);
+
     useEffect(() => {
         void refresh();
-    }, [auth.user?.uid, refresh, refreshVersion]);
+        void refreshApplications();
+    }, [auth.user?.uid, refresh, refreshApplications, refreshVersion]);
 
     return (
         <div className="space-y-3">
@@ -39,7 +54,30 @@ export function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; r
                     )}
                 </div>
             ))}
+            <section className="app-card p-4">
+                <ToolHeader icon={Ticket} title="Submitted applications" detail="Read-only history of registration applications submitted by your family." />
+                {applicationsError ? <RetryableStatus error={applicationsError} fallbackMessage="Unable to load submitted applications." onRetry={refreshApplications} retrying={applicationsLoading} /> : null}
+                {!applicationsError && (applicationsLoading ? <LoadingBlock label="Loading submitted applications" /> : (
+                    applications.length ? <div className="mt-3 grid gap-3 lg:grid-cols-2">{applications.map((application) => <SubmittedApplicationCard key={application.id} application={application} />)}</div> : (
+                        <div className="mt-3"><EmptyState icon={Ticket} title="No submitted applications" detail="Applications submitted through registration forms will appear here." /></div>
+                    )
+                ))}
+            </section>
         </div>
+    );
+}
+
+function SubmittedApplicationCard({ application }: { application: ParentRegistrationApplication }) {
+    return (
+        <section className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+            <div className="grid gap-2 sm:grid-cols-2">
+                <MetricCard label="Player" value={application.playerName || 'Not provided'} />
+                <MetricCard label="Program" value={application.programName || 'Not provided'} />
+                <MetricCard label="Team" value={application.teamName || 'Not provided'} />
+                {application.selectedOptionLabel ? <MetricCard label="Selected option" value={application.selectedOptionLabel} /> : null}
+                <MetricCard label="Status" value={application.statusLabel} />
+            </div>
+        </section>
     );
 }
 
