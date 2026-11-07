@@ -134,6 +134,9 @@ const parentFamilyShareServiceMock = `
 `;
 
 const parentRegistrationsServiceMock = `
+    export async function loadParentRegistrationApplicationsPage() {
+        return { applications: [], nextCursor: null, retryCursor: null, hasMore: false, errors: [] };
+    }
     export async function loadParentRegistrations() {
         window.__parentToolLoadCounts.registrations += 1;
         return [{
