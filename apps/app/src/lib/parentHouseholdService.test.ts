@@ -10,13 +10,14 @@ const legacyParentToolsMocks = vi.hoisted(() => ({
     doc: vi.fn((...segments: unknown[]) => segments.slice(1).join('/')),
     getDoc: vi.fn(),
     getPlayers: vi.fn(),
+    removeFamilyMember: vi.fn(),
     readFamilyMembers: vi.fn()
 }));
 
 vi.mock('./adapters/legacyPlayerDb', () => legacyPlayerDbMocks);
 vi.mock('./adapters/legacyParentTools', () => legacyParentToolsMocks);
 
-import { loadParentHouseholdInviteModel } from './parentHouseholdService';
+import { loadParentHouseholdInviteModel, revokeParentHouseholdMemberAccess } from './parentHouseholdService';
 
 function playerSnapshot(id: string, data: Record<string, unknown>) {
     return {
@@ -121,5 +122,51 @@ describe('loadParentHouseholdInviteModel', () => {
         ]);
         expect(legacyParentToolsMocks.getDoc).toHaveBeenCalledTimes(2);
         expect(legacyPlayerDbMocks.getPlayerPrivateProfile).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe('revokeParentHouseholdMemberAccess', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('delegates a normalized membership ID to the authoritative legacy operation', async () => {
+        const result = { success: true, membershipId: 'membership-1' };
+        legacyParentToolsMocks.removeFamilyMember.mockResolvedValue(result);
+
+        await expect(revokeParentHouseholdMemberAccess(
+            { uid: 'parent-1' } as any,
+            '  membership-1  '
+        )).resolves.toBe(result);
+
+        expect(legacyParentToolsMocks.removeFamilyMember).toHaveBeenCalledOnce();
+        expect(legacyParentToolsMocks.removeFamilyMember).toHaveBeenCalledWith(
+            'parent-1',
+            'membership-1'
+        );
+    });
+
+    it.each([
+        ['missing', undefined],
+        ['empty', ''],
+        ['whitespace-only', '   ']
+    ])('rejects a %s membership ID without invoking the adapter', async (_label, membershipId) => {
+        await expect(revokeParentHouseholdMemberAccess(
+            { uid: 'parent-1' } as any,
+            membershipId as string
+        )).rejects.toThrow('Choose a household membership to revoke.');
+
+        expect(legacyParentToolsMocks.removeFamilyMember).not.toHaveBeenCalled();
+    });
+
+    it('propagates authoritative revocation failures', async () => {
+        const failure = new Error('revocation unavailable');
+        legacyParentToolsMocks.removeFamilyMember.mockRejectedValue(failure);
+
+        await expect(revokeParentHouseholdMemberAccess(
+            { uid: 'parent-1' } as any,
+            'membership-1'
+        )).rejects.toBe(failure);
+        expect(legacyParentToolsMocks.removeFamilyMember).toHaveBeenCalledOnce();
     });
 });
