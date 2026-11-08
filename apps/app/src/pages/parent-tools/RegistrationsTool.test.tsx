@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RegistrationsTool } from './RegistrationsTool';
@@ -290,3 +290,57 @@ function application(overrides: Partial<{
         ...overrides
     };
 }
+
+describe('RegistrationsTool account isolation', () => {
+    const nextAuth: AuthState = { ...auth, user: { ...auth.user!, uid: 'parent-2', email: 'other@example.com' } };
+    const pageFor = (playerName: string) => ({ applications: [{ id: playerName, registrationKey: playerName, teamId: 'team-1', formId: 'form-1', teamName: 'Team', programName: 'Program', playerName, statusLabel: 'Pending' }], nextCursor: null, retryCursor: null, hasMore: false, errors: [] });
+    beforeEach(() => {
+        cleanup();
+        vi.resetAllMocks();
+        registrationMocks.loadParentRegistrations.mockResolvedValue([]);
+    });
+
+    it('removes the previous account history while the next account loads', async () => {
+        registrationMocks.loadParentRegistrationApplicationsPage.mockResolvedValueOnce(pageFor('Previous family')).mockReturnValueOnce(new Promise(() => {}));
+        const view = renderTool();
+        expect(await screen.findByText('Previous family')).toBeTruthy();
+        view.rerender(<MemoryRouter><RegistrationsTool auth={nextAuth} refreshVersion={0} /></MemoryRouter>);
+        expect(screen.queryByText('Previous family')).toBeNull();
+        expect(await screen.findByText('Loading submitted applications')).toBeTruthy();
+    });
+
+    it('discards a previous account response that finishes after the current account', async () => {
+        let finishPrevious!: (value: ReturnType<typeof pageFor>) => void;
+        registrationMocks.loadParentRegistrationApplicationsPage.mockReturnValueOnce(new Promise((resolve) => { finishPrevious = resolve; })).mockResolvedValueOnce(pageFor('Current family'));
+        const view = renderTool();
+        view.rerender(<MemoryRouter><RegistrationsTool auth={nextAuth} refreshVersion={0} /></MemoryRouter>);
+        expect(await screen.findByText('Current family')).toBeTruthy();
+        await act(async () => { finishPrevious(pageFor('Previous family')); });
+        expect(screen.queryByText('Previous family')).toBeNull();
+        expect(screen.getByText('Current family')).toBeTruthy();
+    });
+    it.each([
+        ['sign-out', { ...auth, user: null }],
+        ['email change', { ...auth, user: { ...auth.user!, email: 'updated@example.com' } }],
+        ['email verification change', { ...auth, user: { ...auth.user!, emailVerified: false } }]
+    ])('clears retained history on %s', async (_name, changedAuth) => {
+        registrationMocks.loadParentRegistrationApplicationsPage.mockResolvedValueOnce(pageFor('Previous family')).mockReturnValueOnce(new Promise(() => {}));
+        const view = renderTool();
+        await screen.findByText('Previous family');
+        view.rerender(<MemoryRouter><RegistrationsTool auth={changedAuth as AuthState} refreshVersion={0} /></MemoryRouter>);
+        expect(screen.queryByText('Previous family')).toBeNull();
+    });
+
+    it('discards a previous account error without replacing current history or retry state', async () => {
+        let rejectPrevious!: (error: Error) => void;
+        registrationMocks.loadParentRegistrationApplicationsPage.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectPrevious = reject; })).mockResolvedValueOnce(pageFor('Current family'));
+        const view = renderTool();
+        view.rerender(<MemoryRouter><RegistrationsTool auth={nextAuth} refreshVersion={0} /></MemoryRouter>);
+        await screen.findByText('Current family');
+        await act(async () => { rejectPrevious(new Error('Previous account load failed')); });
+        expect(screen.queryByText('Previous account load failed')).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+        expect(screen.getByText('Current family')).toBeTruthy();
+    });
+
+});
