@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RegistrationsTool } from './RegistrationsTool';
@@ -83,6 +83,52 @@ describe('RegistrationsTool submitted applications', () => {
         expect(screen.getAllByText('Falcons')).toHaveLength(statuses.length);
         expect(screen.getByText('Standard')).toBeTruthy();
         await waitFor(() => expect(screen.queryByText('Review')).toBeNull());
+    });
+
+    it('keeps applications from closed or unpublished forms visible alongside published form cards', async () => {
+        registrationMocks.loadParentRegistrations.mockResolvedValue([
+            {
+                id: 'published-form',
+                teamId: 'team-1',
+                teamName: 'Falcons',
+                programName: 'Spring League',
+                description: 'Published registration',
+                season: '2026',
+                feeLabel: '$100.00',
+                paymentNotice: '',
+                onlineCheckout: true,
+                options: [],
+                url: 'https://allplays.ai/register/published-form'
+            }
+        ]);
+        registrationMocks.loadParentRegistrationApplicationsPage.mockResolvedValue({
+            applications: [application({
+                id: 'closed-application',
+                registrationKey: 'registration-closed',
+                playerName: 'Closed Form Player',
+                formStatus: 'closed',
+                formPublished: false
+            })],
+            nextCursor: null,
+            retryCursor: null,
+            hasMore: false,
+            errors: []
+        });
+
+        renderTool();
+
+        expect(await screen.findByText('Closed Form Player')).toBeTruthy();
+        const publishedCard = screen.getByText('Published registration').closest('section');
+        expect(publishedCard).toBeTruthy();
+        expect(within(publishedCard as HTMLElement).getByRole('link', { name: 'Review' })).toBeTruthy();
+        expect(within(publishedCard as HTMLElement).getByRole('button', { name: 'Legacy form' })).toBeTruthy();
+        expect(within(publishedCard as HTMLElement).getByRole('button', { name: 'Share' })).toBeTruthy();
+
+        const closedApplicationCard = screen.getByText('Closed Form Player').closest('section');
+        expect(closedApplicationCard).toBeTruthy();
+        expect(within(closedApplicationCard as HTMLElement).queryByRole('link', { name: 'Review' })).toBeNull();
+        expect(within(closedApplicationCard as HTMLElement).queryByRole('button', { name: 'Legacy form' })).toBeNull();
+        expect(within(closedApplicationCard as HTMLElement).queryByRole('button', { name: 'Share' })).toBeNull();
     });
 
     it('loads older submitted applications with the returned pagination cursor', async () => {
