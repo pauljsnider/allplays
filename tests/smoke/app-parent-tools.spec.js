@@ -150,6 +150,9 @@ const parentRegistrationsServiceMock = `
             url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
         }];
     }
+    export async function loadParentRegistrationApplicationsPage() {
+        return { applications: [], nextCursor: null, retryCursor: null, hasMore: false, errors: [] };
+    }
     export async function submitOfflineRegistration() {
         return { status: 'pending', registrationId: 'registration-1' };
     }
