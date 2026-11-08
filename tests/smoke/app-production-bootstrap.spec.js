@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { installSmokeAppCheck, assertSmokeAppCheckReady } from './helpers/app-check.js';
 
 const appBootUrl = process.env.SMOKE_APP_BOOT_URL || '';
 const previewSmokeRuntime = process.env.SMOKE_EXPECTED_FIREBASE_RUNTIME_TARGET === 'preview-smoke';
@@ -44,7 +45,9 @@ test('production React app boots from deployed /app bundle', async ({ page }) =>
         }
     });
 
+    const attestationEnabled = await installSmokeAppCheck(page, appBootUrl);
     await page.goto(appUrl('/auth'), { waitUntil: 'domcontentloaded' });
+    await assertSmokeAppCheckReady(page, attestationEnabled);
 
     await expect(page).toHaveTitle(/ALL PLAYS APP/i);
     await expect(page.locator('#root')).not.toBeEmpty();
