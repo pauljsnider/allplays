@@ -2872,13 +2872,17 @@ describe('ScheduleEventDetail assignments', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Live reactions' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Heart' })).toBeTruthy());
-    expect(liveGameReactionsServiceMocks.subscribeToLiveGameReactions).toHaveBeenCalledWith(
-      'team-1',
-      'game-1',
-      expect.any(Function),
-      expect.any(Function),
-      { diamond: { trackingEngine: 'diamond-v2', instanceId } }
-    );
+    // Controls render before the passive effect subscribes after lazy loading.
+    // Wait for the service boundary itself, as the chat assertion above does.
+    await waitFor(() => {
+      expect(liveGameReactionsServiceMocks.subscribeToLiveGameReactions).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        expect.any(Function),
+        expect.any(Function),
+        { diamond: { trackingEngine: 'diamond-v2', instanceId } }
+      );
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Heart' }));
     await waitFor(() => {
       expect(liveGameReactionsServiceMocks.sendLiveGameReaction).toHaveBeenCalledWith(
