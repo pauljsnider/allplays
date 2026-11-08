@@ -11,9 +11,14 @@ import {
 } from '../../lib/parentRegistrationsService';
 import { openPublicUrl, sharePublicUrl } from '../../lib/publicActions';
 import type { AuthState } from '../../lib/types';
+import { getParentToolIdentity } from '../../lib/parentToolIdentity';
 import { EmptyState, LoadingBlock, MetricCard, RetryableStatus, ToolHeader, useParentToolAsyncOperation } from './shared';
 
 export function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
+    return <RegistrationsSession key={getParentToolIdentity(auth)} auth={auth} refreshVersion={refreshVersion} />;
+}
+
+function RegistrationsSession({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
     const [cards, setCards] = useState<ParentRegistrationCard[]>([]);
     const [applications, setApplications] = useState<ParentRegistrationApplication[]>([]);
     const [applicationsNextCursor, setApplicationsNextCursor] = useState<ParentRegistrationApplicationCursor | null>(null);
@@ -28,6 +33,7 @@ export function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; r
             () => loadParentRegistrations(auth.user),
             'Unable to load registrations.',
             {
+                ignoreStale: true,
                 onSuccess: (result) => {
                     setCards(result);
                 }
@@ -40,6 +46,7 @@ export function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; r
             () => loadParentRegistrationApplicationsPage(auth.user, { cursor }),
             'Unable to load submitted applications.',
             {
+                ignoreStale: true,
                 onError: () => {
                     setApplicationsRetryCursor(cursor);
                 },

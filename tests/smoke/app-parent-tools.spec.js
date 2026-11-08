@@ -7,6 +7,12 @@ test.skip(
 
 // Local validation overlay: keep dummy-project telemetry and external assets offline.
 test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+        window.__ALLPLAYS_CONFIG__ = { firebase: {
+            apiKey: 'local-parent-tools-fixture', authDomain: 'demo-parent-tools.firebaseapp.com',
+            projectId: 'demo-parent-tools', messagingSenderId: '123456789', appId: '1:123456789:web:fixture'
+        } };
+    });
     await page.route('**/*', async (route) => {
         const host = new URL(route.request().url()).hostname;
         if (host === '127.0.0.1' || host === 'localhost') await route.continue();
@@ -1089,3 +1095,45 @@ for (const kind of ['photo', 'file']) {
         expect(pageErrors).toEqual([]);
     });
 }
+
+test('registration history belongs to the current parent across account changes', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await mockParentToolsModules(page);
+    await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, (route) => route.fulfill({
+        status: 200, contentType: 'application/javascript', body: `
+            export function useAuth() {
+                const uid = window.__nextParent ? 'parent-2' : 'parent-1';
+                const user = { uid, email: uid + '@example.com', emailVerified: true, displayName: 'Parent', roles: ['parent'], parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] };
+                return { user, profile: null, loading: false, error: null, roles: ['parent'], isParent: true, isCoach: false, isAdmin: false, isPlatformAdmin: false, refresh: async () => {}, signOut: async () => {} };
+            }
+        `
+    }));
+    const historyMock = parentRegistrationsServiceMock.replace(
+        'export async function loadParentRegistrationApplicationsPage() {\n        return { applications: [], nextCursor: null, retryCursor: null, hasMore: false, errors: [] };\n    }',
+        `export async function loadParentRegistrationApplicationsPage(user, options) {
+            const row = (name) => ({ id: name, registrationKey: name, teamId: 'team-1', formId: 'form-1', teamName: 'Team', programName: 'Program', playerName: name, statusLabel: 'Pending' });
+            const result = (name, more = false) => ({ applications: [row(name)], nextCursor: more ? { page: 2 } : null, retryCursor: null, hasMore: more, errors: [] });
+            if (user.uid === 'parent-2') return new Promise(resolve => { window.__finishCurrentHistory = () => resolve(result('Current family')); });
+            if (options.cursor) return new Promise(resolve => { window.__finishPreviousPage = () => resolve(result('Previous late page')); });
+            return result('Previous family', true);
+        }`
+    );
+    await page.route(/\/src\/lib\/parentRegistrationsService\.ts(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: historyMock }));
+    await page.goto(appUrl(baseURL, '/parent-tools/registrations'), { waitUntil: 'domcontentloaded' });
+    expect(pageErrors).toEqual([]);
+    await expect(page.getByText('Previous family', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Load more applications' }).click();
+    await expect.poll(() => page.evaluate(() => typeof window.__finishPreviousPage)).toBe('function');
+    await page.evaluate(() => { window.__nextParent = true; window.location.hash = '/parent-tools/registrations?account=2'; });
+    await expect.poll(() => page.evaluate(() => typeof window.__finishCurrentHistory)).toBe('function');
+    expect(pageErrors).toEqual([]);
+    await expect(page.getByText('Previous family', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Load more applications' })).toHaveCount(0);
+    await page.evaluate(() => window.__finishCurrentHistory());
+    await expect(page.getByText('Current family', { exact: true })).toBeVisible();
+    await page.evaluate(() => window.__finishPreviousPage());
+    await expect(page.getByText('Previous late page', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Current family', { exact: true })).toBeVisible();
+    expect(pageErrors).toEqual([]);
+});
