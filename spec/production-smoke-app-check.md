@@ -29,3 +29,14 @@ Validation: focused unit boundary tests plus the synthetic Chromium spec
 `tests/smoke/app-check-ci-provider.spec.js`; same-artifact production boot using
 registered CI attestation; then exact merge-SHA deploy, release marker and full
 post-deploy smoke. Operator repairs do not count toward bot delivery throughput.
+# Optional iframe storage diagnostics
+
+Chromium can report `requestStorageAccess: Permission denied.` from Google's
+embedded `https://www.google.com/recaptcha/enterprise/anchor` even when the
+registered debug-token exchange and authenticated workflows succeed. The
+authenticated smoke collector classifies only that exact message as nonfatal,
+and only on an allowlisted production origin with a matching embedded frame.
+Missing source/frame evidence, application-origin messages, page errors, failed
+requests, HTTP errors (including App Check 403), and token-readiness failures
+remain fatal. This classification does not grant storage access or change
+production enforcement.
