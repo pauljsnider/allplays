@@ -198,6 +198,8 @@ function application(overrides: Partial<{
     id: string;
     registrationKey: string;
     playerName: string;
+    formStatus: string;
+    formPublished: boolean;
 }> = {}) {
     return {
         id: 'application-1',
