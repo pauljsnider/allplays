@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const familyPlanMocks = vi.hoisted(() => ({
+    removeFamilyMember: vi.fn(),
     addPendingFamilyMember: vi.fn(),
     readFamilyMembers: vi.fn()
 }));
