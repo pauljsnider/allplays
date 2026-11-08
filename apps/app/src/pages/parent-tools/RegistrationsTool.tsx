@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ExternalLink, RefreshCw, Share2, Ticket } from 'lucide-react';
+import { AlertCircle, ExternalLink, RefreshCw, Share2, Ticket } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { loadParentRegistrationApplicationsPage, loadParentRegistrations, type ParentRegistrationApplication, type ParentRegistrationCard } from '../../lib/parentRegistrationsService';
+import {
+    loadParentRegistrationApplicationsPage,
+    loadParentRegistrations,
+    type ParentRegistrationApplication,
+    type ParentRegistrationApplicationCursor,
+    type ParentRegistrationApplicationError,
+    type ParentRegistrationCard
+} from '../../lib/parentRegistrationsService';
 import { openPublicUrl, sharePublicUrl } from '../../lib/publicActions';
 import type { AuthState } from '../../lib/types';
 import { EmptyState, LoadingBlock, MetricCard, RetryableStatus, ToolHeader, useParentToolAsyncOperation } from './shared';
@@ -9,6 +16,10 @@ import { EmptyState, LoadingBlock, MetricCard, RetryableStatus, ToolHeader, useP
 export function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
     const [cards, setCards] = useState<ParentRegistrationCard[]>([]);
     const [applications, setApplications] = useState<ParentRegistrationApplication[]>([]);
+    const [applicationsNextCursor, setApplicationsNextCursor] = useState<ParentRegistrationApplicationCursor | null>(null);
+    const [applicationsRetryCursor, setApplicationsRetryCursor] = useState<ParentRegistrationApplicationCursor | null>(null);
+    const [applicationsHasMore, setApplicationsHasMore] = useState(false);
+    const [applicationPageErrors, setApplicationPageErrors] = useState<ParentRegistrationApplicationError[]>([]);
     const { loading, error, run: runLoad } = useParentToolAsyncOperation();
     const { loading: applicationsLoading, error: applicationsError, run: runApplicationsLoad } = useParentToolAsyncOperation();
 
@@ -24,17 +35,36 @@ export function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; r
         );
     }, [auth.user, runLoad]);
 
-    const refreshApplications = useCallback(async () => {
+    const loadApplicationsPage = useCallback(async (cursor: ParentRegistrationApplicationCursor | null, replace: boolean) => {
         return runApplicationsLoad(
-            () => loadParentRegistrationApplicationsPage(auth.user),
+            () => loadParentRegistrationApplicationsPage(auth.user, { cursor }),
             'Unable to load submitted applications.',
             {
                 onSuccess: (result) => {
-                    setApplications(result?.applications || []);
+                    const pageApplications = result?.applications || [];
+                    setApplications((current) => mergeApplications(replace ? [] : current, pageApplications));
+                    setApplicationsNextCursor(result?.nextCursor || null);
+                    setApplicationsRetryCursor(result?.retryCursor || null);
+                    setApplicationsHasMore(Boolean(result?.hasMore));
+                    setApplicationPageErrors(result?.errors || []);
                 }
             }
         );
     }, [auth.user, runApplicationsLoad]);
+
+    const refreshApplications = useCallback(async () => {
+        return loadApplicationsPage(null, true);
+    }, [loadApplicationsPage]);
+
+    const loadMoreApplications = useCallback(async () => {
+        if (!applicationsNextCursor || applicationsLoading) return;
+        return loadApplicationsPage(applicationsNextCursor, false);
+    }, [applicationsLoading, applicationsNextCursor, loadApplicationsPage]);
+
+    const retryApplicationPage = useCallback(async () => {
+        if (applicationsLoading) return;
+        return loadApplicationsPage(applicationsRetryCursor, false);
+    }, [applicationsLoading, applicationsRetryCursor, loadApplicationsPage]);
 
     useEffect(() => {
         void refresh();
@@ -57,14 +87,49 @@ export function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; r
             <section className="app-card p-4">
                 <ToolHeader icon={Ticket} title="Submitted applications" detail="Read-only history of registration applications submitted by your family." />
                 {applicationsError ? <RetryableStatus error={applicationsError} fallbackMessage="Unable to load submitted applications." onRetry={refreshApplications} retrying={applicationsLoading} /> : null}
-                {!applicationsError && (applicationsLoading ? <LoadingBlock label="Loading submitted applications" /> : (
-                    applications.length ? <div className="mt-3 grid gap-3 lg:grid-cols-2">{applications.map((application) => <SubmittedApplicationCard key={application.id} application={application} />)}</div> : (
-                        <div className="mt-3"><EmptyState icon={Ticket} title="No submitted applications" detail="Applications submitted through registration forms will appear here." /></div>
-                    )
-                ))}
+                {applicationPageErrors.length ? (
+                    <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900" role="alert">
+                        <div className="flex items-start gap-3">
+                            <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+                            <div className="min-w-0 flex-1">
+                                <div>Some submitted applications could not be loaded.</div>
+                                <div className="mt-1 text-xs">{uniqueApplicationErrorMessages(applicationPageErrors).join(' ')}</div>
+                            </div>
+                            <button type="button" className="ghost-button !min-h-8 !px-2 text-xs" onClick={() => void retryApplicationPage()} disabled={applicationsLoading}>
+                                <RefreshCw className={`h-4 w-4 ${applicationsLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
+                                Retry incomplete page
+                            </button>
+                        </div>
+                    </div>
+                ) : null}
+                {applicationsLoading && !applications.length ? <LoadingBlock label="Loading submitted applications" /> : null}
+                {applications.length ? <div className="mt-3 grid gap-3 lg:grid-cols-2">{applications.map((application) => <SubmittedApplicationCard key={application.registrationKey || application.id} application={application} />)}</div> : null}
+                {!applicationsLoading && !applicationsError && !applicationPageErrors.length && !applications.length ? (
+                    <div className="mt-3"><EmptyState icon={Ticket} title="No submitted applications" detail="Applications submitted through registration forms will appear here." /></div>
+                ) : null}
+                {applicationsHasMore && applicationsNextCursor && !applicationPageErrors.length ? (
+                    <button type="button" className="ghost-button mt-3 w-full justify-center" onClick={() => void loadMoreApplications()} disabled={applicationsLoading}>
+                        <RefreshCw className={`h-4 w-4 ${applicationsLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
+                        {applicationsLoading ? 'Loading more applications' : 'Load more applications'}
+                    </button>
+                ) : null}
             </section>
         </div>
     );
+}
+
+function mergeApplications(current: ParentRegistrationApplication[], additions: ParentRegistrationApplication[]) {
+    const applicationsByKey = new Map(current.map((application) => [getApplicationKey(application), application]));
+    additions.forEach((application) => applicationsByKey.set(getApplicationKey(application), application));
+    return Array.from(applicationsByKey.values());
+}
+
+function getApplicationKey(application: ParentRegistrationApplication) {
+    return application.registrationKey || `${application.teamId}:${application.formId}:${application.id}`;
+}
+
+function uniqueApplicationErrorMessages(errors: ParentRegistrationApplicationError[]) {
+    return Array.from(new Set(errors.map((error) => String(error.message || '').trim()).filter(Boolean)));
 }
 
 function SubmittedApplicationCard({ application }: { application: ParentRegistrationApplication }) {
