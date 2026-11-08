@@ -158,6 +158,79 @@ describe('RegistrationsTool submitted applications', () => {
         expect(screen.queryByRole('button', { name: 'Load more applications' })).toBeNull();
     });
 
+    it('does not duplicate applications when a later page overlaps the loaded history', async () => {
+        const nextCursor = { guardianEmail: { id: 'guardian-page-1' }, submittedByUserId: null };
+        registrationMocks.loadParentRegistrationApplicationsPage
+            .mockResolvedValueOnce({
+                applications: [application({ id: 'application-1', registrationKey: 'registration-1', playerName: 'Player One' })],
+                nextCursor,
+                retryCursor: null,
+                hasMore: true,
+                errors: []
+            })
+            .mockResolvedValueOnce({
+                applications: [
+                    application({ id: 'application-1', registrationKey: 'registration-1', playerName: 'Player One (updated)' }),
+                    application({ id: 'application-2', registrationKey: 'registration-2', playerName: 'Player Two' })
+                ],
+                nextCursor: null,
+                retryCursor: null,
+                hasMore: false,
+                errors: []
+            });
+
+        renderTool();
+        fireEvent.click(await screen.findByRole('button', { name: 'Load more applications' }));
+
+        expect(await screen.findByText('Player One (updated)')).toBeTruthy();
+        expect(screen.getAllByText('Player One (updated)')).toHaveLength(1);
+        expect(screen.getByText('Player Two')).toBeTruthy();
+    });
+
+    it('retries a failed pagination request without removing loaded cards', async () => {
+        const nextCursor = { guardianEmail: { id: 'guardian-page-1' }, submittedByUserId: null };
+        registrationMocks.loadParentRegistrationApplicationsPage
+            .mockResolvedValueOnce({
+                applications: [application({ id: 'application-1', registrationKey: 'registration-1', playerName: 'Player One' })],
+                nextCursor,
+                retryCursor: null,
+                hasMore: true,
+                errors: []
+            })
+            .mockRejectedValueOnce(new Error('The next application page is temporarily unavailable.'))
+            .mockResolvedValueOnce({
+                applications: [application({ id: 'application-2', registrationKey: 'registration-2', playerName: 'Player Two' })],
+                nextCursor: null,
+                retryCursor: null,
+                hasMore: false,
+                errors: []
+            });
+
+        renderTool();
+        fireEvent.click(await screen.findByRole('button', { name: 'Load more applications' }));
+        expect(await screen.findByText('The next application page is temporarily unavailable.')).toBeTruthy();
+        expect(screen.getByText('Player One')).toBeTruthy();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+        await waitFor(() => expect(registrationMocks.loadParentRegistrationApplicationsPage).toHaveBeenLastCalledWith(auth.user, { cursor: nextCursor }));
+        expect(await screen.findByText('Player Two')).toBeTruthy();
+        expect(screen.getByText('Player One')).toBeTruthy();
+    });
+
+    it('retries an initial application-load failure', async () => {
+        registrationMocks.loadParentRegistrationApplicationsPage
+            .mockRejectedValueOnce(new Error('The application history is temporarily unavailable.'))
+            .mockResolvedValueOnce({ applications: [application()], nextCursor: null, retryCursor: null, hasMore: false, errors: [] });
+
+        renderTool();
+        expect(await screen.findByText('The application history is temporarily unavailable.')).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+        await waitFor(() => expect(registrationMocks.loadParentRegistrationApplicationsPage).toHaveBeenLastCalledWith(auth.user, { cursor: null }));
+        expect(await screen.findByText('Player One')).toBeTruthy();
+    });
+
     it('keeps partial results visible and retries the incomplete page from its retry cursor', async () => {
         const retryCursor = { guardianEmail: { id: 'guardian-retry' }, submittedByUserId: null };
         registrationMocks.loadParentRegistrationApplicationsPage

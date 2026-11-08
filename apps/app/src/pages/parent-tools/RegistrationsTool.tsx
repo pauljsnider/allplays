@@ -40,6 +40,9 @@ export function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; r
             () => loadParentRegistrationApplicationsPage(auth.user, { cursor }),
             'Unable to load submitted applications.',
             {
+                onError: () => {
+                    setApplicationsRetryCursor(cursor);
+                },
                 onSuccess: (result) => {
                     const pageApplications = result?.applications || [];
                     setApplications((current) => mergeApplications(replace ? [] : current, pageApplications));
@@ -86,7 +89,7 @@ export function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; r
             ))}
             <section className="app-card p-4">
                 <ToolHeader icon={Ticket} title="Submitted applications" detail="Read-only history of registration applications submitted by your family." />
-                {applicationsError ? <RetryableStatus error={applicationsError} fallbackMessage="Unable to load submitted applications." onRetry={refreshApplications} retrying={applicationsLoading} /> : null}
+                {applicationsError ? <RetryableStatus error={applicationsError} fallbackMessage="Unable to load submitted applications." onRetry={retryApplicationPage} retrying={applicationsLoading} /> : null}
                 {applicationPageErrors.length ? (
                     <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900" role="alert">
                         <div className="flex items-start gap-3">
