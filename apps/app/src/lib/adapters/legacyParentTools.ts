@@ -1,7 +1,7 @@
 /* Auto-generated typed adapter boundary for legacy js/ parent-tools imports (#2066).
  * Bindings re-exported as-is so existing js/* test mocks apply via the @legacy alias. */
 import * as legacyDb from '@legacy/db.js';
-import { addPendingFamilyMember as legacy_addPendingFamilyMember, readFamilyMembers as legacy_readFamilyMembers } from '@legacy/family-plan.js';
+import { addPendingFamilyMember as legacy_addPendingFamilyMember, readFamilyMembers as legacy_readFamilyMembers, removeFamilyMember as legacy_removeFamilyMember } from '@legacy/family-plan.js';
 import * as legacyFirebase from '@legacy/firebase.js';
 import { formatParentFeeAmount as legacy_formatParentFeeAmount, formatParentFeeDueDate as legacy_formatParentFeeDueDate, getParentFeeStatusMeta as legacy_getParentFeeStatusMeta, normalizeParentFeeRecord as legacy_normalizeParentFeeRecord, sortParentFeeRecords as legacy_sortParentFeeRecords } from '@legacy/parent-dashboard-fees.js';
 import * as legacyStripeService from '@legacy/stripe-service.js';
@@ -74,6 +74,7 @@ export const moveTeamMediaItems = (...args: any[]) => callLegacyDb('moveTeamMedi
 export const setTeamMediaAlbumCover = (...args: any[]) => callLegacyDb('setTeamMediaAlbumCover', args);
 export const addPendingFamilyMember = legacy_addPendingFamilyMember as (...args: any[]) => any;
 export const readFamilyMembers = legacy_readFamilyMembers as (...args: any[]) => any;
+export const removeFamilyMember = legacy_removeFamilyMember as (...args: any[]) => any;
 export const db: unknown = legacyFirebase.db;
 export const functions: unknown = legacyFirebase.functions;
 export const doc = (...args: any[]) => callLegacyFirebase('doc', args);
