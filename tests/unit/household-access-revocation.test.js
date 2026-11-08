@@ -51,6 +51,14 @@ describe('authoritative household access revocation', () => {
         expect(source).not.toContain("updateDoc(memberRef, {\n        status: 'removed'");
     });
 
+    it('exposes the existing removal binding through the legacy parent tools adapter', () => {
+        const source = readFileSync(new URL('../../apps/app/src/lib/adapters/legacyParentTools.ts', import.meta.url), 'utf8');
+
+        expect(source).toContain("removeFamilyMember as legacy_removeFamilyMember } from '@legacy/family-plan.js';");
+        expect(source).toContain('export const removeFamilyMember = legacy_removeFamilyMember as (...args: any[]) => any;');
+        expect(source).not.toContain('revokeHouseholdMemberAccess');
+    });
+
     it('blocks organizer-side shell revocation writes so cleanup cannot be bypassed', () => {
         const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
         const familyMembershipBlock = rules.slice(
