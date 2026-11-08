@@ -1,6 +1,7 @@
 import { expect } from '@playwright/test';
 import { createAppFailureRecorder, routeTimings } from './app-route-diagnostic.js';
 import { installSmokeAppCheck, assertSmokeAppCheckReady } from './app-check.js';
+import { isRecaptchaStorageDiagnostic } from './third-party-console.js';
 
 export const AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS = 240_000;
 const AUTHENTICATED_CONTEXT_CLOSE_TIMEOUT_MS = 5_000;
@@ -86,6 +87,7 @@ export function collectAppRuntimeIssues(page, secrets = [], {
         if (message.type() !== 'error') return;
         const text = message.text();
         if (/favicon|ERR_BLOCKED_BY_CLIENT|messaging\/unsupported-browser/i.test(text)) return;
+        if (isRecaptchaStorageDiagnostic(page, message)) return;
         issues.push(`console:${redactSmokeDiagnostic(text, secrets)}`);
     });
     page.on('requestfailed', (request) => {
