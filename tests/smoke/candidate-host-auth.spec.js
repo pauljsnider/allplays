@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { installSmokeAppCheck, assertSmokeAppCheckReady } from './helpers/app-check.js';
 import {
     redactDiagnosticText as redactText,
     writeRedactedDiagnostic as writeDiagnostic
@@ -29,7 +30,9 @@ test('candidate host accepts authentication and loads a protected landing page',
         expect(authPassword, 'SMOKE_STAFF_PASSWORD or SMOKE_AUTH_PASSWORD is required for candidate-host auth smoke').toBeTruthy();
 
         await test.step(`authenticate at ${candidateHostUrl}`, async () => {
+            const attestationEnabled = await installSmokeAppCheck(page, candidateHostUrl);
             await page.goto(candidateUrl('/app/#/auth'), { waitUntil: 'domcontentloaded' });
+            await assertSmokeAppCheckReady(page, attestationEnabled);
             await expect(page.getByRole('heading', { name: 'Sign in' }), `Authentication form did not load at candidate URL ${candidateHostUrl}`)
                 .toBeVisible({ timeout: 30_000 });
             await page.getByLabel('Email').fill(authEmail);
