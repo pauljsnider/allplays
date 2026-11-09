@@ -53,6 +53,9 @@ const parentHouseholdServiceMock = `
     export async function createParentHouseholdMemberInvite() {
         return { code: 'HOUSE123', inviteUrl: 'https://allplays.ai/accept-invite.html?code=HOUSE123' };
     }
+    export async function revokeParentHouseholdMemberAccess() {
+        return { success: true };
+    }
 `;
 
 const parentFeesServiceMock = `
