@@ -21,6 +21,7 @@ export type ParentHouseholdFamilyMember = Record<string, any> & {
     playerName: string;
     playerNumber?: string;
     relation: string;
+    organizerUserId?: string;
     accessCode?: string;
     inviteUrl?: string;
 };

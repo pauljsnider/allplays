@@ -41,6 +41,7 @@ const parentToolsServiceMocks = vi.hoisted(() => ({
     loadParentHouseholdInviteModel: vi.fn(),
     loadParentRegistrations: vi.fn(),
     loadParentRegistrationApplicationsPage: vi.fn(),
+    revokeParentHouseholdMemberAccess: vi.fn(),
     revokeParentFamilyShare: vi.fn(),
     updateParentFamilyShareCalendars: vi.fn()
 }));
@@ -57,10 +58,12 @@ const inviteRedemptionMocks = vi.hoisted(() => ({
     redeemSignedInInvite: vi.fn()
 }));
 
-vi.mock('../lib/parentToolsService', () => parentToolsServiceMocks);
-vi.mock('../lib/usePremiumFeatureAccess', () => ({
-    usePremiumFeatureAccess: () => ({ state: 'unlocked', reason: 'global-open' })
+const premiumAccessMocks = vi.hoisted(() => ({
+    usePremiumFeatureAccess: vi.fn()
 }));
+
+vi.mock('../lib/parentToolsService', () => parentToolsServiceMocks);
+vi.mock('../lib/usePremiumFeatureAccess', () => premiumAccessMocks);
 vi.mock('../lib/parentCalendarService', () => ({
     buildParentScheduleIcs: parentToolsServiceMocks.buildParentScheduleIcs,
     getAppleCalendarFeedUrl: parentToolsServiceMocks.getAppleCalendarFeedUrl,
@@ -82,7 +85,8 @@ vi.mock('../lib/parentFamilyShareService', () => ({
 }));
 vi.mock('../lib/parentHouseholdService', () => ({
     createParentHouseholdMemberInvite: parentToolsServiceMocks.createParentHouseholdMemberInvite,
-    loadParentHouseholdInviteModel: parentToolsServiceMocks.loadParentHouseholdInviteModel
+    loadParentHouseholdInviteModel: parentToolsServiceMocks.loadParentHouseholdInviteModel,
+    revokeParentHouseholdMemberAccess: parentToolsServiceMocks.revokeParentHouseholdMemberAccess
 }));
 vi.mock('../lib/parentRegistrationsService', () => ({
     loadParentRegistrations: parentToolsServiceMocks.loadParentRegistrations,
@@ -275,6 +279,7 @@ describe('ParentTools access', () => {
             members: [],
             linkedContacts: []
         });
+        premiumAccessMocks.usePremiumFeatureAccess.mockReturnValue({ state: 'unlocked', reason: 'global-open' });
         vi.mocked(copyPublicText).mockResolvedValue('copied');
         inviteRedemptionMocks.redeemSignedInInvite.mockResolvedValue({
             code: 'AB12CD34',
@@ -1012,6 +1017,101 @@ describe('ParentTools access', () => {
         expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(1);
     });
 
+    it('shows revoke access only for organizer-created active and pending memberships', async () => {
+        parentToolsServiceMocks.loadParentHouseholdInviteModel.mockResolvedValue({
+            linkedPlayers: [],
+            linkedContacts: [{
+                id: 'guardian-1', name: 'Read Only Guardian', email: 'guardian@example.com', phone: '', relation: 'Guardian', status: 'linked',
+                teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Sam Player'
+            }],
+            members: [
+                { id: 'active-1', displayName: 'Alex Active', email: 'active@example.com', status: 'active', organizerUserId: 'parent-1', playerName: 'Sam Player', teamName: 'Bears', relation: 'Guardian' },
+                { id: 'pending-1', displayName: 'Casey Pending', email: 'pending@example.com', status: 'pending', organizerUserId: 'parent-1', playerName: 'Sam Player', teamName: 'Bears', relation: 'Grandparent' },
+                { id: 'other-1', displayName: 'Other Organizer', email: 'other@example.com', status: 'active', organizerUserId: 'parent-2', playerName: 'Sam Player', teamName: 'Bears', relation: 'Guardian' },
+                { id: 'removed-1', displayName: 'Removed Member', email: 'removed@example.com', status: 'removed', organizerUserId: 'parent-1', playerName: 'Sam Player', teamName: 'Bears', relation: 'Guardian' }
+            ]
+        });
+
+        renderParentTools(['/parent-tools/household'], false, linkedAuth);
+
+        expect(((await screen.findByRole('button', { name: 'Revoke Alex Active access to Sam Player' })) as HTMLButtonElement).disabled).toBe(false);
+        expect((screen.getByRole('button', { name: 'Revoke Casey Pending access to Sam Player' }) as HTMLButtonElement).disabled).toBe(false);
+        expect(screen.queryByRole('button', { name: /Read Only Guardian/ })).toBeNull();
+        expect(screen.queryByRole('button', { name: /Other Organizer/ })).toBeNull();
+        expect(screen.queryByText('Removed Member')).toBeNull();
+    });
+
+    it('cancels an explicitly named household revocation without mutating access', async () => {
+        parentToolsServiceMocks.loadParentHouseholdInviteModel.mockResolvedValue({
+            linkedPlayers: [], linkedContacts: [],
+            members: [{ id: 'active-1', displayName: 'Alex Active', email: 'active@example.com', status: 'active', organizerUserId: 'parent-1', playerName: 'Sam Player', teamName: 'Bears', relation: 'Guardian' }]
+        });
+
+        renderParentTools(['/parent-tools/household'], false, linkedAuth);
+        fireEvent.click(await screen.findByRole('button', { name: 'Revoke Alex Active access to Sam Player' }));
+
+        expect(screen.getByText('Alex Active will lose access to Sam Player.')).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+        expect(parentToolsServiceMocks.revokeParentHouseholdMemberAccess).not.toHaveBeenCalled();
+        expect(screen.getByText('Alex Active')).toBeTruthy();
+    });
+
+    it('refreshes the household model after confirmed pending access revocation', async () => {
+        const member = { id: 'pending-1', displayName: 'Casey Pending', email: 'pending@example.com', status: 'pending', organizerUserId: 'parent-1', playerName: 'Sam Player', teamName: 'Bears', relation: 'Grandparent' };
+        parentToolsServiceMocks.loadParentHouseholdInviteModel
+            .mockResolvedValueOnce({ linkedPlayers: [], linkedContacts: [], members: [member] })
+            .mockResolvedValueOnce({ linkedPlayers: [], linkedContacts: [], members: [] });
+        parentToolsServiceMocks.revokeParentHouseholdMemberAccess.mockResolvedValue({ success: true });
+
+        renderParentTools(['/parent-tools/household'], false, linkedAuth);
+        fireEvent.click(await screen.findByRole('button', { name: 'Revoke Casey Pending access to Sam Player' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Revoke access' }));
+
+        await waitFor(() => expect(parentToolsServiceMocks.revokeParentHouseholdMemberAccess).toHaveBeenCalledWith(linkedAuth.user, 'pending-1'));
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(screen.queryByText('Casey Pending')).toBeNull());
+        expect(screen.getByText('Household access revoked.')).toBeTruthy();
+    });
+
+    it('keeps household revocation available when invite creation is premium locked', async () => {
+        premiumAccessMocks.usePremiumFeatureAccess.mockReturnValue({ state: 'locked', reason: 'missing-valid-entitlement' });
+        parentToolsServiceMocks.loadParentHouseholdInviteModel.mockResolvedValue({
+            linkedPlayers: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Sam Player' }], linkedContacts: [],
+            members: [{ id: 'active-1', displayName: 'Alex Active', email: 'active@example.com', status: 'active', organizerUserId: 'parent-1', playerName: 'Sam Player', teamName: 'Bears', relation: 'Guardian' }]
+        });
+
+        renderParentTools(['/parent-tools/household'], false, linkedAuth);
+
+        expect(((await screen.findByRole('button', { name: 'Create invite' })) as HTMLButtonElement).disabled).toBe(true);
+        expect((screen.getByRole('button', { name: 'Revoke Alex Active access to Sam Player' }) as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it('preserves a failed household revocation and succeeds when retried', async () => {
+        const member = { id: 'active-1', displayName: 'Alex Active', email: 'active@example.com', status: 'active', organizerUserId: 'parent-1', playerName: 'Sam Player', teamName: 'Bears', relation: 'Guardian' };
+        parentToolsServiceMocks.loadParentHouseholdInviteModel
+            .mockResolvedValueOnce({ linkedPlayers: [], linkedContacts: [], members: [member] })
+            .mockResolvedValueOnce({ linkedPlayers: [], linkedContacts: [], members: [] });
+        parentToolsServiceMocks.revokeParentHouseholdMemberAccess
+            .mockRejectedValueOnce(new Error('Unable to revoke household access.'))
+            .mockResolvedValueOnce({ success: true });
+
+        renderParentTools(['/parent-tools/household'], false, linkedAuth);
+        fireEvent.click(await screen.findByRole('button', { name: 'Revoke Alex Active access to Sam Player' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Revoke access' }));
+
+        expect(await screen.findByText('Unable to revoke household access.')).toBeTruthy();
+        expect(screen.getByText('Alex Active')).toBeTruthy();
+        expect(screen.queryByText('Household access revoked.')).toBeNull();
+        expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Revoke access' }));
+
+        await waitFor(() => expect(parentToolsServiceMocks.revokeParentHouseholdMemberAccess).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(screen.queryByText('Alex Active')).toBeNull());
+    });
     it('keeps loaded family share links visible when a save action fails', async () => {
         parentToolsServiceMocks.loadFamilyShareModel.mockResolvedValue({
             children: [
