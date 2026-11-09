@@ -12,10 +12,11 @@ import {
 import {
   isScheduleAssignmentClaimedByUser,
   isScheduleAssignmentOpen,
+  normalizeRsvpResponse,
   type ScheduleAssignment
 } from '../../lib/scheduleLogic';
 import { useScheduleEventDetailContext } from '../../pages/schedule/ScheduleEventDetailContext';
-import { AssignmentCard } from './AssignmentCard';
+import { AssignmentCard, type AssignmentClaimReadiness } from './AssignmentCard';
 
 function cloneScheduleAssignments(assignments: ScheduleAssignment[] = []) {
   return assignments.map((assignment) => ({
@@ -44,6 +45,10 @@ function createAssignmentFormFromAssignment(assignment: ScheduleAssignment): Sch
 
 function getAssignmentEventKey(event: { teamId: string; id: string }) {
   return `${event.teamId}::${event.id}`;
+}
+
+export function getAssignmentClaimReadiness(myRsvp: unknown): AssignmentClaimReadiness {
+  return normalizeRsvpResponse(myRsvp) === 'going' ? 'ready' : 'attendance-follow-up';
 }
 
 export function AssignmentsSection() {
@@ -239,6 +244,7 @@ export function AssignmentsSection() {
 
   const openCount = assignments.filter(isScheduleAssignmentOpen).length;
   const userId = auth.user?.uid || '';
+  const claimReadiness = getAssignmentClaimReadiness(event.myRsvp);
   const canManageAssignments = Boolean(auth.user && event.isTeamAdmin && event.isDbGame && !event.isCancelled);
   const formBusy = busyRole === assignmentFormBusyKey;
   const actionableAssignments = assignments.filter((assignment) => (
@@ -313,6 +319,7 @@ export function AssignmentsSection() {
                   userId={userId}
                   busy={busyRole === String(assignment.role || '').trim()}
                   disabled={Boolean(busyRole) || !event.isDbGame || event.isCancelled}
+                  claimReadiness={claimReadiness}
                   canManage={canManageAssignments}
                   onClaim={() => claimSlot(assignment)}
                   onRelease={() => releaseSlot(assignment)}
@@ -340,6 +347,7 @@ export function AssignmentsSection() {
                           userId={userId}
                           busy={busyRole === String(assignment.role || '').trim()}
                           disabled={Boolean(busyRole) || !event.isDbGame || event.isCancelled}
+                          claimReadiness={claimReadiness}
                           canManage={canManageAssignments}
                           onClaim={() => claimSlot(assignment)}
                           onRelease={() => releaseSlot(assignment)}
