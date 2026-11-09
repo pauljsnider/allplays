@@ -77,6 +77,20 @@ describe('live tracker integrity helpers', () => {
     expect(applyQueueBody).toContain('canApplySubstitutionQueue(state.onCourt, state.bench, state.subQueue)');
   });
 
+  it('wires live tracker queued substitutions through projected queue validation', () => {
+    const liveTrackerSource = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
+    const queueSelectionBody = liveTrackerSource.match(/els\.subIn\.addEventListener[\s\S]*?els\.subConfirm\.addEventListener/)?.[0] || '';
+    const applyQueueBody = liveTrackerSource.match(/function applyQueue[\s\S]*?function subIn/)?.[0] || '';
+    const queueGuardIndex = applyQueueBody.indexOf('canApplySubstitutionQueue(state.onCourt, state.bench, state.subQueue)');
+    const historyIndex = applyQueueBody.indexOf('saveHistory(');
+
+    expect(liveTrackerSource).toContain('canApplyQueuedSubstitution');
+    expect(queueSelectionBody).toContain('canApplyPendingSubstitution()');
+    expect(queueGuardIndex).toBeGreaterThanOrEqual(0);
+    expect(historyIndex).toBeGreaterThan(queueGuardIndex);
+    expect(applyQueueBody).toContain('Queued substitutions conflict. Fix the queue before applying.');
+  });
+
   it('reconciles final score to event-derived score when mismatched', () => {
     const log = [
       { undoData: { type: 'stat', statKey: 'pts', value: 2, isOpponent: false } },
