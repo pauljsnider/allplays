@@ -22,8 +22,14 @@ describe('basketball beta tracker handoff', () => {
             db: {}, teamId: 'team', gameId: 'game', gameLog: [], players: [],
             playerStatsByPlayerId: {}, columns: ['PTS'], finalHome: state.home,
             finalAway: state.away, summary: '', opponentStats: {},
-            doc: () => ({}), collection: () => ({}),
-            writeBatch: () => ({ set() {}, delete() {}, update(_ref, value) { saved = value; }, async commit() {} })
+            doc: () => ({ path: 'teams/team/games/game' }), collection: () => ({}),
+            expectedEpoch: '',
+            runTransaction: async (_db, callback) => {
+                let pending;
+                await callback({ get: async () => ({ data: () => game }),
+                    set() {}, delete() {}, update(_ref, value) { pending = value; } });
+                saved = pending;
+            }
         });
         expect(getTeamScorePair({ ...game, ...saved })).toEqual({ teamScore: 9, opponentScore: 3 });
         expect(saved.scoreOrientation).toBe('team-opponent');
