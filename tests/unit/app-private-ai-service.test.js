@@ -4260,6 +4260,23 @@ describe('private AI service', () => {
         });
     });
 
+    it('rejects MCP confirmation when durable arguments changed after the displayed review', async () => {
+        const { runPrivateAiTool, loadPrivateAiPendingAction, executeConfirmedPrivateAiAction, fingerprintPrivateAiAction } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const staged = await runPrivateAiTool(authUser, {
+            name: 'update_rsvp',
+            args: { teamId: 'team-1', eventId: 'game-1', playerId: 'player-1', response: 'going' }
+        });
+        const preview = await loadPrivateAiPendingAction(authUser, staged.confirmationId);
+        const fingerprint = fingerprintPrivateAiAction(preview);
+        firebaseMocks.runTransaction.mockImplementationOnce((_db, callback) => callback({
+            get: async () => ({ exists: () => true, data: () => ({ ...preview, args: { ...preview.args, response: 'not_going' } }) }),
+            set: vi.fn()
+        }));
+        const result = await executeConfirmedPrivateAiAction(authUser, staged.confirmationId, fingerprint);
+        expect(result.ok).toBe(false);
+        expect(scheduleMocks.submitParentScheduleRsvp).not.toHaveBeenCalled();
+    });
+
     it('transactionally executes a pending write only once', async () => {
         const { generatePrivateAiAnswer, runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
         const staged = await runPrivateAiTool(authUser, {
