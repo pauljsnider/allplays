@@ -2,7 +2,11 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { createParentInviteHandler } = require('../parent-invite-creation-core.cjs');
+const {
+  PARENT_INVITE_RECIPIENT_MAX_INVITES,
+  PARENT_INVITE_SENDER_MAX_INVITES,
+  createParentInviteHandler
+} = require('../parent-invite-creation-core.cjs');
 const { createInviteEmailOnCreateHandler } = require('../invite-email-trigger-core.cjs');
 
 class TestHttpsError extends Error {
@@ -455,4 +459,74 @@ test('manual share invites remain bounded and reusable without creating mail', a
   assert.equal(getDocsWithPrefix(harness.docs, 'accessCodes/').length, 1);
   assert.equal(getDocsWithPrefix(harness.docs, 'parentInviteRateLimits/').length, 1);
   assert.equal(getDocsWithPrefix(harness.docs, 'mail/').length, 0);
+});
+
+function createDefaultLimitHarness(initialDocs) {
+  let counter = 0;
+  const harness = createHarness({
+    initialDocs,
+    createInviteCode: () => `C${String(counter++).padStart(7, '0')}`
+  });
+  // Production defaults: no sender/recipient overrides.
+  return { ...harness, handler: harness.createHandler({ senderMaxInvites: undefined, recipientMaxInvites: undefined }) };
+}
+
+test('default limits let one coach invite two contacts for every player on a 20-player roster', async () => {
+  const players = Object.fromEntries(Array.from({ length: 20 }, (_, index) => [
+    `teams/team-1/players/roster-${index}`,
+    { name: `Player ${index}`, number: String(index) }
+  ]));
+  const harness = createDefaultLimitHarness(players);
+
+  for (let index = 0; index < 20; index += 1) {
+    for (const contact of ['a', 'b']) {
+      const result = await harness.handler(
+        inviteInput({ playerId: `roster-${index}`, email: `family${index}${contact}@example.com` }),
+        harness.ownerContext
+      );
+      assert.equal(result.created, true);
+    }
+  }
+
+  assert.equal(getDocsWithPrefix(harness.docs, 'accessCodes/').length, 40);
+  assert.ok(PARENT_INVITE_SENDER_MAX_INVITES >= 40);
+});
+
+test('default limits let one family email be invited for several children on the same day', async () => {
+  const harness = createDefaultLimitHarness({
+    'teams/team-1/players/player-3': { name: 'Jo', number: '10' },
+    'teams/team-1/players/player-4': { name: 'Max', number: '11' },
+    'teams/team-1/players/player-5': { name: 'Lee', number: '12' }
+  });
+
+  for (const playerId of ['player-1', 'player-2', 'player-3', 'player-4', 'player-5']) {
+    const result = await harness.handler(inviteInput({ playerId }), harness.ownerContext);
+    assert.equal(result.created, true);
+  }
+  assert.ok(PARENT_INVITE_RECIPIENT_MAX_INVITES >= 5);
+});
+
+test('the sender budget is counted per team', async () => {
+  const codes = ['TEAMONE1', 'TEAMTWO2', 'TEAMONE3'];
+  const harness = createHarness({
+    createInviteCode: () => codes.shift(),
+    senderMaxInvites: 1,
+    recipientMaxInvites: 10,
+    initialDocs: {
+      'teams/team-2': { name: 'Lions', ownerId: 'owner-1', adminEmails: [] },
+      'teams/team-2/players/player-9': { name: 'Kit', number: '4' }
+    }
+  });
+
+  await harness.handler(inviteInput({ email: 'first@example.com' }), harness.ownerContext);
+  const otherTeam = await harness.handler(
+    inviteInput({ teamId: 'team-2', playerId: 'player-9', email: 'second@example.com' }),
+    harness.ownerContext
+  );
+  assert.equal(otherTeam.created, true);
+
+  await assert.rejects(
+    harness.handler(inviteInput({ playerId: 'player-2', email: 'third@example.com' }), harness.ownerContext),
+    (error) => error.code === 'resource-exhausted'
+  );
 });

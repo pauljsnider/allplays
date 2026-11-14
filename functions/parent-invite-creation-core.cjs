@@ -5,8 +5,13 @@ const { createFirestoreFixedWindowRateLimitReservation } = require('./rate-limit
 
 const PARENT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const PARENT_INVITE_RATE_LIMIT_WINDOW_MS = 24 * 60 * 60 * 1000;
-const PARENT_INVITE_SENDER_MAX_INVITES = 10;
-const PARENT_INVITE_RECIPIENT_MAX_INVITES = 3;
+// Sized for real onboarding: a roster import invites two contacts for each of
+// 15-20 players in one sitting, and one family email can be invited for
+// several children across several teams on the same day. The sender budget is
+// counted per team so setting up a second team does not consume the first's.
+// Both stay configurable through PARENT_INVITE_*_MAX_INVITES.
+const PARENT_INVITE_SENDER_MAX_INVITES = 200;
+const PARENT_INVITE_RECIPIENT_MAX_INVITES = 10;
 const INVITE_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const INVITE_CODE_MAX_ATTEMPTS = 10;
 
@@ -268,7 +273,7 @@ function createParentInviteHandler({
         });
       }
 
-      const senderReservation = prepareSenderReservation(`sender\n${callerUid}`, nowMillis);
+      const senderReservation = prepareSenderReservation(`sender\n${callerUid}\n${teamId}`, nowMillis);
       const recipientReservation = prepareRecipientReservation?.(`recipient\n${email}`, nowMillis) || null;
       const senderLimitSnap = await transaction.get(senderReservation.ref);
       const recipientLimitSnap = recipientReservation
