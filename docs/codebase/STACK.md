@@ -8,7 +8,7 @@ This document describes the active stack as observed on 2026-07-25.
 | --- | --- | --- |
 | Legacy web | HTML5, CSS, JavaScript ES modules in the browser | Root `*.html`, `js/firebase.js`, `js/db.js` |
 | App web/native | React 19, TypeScript 6, Vite 8, Tailwind 4, Capacitor 8 | `apps/app/package.json`, `apps/app/vite.config.ts`, `capacitor.config.json` |
-| Backend | Firebase Functions CommonJS on Node 20 | `functions/package.json`, `firebase.json` |
+| Backend | Firebase Functions CommonJS on Node 22 | `functions/package.json`, `firebase.json` |
 | ChatGPT integration | Express 5 and MCP SDK on Node 22 | `services/chatgpt-mcp/package.json`, `services/chatgpt-mcp/src/server.js` |
 | Data/auth/hosting | Firebase Auth, Firestore, Storage, Functions, Hosting | `firebase.json`, `firestore.rules`, `storage.rules` |
 | Root/app tool runtime | Node 22+, npm 10+ | `package.json`, `apps/app/package.json` |
