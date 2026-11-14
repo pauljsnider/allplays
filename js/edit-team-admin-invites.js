@@ -24,15 +24,6 @@ export async function inviteExistingTeamAdmin({
         : '';
     const code = parsedCode || null;
 
-    if (parsedInviteResult?.existingUser) {
-        return {
-            email: normalizedEmail,
-            status: 'existing_user',
-            code,
-            teamName: parsedInviteResult?.teamName || null
-        };
-    }
-
     if (!code) {
         return {
             email: normalizedEmail,
@@ -44,17 +35,19 @@ export async function inviteExistingTeamAdmin({
     }
 
     try {
-        await sendInviteEmail(normalizedEmail, code, 'admin', { teamName: parsedInviteResult?.teamName || null });
+        const delivery = await sendInviteEmail(normalizedEmail, code, 'admin', { teamName: parsedInviteResult?.teamName || null });
         return {
             email: normalizedEmail,
-            status: 'sent',
+            status: delivery?.emailSent === false ? 'fallback_code' : 'sent',
+            ...(delivery?.emailSent === false ? { reason: 'rate_limited' } : {}),
             code,
             teamName: parsedInviteResult?.teamName || null
         };
-    } catch (_emailError) {
+    } catch (emailError) {
         return {
             email: normalizedEmail,
             status: 'fallback_code',
+            ...(emailError?.code === 'auth/invite-email-rate-limited' ? { reason: 'rate_limited' } : {}),
             code,
             teamName: parsedInviteResult?.teamName || null
         };
@@ -130,12 +123,6 @@ export async function processPendingAdminInvites({
                 : '';
             const code = parsedCode || null;
 
-            if (parsedInviteResult?.existingUser) {
-                summary.existingUserCount += 1;
-                summary.results.push({ email, status: 'existing_user', code });
-                continue;
-            }
-
             if (!code) {
                 summary.fallbackCodeCount += 1;
                 summary.results.push({
@@ -148,12 +135,17 @@ export async function processPendingAdminInvites({
             }
 
             try {
-                await sendInviteEmail(email, code, 'admin', { teamName: parsedInviteResult?.teamName || null });
-                summary.sentCount += 1;
-                summary.results.push({ email, status: 'sent', code });
-            } catch (_emailError) {
+                const delivery = await sendInviteEmail(email, code, 'admin', { teamName: parsedInviteResult?.teamName || null });
+                const status = delivery?.emailSent === false ? 'fallback_code' : 'sent';
+                if (status === 'sent') summary.sentCount += 1;
+                else summary.fallbackCodeCount += 1;
+                summary.results.push({ email, status, code });
+            } catch (emailError) {
                 summary.fallbackCodeCount += 1;
-                summary.results.push({ email, status: 'fallback_code', code });
+                summary.results.push({
+                    email, status: 'fallback_code', code,
+                    ...(emailError?.code === 'auth/invite-email-rate-limited' ? { reason: 'rate_limited' } : {})
+                });
             }
         } catch (error) {
             summary.failedCount += 1;
@@ -181,14 +173,14 @@ export function buildAdminInviteFollowUp(summary, origin = '') {
         const code = typeof result?.code === 'string' ? result.code.trim() : '';
         const email = typeof result?.email === 'string' ? result.email.trim().toLowerCase() : '';
 
-        const canShareCode = (status === 'existing_user' || status === 'fallback_code') && Boolean(code);
+        const canShareCode = (['existing_user', 'fallback_code'].includes(status)) && Boolean(code);
         if (canShareCode) {
             const acceptInviteUrl = buildAppJoinUrl(code, 'admin', normalizedOrigin);
             shareableInvites.push({ email, code, acceptInviteUrl });
             continue;
         }
 
-        if (status === 'failed' || status === 'fallback_code' || status === 'existing_user') {
+        if (['failed', 'fallback_code', 'existing_user'].includes(status)) {
             unresolvedCount += 1;
         }
     }
@@ -203,4 +195,32 @@ export function buildAdminInviteFollowUp(summary, origin = '') {
         unresolvedCount,
         shareableDetails
     };
+}
+
+// Retain recovery details, not only the duplicate-prevention email index.
+export async function loadPendingAdminInvites({ teamId, getTeamAccessCodes }) {
+    const normalizedTeamId = String(teamId || '').trim();
+    if (!normalizedTeamId || typeof getTeamAccessCodes !== 'function') return [];
+    const invites = await getTeamAccessCodes(normalizedTeamId);
+    return (Array.isArray(invites) ? invites : [])
+        .filter((invite) => invite.teamId === normalizedTeamId && isPendingAdminInvite(invite))
+        .map((invite) => ({
+            id: typeof invite.id === 'string' ? invite.id : '',
+            email: String(invite.email || '').trim().toLowerCase(),
+            code: typeof invite.code === 'string' ? invite.code.trim() : '',
+            generatedBy: typeof invite.generatedBy === 'string' ? invite.generatedBy : '',
+            teamName: typeof invite.teamName === 'string' ? invite.teamName : null
+        })).filter((invite) => invite.email);
+}
+
+export async function resendPendingAdminInvite({ teamId, inviteId, userId, getTeamAccessCodes, sendInviteEmail }) {
+    // Re-read before retry so expired/redeemed/revoked invitations fail closed.
+    const invites = await loadPendingAdminInvites({ teamId, getTeamAccessCodes });
+    const invite = invites.find((candidate) => candidate.id === inviteId);
+    if (!invite?.code) throw new Error('This invitation is no longer available. Refresh the page.');
+    if (!userId || invite.generatedBy !== userId) {
+        throw new Error('Only the original sender can resend this invitation. You can share its link instead.');
+    }
+    const delivery = await sendInviteEmail(invite.email, invite.code, 'admin', { teamName: invite.teamName });
+    return { ...invite, status: delivery?.emailSent === false ? 'fallback_code' : 'sent', ...(delivery?.emailSent === false ? { reason: 'rate_limited' } : {}) };
 }

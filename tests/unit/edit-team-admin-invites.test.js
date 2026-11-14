@@ -5,7 +5,7 @@ import {
     processPendingAdminInvites,
     buildAdminInviteFollowUp,
     inviteExistingTeamAdmin,
-    loadPendingAdminInviteEmails
+    loadPendingAdminInviteEmails, loadPendingAdminInvites, resendPendingAdminInvite
 } from '../../js/edit-team-admin-invites.js';
 
 describe('edit team admin invite processing', () => {
@@ -37,7 +37,7 @@ describe('edit team admin invite processing', () => {
         });
     });
 
-    it('returns an existing-user invite without granting access before redemption', async () => {
+    it('emails existing users without granting access before redemption', async () => {
         const inviteAdmin = vi.fn().mockResolvedValue({
             code: 'EXIST111',
             teamName: 'Tigers',
@@ -55,10 +55,10 @@ describe('edit team admin invite processing', () => {
         });
 
         expect(addTeamAdminEmail).not.toHaveBeenCalled();
-        expect(sendInviteEmail).not.toHaveBeenCalled();
+        expect(sendInviteEmail).toHaveBeenCalledWith('coach@example.com', 'EXIST111', 'admin', { teamName: 'Tigers' });
         expect(result).toEqual({
             email: 'coach@example.com',
-            status: 'existing_user',
+            status: 'sent',
             code: 'EXIST111',
             teamName: 'Tigers'
         });
@@ -154,16 +154,16 @@ describe('edit team admin invite processing', () => {
         expect(inviteAdmin).toHaveBeenCalledTimes(2);
         expect(inviteAdmin).toHaveBeenNthCalledWith(1, 'team-123', 'a@example.com');
         expect(inviteAdmin).toHaveBeenNthCalledWith(2, 'team-123', 'b@example.com');
-        expect(sendInviteEmail).toHaveBeenCalledTimes(1);
+        expect(sendInviteEmail).toHaveBeenCalledTimes(2);
         expect(sendInviteEmail).toHaveBeenCalledWith('a@example.com', 'CODE1111', 'admin', { teamName: 'Tigers' });
         expect(result).toEqual({
-            sentCount: 1,
-            existingUserCount: 1,
+            sentCount: 2,
+            existingUserCount: 0,
             fallbackCodeCount: 0,
             failedCount: 0,
             results: [
                 { email: 'a@example.com', status: 'sent', code: 'CODE1111' },
-                { email: 'b@example.com', status: 'existing_user', code: 'CODE2222' }
+                { email: 'b@example.com', status: 'sent', code: 'CODE2222' }
             ]
         });
     });
@@ -304,5 +304,32 @@ describe('edit team admin invite processing', () => {
 
         expect(html).toContain('inviteExistingTeamAdmin');
         expect(html).toContain('addTeamAdminEmail');
+    });
+});
+
+describe('pending admin invite recovery', () => {
+    const invite = { id: 'CODE1', code: 'CODE1', teamId: 't1', type: 'admin_invite', email: 'Coach@Example.com', generatedBy: 'sender', expiresAt: new Date(Date.now() + 60000) };
+    it('retains link and sender after reload while excluding other teams and spent codes', async () => {
+        const result = await loadPendingAdminInvites({ teamId: 't1', getTeamAccessCodes: async () => [invite, {...invite, teamId: 'other'}, {...invite, used: true}, {...invite, revoked: true}] });
+        expect(result).toEqual([{id: 'CODE1', code: 'CODE1', email: 'coach@example.com', generatedBy: 'sender', teamName: null}]);
+    });
+    it('resends the same valid code without creating an invite or granting access', async () => {
+        const sendInviteEmail = vi.fn().mockResolvedValue({emailSent:true});
+        await resendPendingAdminInvite({teamId:'t1', inviteId:'CODE1', userId:'sender', getTeamAccessCodes:async()=>[invite], sendInviteEmail});
+        expect(sendInviteEmail).toHaveBeenCalledExactlyOnceWith('coach@example.com','CODE1','admin',{teamName:null});
+    });
+    it('denies resend by another admin and after expiry or redemption', async () => {
+        const sendInviteEmail = vi.fn();
+        for (const [userId, record] of [['other',invite],['sender',{...invite,used:true}],['sender',{...invite,expiresAt:new Date(0)}]]) {
+            await expect(resendPendingAdminInvite({teamId:'t1',inviteId:'CODE1',userId,getTeamAccessCodes:async()=>[record],sendInviteEmail})).rejects.toThrow();
+        }
+        expect(sendInviteEmail).not.toHaveBeenCalled();
+    });
+    it('preserves a recovery code on email cooldown instead of claiming sent', async () => {
+        const result = await inviteExistingTeamAdmin({teamId:'t1',email:'coach@example.com',inviteAdmin:async()=>({code:'CODE1',existingUser:true}),sendInviteEmail:async()=>{throw Object.assign(new Error('wait'),{code:'auth/invite-email-rate-limited'});}});
+        expect(result.status).toBe('fallback_code');
+        expect(result.reason).toBe('rate_limited');
+        expect(result.code).toBe('CODE1');
+        expect(buildAdminInviteFollowUp({results:[result]},'https://example.com').shareableCount).toBe(1);
     });
 });
