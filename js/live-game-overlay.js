@@ -1212,10 +1212,9 @@ async function initializeChatComposer(database, teamId, gameId) {
 function renderAll() {
     if (!uiState.isReplay && uiState.aggregateRows) {
         const game = uiState.game;
-        const epochGame = game.lastResetEventBoundaryMs > getTimestampMs(game.game?.liveResetAt)
-            ? { ...game.game, liveResetEventId: game.lastResetEventId, liveResetAt: game.lastResetEventBoundaryMs }
-            : game.game;
-        applyLiveAggregateTotals(game, uiState.aggregateRows, { epochGame });
+        // Producers certify the game document's epoch. A separately delivered
+        // historical reset marker may be later without identifying a new epoch.
+        applyLiveAggregateTotals(game, uiState.aggregateRows);
         if (elements.playerTotalsStatus) {
             elements.playerTotalsStatus.hidden = game.aggregateTotalsStatus === 'ready';
             elements.playerTotalsStatus.textContent = game.aggregateTotalsStatus === 'ready' ? ''

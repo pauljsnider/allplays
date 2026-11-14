@@ -756,10 +756,22 @@ export async function getGame(_teamId, gameId) {
     };
 }
 export async function getPlayers() {
-    return [];
+    return window.__LIVE_GAME_PLAYERS__ || [];
 }
-export function subscribeLiveEvents() {
-    return () => {};
+export function subscribeLiveEvents(_teamId, _gameId, callback) {
+    let active = true;
+    window.__LIVE_GAME_EVENT_SNAPSHOT__ = rows => { if (active) callback(rows); };
+    return () => { active = false; };
+}
+export function subscribeAggregatedStats(_teamId, _gameId, callback, onError) {
+    let active = true;
+    window.__LIVE_GAME_STATS_SNAPSHOT__ = rows => { if (active) callback(rows); };
+    window.__LIVE_GAME_STATS_ERROR__ = error => { if (active) onError?.(error); };
+    callback(window.__LIVE_GAME_AGGREGATES__ || []);
+    return () => {
+        active = false;
+        window.__LIVE_GAME_STATS_UNSUBSCRIBED__ = (window.__LIVE_GAME_STATS_UNSUBSCRIBED__ || 0) + 1;
+    };
 }
 export function subscribeLiveChat() {
     return () => {};
@@ -1838,6 +1850,45 @@ for (const replay of [true, false]) {
         await page.clock.fastForward(60000);
         expect(await page.evaluate(() => window.__PLAYBACK_READS__?.length || 0)).toBe(0);
         await expect(page.locator('#youtube-stream-iframe')).not.toHaveAttribute('src', /youtube.com\/embed/);
+        expect(errors).toEqual([]);
+    });
+}
+
+for (const aggregateFirst of [true, false]) {
+    test(`legacy viewer preserves timestamp-only aggregate epoch (${aggregateFirst ? 'aggregate first' : 'marker first'})`, async ({ page, baseURL }) => {
+        const errors = await collectPageErrors(page);
+        await page.addInitScript(() => {
+            window.__LIVE_GAME_GAME__ = { status: 'live', liveStatus: 'live', liveResetAt: 1000,
+                liveLineup: { onCourt: ['a', 'b'], bench: [] } };
+            window.__LIVE_GAME_PLAYERS__ = [{ id: 'a', name: 'Existing Player', number: '7' },
+                { id: 'b', name: 'New Player', number: '4' }];
+        });
+        await routeLiveGameStubs(page);
+        // Exercise real reset reduction and lineup rendering, not the empty replay stub.
+        await page.route(/\/js\/live-game-state\.js(?:\?v=\d+)?$/, route => route.continue());
+        await page.route(/\/js\/live-sport-config\.js(?:\?v=\d+)?$/, route => route.continue());
+        await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+        await expect.poll(() => page.evaluate(() => typeof window.__LIVE_GAME_STATS_SNAPSHOT__)).toBe('function');
+        await page.evaluate(aggregateFirst => {
+            const rows = [{ id: 'a', stats: { pts: 12 }, liveStatsVersion: 1, liveStatsEpoch: 'time:1000' },
+                { id: 'b', stats: { pts: 37 }, liveStatsVersion: 1, liveStatsEpoch: 'time:1000' }];
+            if (aggregateFirst) window.__LIVE_GAME_STATS_SNAPSHOT__(rows);
+            window.__LIVE_GAME_EVENT_SNAPSHOT__([{ id: 'historical-marker', type: 'reset', createdAt: 2000,
+                onCourt: ['a', 'b'], bench: [] }]);
+            if (!aggregateFirst) window.__LIVE_GAME_STATS_SNAPSHOT__(rows);
+        }, aggregateFirst);
+        await expect(page.locator('#lineup-oncourt')).toContainText('Existing Player');
+        await expect(page.locator('#lineup-oncourt')).toContainText('12');
+        await expect(page.locator('#lineup-oncourt')).toContainText('New Player');
+        await expect(page.locator('#lineup-oncourt')).toContainText('37');
+        await expect(page.locator('#player-totals-status')).toBeHidden();
+        await page.evaluate(() => window.__LIVE_GAME_STATS_ERROR__({ code: 'unavailable' }));
+        await expect(page.locator('#player-totals-status')).toBeVisible();
+        const unsubscribeCount = await page.evaluate(() => window.__LIVE_GAME_STATS_UNSUBSCRIBED__ || 0);
+        await page.evaluate(() => window.__POLL_REPLAY_GAME__({ status: 'completed', liveStatus: 'completed' }));
+        await expect.poll(() => page.evaluate(() => window.__LIVE_GAME_STATS_UNSUBSCRIBED__ || 0)).toBeGreaterThan(unsubscribeCount);
+        await page.evaluate(() => window.__LIVE_GAME_STATS_SNAPSHOT__([{ id: 'a', stats: { pts: 999 }, liveStatsVersion: 1, liveStatsEpoch: 'time:1000' }]));
+        await expect(page.locator('#lineup-oncourt')).not.toContainText('999');
         expect(errors).toEqual([]);
     });
 }

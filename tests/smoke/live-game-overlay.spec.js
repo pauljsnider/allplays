@@ -403,7 +403,7 @@ async function stubRealOverlayModules(page) {
                 isPublicProjection: true,
                 ...(typeof window.__OVERLAY_REPLAY_MARKER__ === 'boolean'
                     ? { hasRecordedReplay: window.__OVERLAY_REPLAY_MARKER__ } : {}),
-                liveResetAt: window.__OVERLAY_RESET_REPLAY__ ? 200000 : undefined,
+                liveResetAt: window.__OVERLAY_RESET_REPLAY__ ? 200000 : window.__OVERLAY_GAME_RESET_AT__,
                 liveLineup: { onCourt: ['p9'], bench: ['p4'] },
                 liveStats: { p9: { goals: 5 } },
                 opponentStats: {
@@ -2619,3 +2619,32 @@ test('canonical aggregate totals survive bounded event updates and clear on auth
     await expect(page.locator('#leader-list')).not.toContainText('12 GOALS');
     expect(errors).toEqual([]);
 });
+
+for (const aggregateFirst of [true, false]) {
+    test(`timestamp-only reset retains canonical totals with later marker (${aggregateFirst ? 'aggregate first' : 'marker first'})`, async ({ page, baseURL }) => {
+        const errors = collectPageErrors(page);
+        await page.addInitScript(() => { window.__OVERLAY_GAME_RESET_AT__ = 1000; });
+        await stubRealOverlayModules(page);
+        await stubYouTubeEmbed(page);
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+        await expect.poll(() => page.evaluate(() => typeof window.__OVERLAY_STATS_CALLBACK__)).toBe('function');
+        await page.locator('#leaders-tab').click();
+        await page.evaluate(aggregateFirst => {
+            const rows = [
+                { id: 'p9', stats: { goals: 12 }, liveStatsVersion: 1, liveStatsEpoch: 'time:1000' },
+                { id: 'p4', stats: { goals: 37 }, liveStatsVersion: 1, liveStatsEpoch: 'time:1000' }
+            ];
+            const marker = [{ id: 'historical-marker', type: 'reset', createdAt: 2000, onCourt: ['p9', 'p4'], bench: [] }];
+            if (aggregateFirst) window.__OVERLAY_STATS_CALLBACK__(rows);
+            window.__OVERLAY_EVENT_CALLBACK__(marker);
+            if (!aggregateFirst) window.__OVERLAY_STATS_CALLBACK__(rows);
+        }, aggregateFirst);
+        await expect(page.locator('#leader-list')).toContainText('12 GOALS');
+        await expect(page.locator('#leader-list')).toContainText('37 GOALS');
+        await expect(page.locator('#player-totals-status')).toBeHidden();
+        await page.evaluate(() => window.__POLL_REPLAY_GAME__({ liveResetAt: 3000, liveResetEventId: 'new-reset' }));
+        await expect(page.locator('#leader-list')).not.toContainText('37 GOALS');
+        await expect(page.locator('#player-totals-status')).toBeVisible();
+        expect(errors).toEqual([]);
+    });
+}

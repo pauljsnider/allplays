@@ -1894,10 +1894,9 @@ function renderStats() {
 
 function renderLineup() {
   if (state.isLive && state.aggregateRows) {
-    const epochGame = state.aggregateResetMarker && state.aggregateResetMarker.at > getTimestampMs(state.game?.liveResetAt)
-      ? { ...state.game, liveResetEventId: state.aggregateResetMarker.id, liveResetAt: state.aggregateResetMarker.at }
-      : state.game;
-    applyLiveAggregateTotals(state, state.aggregateRows, { epochGame });
+    // Use the same authoritative game epoch as aggregate producers, including
+    // timestamp-only historical resets whose event marker was written later.
+    applyLiveAggregateTotals(state, state.aggregateRows);
   }
   if (els.playerTotalsStatus) {
     const incomplete = state.isLive && state.game?.trackingEngine !== DIAMOND_ENGINE &&
@@ -2499,12 +2498,6 @@ function startLiveEvents() {
       }
     }
     state.liveEventsFirstLoad = false;
-    for (const event of events) {
-      const at = getTimestampMs(event.createdAt);
-      if (event.type === 'reset' && at > (state.aggregateResetMarker?.at || 0)) {
-        state.aggregateResetMarker = { id: event.id, at };
-      }
-    }
     processNewEvents(events, {
       announce: !isInitialLiveEventsLoad,
       preserveSeededOpponentGoalStats: isInitialLiveEventsLoad
