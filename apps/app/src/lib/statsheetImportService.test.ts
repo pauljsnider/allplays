@@ -52,7 +52,7 @@ const firebaseAiMocks = vi.hoisted(() => ({
 vi.mock('../../../../js/firebase.js', () => firebaseMocks)
 vi.mock('../../../../js/db.js', () => dbMocks)
 vi.mock('../../../../js/vendor/firebase-app.js', () => firebaseAppMocks)
-vi.mock('../../../../js/vendor/firebase-ai.js', () => firebaseAiMocks)
+vi.mock('../../../../js/firebase-ai.js', () => firebaseAiMocks)
 vi.mock('./profilePhotoService', () => ({ acquireProfilePhoto: vi.fn() }))
 vi.mock('../../../../js/live-tracker-save-complete.js', () => ({
   addAggregatedStatsWritesToBatch: vi.fn(({ aggregatedStatsWrites = [], batch, db, currentTeamId, currentGameId, createDocRef }: any) => {

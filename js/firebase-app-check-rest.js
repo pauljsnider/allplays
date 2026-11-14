@@ -1,12 +1,23 @@
 const PRIMARY_INITIALIZATION_KEY = '__allplaysPrimaryAppCheckInitialization';
 const PRIMARY_OPTIONS_KEY = '__allplaysPrimaryFirebaseOptions';
 const PRIMARY_TOKEN_GETTER_KEY = '__allplaysPrimaryAppCheckTokenGetter';
+const PRIMARY_TOKEN_PREPARER_KEY = '__allplaysPrimaryAppCheckTokenPreparer';
 const STATUS_KEY = '__ALLPLAYS_APP_CHECK_STATUS__';
 
-export function registerPrimaryAppCheckContext({ initialization, options, tokenGetter } = {}) {
+export function registerPrimaryAppCheckContext({ initialization, options, tokenGetter, tokenPreparer } = {}) {
     if (initialization) globalThis[PRIMARY_INITIALIZATION_KEY] = initialization;
     if (options) globalThis[PRIMARY_OPTIONS_KEY] = { ...options };
     if (typeof tokenGetter === 'function') globalThis[PRIMARY_TOKEN_GETTER_KEY] = tokenGetter;
+    if (typeof tokenPreparer === 'function') globalThis[PRIMARY_TOKEN_PREPARER_KEY] = tokenPreparer;
+}
+
+/** AI requires attestation even while other services are in monitoring mode. */
+export async function preparePrimaryAppCheckToken(forceRefresh = false) {
+    const initialization = globalThis[PRIMARY_INITIALIZATION_KEY];
+    if (initialization) await initialization;
+    const prepare = globalThis[PRIMARY_TOKEN_PREPARER_KEY];
+    if (typeof prepare === 'function') await prepare();
+    return getPrimaryAppCheckToken(forceRefresh);
 }
 
 function reportTokenError() {

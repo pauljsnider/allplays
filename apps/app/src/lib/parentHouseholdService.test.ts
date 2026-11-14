@@ -10,13 +10,14 @@ const legacyParentToolsMocks = vi.hoisted(() => ({
     doc: vi.fn((...segments: unknown[]) => segments.slice(1).join('/')),
     getDoc: vi.fn(),
     getPlayers: vi.fn(),
-    readFamilyMembers: vi.fn()
+    readFamilyMembers: vi.fn(),
+    removeFamilyMember: vi.fn()
 }));
 
 vi.mock('./adapters/legacyPlayerDb', () => legacyPlayerDbMocks);
 vi.mock('./adapters/legacyParentTools', () => legacyParentToolsMocks);
 
-import { loadParentHouseholdInviteModel } from './parentHouseholdService';
+import { loadParentHouseholdInviteModel, revokeParentHouseholdMemberAccess } from './parentHouseholdService';
 
 function playerSnapshot(id: string, data: Record<string, unknown>) {
     return {
@@ -121,5 +122,31 @@ describe('loadParentHouseholdInviteModel', () => {
         ]);
         expect(legacyParentToolsMocks.getDoc).toHaveBeenCalledTimes(2);
         expect(legacyPlayerDbMocks.getPlayerPrivateProfile).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe('revokeParentHouseholdMemberAccess', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('delegates a valid membership ID to the legacy adapter', async () => {
+        const result = { success: true, membershipId: 'membership-1' };
+        legacyParentToolsMocks.removeFamilyMember.mockResolvedValue(result);
+
+        await expect(revokeParentHouseholdMemberAccess({ uid: 'parent-1' } as any, ' membership-1 ')).resolves.toBe(result);
+        expect(legacyParentToolsMocks.removeFamilyMember).toHaveBeenCalledWith('parent-1', 'membership-1');
+    });
+
+    it.each([undefined, null, '', '   '])('rejects missing membership ID %j without invoking the adapter', async (membershipId) => {
+        await expect(revokeParentHouseholdMemberAccess({ uid: 'parent-1' } as any, membershipId as any)).rejects.toThrow('Household membership is required.');
+        expect(legacyParentToolsMocks.removeFamilyMember).not.toHaveBeenCalled();
+    });
+
+    it('propagates adapter failures', async () => {
+        const error = new Error('permission denied');
+        legacyParentToolsMocks.removeFamilyMember.mockRejectedValue(error);
+
+        await expect(revokeParentHouseholdMemberAccess({ uid: 'parent-1' } as any, 'membership-1')).rejects.toBe(error);
     });
 });

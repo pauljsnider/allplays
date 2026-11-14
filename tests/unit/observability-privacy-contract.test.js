@@ -32,7 +32,7 @@ describe('privacy-preserving observability contract', () => {
                 .join('\n');
 
         expect(trackedSources).not.toContain('telemetry.js?v=3');
-        expect(trackedSources).toContain('telemetry.js?v=5');
+        expect(trackedSources).toContain('telemetry.js?v=6');
         expect(client).toContain("from './telemetry-utils.js?v=3'");
     });
 

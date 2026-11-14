@@ -1,4 +1,4 @@
-import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
+import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=2';
 
 const SUPPORTED_REMINDER_HOURS = [24, 48, 72];
 

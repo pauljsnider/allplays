@@ -461,6 +461,27 @@ describe('PrivateAiChat', () => {
         expect(screen.getByText('No app data was changed.')).toBeTruthy();
     });
 
+    it('keeps an open attachment input connected when saved conversations finish loading', async () => {
+        let resolveConversations!: (value: unknown[]) => void;
+        privateAiServiceMocks.loadPrivateAiConversations.mockImplementationOnce(() => new Promise((resolve) => {
+            resolveConversations = resolve;
+        }));
+        renderChat();
+        // The native file chooser may stay open while the history request resolves.
+        const attachmentInput = screen.getByLabelText('Attach image, CSV, or PDF');
+        resolveConversations([{
+            id: 'default', title: 'Recent chat', lastMessagePreview: 'Saved conversation',
+            createdAt: new Date(), updatedAt: new Date()
+        }]);
+        await screen.findByLabelText('AI conversations');
+        expect(attachmentInput.isConnected).toBe(true);
+        expect(screen.getByLabelText('Attach image, CSV, or PDF')).toBe(attachmentInput);
+        const pdf = new File(['synthetic PDF'], 'pending-selection.pdf', { type: 'application/pdf' });
+        fireEvent.change(attachmentInput, { target: { files: [pdf] } });
+        expect(await screen.findByText('pending-selection.pdf')).toBeTruthy();
+        expect(privateAiServiceMocks.sendPrivateAiAttachmentMessage).not.toHaveBeenCalled();
+    });
+
     it('accepts an image pasted directly into the AI composer', async () => {
         const image = new File(['image'], 'clipboard-roster.png', { type: 'image/png' });
 

@@ -215,7 +215,7 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
   );
   rewritten = replaceNamedImportByModulePath(
     rewritten,
-    './vendor/firebase-ai.js',
+    './firebase-ai.js',
     'const { getAI, getGenerativeModel, GoogleAIBackend } = deps.firebaseAi;'
   );
   rewritten = replaceNamedImportByModulePath(

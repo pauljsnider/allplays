@@ -31,6 +31,7 @@ import {
     isPrimaryFirebaseRestRequest,
     normalizeNativeAppCheckToken
 } from '../../js/firebase-app-check.js';
+import { preparePrimaryAppCheckToken } from '../../js/firebase-app-check-rest.js';
 
 const PRIMARY_APP = {
     name: '[DEFAULT]',
@@ -48,6 +49,7 @@ describe('Firebase App Check initialization', () => {
         delete globalThis.__allplaysPrimaryAppCheckInitialization;
         delete globalThis.__allplaysPrimaryFirebaseOptions;
         delete globalThis.__allplaysPrimaryAppCheckTokenGetter;
+        delete globalThis.__allplaysPrimaryAppCheckTokenPreparer;
         delete globalThis.__ALLPLAYS_APP_CHECK_STATUS__;
         delete globalThis.FIREBASE_APPCHECK_DEBUG_TOKEN;
         globalThis.window = {
@@ -242,6 +244,26 @@ describe('Firebase App Check initialization', () => {
         ]);
     });
 
+    it('lets an AI request activate a late native token without waiting for the background retry', async () => {
+        vi.useFakeTimers();
+        try {
+            let resolveToken;
+            nativeAppCheck.getToken.mockImplementationOnce(() => new Promise((resolve) => { resolveToken = resolve; }));
+            await initializeNativeAppCheck(PRIMARY_APP, { nativeDebug: false });
+            await vi.advanceTimersByTimeAsync(1500);
+            expect(appCheckSdk.initializeAppCheck).not.toHaveBeenCalled();
+            resolveToken({ token: 'late-valid-token', expireTimeMillis: Date.now() + 60000 });
+            await Promise.resolve();
+            await Promise.resolve();
+            await expect(preparePrimaryAppCheckToken()).resolves.toBe('not-logged-or-exposed');
+            expect(appCheckSdk.initializeAppCheck).toHaveBeenCalledOnce();
+            expect(nativeAppCheck.getToken).toHaveBeenCalledOnce();
+        } finally {
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
+    });
+
     it('does not replace the iOS provider after native startup configures Firebase', async () => {
         globalThis.window.Capacitor = {
             isNativePlatform: () => true,
@@ -305,6 +327,15 @@ describe('Firebase App Check initialization', () => {
             token: `header.${jwtPayload}.signature`,
             expireTimeMillis: futureExpiry
         });
+    });
+
+    it('rejects known-expired native tokens instead of extending them with the fallback TTL', () => {
+        const now = 1_800_000_000_000;
+        for (const expiry of [now - 1, 0, -1]) {
+            const payload = Buffer.from(JSON.stringify({ exp: expiry / 1000 })).toString('base64url');
+            expect(() => normalizeNativeAppCheckToken({ token: `header.${payload}.signature` }, now)).toThrow('temporarily unavailable');
+            expect(() => normalizeNativeAppCheckToken({ token: 'fixture', expireTimeMillis: expiry }, now)).toThrow('temporarily unavailable');
+        }
     });
 
     it('uses a finite future fallback for malformed native tokens without a 0ms or NaN refresh window', () => {

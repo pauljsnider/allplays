@@ -1908,8 +1908,16 @@ service cloud.firestore {
              snapshot.get('href', null) == null;
     }
 
+    function isSocialPostPayloadPrivacySafe(data) {
+      return !data.keys().hasAny([
+        'authorEmail', 'email', 'phone', 'phoneNumber', 'authorPhone',
+        'contactEmail', 'contactPhone'
+      ]);
+    }
+
     function isSocialPostCreatePayloadValid(data) {
       return isSignedIn() &&
+             isSocialPostPayloadPrivacySafe(data) &&
              data.get('authorId', '') == request.auth.uid &&
              data.get('type', '') is string &&
              isSocialPostType(data.get('type', '')) &&
@@ -3152,6 +3160,7 @@ service cloud.firestore {
       allow create: if isVerifiedForSensitiveWrite() &&
                        isSocialPostCreatePayloadValid(request.resource.data);
       allow update: if isVerifiedForSensitiveWrite() &&
+                    isSocialPostPayloadPrivacySafe(request.resource.data) &&
                     (
                       isSocialPostAuthorContentUpdateValid() ||
                       isSocialPostAuthorHideUpdateValid() ||

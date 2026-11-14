@@ -329,12 +329,12 @@ async function mockEditScheduleDependencies(page) {
     await page.route('**/js/team-admin-banner.js*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
     await page.route('**/js/team-access.js*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ACCESS_STUB }));
     await page.route(/\/js\/live-game-state\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_STATE_STUB }));
-    await page.route('**/js/edit-schedule-cancel-game.js?v=4', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: CANCEL_GAME_STUB }));
+    await page.route('**/js/edit-schedule-cancel-game.js?v=5', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: CANCEL_GAME_STUB }));
     await page.route('**/js/edit-schedule-practice-payload.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: PRACTICE_PAYLOAD_STUB }));
     await page.route(/\/js\/edit-schedule-practice-submit\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: PRACTICE_SUBMIT_STUB }));
     await page.route('**/js/firebase.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_STUB }));
     await page.route('**/js/vendor/firebase-app.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
-    await page.route('**/js/vendor/firebase-ai.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
+    await page.route('**/js/firebase-ai.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
     await page.route('**/js/tournament-brackets.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TOURNAMENT_STUB }));
     await page.route('**/js/schedule-notifications.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: SCHEDULE_NOTIFICATIONS_STUB }));
     await page.route('**/js/tournament-standings.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TOURNAMENT_STANDINGS_STUB }));

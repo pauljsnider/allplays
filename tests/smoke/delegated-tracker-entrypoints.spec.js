@@ -154,7 +154,7 @@ test.beforeEach(async ({ page }) => {
         contentType: 'application/javascript',
         body: "export function serverTimestamp() { return 'server-timestamp'; }"
     }));
-    await page.route(/\/js\/vendor\/firebase-ai\.js$/, (route) => route.fulfill({
+    await page.route(/\/js\/firebase-ai\.js(?:\?v=\d+)?$/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: 'export class GoogleAIBackend {} export const Schema = {}; export function getAI() { return {}; } export function getGenerativeModel() { return {}; }'

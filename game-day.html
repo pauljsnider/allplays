@@ -517,8 +517,8 @@
     <script type="module">
         import { getTeamScorePair } from './js/season-record.js';
         import { getApp } from './js/vendor/firebase-app.js';
-        import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
-        import { db } from './js/firebase.js?v=27';
+        import { getAI, getGenerativeModel, GoogleAIBackend } from './js/firebase-ai.js?v=1';
+        import { db } from './js/firebase.js?v=4433197';
         import { doc, getDocFromServer, serverTimestamp, setDoc } from './js/vendor/firebase-firestore.js';
         import {
             getGameDayTeamContext, getGame, subscribeGame, getPlayers,
@@ -526,10 +526,10 @@
             getConfigs, updateGame, logStatEvent, updatePlayerStats,
             broadcastLiveEvent, subscribeLiveEvents, getLiveEvents, subscribeAggregatedStats,
             setGameLiveStatus, submitRsvpForPlayer, postChatMessage
-        } from './js/db.js?v=4433210';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime } from './js/utils.js?v=443386';
-        import { checkAuth } from './js/auth.js?v=4433215';
-        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443361';
+        } from './js/db.js?v=4433212';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime } from './js/utils.js?v=443388';
+        import { checkAuth } from './js/auth.js?v=4433217';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443363';
         import { buildRotationPlanFromGamePlan } from './js/game-plan-interop.js?v=2';
         import { getPeriodsForFormation, normalizeActivePeriod, sortSubstitutionPeriods } from './js/game-day-periods.js?v=2';
         import {

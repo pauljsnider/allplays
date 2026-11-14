@@ -1,6 +1,6 @@
-import { checkAuth } from './auth.js?v=4433215';
-import { getUserTeamsWithAccess, getGames } from './db.js?v=4433210';
-import { functions, httpsCallable } from './firebase.js?v=4433195';
+import { checkAuth } from './auth.js?v=4433217';
+import { getUserTeamsWithAccess, getGames } from './db.js?v=4433212';
+import { functions, httpsCallable } from './firebase.js?v=4433197';
 const $ = id => document.getElementById(id);
 const configure = httpsCallable(functions, 'configureBadgeScoreController');
 let activeUser = null;
