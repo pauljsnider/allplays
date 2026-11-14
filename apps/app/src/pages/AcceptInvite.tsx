@@ -13,10 +13,14 @@ import {
   mapLegacyRedirectToAppRoute,
   readPendingInvite,
   redeemInviteForUser,
-  rememberPendingInvite
+  rememberPendingInvite,
+  resendVerificationEmail
 } from '../lib/authService';
 import { getValidatedInviteCode, normalizeInviteCode, redeemSignedInInvite } from '../lib/inviteRedemption';
 import type { AuthState } from '../lib/types';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('accept-invite');
 
 function readEmailForSignIn() {
   try {
@@ -112,8 +116,18 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
         processedKeyRef.current = '';
         if (error?.details?.reason === 'email-verification-required') {
           rememberPendingInvite(normalizedCode, error.details.inviteType || inviteType);
+          // The verification screen tells the user to open an email, so queue one.
+          // A returning user's signup-time email is usually long gone.
+          void resendVerificationEmail(nextRoute).catch((verificationError: unknown) => {
+            logger.warn('Unable to queue verification for a pending invitation.', { error: verificationError });
+          });
           navigate(nextRoute ? `/verify-pending?next=${encodeURIComponent(nextRoute)}` : '/verify-pending', { replace: true });
           return;
+        }
+        if (!isRetryableInviteError(error)) {
+          // A code that can never succeed must not stay pending, or it is
+          // re-submitted every time this page opens without a code.
+          clearPendingInvite();
         }
         setState('error');
         setMessage(error?.message || 'Unable to accept this invite.');
@@ -249,6 +263,24 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
       {state === 'error' ? <Status icon={XCircle} message={message} tone="error" /> : null}
     </AuthFrame>
   );
+}
+
+const retryableInviteErrorCodes = new Set([
+  'aborted',
+  'cancelled',
+  'deadline-exceeded',
+  'internal',
+  'resource-exhausted',
+  'unavailable',
+  'unknown'
+]);
+
+function isRetryableInviteError(error: { code?: unknown; message?: unknown } | null | undefined) {
+  const code = String(error?.code || '')
+    .toLowerCase()
+    .replace(/^functions\//, '');
+  if (retryableInviteErrorCodes.has(code)) return true;
+  return /network|offline|timed out|timeout/i.test(String(error?.message || ''));
 }
 
 function isCurrentInviteRoute(fallbackPathname: string) {
