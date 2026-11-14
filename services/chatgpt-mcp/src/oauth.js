@@ -35,6 +35,9 @@ export function requestedReviewScope(scope) {
     if (scopes.some((value) => !['allplays.read', 'allplays.review'].includes(value))) {
         throw new OAuthError('invalid_scope', 'Unsupported scope.');
     }
+    if (scopes.includes('allplays.review') && !scopes.includes('allplays.read')) {
+        throw new OAuthError('invalid_scope', 'allplays.review requires allplays.read.');
+    }
     return scopes.includes('allplays.review');
 }
 

@@ -35,7 +35,7 @@ function firestoreFixture() {
 }
 describe('explicit review-only OAuth capability', () => {
     it('requires both the requested scope and explicit consent; legacy/read grants stay read-only', async () => {
-        for (const extra of [{}, { scope: 'allplays.review' }, { reviewApproved: true }]) {
+        for (const extra of [{}, { reviewApproved: true }]) {
             const broker = createOAuthBroker();
             const tokens = await issue(broker, extra);
             expect(tokens.scope).toBe('allplays.read');
@@ -45,6 +45,11 @@ describe('explicit review-only OAuth capability', () => {
             expect(await broker.resolveAccessToken(rotated.access_token)).not.toHaveProperty('reviewRequests');
         }
         expect(() => requestedReviewScope('allplays.admin')).toThrow('Unsupported scope');
+    });
+    it('rejects review scope unless read scope was also requested', async () => {
+        const broker = createOAuthBroker();
+        await expect(issue(broker, { scope: 'allplays.review', reviewApproved: true }))
+            .rejects.toMatchObject({ code: 'invalid_scope' });
     });
     it('preserves explicit consent through memory-store cross-instance rotation', async () => {
         const state = {};
@@ -59,7 +64,7 @@ describe('explicit review-only OAuth capability', () => {
         const fixture = firestoreFixture();
         const broker = createOAuthBroker({ grantStore: fixture.store() });
         const clientId = broker.registerClient({ redirect_uris: [redirectUri] }).client_id;
-        const code = await broker.approveAuthorization({ clientId, redirectUri, codeChallenge: s256Challenge(verifier), firebaseRefreshToken: 'synthetic-binding', scope: 'allplays.review', reviewApproved: true });
+        const code = await broker.approveAuthorization({ clientId, redirectUri, codeChallenge: s256Challenge(verifier), firebaseRefreshToken: 'synthetic-binding', scope: 'allplays.read allplays.review', reviewApproved: true });
         const restarted = createOAuthBroker({ grantStore: fixture.store() });
         const tokens = await restarted.exchange({ grant_type: 'authorization_code', code, code_verifier: verifier });
         expect(await restarted.resolveAccessToken(tokens.access_token)).toMatchObject({ reviewRequests: true });
