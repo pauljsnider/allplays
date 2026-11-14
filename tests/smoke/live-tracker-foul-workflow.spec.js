@@ -289,6 +289,39 @@ async function installModuleMocks(page) {
             saveStore(store);
         }
 
+        export async function runTransaction(_db, callback) {
+            const store = clone(loadStore());
+            const operations = [];
+            const result = await callback({
+                get: async ref => {
+                    const path = String(ref.path || '');
+                    const value = path.includes('/aggregatedStats/')
+                        ? store.aggregatedStats?.[path.split('/').pop()] : store.game;
+                    return { exists: () => value !== undefined, data: () => value === undefined ? undefined : clone(value) };
+                },
+                set: (ref, data, options = {}) => operations.push({ kind: 'set', ref, data: clone(data), options }),
+                update: (ref, data) => operations.push({ kind: 'update', ref, data: clone(data) }),
+                delete: ref => operations.push({ kind: 'delete', ref })
+            });
+            // Publish only after callback success; an epoch rejection commits nothing.
+            for (const operation of operations) {
+                const path = String(operation.ref.path || '');
+                if (path.includes('/aggregatedStats/')) {
+                    const id = path.split('/').pop();
+                    store.aggregatedStats ||= {};
+                    if (operation.kind === 'delete') delete store.aggregatedStats[id];
+                    else store.aggregatedStats[id] = operation.options?.merge || operation.options?.mergeFields
+                        ? { ...store.aggregatedStats[id], ...operation.data } : operation.data;
+                } else if (operation.kind === 'update' && path.endsWith('/games/game-1')) {
+                    store.game = { ...store.game, ...operation.data };
+                } else {
+                    store.batchOps = [...(store.batchOps || []), { type: operation.kind, path, data: operation.data }];
+                }
+            }
+            saveStore(store);
+            return result;
+        }
+
         export async function addDoc() {
             return { id: 'doc-' + Date.now() };
         }
