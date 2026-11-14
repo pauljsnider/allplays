@@ -65,7 +65,7 @@ export async function getAllUsers() {
 }
 
 export async function getTeamAccessCodes() {
-    return [];
+    return JSON.parse(sessionStorage.getItem('testPendingInvites') || '[]');
 }
 
 export async function getConfigs() {
@@ -94,6 +94,8 @@ export async function syncRegistrationProvider() {
 
 export async function inviteAdmin(teamId, email) {
     window.__lastAdminInvite = { teamId, email };
+    window.__inviteCreationCount = (window.__inviteCreationCount || 0) + 1;
+    sessionStorage.setItem('testPendingInvites', JSON.stringify([{ id: 'invite-1', code: 'EXIST111', email, teamId, teamName: 'Tigers', type: 'admin_invite', generatedBy: 'owner-1', used: false, expiresAt: Date.now() + 60000 }]));
     return {
         code: 'EXIST111',
         teamName: 'Tigers',
@@ -145,8 +147,9 @@ export function checkAuth(callback) {
     });
 }
 
-export async function sendInviteEmail() {
-    return { success: true };
+export async function sendInviteEmail(email, code) {
+    window.__lastInviteEmail = {email, code};
+    return { success: true, emailSent: true };
 }
 `;
 
@@ -202,26 +205,34 @@ async function mockEditTeamDependencies(page) {
     await page.route(/\/js\/team-access\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ACCESS_STUB }));
 }
 
-test('team management exposes the existing-user admin redemption fallback without granting access before redemption', async ({ page, baseURL }) => {
+test('team management emails existing users and recovers pending invitation after reload without granting access', async ({ page, baseURL }) => {
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
     await mockEditTeamDependencies(page);
 
     await page.goto(`${baseURL}/edit-team.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+    expect(errors).toEqual([]);
     await expect(page.locator('#admin-list')).toContainText('owner@example.com');
 
     await page.locator('#add-admin-btn').click();
     await page.locator('#admin-email-input').fill('Coach@Example.com');
     await page.locator('#save-admin-btn').click();
 
-    await expect(page.locator('#admin-invite-status')).toContainText('already has an account');
-    await expect(page.locator('#admin-code-text')).toHaveText('EXIST111');
-    await expect(page.locator('#admin-invite-code')).toBeVisible();
+    await expect(page.locator('#admin-invite-status')).toContainText('email accepted');
+    await expect(page.locator('#pending-admin-list')).toContainText('coach@example.com');
+    expect(await page.evaluate(() => window.__lastInviteEmail)).toEqual({email:'coach@example.com',code:'EXIST111'});
+    await page.reload();
+    expect(errors).toEqual([]);
+    await expect(page.locator('#pending-admin-list')).toContainText('coach@example.com');
+    await expect(page.getByLabel('Invitation link for coach@example.com')).toHaveValue(/EXIST111/);
+    await page.getByRole('button', {name:'Resend invitation'}).click();
+    await expect(page.locator('#pending-admin-list')).toContainText('email accepted');
+    expect(await page.evaluate(() => window.__lastInviteEmail)).toEqual({email:'coach@example.com',code:'EXIST111'});
+    expect(await page.evaluate(() => window.__inviteCreationCount)).toBeUndefined();
     await expect(page.locator('#admin-list')).toContainText('owner@example.com');
     await expect(page.locator('#admin-list')).not.toContainText('coach@example.com');
 
-    expect(await page.evaluate(() => window.__lastAdminInvite)).toEqual({
-        teamId: 'team-1',
-        email: 'coach@example.com'
-    });
+    expect(await page.evaluate(() => window.__lastAdminInvite)).toBeUndefined();
     expect(await page.evaluate(() => window.__lastPersistedAdmin)).toBeUndefined();
 });
 

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { deriveAgeClassification, getDiamondLeaderboardQualification } from './teamDetailService';
+import { deriveAgeClassification, getDiamondLeaderboardQualification, inviteTeamAdminForApp } from './teamDetailService';
 
 describe('deriveAgeClassification', () => {
   it('uses age group, birth year, grade, then birth date year in precedence order', () => {
@@ -129,7 +129,7 @@ vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: vi.fn(() => f
 vi.mock('@capacitor-firebase/authentication', () => ({ FirebaseAuthentication: {} }));
 vi.mock('../../../../js/db.js', () => dbMocks);
 vi.mock('../../../../js/auth.js', () => ({ sendInviteEmail: vi.fn() }));
-vi.mock('../../../../js/edit-team-admin-invites.js', () => ({ inviteExistingTeamAdmin: vi.fn() }));
+// Exercise the real shared invitation helper through the React service boundary.
 vi.mock('../../../../js/firebase.js', () => firebaseMocks);
 vi.mock('../../../../js/roster-profile-fields.js', () => ({
   collectRosterParentContacts: vi.fn((player: any, options: any = {}) => {
@@ -3764,5 +3764,40 @@ describe('buildTeamDetailModel standings', () => {
     );
     expect(built.standings.rows).toHaveLength(2);
     expect(built.standings.currentRow).toEqual(expect.objectContaining({ team: 'Bears', rank: 1 }));
+  });
+});
+
+describe('admin invitation delivery through the shared helper', () => {
+  it('emails an existing account without granting access or requiring a team save', async () => {
+    const { sendInviteEmail } = await import('../../../../js/auth.js');
+    vi.clearAllMocks();
+    dbMocks.getTeam.mockResolvedValue({ id: 'invite-team', ownerId: 'owner' });
+    dbMocks.getPlayers.mockResolvedValue([]);
+    dbMocks.getGames.mockResolvedValue([]);
+    dbMocks.getConfigs.mockResolvedValue([]);
+    dbMocks.inviteAdmin.mockResolvedValue({ code: 'ABC12345', existingUser: true, teamName: 'Tigers' });
+    vi.mocked(sendInviteEmail).mockResolvedValue({ success: true, emailSent: true });
+    const result = await inviteTeamAdminForApp('invite-team', 'Coach@Example.com', { uid: 'owner' } as any);
+    expect(result.status).toBe('sent');
+    expect(result.code).toBe('ABC12345');
+    expect(result.acceptInviteUrl).toBe('https://allplays.ai/app/#/accept-invite');
+    expect(sendInviteEmail).toHaveBeenCalledWith('coach@example.com', 'ABC12345', 'admin', { teamName: 'Tigers' });
+    expect(dbMocks.addTeamAdminEmail).not.toHaveBeenCalled();
+    expect(dbMocks.updateTeam).not.toHaveBeenCalled();
+  });
+
+  it('retains a shareable link and does not claim delivery on recipient cooldown', async () => {
+    const { sendInviteEmail } = await import('../../../../js/auth.js');
+    dbMocks.getTeam.mockResolvedValue({ id: 'cooldown-team', ownerId: 'owner' });
+    dbMocks.getPlayers.mockResolvedValue([]);
+    dbMocks.getGames.mockResolvedValue([]);
+    dbMocks.getConfigs.mockResolvedValue([]);
+    dbMocks.inviteAdmin.mockResolvedValue({ code: 'ABC12345', existingUser: true, teamName: 'Tigers' });
+    vi.mocked(sendInviteEmail).mockRejectedValue(Object.assign(new Error('Wait'), { code: 'auth/invite-email-rate-limited' }));
+    const result = await inviteTeamAdminForApp('cooldown-team', 'coach@example.com', { uid: 'owner' } as any);
+    expect(result.status).toBe('fallback_code');
+    expect(result.reason).toBe('rate_limited');
+    expect(result.code).toBe('ABC12345');
+    expect(result.acceptInviteUrl).toBe('https://allplays.ai/app/#/accept-invite');
   });
 });
