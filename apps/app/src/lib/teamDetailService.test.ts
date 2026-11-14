@@ -1515,6 +1515,18 @@ describe('team detail bootstrap loading', () => {
     expect(dbMocks.getConfigs).not.toHaveBeenCalled();
   });
 
+  it.each(['parent-1', 'owner-1'])('returns the core team without starting optional schedule discovery for %s', async (uid) => {
+    scheduleServiceMocks.loadTeamOverviewSchedule.mockImplementation(() => new Promise(() => {}));
+    const model = await loadParentTeamDetailBootstrap('team-1', { uid } as any, { includeOverviewSchedule: false });
+
+    expect(model.team.name).toBe('Bears');
+    expect(model.players).toHaveLength(1);
+    expect(scheduleServiceMocks.loadTeamOverviewSchedule).not.toHaveBeenCalled();
+    expect(dbMocks.getPlayersWithPrivateRosterContacts).toHaveBeenCalledTimes(uid === 'owner-1' ? 1 : 0);
+    expect(dbMocks.getGames).not.toHaveBeenCalled();
+    expect(dbMocks.getConfigs).not.toHaveBeenCalled();
+  });
+
   it('uses the bounded overview schedule during bootstrap without hydrating games', async () => {
     scheduleServiceMocks.loadTeamOverviewSchedule.mockResolvedValueOnce([
       {
