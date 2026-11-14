@@ -10,40 +10,6 @@ validation and explicit confirmation happen in the signed-in app; these are
 not direct in-chat mutation tools. See [write workflows](WRITE_WORKFLOWS.md) for
 the catalog, retry contract, limitations, and rollout order.
 
-An isolated direct-command prototype supports team drill favorites, creating a
-stat configuration by cloning an existing one, renaming a configuration, and
-creating/updating basic roster fields individually or in an atomic batch of up
-to 20 players, and creating/updating draft
-practice timelines for existing non-recurring events. Roster and coaching
-proposals keep content behind current team authorization and store only opaque
-user receipts. Practice updates append blocks while preserving existing notes
-and attendance; packet delivery remains outside this path. Ordinary schedule
-create/update tools now support a direct prototype path with exact-ID discovery,
-explicit time offsets, and separate default-false approvals for the save and
-possible team notifications. Receipts confirm saving, never notification delivery.
-An app-review fallback remains available. Manager RSVP overrides support one
-active player on one ordinary event, preserving private notes and refusing
-base/family reconciliation; cached RSVP totals are not refreshed. A shared app fix preserves omitted practice reminder settings on web and
-native updates.
-Managed-team and configuration discovery support the prepare → explicit MCP form
-approval → transaction flow through authenticated HTTP sessions. Tests use
-synthetic data and emulator accounts. The router is unmounted in production and
-grants no ongoing write capability.
-An unmounted server-only notification journal now provides durable attempt and
-reconciliation primitives; it is not connected to deployed triggers, real
-providers or MCP status reads. See [write workflows](WRITE_WORKFLOWS.md) for the
-exact remaining integration work and [review slices](REVIEW_SLICES.md) for the
-proposed dependency stack. No new PRs or handoff were created for that plan.
-
-The latest [assignment batch checkpoint](ASSIGNMENT_BATCH_REVIEW.md) adds atomic
-creation/update of 1–20 volunteer slots with explicit review of affected claims
-and acknowledgement that volunteers are not notified. The preceding
-[stat presentation checkpoint](STAT_PRESENTATION_REVIEW.md) adds customized
-presets and selected display/ranking changes. Coverage remains 20 of 46 workflow
-names partially direct, with 26 app-review-only. Profiles and RSVP notes retain
-hard pending-text cleanup and client/transcript retention gates. Full parity and
-production activation remain open.
-
 Spec: `/spec/chatgpt-app-integration/` · Plan: `AllPlays_ChatGPT_App_Integration_Plan.docx`
 
 ## How authorization works
@@ -254,18 +220,3 @@ instance-local grants and invalidates the multi-instance guarantee.
 Focused OAuth tests:
 `npx vitest run tests/unit/chatgpt-mcp-oauth.test.js --reporter=verbose`
 from the repo root.
-
-The unmounted [delivery coordinator and provider interfaces](DELIVERY_INTEGRATION.md)
-add exact event/approval binding, pinned inbox/FCM requests and bounded status
-reconciliation. Durable evidence, status routing and audience interfaces now have isolated
-implementations; live broker/writer/client integration remains unfinished; this does not activate direct schedule notifications.
-
-The [broker boundary review](BROKER_EVIDENCE_REVIEW.md) describes fail-closed
-composition hardening and the actual isolated broker/form/credentialed-write
-adapter. Feature expansion is paused; production transport and single-consumer
-activation remain open security/integration work.
-
-The [isolated transport and rollout contract](BROKER_TRANSPORT_REVIEW.md) adds
-signed-command/HTTP tests, concrete canonical audience readers and an immutable
-consumer-ownership model. Production identity verifiers, signer/executor wiring
-and consumer cutover remain unmounted and unapproved.

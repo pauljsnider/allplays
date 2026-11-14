@@ -219,8 +219,8 @@ export function createOAuthBroker({
         throw new OAuthError('invalid_request', 'Unsupported grant_type.');
     }
 
-    async function resolveAccessToken(token, options) {
-        return grantStore.resolveAccessToken(token, options);
+    async function resolveAccessToken(token) {
+        return grantStore.resolveAccessToken(token);
     }
 
     return { registerClient, validateAuthorizeRequest, approveAuthorization, exchange, resolveAccessToken };

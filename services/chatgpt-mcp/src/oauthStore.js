@@ -112,10 +112,10 @@ export function createMemoryOAuthGrantStore({
             }, currentTime, maxStoredGrants);
         },
 
-        async resolveAccessToken(token, { includeBinding = false } = {}) {
+        async resolveAccessToken(token) {
             pruneExpired(stores.accessTokens, now());
             const record = stores.accessTokens.get(token);
-            return record ? { firebaseRefreshToken: record.firebaseRefreshToken, ...reviewCapability(record), ...(includeBinding ? { clientId: record.clientId, expiresAt: record.expiresAt } : {}) } : null;
+            return record ? { firebaseRefreshToken: record.firebaseRefreshToken, ...reviewCapability(record) } : null;
         },
 
         async rotateRefreshToken({
@@ -538,7 +538,7 @@ export function createFirestoreOAuthGrantStore({
             if (!result.ok) throw new Error('OAuth grant token collision.');
         },
 
-        async resolveAccessToken(token, { includeBinding = false } = {}) {
+        async resolveAccessToken(token) {
             const result = await readGrant('access', token);
             if (!result) return null;
             const grant = decryptGrant('access', result);
@@ -546,7 +546,7 @@ export function createFirestoreOAuthGrantStore({
                 await deleteExpired('access', result.digest, result.document.updateTime);
                 return null;
             }
-            return { firebaseRefreshToken: grant.firebaseRefreshToken, ...reviewCapability(grant), ...(includeBinding ? { clientId: grant.clientId, expiresAt: grant.expiresAt } : {}) };
+            return { firebaseRefreshToken: grant.firebaseRefreshToken, ...reviewCapability(grant) };
         },
 
         async rotateRefreshToken({

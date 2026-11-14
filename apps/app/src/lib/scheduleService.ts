@@ -2795,13 +2795,6 @@ function buildScheduledPracticePayload(input: SchedulePracticeFormInput, user: A
     createdBy: user.uid
   };
 
-  // Partial AI/app edits must not reset reminder settings or delivery history.
-  // Omission preserves the stored field in both SDK and native masked updates;
-  // explicit settings (including an empty object) retain the existing contract.
-  if (options?.editingPracticeId && input.scheduleNotifications === undefined) {
-    delete practiceData.scheduleNotifications;
-  }
-
   const recurrence = sanitizePracticeRecurrenceInput(input.recurrence);
   applyPracticeRecurrenceFields({
     practiceData,

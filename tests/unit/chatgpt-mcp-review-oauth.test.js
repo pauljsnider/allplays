@@ -54,7 +54,6 @@ describe('explicit review-only OAuth capability', () => {
         const rotated = await restarted.exchange({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token });
         expect(rotated.scope).toBe('allplays.read allplays.review');
         expect(await restarted.resolveAccessToken(rotated.access_token)).toMatchObject({ reviewRequests: true });
-        expect(await restarted.resolveAccessToken(rotated.access_token, { includeBinding: true })).toMatchObject({ clientId: expect.any(String), expiresAt: expect.any(Number), reviewRequests: true });
     });
     it('authenticates scope in durable code and grant envelopes, preserves it across restart and rejects tampering', async () => {
         const fixture = firestoreFixture();
@@ -64,7 +63,6 @@ describe('explicit review-only OAuth capability', () => {
         const restarted = createOAuthBroker({ grantStore: fixture.store() });
         const tokens = await restarted.exchange({ grant_type: 'authorization_code', code, code_verifier: verifier });
         expect(await restarted.resolveAccessToken(tokens.access_token)).toMatchObject({ reviewRequests: true });
-        expect(await restarted.resolveAccessToken(tokens.access_token, { includeBinding: true })).toMatchObject({ clientId, expiresAt: expect.any(Number), reviewRequests: true });
         const rotated = await restarted.exchange({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token });
         expect(rotated.scope).toBe('allplays.read allplays.review');
         const access = [...fixture.documents.values()].filter((record) => record.fields.type.stringValue === 'access');
@@ -98,8 +96,6 @@ describe('explicit review-only OAuth capability', () => {
             const listText = await listed.text();
             expect(listText).toContain('get_team_roster');
             expect(listText).toContain('nextCursor');
-            expect(listText).not.toContain('prepare_team_drill_favorite');
-            expect(listText).not.toContain('confirm_team_drill_favorite');
             expect(guard).toHaveBeenCalledTimes(2);
             const client = await (await fetch(`${origin}/oauth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redirect_uris: [redirectUri] }) })).json();
             const query = new URLSearchParams({ client_id: client.client_id, redirect_uri: redirectUri, response_type: 'code', code_challenge: s256Challenge(verifier), code_challenge_method: 'S256', scope: 'allplays.read allplays.review' });

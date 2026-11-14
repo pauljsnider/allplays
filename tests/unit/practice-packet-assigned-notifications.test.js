@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { directPracticeFixture, practiceInput, practiceProposalId, practiceUpdateId, practiceSessionPath, acceptPractice } from '../helpers/direct-practice-fixture.js';
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 
@@ -90,20 +89,6 @@ function buildHarness({
 }
 
 describe('notifyPracticePacketAssigned trigger', () => {
-    it('does not deliver a packet for MCP draft creation or append-only timeline updates', async () => {
-        const fixture = directPracticeFixture(); const harness = buildHarness();
-        await fixture.commands.prepare(practiceInput);
-        await fixture.commands.confirm({ proposalId: practiceProposalId }, async () => acceptPractice());
-        const created = structuredClone(fixture.records.get(practiceSessionPath).data);
-        await harness.trigger({ before: { exists: false, data: () => null }, after: { exists: true, data: () => created } }, { params: { teamId: 'team-1', sessionId: practiceInput.sessionId } });
-        await fixture.commands.prepare({ ...practiceInput, mode: 'update', proposalId: practiceUpdateId, changes: { title: 'Updated title', appendBlocks: [{ title: 'Cool down', duration: 5 }] } });
-        await fixture.commands.confirm({ proposalId: practiceUpdateId }, async () => acceptPractice());
-        const updated = fixture.records.get(practiceSessionPath).data;
-        await harness.trigger({ before: { exists: true, data: () => created }, after: { exists: true, data: () => updated } }, { params: { teamId: 'team-1', sessionId: practiceInput.sessionId } });
-        expect(harness.getTargetsForCategory).not.toHaveBeenCalled();
-        expect(harness.sendDirectTargetsNotification).not.toHaveBeenCalled();
-    });
-
     it('fires from the practice session write and targets only parents linked to assigned players', async () => {
         const harness = buildHarness({
             targets: [
