@@ -389,6 +389,8 @@
                     <div id="admin-list" class="space-y-2 text-sm">
                         <!-- Admin emails render here -->
                     </div>
+                    <div id="pending-admin-list" class="space-y-2 text-sm mt-3"></div>
+                    <p class="text-xs text-gray-500 mt-2">For an existing team, Send Invite sends immediately. Save Team is not required. Access starts after the recipient accepts.</p>
                     <div id="add-admin-form" class="hidden mt-3 p-3 bg-white rounded border border-indigo-200">
                         <input type="email" id="admin-email-input" placeholder="coach@example.com"
                             class="w-full px-3 py-2 border border-gray-300 rounded mb-2 text-sm">
@@ -618,7 +620,7 @@
         import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443364';
         import { normalizeYouTubeEmbedUrl } from './js/live-stream-utils.js?v=2';
         import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=44338';
-        import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin, loadPendingAdminInviteEmails } from './js/edit-team-admin-invites.js?v=6';
+        import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin, loadPendingAdminInviteEmails, loadPendingAdminInvites, resendPendingAdminInvite } from './js/edit-team-admin-invites.js?v=7';
         import { buildRolloverAccessPreview, buildStaffAdminRolloverUpdate } from './js/rollover-access.js?v=1';
         import { buildRosterRolloverPreviewRows } from './js/roster-rollover-preview.js?v=1';
         import { buildAppJoinUrl } from './js/join-code.js?v=3';
@@ -669,6 +671,7 @@
 
         updateTeamManagementActions(initialTeamId, { created: isInitialCreatedState });
         let pendingAdminInviteEmails = [];
+        let pendingAdminInvites = [];
         let confirmedTeamMembers = [];
         let teamPermissions = normalizeTeamPermissions();
         let loadedTeamHasTeamPermissions = false;
@@ -1441,6 +1444,66 @@
             });
         }
 
+        function renderPendingAdminInvites() {
+            const list = document.getElementById('pending-admin-list');
+            if (!list) return;
+            list.replaceChildren();
+            const pending = pendingAdminInvites.filter((invite) => !adminEmails.includes(invite.email));
+            if (!pending.length) return;
+            const heading = document.createElement('p');
+            heading.textContent = 'Pending invitations (access not yet accepted)';
+            heading.className = 'font-semibold text-indigo-900';
+            list.appendChild(heading);
+            for (const invite of pending) {
+                const row = document.createElement('div');
+                row.className = 'bg-white border border-indigo-200 rounded px-3 py-2 space-y-2';
+                const label = document.createElement('p');
+                label.textContent = invite.email;
+                row.appendChild(label);
+                if (invite.code) {
+                    const link = document.createElement('input');
+                    link.type = 'text';
+                    link.readOnly = true;
+                    link.value = buildAppJoinUrl(invite.code, 'admin', window.location.origin);
+                    link.setAttribute('aria-label', 'Invitation link for ' + invite.email);
+                    link.className = 'w-full text-xs border rounded p-2';
+                    row.appendChild(link);
+                    const retry = document.createElement('button');
+                    retry.type = 'button';
+                    retry.textContent = 'Resend invitation';
+                    retry.className = 'text-xs text-indigo-700';
+                    retry.disabled = invite.generatedBy !== currentUser?.uid;
+                    const feedback = document.createElement('p');
+                    feedback.setAttribute('role', 'status');
+                    if (retry.disabled) feedback.textContent = 'Only the original sender can resend. You can copy the link above.';
+                    retry.addEventListener('click', async () => {
+                        retry.disabled = true;
+                        feedback.textContent = 'Sending…';
+                        try {
+                            const result = await resendPendingAdminInvite({
+                                teamId: currentTeamId, inviteId: invite.id, userId: currentUser?.uid,
+                                getTeamAccessCodes, sendInviteEmail
+                            });
+                            feedback.textContent = result.reason === 'rate_limited'
+                                ? 'Recently requested. Wait at least a minute before retrying, or copy the link.'
+                                : 'Invitation email accepted. Recipient acceptance is still required.';
+                        } catch (error) {
+                            feedback.textContent = error?.message || 'Could not send. The invitation link is still available.';
+                        } finally {
+                            retry.disabled = invite.generatedBy !== currentUser?.uid;
+                        }
+                    });
+                    row.appendChild(retry);
+                    row.appendChild(feedback);
+                } else {
+                    const message = document.createElement('p');
+                    message.textContent = 'Invitation details unavailable. Refresh to retry loading them.';
+                    row.appendChild(message);
+                }
+                list.appendChild(row);
+            }
+        }
+
         function getPermissionState(kind) {
             return teamPermissions[kind] || { mode: 'all_confirmed', memberIds: [] };
         }
@@ -1665,10 +1728,9 @@
                 streamInput.dispatchEvent(new Event('input')); // trigger detection badge
                 adminEmails = normalizeAdminEmailList(team.adminEmails);
                 loadedAdminEmails = [...adminEmails];
-                pendingAdminInviteEmails = await loadPendingAdminInviteEmails({
-                    teamId: initialTeamId,
-                    getTeamAccessCodes
-                });
+                pendingAdminInvites = await loadPendingAdminInvites({ teamId: initialTeamId, getTeamAccessCodes });
+                pendingAdminInviteEmails = normalizeAdminEmailList(pendingAdminInvites.map((invite) => invite.email));
+                renderPendingAdminInvites();
                 loadedTeamHasTeamPermissions = Object.prototype.hasOwnProperty.call(team, 'teamPermissions');
                 teamPermissions = normalizeTeamPermissions(team.teamPermissions);
                 await loadConfirmedTeamMembers(initialTeamId);
@@ -1837,7 +1899,8 @@
                 return;
             }
             if (pendingAdminInviteEmails.includes(email)) {
-                showAdminStatus('This email already has a pending invite.', 'error');
+                renderPendingAdminInvites();
+                showAdminStatus('This email has a pending invitation. Use its link or resend it below; no Save is needed.', 'info');
                 return;
             }
 
@@ -1871,7 +1934,10 @@
                         }
                     } else if (result.status === 'sent') {
                         // New user - send email
-                        showAdminStatus(`Invite sent to ${email}! They'll receive an email to join as an admin.`, 'success');
+                        showAdminStatus(`Invitation email accepted for ${email}. Access starts after they accept; no Save is needed.`, 'success');
+                    } else if (result.reason === 'rate_limited') {
+                        showAdminStatus('An email was requested recently. Wait at least a minute before retrying, or share the link below.', 'info');
+                        if (inviteCode) { showAdminCode(inviteCode); showCode = true; }
                     } else if (result.status === 'fallback_code') {
                         showAdminStatus(`Could not send email. Share this code or link instead:`, 'warning');
                         if (inviteCode) {
@@ -1888,6 +1954,9 @@
 
                 if (currentTeamId && inviteCode) {
                     pendingAdminInviteEmails = normalizeAdminEmailList([...pendingAdminInviteEmails, email]);
+                    // The code was persisted before email delivery; keep recovery available even if a refresh fails.
+                    pendingAdminInvites.push({ id: inviteCode, code: inviteCode, email, generatedBy: currentUser.uid });
+                    renderPendingAdminInvites();
                 }
 
                 // Add to local list and update UI

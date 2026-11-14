@@ -109,6 +109,9 @@ class MockElement {
 
     focus() {}
 
+    replaceChildren() { this.children = []; this.textContent = ''; }
+    appendChild(child) { this.children ||= []; this.children.push(child); return child; }
+
     setAttribute(name, value) {
         this.attributes[name] = String(value);
     }
@@ -280,6 +283,7 @@ function createEnvironment(initialState, overrides = {}) {
         'registration-connection-help',
         'registration-refresh-btn',
         'clear-registration-provider-btn',
+        'pending-admin-list',
         'save-admin-btn',
         'cancel-admin-btn',
         'manage-roster-btn',
@@ -317,6 +321,7 @@ function createEnvironment(initialState, overrides = {}) {
     elements.get('photo-upload').files = [];
 
     const document = {
+        createElement() { return new MockElement(); },
         getElementById(id) {
             const element = elements.get(id);
             if (!element) {
@@ -416,8 +421,8 @@ function extractEditTeamModule() {
             'const { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } = deps.teamAccess;'
         )
         .replace(
-            "import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin, loadPendingAdminInviteEmails } from './js/edit-team-admin-invites.js?v=6';",
-            'const { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin, loadPendingAdminInviteEmails } = deps.editTeamAdminInvites;'
+            "import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin, loadPendingAdminInviteEmails, loadPendingAdminInvites, resendPendingAdminInvite } from './js/edit-team-admin-invites.js?v=7';",
+            'const { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin, loadPendingAdminInviteEmails, loadPendingAdminInvites, resendPendingAdminInvite } = deps.editTeamAdminInvites;'
         )
         .replace(
             "import { buildRolloverAccessPreview, buildStaffAdminRolloverUpdate } from './js/rollover-access.js?v=1';",
@@ -1966,7 +1971,7 @@ describe('edit team admin access persistence', () => {
             ownerReloadEnv.elements.get('admin-email-input').value = 'pending@example.com';
             await ownerReloadEnv.elements.get('save-admin-btn').click();
 
-            expect(ownerReloadEnv.elements.get('admin-invite-status').textContent).toBe('This email already has a pending invite.');
+            expect(ownerReloadEnv.elements.get('admin-invite-status').textContent).toBe('This email has a pending invitation. Use its link or resend it below; no Save is needed.');
         } finally {
             ownerReloadEnv.cleanup();
         }
