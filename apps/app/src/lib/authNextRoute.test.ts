@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { completeAuthNavigation, getDocumentAuthNextRoute, getHostedDocumentAuthNextUrl, getSafeAuthNextRoute } from './authNextRoute';
+import {
+  buildPendingInviteRoute,
+  completeAuthNavigation,
+  getDocumentAuthNextRoute,
+  getHostedDocumentAuthNextUrl,
+  getSafeAuthNextRoute,
+  getVerificationContinuationRoute,
+  isAcceptInviteRoute
+} from './authNextRoute';
 
 function createLocation() {
   return {
@@ -148,5 +156,30 @@ describe('document authentication return routes', () => {
     expect(locationObject.replace).not.toHaveBeenCalled();
     expect(locationObject.reload).not.toHaveBeenCalled();
     expect(navigate).not.toHaveBeenCalled();
+  });
+});
+
+describe('verification continuation routes', () => {
+  it('drops a continuation that points back at the verification screen', () => {
+    expect(getVerificationContinuationRoute('/verify-pending')).toBe('');
+    expect(getVerificationContinuationRoute('/verify-pending?next=%2Fverify-pending')).toBe('');
+    expect(getVerificationContinuationRoute('/schedule?teamId=team-1')).toBe('/schedule?teamId=team-1');
+    expect(getVerificationContinuationRoute('https://evil.example/x')).toBe('');
+  });
+
+  it('recognizes an invite continuation', () => {
+    expect(isAcceptInviteRoute('/accept-invite?code=ABCDEFGH&type=parent')).toBe(true);
+    expect(isAcceptInviteRoute('/teams')).toBe(false);
+    expect(isAcceptInviteRoute('')).toBe(false);
+  });
+
+  it('builds the pending invite route without nesting invite or verification routes', () => {
+    expect(buildPendingInviteRoute(' abcdefgh ', 'parent')).toBe('/accept-invite?code=ABCDEFGH&type=parent');
+    expect(buildPendingInviteRoute('FRIEND12', 'friend', '/teams')).toBe('/accept-invite?code=FRIEND12&type=friend&next=%2Fteams');
+    expect(buildPendingInviteRoute('ABCDEFGH', 'parent', '/verify-pending')).toBe('/accept-invite?code=ABCDEFGH&type=parent');
+    expect(buildPendingInviteRoute('ABCDEFGH', 'parent', '/accept-invite?code=OTHER123&type=parent')).toBe(
+      '/accept-invite?code=ABCDEFGH&type=parent'
+    );
+    expect(buildPendingInviteRoute('', 'parent', '/teams')).toBe('');
   });
 });

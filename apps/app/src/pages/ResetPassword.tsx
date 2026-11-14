@@ -3,14 +3,15 @@ import type { FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, KeyRound, MailWarning, XCircle } from 'lucide-react';
 import { AuthFrame, DocumentAuthLink } from '../components/AuthFrame';
-import { getDocumentAuthNextRoute, getSafeAuthNextRoute } from '../lib/authNextRoute';
+import { getDocumentAuthNextRoute, getSafeAuthNextRoute, getVerificationContinuationRoute } from '../lib/authNextRoute';
 import { applyEmailActionCode, confirmReset, verifyResetCode } from '../lib/authService';
 
 export function ResetPassword() {
   const [searchParams] = useSearchParams();
   const mode = searchParams.get('mode') || '';
   const oobCode = searchParams.get('oobCode') || '';
-  const requestedNext = getSafeAuthNextRoute(searchParams.get('next'));
+  const requestedNext =
+    mode === 'verifyEmail' ? getVerificationContinuationRoute(searchParams.get('next')) : getSafeAuthNextRoute(searchParams.get('next'));
   const documentRequestedNext = getDocumentAuthNextRoute(requestedNext);
   const authBackRoute = requestedNext ? `/auth?next=${encodeURIComponent(requestedNext)}` : '/auth';
   const verificationSuccessRoute = requestedNext ? `/verify-pending?next=${encodeURIComponent(requestedNext)}` : '/verify-pending';
