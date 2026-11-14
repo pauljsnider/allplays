@@ -4098,9 +4098,19 @@ async function savePrivateAiPendingAction(
   return pending;
 }
 
+export function fingerprintPrivateAiAction(action: { toolName: string; args: Record<string, unknown> }) {
+  const canonical = (value: any): any => value instanceof Date ? value.toISOString() : Array.isArray(value)
+    ? value.map(canonical)
+    : value && typeof value === 'object'
+      ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]))
+      : value;
+  return JSON.stringify(canonical({ toolName: action.toolName, args: action.args }));
+}
+
 async function claimPrivateAiPendingAction(
   user: AuthUser,
-  pending: PrivateAiPendingAction
+  pending: PrivateAiPendingAction,
+  expectedFingerprint?: string
 ): Promise<PrivateAiPendingAction | null> {
   const memoryKey = `${user.uid}:${pending.id}`;
   const memoryPending = pendingActionMemory.get(memoryKey);
@@ -4115,6 +4125,7 @@ async function claimPrivateAiPendingAction(
   ) return null;
 
   if (typeof runTransaction !== 'function') {
+    if (expectedFingerprint) return null;
     if (!memoryPending || pending.payloadScope === 'team') return null;
     memoryPending.status = 'executing';
     memoryPending.executionLeaseExpiresAt = new Date(Date.now() + pendingActionExecutionLeaseMs).toISOString();
@@ -4179,6 +4190,7 @@ async function claimPrivateAiPendingAction(
           : undefined;
       }
 
+      if (expectedFingerprint && fingerprintPrivateAiAction({ toolName, args }) !== expectedFingerprint) return null;
       const executionLeaseExpiresAt = new Date(Date.now() + pendingActionExecutionLeaseMs).toISOString();
       const executionState = {
         status: 'executing',
@@ -4221,7 +4233,7 @@ async function claimPrivateAiPendingAction(
   }
 }
 
-async function executeConfirmedPrivateAiAction(user: AuthUser, confirmationId: string): Promise<PrivateAiToolResult> {
+export async function executeConfirmedPrivateAiAction(user: AuthUser, confirmationId: string, expectedFingerprint?: string): Promise<PrivateAiToolResult> {
   const id = compactText(confirmationId);
   const pending = await loadPrivateAiPendingAction(user, id, { allowTeamMemoryCandidate: true });
   if (!pending) {
@@ -4241,7 +4253,7 @@ async function executeConfirmedPrivateAiAction(user: AuthUser, confirmationId: s
   if (Date.parse(pending.expiresAt) <= Date.now()) {
     return { name: pending.toolName, ok: false, error: 'That AI preview expired. Prepare the change again before confirming.' };
   }
-  const claimedPending = await claimPrivateAiPendingAction(user, pending);
+  const claimedPending = await claimPrivateAiPendingAction(user, pending, expectedFingerprint);
   if (!claimedPending) {
     return { name: pending.toolName, ok: false, error: 'That AI change was already confirmed, superseded, or is currently running.' };
   }
@@ -4451,7 +4463,7 @@ async function clearTeamScopedPrivateAiPayload(
   });
 }
 
-async function loadPrivateAiPendingAction(
+export async function loadPrivateAiPendingAction(
   user: AuthUser,
   confirmationId: string,
   options: { allowTeamMemoryCandidate?: boolean } = {}

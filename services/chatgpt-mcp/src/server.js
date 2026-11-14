@@ -25,7 +25,9 @@ import {
 } from './core.js';
 import { createIdentityResolver, extractBearerToken } from './identity.js';
 import { createUserDb } from './firestoreRest.js';
-import { createOAuthBroker, metadataFor, OAuthError } from './oauth.js';
+import { writeCatalog, prepareWriteReview, getWriteReviewStatus } from './writeReview.js';
+import { getManagedTeamRoster } from './rosterDiscovery.js';
+import { createOAuthBroker, metadataFor, OAuthError, requestedReviewScope } from './oauth.js';
 import {
     createFirestoreOAuthGrantStore,
     createMemoryOAuthGrantStore,
@@ -155,7 +157,7 @@ function renderSignInPage({ clientId, redirectUri, codeChallenge, state, scope, 
 <body>
     <div class="card">
         <h1>ALL PLAYS</h1>
-        <p>Sign in to connect your AllPlays account to ChatGPT. ChatGPT will be able to read your teams, schedule, and game summaries.</p>
+        <p>Sign in to connect your AllPlays account to ChatGPT. ChatGPT can read your teams, managed roster names and IDs, schedule, and game summaries. Changes require your separate review and confirmation in AllPlays.</p>
         ${error ? `<div class="error">${escapeHtml(error)}</div>` : ''}
         <form method="POST" action="/oauth/authorize">
             ${hiddenInputs}
@@ -163,6 +165,7 @@ function renderSignInPage({ clientId, redirectUri, codeChallenge, state, scope, 
             <input id="email" name="email" type="email" autocomplete="username" required>
             <label for="password">Password</label>
             <input id="password" name="password" type="password" autocomplete="current-password" required>
+            ${requestedReviewScope(scope) ? `<label class="terms"><input name="review_agree" type="checkbox" value="yes"><span>Also allow ChatGPT to save change requests for my review in AllPlays. Each action still requires my confirmation in the app.</span></label>` : ''}
             <label class="terms">
                 <input id="terms" name="terms_agree" type="checkbox" value="yes" required>
                 <span>I agree to the <a href="https://allplays.ai/terms.html" target="_blank" rel="noreferrer">Terms</a> and <a href="https://allplays.ai/privacy.html" target="_blank" rel="noreferrer">Privacy Policy</a>.</span>
@@ -182,10 +185,14 @@ function toolError(error) {
     const code = error instanceof DomainError ? error.code : 'internal';
     const message = error instanceof DomainError ? error.message : 'Internal error.';
     if (!(error instanceof DomainError)) console.error('[chatgpt-mcp] tool failure:', error);
-    return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: code, message }) }] };
+    return {
+        isError: true,
+        content: [{ type: 'text', text: JSON.stringify({ error: code, message }) }],
+        ...(code === 'insufficient_scope' ? { _meta: { 'mcp/www_authenticate': ['Bearer error="insufficient_scope", scope="allplays.review"'] } } : {})
+    };
 }
 
-function buildServer(identity) {
+function buildServer(identity, { reviewRequests = false } = {}) {
     const server = new McpServer({ name: 'allplays', version: '0.2.0' });
     const db = createUserDb({ projectId: PROJECT_ID, idToken: identity.idToken });
 
@@ -210,6 +217,10 @@ function buildServer(identity) {
             return toolError(error);
         }
     };
+    const runReview = (handler) => async (args) => {
+        if (!reviewRequests) return toolError(new DomainError('insufficient_scope', 'Reconnect with allplays.review and explicitly approve saving review requests. Existing read-only grants and direct Firebase bearers cannot prepare writes.'));
+        return run(handler)(args);
+    };
 
     server.registerTool('get_profile', {
         title: 'Get profile',
@@ -217,6 +228,17 @@ function buildServer(identity) {
         inputSchema: {},
         annotations: { readOnlyHint: true }
     }, run((context) => listMyTeams(db, context)));
+
+    server.registerTool('get_team_roster', {
+        title: 'Get managed team roster',
+        description: 'Discover exact player IDs and active/inactive state for a team you currently manage before proposing roster changes. Returns only names, numbers, positions, and active state; no family contacts or private profile fields. Follow nextCursor until hasMore is false before checking duplicates or unique names. Concurrent changes still require confirmation-time revalidation.',
+        inputSchema: {
+            teamId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+            cursor: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(),
+            limit: z.number().int().min(1).max(100).optional()
+        },
+        annotations: { readOnlyHint: true }
+    }, run((context, args) => getManagedTeamRoster(db, context, args)));
 
     server.registerTool('list_schedule', {
         title: 'List schedule',
@@ -245,6 +267,24 @@ function buildServer(identity) {
         },
         annotations: { readOnlyHint: true }
     }, run((context, args) => getGameSummary(db, context, args)));
+
+    for (const definition of writeCatalog) {
+        server.registerTool(definition.name, {
+            title: `Review ${definition.name.replaceAll('_', ' ')}`,
+            description: `Save a request for review in the signed-in AllPlays app; this tool does NOT execute the action. Open the returned reviewUrl for validation and explicit final confirmation. ${definition.teamScoped ? 'An exact managed teamId is required in arguments. ' : ''}${definition.description}`,
+            inputSchema: {
+                requestId: z.string().uuid().describe('Stable UUID v4 for this request. Reuse it on retries, including after timeouts.'),
+                arguments: z.record(z.string(), z.unknown()).describe('Action arguments described above. Do not include credentials, files, internal confirmation fields, or inferred approvals.')
+            },
+            annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+        }, runReview((context, args) => prepareWriteReview(db, context, { ...args, action: definition.name })));
+    }
+    server.registerTool('get_action_status', {
+        title: 'Get action review status',
+        description: 'Check whether a saved review request is waiting, prepared, completed, failed, or uncertain. Never infer completion from a saved request.',
+        inputSchema: { requestId: z.string().uuid() },
+        annotations: { readOnlyHint: true }
+    }, run((context, args) => getWriteReviewStatus(db, context, args)));
 
     return server;
 }
@@ -276,6 +316,7 @@ app.post('/oauth/register', (req, res) => {
 
 app.get('/oauth/authorize', (req, res) => {
     try {
+        requestedReviewScope(req.query.scope);
         const { clientId, redirectUri, codeChallenge } = oauth.validateAuthorizeRequest(req.query || {});
         res.type('html').send(renderSignInPage({
             clientId,
@@ -293,6 +334,7 @@ app.get('/oauth/authorize', (req, res) => {
 app.post('/oauth/authorize', async (req, res) => {
     const params = req.body || {};
     try {
+        requestedReviewScope(params.scope);
         const { clientId, redirectUri, codeChallenge } = oauth.validateAuthorizeRequest({
             client_id: params.client_id,
             redirect_uri: params.redirect_uri,
@@ -319,7 +361,9 @@ app.post('/oauth/authorize', async (req, res) => {
             clientId,
             redirectUri,
             codeChallenge,
-            firebaseRefreshToken
+            firebaseRefreshToken,
+            scope: params.scope,
+            reviewApproved: params.review_agree === 'yes'
         });
         const redirect = new URL(redirectUri);
         redirect.searchParams.set('code', code);
@@ -358,6 +402,7 @@ app.post('/oauth/token', async (req, res) => {
 
 app.post('/mcp', async (req, res) => {
     let identity;
+    let reviewRequests = false;
     try {
         let authHeader = req.headers.authorization
             || (FALLBACK_BEARER ? `Bearer ${FALLBACK_BEARER}` : undefined);
@@ -365,6 +410,7 @@ app.post('/mcp', async (req, res) => {
         // token; direct Firebase refresh/ID tokens pass through unchanged.
         const bearer = extractBearerToken(authHeader);
         const brokerGrant = bearer ? await oauth.resolveAccessToken(bearer) : null;
+        reviewRequests = brokerGrant?.reviewRequests === true;
         if (brokerGrant) authHeader = `Bearer ${brokerGrant.firebaseRefreshToken}`;
         identity = await resolveIdentity(authHeader);
     } catch (error) {
@@ -380,7 +426,7 @@ app.post('/mcp', async (req, res) => {
     }
 
     try {
-        const server = buildServer(identity);
+        const server = buildServer(identity, { reviewRequests });
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
         res.on('close', () => {
             transport.close();

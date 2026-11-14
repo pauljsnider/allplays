@@ -42,6 +42,10 @@ function setBounded(store, key, record, now, maxStoredGrants) {
     store.set(key, record);
 }
 
+function reviewCapability(record) {
+    return record.reviewRequests === true ? { reviewRequests: true } : {};
+}
+
 export function createMemoryOAuthGrantStore({
     state = {},
     now = () => Date.now(),
@@ -59,6 +63,7 @@ export function createMemoryOAuthGrantStore({
             redirectUri,
             codeChallenge,
             firebaseRefreshToken,
+            reviewRequests = false,
             expiresAt
         }) {
             setBounded(stores.authorizationCodes, code, {
@@ -66,6 +71,7 @@ export function createMemoryOAuthGrantStore({
                 redirectUri,
                 codeChallenge,
                 firebaseRefreshToken,
+                ...reviewCapability({ reviewRequests }),
                 expiresAt
             }, now(), maxStoredGrants);
         },
@@ -86,6 +92,7 @@ export function createMemoryOAuthGrantStore({
             accessToken,
             refreshToken,
             firebaseRefreshToken,
+            reviewRequests = false,
             clientId,
             accessExpiresAt,
             refreshExpiresAt
@@ -93,11 +100,13 @@ export function createMemoryOAuthGrantStore({
             const currentTime = now();
             setBounded(stores.accessTokens, accessToken, {
                 firebaseRefreshToken,
+                ...reviewCapability({ reviewRequests }),
                 clientId,
                 expiresAt: accessExpiresAt
             }, currentTime, maxStoredGrants);
             setBounded(stores.refreshTokens, refreshToken, {
                 firebaseRefreshToken,
+                ...reviewCapability({ reviewRequests }),
                 clientId,
                 expiresAt: refreshExpiresAt
             }, currentTime, maxStoredGrants);
@@ -106,7 +115,7 @@ export function createMemoryOAuthGrantStore({
         async resolveAccessToken(token) {
             pruneExpired(stores.accessTokens, now());
             const record = stores.accessTokens.get(token);
-            return record ? { firebaseRefreshToken: record.firebaseRefreshToken } : null;
+            return record ? { firebaseRefreshToken: record.firebaseRefreshToken, ...reviewCapability(record) } : null;
         },
 
         async rotateRefreshToken({
@@ -126,15 +135,17 @@ export function createMemoryOAuthGrantStore({
             stores.refreshTokens.delete(refreshToken);
             setBounded(stores.accessTokens, newAccessToken, {
                 firebaseRefreshToken: record.firebaseRefreshToken,
+                ...reviewCapability(record),
                 clientId: record.clientId,
                 expiresAt: accessExpiresAt
             }, currentTime, maxStoredGrants);
             setBounded(stores.refreshTokens, newRefreshToken, {
                 firebaseRefreshToken: record.firebaseRefreshToken,
+                ...reviewCapability(record),
                 clientId: record.clientId,
                 expiresAt: refreshExpiresAt
             }, currentTime, maxStoredGrants);
-            return true;
+            return record.reviewRequests === true ? { reviewRequests: true } : true;
         }
     };
 }
@@ -151,7 +162,7 @@ function decodeEncryptionKey(value) {
     return key;
 }
 
-function authenticatedMetadata({ type, digest, clientId, expiresAt, redirectUri, codeChallenge }) {
+function authenticatedMetadata({ type, digest, clientId, expiresAt, redirectUri, codeChallenge, reviewRequests }) {
     const metadata = {
         type,
         digest,
@@ -162,6 +173,9 @@ function authenticatedMetadata({ type, digest, clientId, expiresAt, redirectUri,
         metadata.redirectUri = redirectUri || '';
         metadata.codeChallenge = codeChallenge || '';
     }
+    // Omit for legacy read grants to preserve their exact authenticated bytes.
+    // Adding or removing consent from a persisted envelope must fail decryption.
+    if (reviewRequests === true) metadata.reviewRequests = true;
     return Buffer.from(JSON.stringify(metadata), 'utf8');
 }
 
@@ -204,9 +218,9 @@ function documentFields(record) {
     );
 }
 
-function grantRecord({ type, token, firebaseRefreshToken, clientId, expiresAt, encryptionKey }) {
+function grantRecord({ type, token, firebaseRefreshToken, clientId, expiresAt, encryptionKey, reviewRequests = false }) {
     const digest = tokenDigest(token);
-    const metadata = { type, digest, clientId, expiresAt };
+    const metadata = { type, digest, clientId, expiresAt, ...reviewCapability({ reviewRequests }) };
     return {
         id: `${type}_${digest}`,
         digest,
@@ -214,6 +228,7 @@ function grantRecord({ type, token, firebaseRefreshToken, clientId, expiresAt, e
             type,
             clientId,
             expiresAt: new Date(expiresAt),
+            ...reviewCapability({ reviewRequests }),
             encryptedBinding: encryptBinding(encryptionKey, firebaseRefreshToken, metadata)
         }
     };
@@ -226,6 +241,7 @@ function authorizationCodeRecord({
     codeChallenge,
     firebaseRefreshToken,
     expiresAt,
+    reviewRequests = false,
     encryptionKey
 }) {
     const type = 'code';
@@ -236,7 +252,8 @@ function authorizationCodeRecord({
         clientId,
         redirectUri,
         codeChallenge,
-        expiresAt
+        expiresAt,
+        ...reviewCapability({ reviewRequests })
     };
     return {
         id: `${type}_${digest}`,
@@ -247,6 +264,7 @@ function authorizationCodeRecord({
             redirectUri,
             codeChallenge,
             expiresAt: new Date(expiresAt),
+            ...reviewCapability({ reviewRequests }),
             encryptedBinding: encryptBinding(encryptionKey, firebaseRefreshToken, metadata)
         }
     };
@@ -392,12 +410,14 @@ export function createFirestoreOAuthGrantStore({
         }
         return {
             clientId: result.record.clientId,
+            ...reviewCapability(result.record),
             expiresAt,
             firebaseRefreshToken: decryptBinding(key, result.record.encryptedBinding, {
                 type,
                 digest: result.digest,
                 clientId: result.record.clientId,
-                expiresAt
+                expiresAt,
+                ...reviewCapability(result.record)
             })
         };
     }
@@ -421,12 +441,14 @@ export function createFirestoreOAuthGrantStore({
             clientId: result.record.clientId,
             redirectUri: result.record.redirectUri,
             codeChallenge: result.record.codeChallenge,
-            expiresAt
+            expiresAt,
+            ...reviewCapability(result.record)
         };
         return {
             clientId: result.record.clientId,
             redirectUri: result.record.redirectUri,
             codeChallenge: result.record.codeChallenge,
+            ...reviewCapability(result.record),
             expiresAt,
             firebaseRefreshToken: decryptBinding(
                 key,
@@ -443,6 +465,7 @@ export function createFirestoreOAuthGrantStore({
             redirectUri,
             codeChallenge,
             firebaseRefreshToken,
+            reviewRequests = false,
             expiresAt
         }) {
             const record = authorizationCodeRecord({
@@ -451,6 +474,7 @@ export function createFirestoreOAuthGrantStore({
                 redirectUri,
                 codeChallenge,
                 firebaseRefreshToken,
+                reviewRequests,
                 expiresAt,
                 encryptionKey: key
             });
@@ -484,6 +508,7 @@ export function createFirestoreOAuthGrantStore({
             accessToken,
             refreshToken,
             firebaseRefreshToken,
+            reviewRequests = false,
             clientId,
             accessExpiresAt,
             refreshExpiresAt
@@ -492,6 +517,7 @@ export function createFirestoreOAuthGrantStore({
                 type: 'access',
                 token: accessToken,
                 firebaseRefreshToken,
+                ...reviewCapability({ reviewRequests }),
                 clientId,
                 expiresAt: accessExpiresAt,
                 encryptionKey: key
@@ -500,6 +526,7 @@ export function createFirestoreOAuthGrantStore({
                 type: 'refresh',
                 token: refreshToken,
                 firebaseRefreshToken,
+                ...reviewCapability({ reviewRequests }),
                 clientId,
                 expiresAt: refreshExpiresAt,
                 encryptionKey: key
@@ -519,7 +546,7 @@ export function createFirestoreOAuthGrantStore({
                 await deleteExpired('access', result.digest, result.document.updateTime);
                 return null;
             }
-            return { firebaseRefreshToken: grant.firebaseRefreshToken };
+            return { firebaseRefreshToken: grant.firebaseRefreshToken, ...reviewCapability(grant) };
         },
 
         async rotateRefreshToken({
@@ -548,6 +575,7 @@ export function createFirestoreOAuthGrantStore({
                 type: 'access',
                 token: newAccessToken,
                 firebaseRefreshToken: grant.firebaseRefreshToken,
+                ...reviewCapability(grant),
                 clientId: grant.clientId,
                 expiresAt: accessExpiresAt,
                 encryptionKey: key
@@ -556,6 +584,7 @@ export function createFirestoreOAuthGrantStore({
                 type: 'refresh',
                 token: newRefreshToken,
                 firebaseRefreshToken: grant.firebaseRefreshToken,
+                ...reviewCapability(grant),
                 clientId: grant.clientId,
                 expiresAt: refreshExpiresAt,
                 encryptionKey: key
@@ -568,7 +597,7 @@ export function createFirestoreOAuthGrantStore({
                 createdDocumentWrite(documentName(access.id), access),
                 createdDocumentWrite(documentName(refresh.id), refresh)
             ]);
-            return result.ok;
+            return result.ok && (grant.reviewRequests === true ? { reviewRequests: true } : true);
         }
     };
 }

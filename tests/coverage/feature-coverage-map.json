@@ -956,7 +956,8 @@
             ],
             "legacyPages": [],
             "appPages": [
-                "apps/app/src/pages/PrivateAiChat.tsx"
+                "apps/app/src/pages/PrivateAiChat.tsx",
+                "apps/app/src/pages/McpActionReview.tsx"
             ],
             "cloudFunctions": [],
             "unitTests": [
@@ -966,14 +967,21 @@
                 "tests/unit/app-performance-baseline-contract.test.js",
                 "tests/unit/app-private-ai-service.test.js",
                 "tests/unit/app-protected-route-bootstrap.test.js",
-                "tests/unit/app-service-load-telemetry.test.ts"
+                "tests/unit/app-service-load-telemetry.test.ts",
+                "apps/app/src/lib/mcpActionReviewService.test.ts",
+                "tests/unit/chatgpt-mcp-write-review.test.js",
+                "tests/unit/chatgpt-mcp-review-oauth.test.js",
+                "tests/unit/chatgpt-mcp-roster-discovery.test.js"
             ],
             "integrationTests": [
-                "tests/unit/app-private-ai-integration.test.jsx"
+                "tests/unit/app-private-ai-integration.test.jsx",
+                "apps/app/src/pages/McpActionReview.test.tsx",
+                "tests/unit/chatgpt-mcp-review-rules.test.js"
             ],
             "workflowTests": [
                 "tests/smoke/app-private-ai.spec.js",
-                "tests/smoke/app-production-bootstrap.spec.js"
+                "tests/smoke/app-production-bootstrap.spec.js",
+                "tests/smoke/app-mcp-review-auth.spec.js"
             ],
             "knownGaps": [
                 {
