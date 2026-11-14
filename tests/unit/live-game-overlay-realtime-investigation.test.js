@@ -93,6 +93,28 @@ describe.each([['old viewer', oldViewer], ['overlay', overlayViewer]])('%s realt
         expect(viewer.state.stats['fixture-player'].pts).toBe(20);
     });
 
+    it('keeps a basketball basket after 20 clock events evict every stat from the query window', () => {
+        const viewer = factory();
+        const basket = { ...event(1), value: 2, homeScore: 2 };
+        const clocks = Array.from({ length: 20 }, (_, index) => ({
+            id: `clock-${index}`, type: 'clock_sync', createdAt: 1002 + index,
+            homeScore: 2, awayScore: 0, gameClockMs: (index + 1) * 1000
+        }));
+        viewer.deliver([basket]);
+        for (let count = 1; count <= clocks.length; count += 1) {
+            viewer.deliver([basket, ...clocks.slice(0, count)].slice(-20));
+            expect(viewer.state.homeScore).toBe(2);
+            expect(viewer.state.stats['fixture-player'].pts).toBe(2);
+        }
+        viewer.deliver(clocks);
+        expect(viewer.state.stats['fixture-player'].pts).toBe(2);
+        // An explicit new epoch must still clear the retained basket.
+        viewer.deliver([{ id: 'basket-reset', type: 'reset', createdAt: 2000,
+            homeScore: 0, awayScore: 0 }]);
+        expect(viewer.state.homeScore).toBe(0);
+        expect(viewer.state.stats['fixture-player']?.pts || 0).toBe(0);
+    });
+
     it('honors an explicit reset epoch instead of retaining every prior event', () => {
         const viewer = factory();
         viewer.deliver(firstWindow);
