@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { commitStandardTrackerFinishData } from '../../js/track-finish.js';
+import { commitStandardTrackerFinishData, resetStandardTrackerData } from '../../js/track-finish.js';
 import { hasPlayerProfileParticipation } from '../../js/player-profile-stats.js';
 
 function createFirestoreHarness({ commitFailuresByBatchIndex = {} } = {}) {
     const batches = [];
     let autoId = 0;
 
-    return {
+    const harness = {
         db: { name: 'mock-db' },
         batches,
         writeBatch: () => {
@@ -49,6 +49,14 @@ function createFirestoreHarness({ commitFailuresByBatchIndex = {} } = {}) {
             throw new Error(`Unsupported doc() call: ${JSON.stringify(args)}`);
         }
     };
+    harness.runTransaction = async (_db, callback) => {
+        const batch = harness.writeBatch();
+        batch.get = async () => ({ data: () => ({}) });
+        const result = await callback(batch);
+        await batch.commit();
+        return result;
+    };
+    return harness;
 }
 
 function buildGameLog(count) {
@@ -80,7 +88,8 @@ async function runFinishSave({ eventCount, rosterCount }) {
 
     const result = await commitStandardTrackerFinishData({
         db: harness.db,
-        writeBatch: harness.writeBatch,
+        runTransaction: harness.runTransaction,
+        expectedEpoch: '',
         doc: harness.doc,
         collection: harness.collection,
         teamId: 'team-1',
@@ -236,7 +245,8 @@ describe('standard tracker finish batch limits', () => {
 
         await commitStandardTrackerFinishData({
             db: harness.db,
-            writeBatch: harness.writeBatch,
+            runTransaction: harness.runTransaction,
+        expectedEpoch: '',
             doc: harness.doc,
             collection: harness.collection,
             teamId: 'team-1',
@@ -267,6 +277,7 @@ describe('standard tracker finish batch limits', () => {
         const explicitZeroStatWrite = statsBatch.operations.find((op) => op.ref.path === 'teams/team-1/games/game-1/aggregatedStats/p3');
 
         expect(untouchedWrite.data).toEqual({
+            liveStatsVersion: 1, liveStatsEpoch: '',
             playerName: 'Ben',
             playerNumber: '8',
             participated: false,
@@ -277,6 +288,7 @@ describe('standard tracker finish batch limits', () => {
         });
         expect(hasPlayerProfileParticipation(untouchedWrite.data)).toBe(false);
         expect(explicitZeroStatWrite.data).toEqual({
+            liveStatsVersion: 1, liveStatsEpoch: '',
             playerName: 'Cam',
             playerNumber: '11',
             participated: false,
@@ -293,7 +305,8 @@ describe('standard tracker finish batch limits', () => {
 
         await commitStandardTrackerFinishData({
             db: harness.db,
-            writeBatch: harness.writeBatch,
+            runTransaction: harness.runTransaction,
+        expectedEpoch: '',
             doc: harness.doc,
             collection: harness.collection,
             teamId: 'team-1',
@@ -334,7 +347,8 @@ describe('standard tracker finish batch limits', () => {
 
         await commitStandardTrackerFinishData({
             db: harness.db,
-            writeBatch: harness.writeBatch,
+            runTransaction: harness.runTransaction,
+        expectedEpoch: '',
             doc: harness.doc,
             collection: harness.collection,
             teamId: 'team-1',
@@ -393,7 +407,8 @@ describe('standard tracker finish batch limits', () => {
 
         await commitStandardTrackerFinishData({
             db: harness.db,
-            writeBatch: harness.writeBatch,
+            runTransaction: harness.runTransaction,
+        expectedEpoch: '',
             doc: harness.doc,
             collection: harness.collection,
             teamId: 'team-1',
@@ -459,7 +474,8 @@ describe('standard tracker finish batch limits', () => {
 
         await expect(commitStandardTrackerFinishData({
             db: harness.db,
-            writeBatch: harness.writeBatch,
+            runTransaction: harness.runTransaction,
+        expectedEpoch: '',
             doc: harness.doc,
             collection: harness.collection,
             teamId: 'team-1',
@@ -494,7 +510,8 @@ describe('standard tracker finish batch limits', () => {
         });
         const finishPayload = {
             db: harness.db,
-            writeBatch: harness.writeBatch,
+            runTransaction: harness.runTransaction,
+        expectedEpoch: '',
             doc: harness.doc,
             collection: harness.collection,
             teamId: 'team-1',
@@ -588,7 +605,7 @@ describe('standard tracker finish batch limits', () => {
         const helperAwaitIndex = source.indexOf('await commitStandardTrackerFinishData({', saveAndCompleteIndex);
         const catchIndex = source.indexOf('} catch (error) {', helperAwaitIndex);
 
-        expect(source).toContain("import { commitStandardTrackerFinishData } from './track-finish.js?v=3';");
+        expect(source).toContain("import { commitStandardTrackerFinishData, resetStandardTrackerData } from './track-finish.js?v=4';");
         expect(helperAwaitIndex).toBeGreaterThan(saveAndCompleteIndex);
         expect(source.indexOf('includeTimeMs: true', helperAwaitIndex)).toBeGreaterThan(helperAwaitIndex);
         expect(source.indexOf('const batch = writeBatch(db);', saveAndCompleteIndex)).toBe(-1);
@@ -598,7 +615,7 @@ describe('standard tracker finish batch limits', () => {
     it('wires the production track.html submit path through the tested finish helper before success-only side effects', () => {
         const source = readFileSync(new URL('../../track.html', import.meta.url), 'utf8');
 
-        expect(source).toContain("import { commitStandardTrackerFinishData } from './js/track-finish.js?v=3';");
+        expect(source).toContain("import { commitStandardTrackerFinishData, resetStandardTrackerData } from './js/track-finish.js?v=4';");
         expect(source).toContain('await commitStandardTrackerFinishData({');
         expect(source).toContain('gameState.playerParticipationByPlayerId[doc.id]');
 
@@ -671,6 +688,8 @@ describe('standard tracker finish batch limits', () => {
             resolveSummaryRecipient: vi.fn(() => 'coach@example.com'),
             setTimeout: setTimeoutMock,
             window: { location: { href: 'track.html#teamId=team-1&gameId=game-1' } },
+            runTransaction: vi.fn(),
+            getLiveStatsEpoch: () => '',
             writeBatch: vi.fn()
         };
 
@@ -736,6 +755,8 @@ describe('standard tracker finish batch limits', () => {
                 stats: { p1: { pts: 12, ast: 3, time: 90000 } }
             },
             window: { location: { href: 'track-basketball.html#teamId=team-1&gameId=game-1' } },
+            runTransaction: vi.fn(),
+            getLiveStatsEpoch: () => '',
             writeBatch: vi.fn()
         };
 

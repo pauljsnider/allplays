@@ -4,12 +4,13 @@ import { getGameDayTeamContext, getGame, getPlayers, getConfigs, updateGame, get
 import { db } from './firebase.js?v=4433197';
 import { getUrlParams, escapeHtml } from './utils.js?v=443389';
 import { checkAuth } from './auth.js?v=4433218';
-import { writeBatch, doc, setDoc, addDoc } from './firebase.js?v=4433197';
+import { writeBatch, runTransaction, doc, setDoc, addDoc } from './firebase.js?v=4433197';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './firebase-ai.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 import { canApplySubstitution, applySubstitution, canApplySubstitutionQueue, canApplyQueuedSubstitution, resolveFinalScoreForCompletion } from './live-tracker-integrity.js?v=4';
 import { resolveFinalScore, resolveSummaryRecipient } from './live-tracker-email.js?v=2';
-import { commitStandardTrackerFinishData } from './track-finish.js?v=3';
+import { commitStandardTrackerFinishData, resetStandardTrackerData } from './track-finish.js?v=4';
+import { getLiveStatsEpoch, readLiveStatsForWrite, liveStatsMatchEpoch } from './live-aggregate-stats.js?v=1';
 import { getPrivatePlayerStatIds } from './stat-leaderboards.js?v=4';
 import { hasScorekeepingTeamAccess } from './team-access.js?v=44338';
 
@@ -741,7 +742,8 @@ async function saveAndComplete() {
     // 2. Persist events, aggregated stats, and the completed game update in chunks.
     await commitStandardTrackerFinishData({
       db,
-      writeBatch,
+      runTransaction,
+      expectedEpoch: getLiveStatsEpoch(currentGame),
       doc,
       collection,
       teamId: currentTeamId,
@@ -840,13 +842,10 @@ async function startStop() {
         const confirmClear = confirm(`This game already has ${eventsSnap.size} tracked event(s). Starting fresh will clear them. Continue?`);
         if (!confirmClear) return;
 
-        await Promise.all(eventsSnap.docs.map(d => deleteDoc(d.ref)));
-        const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
-        await Promise.all(statsSnap.docs.map(d => deleteDoc(d.ref)));
-        const privateStatsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`));
-        await Promise.all(privateStatsSnap.docs.map(d => deleteDoc(d.ref)));
-        // Reset game doc scores/opponent stats to avoid mixing old data
-        await updateGame(currentTeamId, currentGameId, { homeScore: 0, awayScore: 0, opponentStats: {} });
+        const resetPatch = await resetStandardTrackerData({ db, runTransaction, doc, collection, getDocs,
+          teamId: currentTeamId, gameId: currentGameId, expectedEpoch: getLiveStatsEpoch(currentGame) });
+        Object.assign(currentGame, resetPatch);
+
       }
     }
 
@@ -1513,9 +1512,9 @@ async function init() {
     state.scoreLogIsComplete = !hasPersistedTrackingData;
     statsSnapshot.forEach(d => {
       if (!state.stats[d.id]) state.stats[d.id] = statDefaults(currentConfig.columns);
-      const existing = d.data().stats || {};
+      const existing = readLiveStatsForWrite(d.data(), currentGame);
       Object.assign(state.stats[d.id], existing);
-      if (typeof d.data().timeMs === 'number') {
+      if (liveStatsMatchEpoch(d.data(), currentGame) && typeof d.data().timeMs === 'number') {
         state.stats[d.id].time = d.data().timeMs;
       }
     });
@@ -1526,7 +1525,7 @@ async function init() {
 
     privateStatsSnapshot.forEach(d => {
         if (!state.stats[d.id]) state.stats[d.id] = statDefaults(currentConfig.columns);
-        const existing = d.data().stats || {};
+        const existing = readLiveStatsForWrite(d.data(), currentGame);
         Object.assign(state.stats[d.id], existing);
     });
 
