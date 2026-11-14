@@ -1570,6 +1570,8 @@ test('signed-out viewers can read chat but cannot post from the overlay', async 
 
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('#home-team-name')).toHaveText('Current Academy');
+    // The one-shot fixture delivery must follow initial auth-driven resubscription.
+    await expect.poll(() => page.evaluate(() => typeof window.__OVERLAY_AUTH_CALLBACK__)).toBe('function');
     await page.evaluate(() => window.__OVERLAY_CHAT_CALLBACK__([{
         id: 'chat-1', senderName: 'Taylor', text: 'Readable for everyone', createdAt: Date.now()
     }]));
