@@ -47,7 +47,7 @@ describe('help page reference integrity', () => {
     it('lists only shipped html files in help-page-reference.html', () => {
         const referenceHtml = readRepoFile('help-page-reference.html');
         expect(referenceHtml).toContain('data-help-back-link');
-        expect(referenceHtml).toContain('./js/help-context.js?v=1');
+        expect(referenceHtml).toContain('./js/help-context.js?v=2');
 
         const referenceRows = extractReferenceRows(referenceHtml);
         const referencedFiles = referenceRows.map((row) => row.file);

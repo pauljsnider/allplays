@@ -133,15 +133,15 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
         expect(html).toMatch(/\.panel-tab\s*\{[^}]*min-width:\s*44px;/);
-        expect(html).toContain('js/live-game-overlay.js?v=65');
+        expect(html).toContain('js/live-game-overlay.js?v=66');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
         expect(source).toContain("params.demo === '1'");
         expect(source).toContain("params.replay === 'true'");
         expect(source).toContain('startDemoReplayMode');
-        expect(source).toContain("return import('./db.js?v=4433207')");
-        expect(source).toContain("import('./live-game-state.js?v=55')");
+        expect(source).toContain("return import('./db.js?v=4433212')");
+        expect(source).toContain("import('./live-game-state.js?v=60')");
         expect(source).toContain('stateTools.applyResetEventState');
         expect(source).toContain('reconcileOverlayLiveEvents');
         expect(source).toContain("from './live-game-overlay-model.js?v=34'");
@@ -158,7 +158,7 @@ describe('live game overlay page', () => {
         expect(source).toContain('database.subscribeReactions');
         expect(source).toContain('getOverlayLiveClockMs');
         expect(source).toContain('syncLiveClockAnchor');
-        expect(source).toContain("import('./auth.js?v=4433211')");
+        expect(source).toContain("import('./auth.js?v=4433217')");
         expect(source).toContain("import('./live-game-chat.js?v=4')");
         expect(currentLiveGameSource).toContain("from './live-game-overlay-model.js?v=34'");
         expect(currentLiveGameSource).toContain("from './live-game-video.js?v=443319'");
@@ -174,7 +174,7 @@ describe('live game overlay page', () => {
         expect(source).toContain('createSafeImageElement');
         expect(source).toContain('formatOverlayChatMessageHtml');
         expect(source).toContain('generateAiResponse');
-        expect(source).toContain("import('./vendor/firebase-ai.js')");
+        expect(source).toContain("import('./firebase-ai.js?v=1')");
         expect(source).toContain('handleMentionInput');
         expect(source).toContain('ensureChatDisplayName');
         expect(source).toContain('liveChatDisplayName:');
@@ -197,9 +197,9 @@ describe('live game overlay page', () => {
         expect(source).not.toContain('trackViewerPresence(');
         expect(source).toContain('sendChatReaction');
         expect(source).toContain("from './game-share-links.js?v=1'");
-        expect(source).toContain("from './utils.js?v=443383'");
+        expect(source).toContain("from './utils.js?v=443388'");
         expect(source).toContain("from './live-game-announcer.js?v=1'");
-        expect(source).toContain("import('./team-entitlements.js?v=9')");
+        expect(source).toContain("import('./team-entitlements.js?v=11')");
         expect(source).toContain('isRecordedReplayTeamPassGateEnabled');
         expect(source).toContain('getTeamEntitlementStatus');
         expect(source).toContain('showReplayAccessGate');

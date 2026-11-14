@@ -1,5 +1,5 @@
 import { getPlayerPrivateProfile } from './adapters/legacyPlayerDb';
-import { addPendingFamilyMember, db, doc, getDoc, readFamilyMembers } from './adapters/legacyParentTools';
+import { addPendingFamilyMember, db, doc, getDoc, readFamilyMembers, removeFamilyMember } from './adapters/legacyParentTools';
 import { canonicalizeAppAcceptInviteUrl } from './inviteUrls';
 import type { AuthUser } from './types';
 
@@ -21,6 +21,7 @@ export type ParentHouseholdFamilyMember = Record<string, any> & {
     playerName: string;
     playerNumber?: string;
     relation: string;
+    organizerUserId?: string;
     accessCode?: string;
     inviteUrl?: string;
 };
@@ -108,6 +109,13 @@ export async function createParentHouseholdMemberInvite(user: AuthUser | null, r
         email,
         emailSent: true
     };
+}
+
+export async function revokeParentHouseholdMemberAccess(user: AuthUser | null, membershipId: string) {
+    if (!user?.uid) throw new Error('Sign in before revoking household access.');
+    const normalizedMembershipId = compactString(membershipId);
+    if (!normalizedMembershipId) throw new Error('Household membership is required.');
+    return removeFamilyMember(user.uid, normalizedMembershipId);
 }
 
 function normalizeFamilyChildren(children: any[]) {

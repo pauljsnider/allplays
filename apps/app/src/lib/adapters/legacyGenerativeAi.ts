@@ -1,5 +1,5 @@
 import { getApp as legacyGetApp } from '@legacy/vendor/firebase-app.js';
-import { getAI as legacyGetAI, getGenerativeModel as legacyGetGenerativeModel, GoogleAIBackend as LegacyGoogleAIBackend, Schema as LegacySchema } from '@legacy/vendor/firebase-ai.js';
+import { getAI as legacyGetAI, getGenerativeModel as legacyGetGenerativeModel, GoogleAIBackend as LegacyGoogleAIBackend, Schema as LegacySchema } from '@legacy/firebase-ai.js';
 
 /**
  * Typed adapter boundary for the vendored Firebase AI SDK (#2066), so app

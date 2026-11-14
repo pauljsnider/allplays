@@ -43,7 +43,7 @@ import './firebase'; export * from 'firebase/app'; export * from 'firebase/auth'
 export const resolvePrimaryFirebaseConfig = async () => ({ projectId: 'demo-allplays-resource', apiKey: 'local-only', authDomain: 'localhost' });
 export const initializePrimaryAppCheck = async () => null;
 `);
-  writeFileSync(join(dir, 'app-check.ts'), `export const initializePrimaryAppCheck = async () => null; export const getPrimaryAppCheckToken = async () => null; export const getPrimaryAppCheckHeaders = async (headers = {}) => headers;`);
+  writeFileSync(join(dir, 'app-check.ts'), `export const initializePrimaryAppCheck = async () => null; export const getPrimaryAppCheckToken = async () => null; export const preparePrimaryAppCheckToken = async () => null; export const getPrimaryAppCheckHeaders = async (headers = {}) => headers;`);
   writeFileSync(join(dir, 'images.ts'), `import { storage } from './firebase'; export const imageStorage = storage; export const ensureImageAuth = async () => null; export const requireImageAuth = async () => null;`);
   writeFileSync(join(dir, 'shell.html'), '<html><head><title>Isolated full app QA</title></head><body><div id="root"></div><script type="module" src="/shell.tsx"></script></body></html>');
   writeFileSync(join(dir, 'shell.tsx'), "import '../src/main';");

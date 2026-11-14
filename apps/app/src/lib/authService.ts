@@ -34,6 +34,7 @@ import { raceFirstSuccessfulRead } from './adapters/legacyHedgedRead';
 import { clearAppDataCache } from './appDataCache';
 import { buildFirebaseSdkActionHref } from './appLinks';
 import { getSafeAuthNextRoute } from './authNextRoute';
+import { normalizeAppInviteType } from './inviteUrls';
 import { mergeOwnedTeamIds } from './teamAccess';
 import { callNativeFirebaseFunctionWithAuth } from './nativeCallable';
 import type { AuthUser, ProfileHydrationStatus, UserRole } from './types';
@@ -64,6 +65,7 @@ type FirebaseUser = {
   displayName?: string | null;
   photoURL?: string | null;
   emailVerified?: boolean;
+  phoneNumber?: string | null;
   metadata?: {
     creationTime?: string;
     lastSignInTime?: string;
@@ -80,6 +82,7 @@ type UserCredential = {
   nativeRest?: boolean;
   activationCodeRedeemed?: boolean;
   wasNewUser?: boolean;
+  pendingFamilyInvite?: { code: string; type: string };
 };
 
 type HydratedUser = {
@@ -812,6 +815,17 @@ async function postNativeFriendInviteRedemption(userId: string, code: string) {
 
 async function redeemFriendInviteForCurrentSession(dbModule: FriendInviteRedeemer, userId: string, code: string, email?: string | null) {
   const normalizedCode = normalizeCode(code);
+  if (isNativeRuntime()) {
+    await FirebaseAuthentication.reload();
+  }
+  const currentUser = isNativeRuntime()
+    ? (await FirebaseAuthentication.getCurrentUser().catch(() => ({ user: null }))).user
+    : getCurrentFirebaseUser();
+  if (currentUser?.uid === userId && currentUser.emailVerified === false && !currentUser.phoneNumber) {
+    throw Object.assign(new Error('Verify your email before accepting this friend invite.'), {
+      details: { reason: 'email-verification-required', inviteType: 'friend' }
+    });
+  }
   if (!isNativeRuntime()) {
     return dbModule.redeemFriendInvite(userId, normalizedCode, email);
   }
@@ -1452,7 +1466,7 @@ export async function signUpWithEmail(email: string, password: string, activatio
         }
       }
     : auth;
-  return executeEmailPasswordSignup({
+  const credential = (await executeEmailPasswordSignup({
     email: normalizedEmail,
     password,
     activationCode: normalizeCode(activationCode),
@@ -1510,7 +1524,11 @@ export async function signUpWithEmail(email: string, password: string, activatio
           }
         : firebaseSignOut
     }
-  }) as Promise<UserCredential>;
+  })) as UserCredential;
+  if (credential?.pendingFamilyInvite) {
+    rememberPendingInvite(credential.pendingFamilyInvite.code, credential.pendingFamilyInvite.type);
+  }
+  return credential;
 }
 
 async function signInWithNativeGoogleCredential() {
@@ -1583,8 +1601,18 @@ async function processGoogleResult(
   const code = normalizeCode(activationCode || window.sessionStorage.getItem(pendingActivationCodeKey));
   if (!isNewFirebaseUser(result.user)) {
     if (code) {
-      await redeemInviteForUser(result.user.uid, code, result.user.email);
-      result.activationCodeRedeemed = true;
+      try {
+        await redeemInviteForUser(result.user.uid, code, result.user.email);
+        result.activationCodeRedeemed = true;
+      } catch (error: any) {
+        if (error?.details?.reason !== 'email-verification-required' || !result.user.email) throw error;
+        const pendingType = error.details.inviteType || readPendingInvite().type;
+        rememberPendingInvite(code, pendingType);
+        result.pendingFamilyInvite = { code, type: pendingType };
+        await resendVerificationEmail().catch((verificationError: unknown) => {
+          logger.warn('Unable to queue verification for pending invitation.', { error: verificationError });
+        });
+      }
     }
     const profileUpdate: Record<string, unknown> = {
       email: result.user.email || '',
@@ -1639,15 +1667,38 @@ async function processGoogleResult(
       await dbModule.markAccessCodeAsUsed(validation.codeId, result.user.uid);
     }
 
-    await dbModule.updateUserProfile(result.user.uid, {
-      email: result.user.email || '',
-      fullName: result.user.displayName || '',
-      photoUrl: result.user.photoURL || '',
-      createdAt: new Date(),
-      lastLogin: new Date()
-    });
-  } catch (error) {
+    await dbModule
+      .updateUserProfile(result.user.uid, {
+        email: result.user.email || '',
+        fullName: result.user.displayName || '',
+        photoUrl: result.user.photoURL || '',
+        createdAt: new Date(),
+        lastLogin: new Date()
+      })
+      .catch((profileError: unknown) => {
+        // Redemption has committed. A best-effort profile sync must not delete
+        // its recipient and leave an accepted invitation without an account.
+        logger.warn('Unable to save signup profile after invite redemption.', { error: profileError });
+      });
+  } catch (error: any) {
     window.sessionStorage.removeItem(pendingActivationCodeKey);
+    const pendingType = normalizeAppInviteType(validation.type);
+    if (error?.details?.reason === 'email-verification-required' && pendingType && result.user.email) {
+      rememberPendingInvite(validation.data?.code || code, pendingType);
+      result.pendingFamilyInvite = { code: validation.data?.code || code, type: pendingType };
+      await dbModule
+        .updateUserProfile(result.user.uid, {
+          email: result.user.email,
+          createdAt: new Date(),
+          emailVerificationRequired: true
+        })
+        .catch((profileError: unknown) => logger.warn('Unable to save pending invite profile.', { error: profileError }));
+      await resendVerificationEmail().catch((verificationError: unknown) => {
+        logger.warn('Unable to queue signup verification; recipient can retry from verification screen.', { error: verificationError });
+      });
+      result.wasNewUser = true;
+      return result;
+    }
     await cleanupFailedNewUser(result.user, 'Google activation', { activationCode: validation.data?.code || code });
     throw error;
   }
@@ -1904,6 +1955,7 @@ export async function redeemInviteForUser(userId: string, code: string, authEmai
     loadLegacyAdminInvite(),
     loadLegacyInviteFlow()
   ]);
+  let validatedInviteType = '';
   const processInvite = createInviteProcessor({
     validateAccessCode: async (inviteCode: string) => {
       const nativeAuthToken = isNativeRuntime()
@@ -1912,7 +1964,9 @@ export async function redeemInviteForUser(userId: string, code: string, authEmai
             return null;
           })
         : null;
-      return dbModule.validateAccessCode(inviteCode, nativeAuthToken ? { nativeAuthToken } : undefined);
+      const validation = await dbModule.validateAccessCode(inviteCode, nativeAuthToken ? { nativeAuthToken } : undefined);
+      if (validation.valid) validatedInviteType = normalizeAppInviteType(validation.type);
+      return validation;
     },
     redeemParentInvite: dbModule.redeemParentInvite,
     redeemFriendInvite: (inviteUserId: string, inviteCode: string, email?: string | null) =>
@@ -1926,7 +1980,14 @@ export async function redeemInviteForUser(userId: string, code: string, authEmai
     getUserProfile: dbModule.getUserProfile,
     markAccessCodeAsUsed: dbModule.markAccessCodeAsUsed
   });
-  return processInvite(userId, normalizedCode, authEmail || null);
+  try {
+    return await processInvite(userId, normalizedCode, authEmail || null);
+  } catch (error: any) {
+    if (error?.details?.reason === 'email-verification-required' && validatedInviteType) {
+      error.details = { ...error.details, inviteType: validatedInviteType };
+    }
+    throw error;
+  }
 }
 
 export function rememberPendingInvite(code: string, type = 'parent') {
@@ -1961,6 +2022,7 @@ export function getRouteForUser(user: AuthUser | null) {
 
 export function mapLegacyRedirectToAppRoute(redirectUrl?: string) {
   const normalized = String(redirectUrl || '').toLowerCase();
+  if (normalized === '/app/#/home?section=friends') return '/home?section=friends';
   if (normalized.includes('parent-dashboard') || normalized.includes('calendar')) {
     return '/home';
   }

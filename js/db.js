@@ -33,8 +33,8 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from './firebase.js?v=33';
-import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
+} from './firebase.js?v=4433197';
+import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=2';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=18';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=3';
@@ -99,7 +99,7 @@ import {
 } from './shared-schedule-sync.js?v=3';
 import { normalizeTeamNotificationPreferences } from './notification-preferences.js?v=1';
 import { normalizeAdSpaceSponsors, normalizeLocalAttractionSponsors } from './local-attractions.js?v=2';
-import { generateJoinCode, normalizeJoinCode } from './join-code.js?v=1';
+import { generateJoinCode, normalizeJoinCode } from './join-code.js?v=3';
 import { buildRosterFieldDefinitionPayload } from './roster-profile-fields.js?v=2';
 import { commitFamilyRsvpWrite } from './rsvp-family-write.js?v=1';
 import {
@@ -114,7 +114,7 @@ import {
     summarizeAthleteProfileCareer,
     collectAthleteGameClipsForPlayer
 } from './athlete-profile-utils.js?v=4';
-import { loadCompleteAthleteProfileSeasonStats } from './diamond-legacy-game-context.js?v=1';
+import { loadCompleteAthleteProfileSeasonStats } from './diamond-legacy-game-context.js?v=3';
 import {
     DIAMOND_PLAYER_STAT_CATALOG,
     resolveDiamondPublicTeamStatDocument
@@ -129,7 +129,7 @@ import {
     FRIEND_INVITE_TYPE,
     buildFriendInviteAccessCodeData
 } from './friend-invite.js?v=1';
-import { commitCertificateDefaults } from './certificates/persistence.js?v=7';
+import { commitCertificateDefaults } from './certificates/persistence.js?v=9';
 
 export async function normalizeParentScopeLinks(parentLinks = []) {
     // Dedupe first (no I/O) so every remaining link is fetched exactly once.
@@ -255,7 +255,7 @@ import {
     loadVolunteerScreeningTargetRegistrations
 } from './volunteer-screening-access.js?v=2';
 import { buildTournamentGroupOverrideKey, buildTournamentPoolOverrideKey, matchesTournamentStandingsGroup } from './tournament-standings.js?v=4';
-import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeTeamMediaVideoDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=44339';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeTeamMediaVideoDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=44340';
 import { getApp } from './vendor/firebase-app.js';
 import {
     computeOfficiatingCoverageStatus,
@@ -266,7 +266,7 @@ import { buildOfficiatingNotificationRecord } from './officiating-notifications.
 import {
     getTeamEmailAttachmentTotalBytes,
     normalizeTeamEmailAttachments
-} from './team-email-attachments.js?v=9';
+} from './team-email-attachments.js?v=11';
 export {
     TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES,
     assertTeamEmailAttachmentLimit,
@@ -275,7 +275,7 @@ export {
     getTeamEmailDraft,
     normalizeTeamEmailAttachments,
     uploadTeamEmailAttachment
-} from './team-email-attachments.js?v=9';
+} from './team-email-attachments.js?v=11';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
@@ -824,7 +824,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443383'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443388'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -5583,7 +5583,14 @@ export async function createAccessCode(userId, email, phone, code, options = {})
             phone,
             inviterProfile: {
                 ...friendInviteInviterProfile,
-                discoveryTeamIds: derivePublicProfileTeamIds(friendInviteInviterProfile)
+                discoveryTeamIds: uniqueNonEmptyIds([
+                    ...(Array.isArray(friendInviteInviterProfile.parentOf)
+                        ? friendInviteInviterProfile.parentOf.map((link) => link?.teamId)
+                        : []),
+                    ...(Array.isArray(friendInviteInviterProfile.parentTeamIds)
+                        ? friendInviteInviterProfile.parentTeamIds
+                        : [])
+                ])
             },
             now,
             expiresAt: options.expiresAt || Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000)

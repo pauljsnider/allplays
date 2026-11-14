@@ -15,8 +15,8 @@ describe('verify pending legacy page redirect wiring', () => {
     it('uses role-aware redirect logic instead of hardcoded dashboard links', () => {
         const source = readFileSync(resolve(process.cwd(), 'verify-pending.html'), 'utf8');
 
-        expect(source).toContain("import { checkAuth, getRedirectUrl, logout, resendVerificationEmail } from './js/auth.js?v=4433211';");
-        expect(source).toContain("import { getPendingVerificationRedirectUrl, refreshVerifiedUserToken } from './js/verify-pending-flow.js?v=3';");
+        expect(source).toContain("import { checkAuth, getRedirectUrl, logout, resendVerificationEmail } from './js/auth.js?v=4433217';");
+        expect(source).toContain("import { getPendingVerificationRedirectUrl, refreshVerifiedUserToken } from './js/verify-pending-flow.js?v=4';");
         expect(source).toContain('const fallbackRedirectUrl = getRedirectUrl(user);');
         expect(source).toContain('const redirectUrl = getPendingVerificationRedirectUrl(user, getRedirectUrl);');
         expect(source).toContain('await refreshVerifiedUserToken(user);');

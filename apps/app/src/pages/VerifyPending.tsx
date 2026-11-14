@@ -36,7 +36,10 @@ export function VerifyPending({ auth }: { auth: AuthState }) {
         const pendingInviteRoute = pendingInvite.code
           ? `/accept-invite?code=${encodeURIComponent(pendingInvite.code)}&type=${encodeURIComponent(pendingInvite.type)}`
           : '';
-        await completeAuthNavigation(nextRoute || pendingInviteRoute || getRouteForUser(refreshedUser), navigate, {
+        const continuation = pendingInviteRoute
+          ? `${pendingInviteRoute}${nextRoute ? `&next=${encodeURIComponent(nextRoute)}` : ''}`
+          : nextRoute || getRouteForUser(refreshedUser);
+        await completeAuthNavigation(continuation, navigate, {
           nativeRuntime: isNativeRuntime(),
           openHostedAuth: openPublicUrl
         });

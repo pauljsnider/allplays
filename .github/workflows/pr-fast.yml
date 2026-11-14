@@ -163,6 +163,11 @@ jobs:
         if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: npx playwright install --with-deps chromium
 
+      - name: Run isolated invitation browser flow
+        if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
+        timeout-minutes: 10
+        run: npm run test:invitations:browser
+
       - name: Run isolated resource packet browser flow
         if: ${{ needs.change-impact.outputs.lane != 'spec-only' }}
         run: npm run test:resource-packets:browser

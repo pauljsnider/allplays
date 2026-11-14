@@ -7,7 +7,7 @@ const appCheckMocks = vi.hoisted(() => ({
     }))
 }));
 
-vi.mock('../../js/firebase-app-check-rest.js?v=1', () => appCheckMocks);
+vi.mock('../../js/firebase-app-check-rest.js?v=2', () => appCheckMocks);
 
 const { loadAuthProfileViaRest } = await import('../../js/auth-profile-rest.js');
 

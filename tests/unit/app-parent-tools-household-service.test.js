@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const familyPlanMocks = vi.hoisted(() => ({
+    removeFamilyMember: vi.fn(),
     addPendingFamilyMember: vi.fn(),
     readFamilyMembers: vi.fn()
 }));
@@ -36,7 +37,7 @@ vi.mock('../../js/db.js', () => ({
     moveTeamMediaItems: dbMocks.moveTeamMediaItems,
     setTeamMediaAlbumCover: dbMocks.setTeamMediaAlbumCover
 }));
-vi.mock('../../js/firebase.js?v=33', () => ({
+vi.mock('../../js/firebase.js?v=4433197', () => ({
     db: {},
     doc: vi.fn(),
     collection: vi.fn(),

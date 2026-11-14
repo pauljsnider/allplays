@@ -1,4 +1,4 @@
-import { buildAppJoinUrl, isValidJoinCode, normalizeJoinCode } from './join-code.js?v=2';
+import { buildAppJoinUrl, isValidJoinCode, normalizeJoinCode } from './join-code.js?v=3';
 
 export function normalizeInviteCode(inviteCode) {
     const normalized = normalizeJoinCode(inviteCode);

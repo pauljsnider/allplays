@@ -642,7 +642,7 @@ async function stubRealOverlayModules(page) {
             }
         `
     }));
-    await page.route(/\/js\/vendor\/firebase-ai\.js(?:\?.*)?$/, (route) => route.fulfill({
+    await page.route(/\/js\/firebase-ai\.js(?:\?.*)?$/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: `

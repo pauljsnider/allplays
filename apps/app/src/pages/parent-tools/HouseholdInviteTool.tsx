@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { CheckCircle2, Copy, Loader2, RefreshCw, Users } from 'lucide-react';
-import { createParentHouseholdMemberInvite, loadParentHouseholdInviteModel, type ParentHouseholdFamilyContact, type ParentHouseholdFamilyMember, type ParentHouseholdLinkedPlayer } from '../../lib/parentHouseholdService';
+import { createParentHouseholdMemberInvite, loadParentHouseholdInviteModel, revokeParentHouseholdMemberAccess, type ParentHouseholdFamilyContact, type ParentHouseholdFamilyMember, type ParentHouseholdLinkedPlayer } from '../../lib/parentHouseholdService';
 import { toAppServiceError } from '../../lib/appErrors';
 import { PremiumGate } from '../../components/PremiumGate';
+import { Modal } from '../../components/Modal';
 import { PREMIUM_FEATURES, PREMIUM_SCOPES } from '../../lib/premiumAccessService';
 import { usePremiumFeatureAccess } from '../../lib/usePremiumFeatureAccess';
 import type { AuthState } from '../../lib/types';
@@ -26,17 +27,25 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
     const [createdInvite, setCreatedInvite] = useState<{ code: string; inviteUrl: string; email: string; emailSent: boolean } | null>(null);
     const [message, setMessage] = useState('');
     const [copiedEmail, setCopiedEmail] = useState('');
+    const [pendingRevokeMember, setPendingRevokeMember] = useState<ParentHouseholdFamilyMember | null>(null);
+    const [failedRevokeMember, setFailedRevokeMember] = useState<ParentHouseholdFamilyMember | null>(null);
     const loadOperation = useParentToolAsyncOperation();
     const submitOperation = useParentToolAsyncOperation();
+    const revokeOperation = useParentToolAsyncOperation();
     const runLoad = loadOperation.run;
     const runSubmit = submitOperation.run;
+    const runRevoke = revokeOperation.run;
     const clearLoadError = loadOperation.clearError;
     const clearSubmitError = submitOperation.clearError;
+    const clearRevokeError = revokeOperation.clearError;
     const setSubmitError = submitOperation.setError;
     const loading = loadOperation.loading;
     const saving = submitOperation.loading;
+    const revoking = revokeOperation.loading;
     const error = loadOperation.error ?? submitOperation.error;
+    const revokeError = revokeOperation.error;
 
+    const activeMembers = useMemo(() => members.filter((member) => String(member.status || '').toLowerCase() === 'active'), [members]);
     const pendingMembers = useMemo(() => members.filter((member) => String(member.status || '').toLowerCase() === 'pending'), [members]);
 
     const refresh = useCallback(async () => {
@@ -104,6 +113,27 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
         );
     };
 
+    const revoke = async (member: ParentHouseholdFamilyMember) => {
+        clearRevokeError();
+        setFailedRevokeMember(null);
+        setMessage('');
+        await runRevoke(
+            () => revokeParentHouseholdMemberAccess(auth.user, member.id),
+            'Unable to revoke household access.',
+            {
+                onSuccess: async () => {
+                    const refreshed = await refresh();
+                    if (refreshed) setMessage('Household access revoked.');
+                },
+                onError: () => {
+                    setFailedRevokeMember(member);
+                },
+                onFinally: () => {
+                    setPendingRevokeMember(null);
+                }
+            }
+        );
+    };
     const copyEmail = async (nextEmail: string) => {
         const normalizedEmail = String(nextEmail || '').trim();
         if (!normalizedEmail) return;
@@ -117,6 +147,7 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
             <section className="app-card p-4">
                 <ToolHeader icon={Users} title="Create invite" detail="Invite another parent or caregiver to connect their account to one of your linked players." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
                 {error ? <RetryableStatus error={error} fallbackMessage="Unable to load household invites." onRetry={loading ? undefined : refresh} retrying={loading} /> : null}
+                {revokeError ? <RetryableStatus error={revokeError} fallbackMessage="Unable to revoke household access." onRetry={failedRevokeMember && !revoking ? () => setPendingRevokeMember(failedRevokeMember) : undefined} retrying={revoking} buttonLabel="Try again" /> : null}
                 {message ? <Status tone="success" message={message} /> : null}
                 {createdInvite ? (
                     <InviteResultCard
@@ -191,18 +222,85 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
             </section>
 
             <section className="app-card p-4">
+                <ToolHeader icon={Users} title="Active household access" detail="Parent and caregiver accounts with active access to your linked players." />
+                <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                    {activeMembers.length ? activeMembers.map((member) => (
+                        <HouseholdMembershipCard key={member.id} member={member} currentUserId={auth.user?.uid || ''} revoking={revoking} onRevoke={() => setPendingRevokeMember(member)} />
+                    )) : <EmptyState icon={Users} title="No active household access" detail="Accepted parent and caregiver access will appear here." />}
+                </div>
+            </section>
+
+            <section className="app-card p-4">
                 <ToolHeader icon={Users} title="Pending parent & caregiver invites" detail="Invites that have not been redeemed or removed." />
                 <div className="mt-3 grid gap-3 lg:grid-cols-2">
                     {pendingMembers.length ? pendingMembers.map((member) => (
-                        <div key={member.id} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-                            <div className="text-sm font-black text-gray-950">{member.displayName || member.email}</div>
-                            <div className="mt-0.5 text-xs font-semibold text-gray-500">{member.email}</div>
-                            <div className="mt-1 text-xs font-semibold text-gray-600">{member.relation || 'Household contact'} for {member.playerName || 'Player'}{member.playerNumber ? ` #${member.playerNumber}` : ''}{member.teamName ? ` - ${member.teamName}` : ''}</div>
-                            {member.accessCode ? <div className="mt-2 text-xs font-semibold text-gray-600">Code <span className="font-mono">{member.accessCode}</span></div> : null}
-                        </div>
+                        <HouseholdMembershipCard key={member.id} member={member} currentUserId={auth.user?.uid || ''} revoking={revoking} onRevoke={() => setPendingRevokeMember(member)} />
                     )) : <EmptyState icon={Users} title="No pending household invites" detail="Create an invite when a household member needs account-based access to a linked player." />}
                 </div>
             </section>
+
+            {pendingRevokeMember ? (
+                <Modal
+                    ariaLabelledBy="household-revoke-title"
+                    onClose={() => {
+                        if (!revoking) setPendingRevokeMember(null);
+                    }}
+                    overlayClassName="z-50 flex items-end justify-center bg-gray-950/40 px-4 py-5 sm:items-center"
+                >
+                    <div className="w-full max-w-sm rounded-2xl bg-white p-4 shadow-2xl">
+                        <h3 id="household-revoke-title" className="text-base font-black text-gray-950">Revoke household access?</h3>
+                        <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
+                            {pendingRevokeMember.displayName || pendingRevokeMember.email || 'This caregiver'} will lose access to {pendingRevokeMember.playerName || 'this player'}.
+                        </p>
+                        <div className="mt-4 grid grid-cols-2 gap-2">
+                            <button type="button" className="secondary-button justify-center text-xs" onClick={() => setPendingRevokeMember(null)} disabled={revoking}>Cancel</button>
+                            <button type="button" className="primary-button justify-center text-xs !bg-rose-600 hover:!bg-rose-700" onClick={() => revoke(pendingRevokeMember)} disabled={revoking}>
+                                {revoking ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+                                Revoke access
+                            </button>
+                        </div>
+                    </div>
+                </Modal>
+            ) : null}
+        </div>
+    );
+}
+
+function HouseholdMembershipCard({
+    member,
+    currentUserId,
+    revoking,
+    onRevoke
+}: {
+    member: ParentHouseholdFamilyMember;
+    currentUserId: string;
+    revoking: boolean;
+    onRevoke: () => void;
+}) {
+    const status = String(member.status || '').toLowerCase();
+    const label = member.displayName || member.email || 'Household contact';
+    const playerLabel = member.playerName || 'Player';
+    const canRevoke = Boolean(currentUserId && member.organizerUserId === currentUserId && (status === 'active' || status === 'pending'));
+    const statusClassName = status === 'active'
+        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+        : 'border-amber-200 bg-amber-50 text-amber-700';
+
+    return (
+        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+            <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-black text-gray-950">{label}</div>
+                    {member.email && member.email !== label ? <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{member.email}</div> : null}
+                    <div className="mt-1 text-xs font-semibold text-gray-600">{member.relation || 'Household contact'} for {playerLabel}{member.playerNumber ? ` #${member.playerNumber}` : ''}{member.teamName ? ` - ${member.teamName}` : ''}</div>
+                    {member.accessCode && status === 'pending' ? <div className="mt-2 text-xs font-semibold text-gray-600">Code <span className="font-mono">{member.accessCode}</span></div> : null}
+                </div>
+                <span className={`flex-none rounded-full border px-2 py-0.5 text-[11px] font-black uppercase leading-4 ${statusClassName}`}>{status}</span>
+            </div>
+            {canRevoke ? (
+                <button type="button" className="ghost-button mt-3 !min-h-11 w-full justify-center text-xs text-rose-700" onClick={onRevoke} disabled={revoking} aria-label={`Revoke ${label} access to ${playerLabel}`}>
+                    Revoke access
+                </button>
+            ) : null}
         </div>
     );
 }

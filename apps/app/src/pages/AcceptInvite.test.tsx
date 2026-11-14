@@ -6,131 +6,168 @@ import { AcceptInvite } from './AcceptInvite';
 import type { AuthState } from '../lib/types';
 
 const authServiceMocks = vi.hoisted(() => ({
-    clearPendingInvite: vi.fn(),
-    completeEmailLink: vi.fn(),
-    isEmailLink: vi.fn(() => false),
-    mapLegacyRedirectToAppRoute: vi.fn(() => '/home'),
-    readPendingInvite: vi.fn(() => ({ code: '', type: '' })),
-    redeemInviteForUser: vi.fn(),
-    rememberPendingInvite: vi.fn()
+  clearPendingInvite: vi.fn(),
+  completeEmailLink: vi.fn(),
+  isEmailLink: vi.fn(() => false),
+  mapLegacyRedirectToAppRoute: vi.fn(() => '/home'),
+  readPendingInvite: vi.fn(() => ({ code: '', type: '' })),
+  redeemInviteForUser: vi.fn(),
+  rememberPendingInvite: vi.fn()
 }));
 
 const inviteRedemptionMocks = vi.hoisted(() => ({
-    getValidatedInviteCode: vi.fn((code: string) => String(code || '').trim().toUpperCase()),
-    normalizeInviteCode: vi.fn((code: string) => String(code || '').trim().toUpperCase()),
-    redeemSignedInInvite: vi.fn()
+  getValidatedInviteCode: vi.fn((code: string) =>
+    String(code || '')
+      .trim()
+      .toUpperCase()
+  ),
+  normalizeInviteCode: vi.fn((code: string) =>
+    String(code || '')
+      .trim()
+      .toUpperCase()
+  ),
+  redeemSignedInInvite: vi.fn()
 }));
 
 vi.mock('../lib/authService', () => authServiceMocks);
 vi.mock('../lib/inviteRedemption', () => inviteRedemptionMocks);
 
 const auth: AuthState = {
-    user: {
-        uid: 'user-1',
-        email: 'parent@example.com',
-        displayName: 'Pat Parent',
-        emailVerified: false,
-        roles: ['parent']
-    },
-    profile: null,
-    loading: false,
-    error: null,
-    roles: ['parent'],
-    isParent: true,
-    isCoach: false,
-    isAdmin: false,
-    isPlatformAdmin: false,
-    refresh: vi.fn().mockResolvedValue(undefined),
-    signOut: vi.fn().mockResolvedValue(undefined)
+  user: {
+    uid: 'user-1',
+    email: 'parent@example.com',
+    displayName: 'Pat Parent',
+    emailVerified: false,
+    roles: ['parent']
+  },
+  profile: null,
+  loading: false,
+  error: null,
+  roles: ['parent'],
+  isParent: true,
+  isCoach: false,
+  isAdmin: false,
+  isPlatformAdmin: false,
+  refresh: vi.fn().mockResolvedValue(undefined),
+  signOut: vi.fn().mockResolvedValue(undefined)
 };
 
-function renderAcceptInvite() {
-    return render(
-        <MemoryRouter initialEntries={['/accept-invite?code=ABCDEFGH&type=parent']}>
-            <Routes>
-                <Route path="/accept-invite" element={<AcceptInvite auth={auth} />} />
-                <Route path="/home" element={<div>Home route</div>} />
-            </Routes>
-        </MemoryRouter>
-    );
+function renderAcceptInvite(path = '/accept-invite?code=ABCDEFGH&type=parent') {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <Routes>
+        <Route path="/accept-invite" element={<AcceptInvite auth={auth} />} />
+        <Route path="/home" element={<div>Home route</div>} />
+        <Route path="/teams" element={<div>Requested destination</div>} />
+        <Route path="/verify-pending" element={<div>Verify route</div>} />
+      </Routes>
+    </MemoryRouter>
+  );
 }
 
 function renderAcceptInviteHashRoute() {
-    window.location.hash = '#/accept-invite?code=ABCDEFGH&type=parent';
+  window.location.hash = '#/accept-invite?code=ABCDEFGH&type=parent';
 
-    return render(
-        <HashRouter>
-            <Routes>
-                <Route path="/accept-invite" element={<AcceptInvite auth={auth} />} />
-                <Route path="/reset-password" element={<div>Reset route</div>} />
-                <Route path="/home" element={<div>Home route</div>} />
-            </Routes>
-        </HashRouter>
-    );
+  return render(
+    <HashRouter>
+      <Routes>
+        <Route path="/accept-invite" element={<AcceptInvite auth={auth} />} />
+        <Route path="/reset-password" element={<div>Reset route</div>} />
+        <Route path="/home" element={<div>Home route</div>} />
+        <Route path="/teams" element={<div>Requested destination</div>} />
+        <Route path="/verify-pending" element={<div>Verify route</div>} />
+      </Routes>
+    </HashRouter>
+  );
 }
 
 describe('AcceptInvite', () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
-        inviteRedemptionMocks.redeemSignedInInvite.mockResolvedValue({
-            code: 'ABCDEFGH',
-            redirectPath: '/home',
-            message: 'Invite accepted.'
-        });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    inviteRedemptionMocks.redeemSignedInInvite.mockResolvedValue({
+      code: 'ABCDEFGH',
+      redirectPath: '/home',
+      message: 'Invite accepted.'
     });
+  });
 
-    afterEach(() => {
-        cleanup();
-        window.location.hash = '';
+  afterEach(() => {
+    cleanup();
+    window.location.hash = '';
+  });
+
+  it('shows signed-in invite success before redirecting to the destination route', async () => {
+    renderAcceptInvite();
+
+    expect(await screen.findByText('Invite accepted.')).toBeTruthy();
+    expect(screen.getByRole('status')).toHaveTextContent('Invite accepted.');
+    expect(screen.queryByText('Home route')).toBeNull();
+
+    await new Promise((resolve) => setTimeout(resolve, 750));
+
+    expect(await screen.findByText('Home route')).toBeTruthy();
+    expect(inviteRedemptionMocks.redeemSignedInInvite).toHaveBeenCalledWith({
+      userId: 'user-1',
+      code: 'ABCDEFGH',
+      email: 'parent@example.com',
+      refresh: auth.refresh
     });
+    expect(inviteRedemptionMocks.redeemSignedInInvite).toHaveBeenCalledTimes(1);
+  });
 
-    it('shows signed-in invite success before redirecting to the destination route', async () => {
-        renderAcceptInvite();
+  it('continues to the safe requested destination only after redemption succeeds', async () => {
+    renderAcceptInvite('/accept-invite?code=ABCDEFGH&type=friend&next=%2Fteams');
+    expect(await screen.findByText('Invite accepted.')).toBeTruthy();
+    expect(screen.queryByText('Requested destination')).toBeNull();
+    expect(await screen.findByText('Requested destination')).toBeTruthy();
+  });
 
-        expect(await screen.findByText('Invite accepted.')).toBeTruthy();
-        expect(screen.getByRole('status')).toHaveTextContent('Invite accepted.');
-        expect(screen.queryByText('Home route')).toBeNull();
+  it.each(['friend', 'parent', 'household', 'coparent', 'admin'])(
+    'preserves %s invites when redemption requires verification',
+    async (inviteType) => {
+      inviteRedemptionMocks.redeemSignedInInvite.mockRejectedValue(
+        Object.assign(new Error('Verify your email.'), {
+          details: { reason: 'email-verification-required', inviteType }
+        })
+      );
+      renderAcceptInvite();
+      expect(await screen.findByText('Verify route')).toBeTruthy();
+      expect(authServiceMocks.rememberPendingInvite).toHaveBeenCalledWith('ABCDEFGH', inviteType);
+      expect(authServiceMocks.clearPendingInvite).not.toHaveBeenCalled();
+    }
+  );
 
-        await new Promise((resolve) => setTimeout(resolve, 750));
+  it('announces invite progress and errors with live semantics', async () => {
+    let rejectRedemption: (error: Error) => void = () => undefined;
+    inviteRedemptionMocks.redeemSignedInInvite.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectRedemption = reject;
+        })
+    );
 
-        expect(await screen.findByText('Home route')).toBeTruthy();
-        expect(inviteRedemptionMocks.redeemSignedInInvite).toHaveBeenCalledWith({
-            userId: 'user-1',
-            code: 'ABCDEFGH',
-            email: 'parent@example.com',
-            refresh: auth.refresh
-        });
-        expect(inviteRedemptionMocks.redeemSignedInInvite).toHaveBeenCalledTimes(1);
+    renderAcceptInvite();
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Processing invite...');
+    await act(async () => {
+      rejectRedemption(new Error('Invite is no longer valid.'));
     });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Invite is no longer valid.');
+  });
 
-    it('announces invite progress and errors with live semantics', async () => {
-        let rejectRedemption: (error: Error) => void = () => undefined;
-        inviteRedemptionMocks.redeemSignedInInvite.mockImplementation(() => new Promise((_resolve, reject) => {
-            rejectRedemption = reject;
-        }));
+  it('does not apply the delayed success redirect after leaving the invite route', async () => {
+    renderAcceptInviteHashRoute();
 
-        renderAcceptInvite();
+    expect(await screen.findByText('Invite accepted.')).toBeTruthy();
 
-        expect(await screen.findByRole('status')).toHaveTextContent('Processing invite...');
-        await act(async () => {
-            rejectRedemption(new Error('Invite is no longer valid.'));
-        });
-        expect(await screen.findByRole('alert')).toHaveTextContent('Invite is no longer valid.');
-    });
+    window.location.hash = '#/reset-password?mode=resetPassword&oobCode=valid-code';
+    window.dispatchEvent(new Event('hashchange'));
 
-    it('does not apply the delayed success redirect after leaving the invite route', async () => {
-        renderAcceptInviteHashRoute();
+    expect(await screen.findByText('Reset route')).toBeTruthy();
 
-        expect(await screen.findByText('Invite accepted.')).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 750));
 
-        window.location.hash = '#/reset-password?mode=resetPassword&oobCode=valid-code';
-        window.dispatchEvent(new Event('hashchange'));
-
-        expect(await screen.findByText('Reset route')).toBeTruthy();
-
-        await new Promise((resolve) => setTimeout(resolve, 750));
-
-        expect(screen.getByText('Reset route')).toBeTruthy();
-        expect(screen.queryByText('Home route')).toBeNull();
-    });
+    expect(screen.getByText('Reset route')).toBeTruthy();
+    expect(screen.queryByText('Home route')).toBeNull();
+  });
 });

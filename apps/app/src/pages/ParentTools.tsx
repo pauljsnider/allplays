@@ -2,6 +2,7 @@ import { lazy, memo, Suspense, useCallback, useEffect, useRef, useState, type Co
 import { Award, CalendarDays, ChevronLeft, DollarSign, Loader2, Share2, Shield, Ticket, Users, type LucideIcon } from 'lucide-react';
 import { Link, Navigate, NavLink, useLocation, useParams } from 'react-router-dom';
 import type { AuthState } from '../lib/types';
+import { getParentToolIdentity } from '../lib/parentToolIdentity';
 import { loadParentToolPanel } from './parent-tools/loadParentToolPanel';
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
 
@@ -110,6 +111,10 @@ const ParentToolPanel = memo(function ParentToolPanel({ toolId, auth, refreshVer
 });
 
 export function ParentTools({ auth }: { auth: AuthState }) {
+    return <ParentToolsSession key={getParentToolIdentity(auth)} auth={auth} />;
+}
+
+function ParentToolsSession({ auth }: { auth: AuthState }) {
     const { toolId = 'access' } = useParams();
     const location = useLocation();
     const activeTool = validToolIds.has(toolId as ParentToolId) ? toolId as ParentToolId : null;

@@ -1,14 +1,14 @@
 import { getTeamScorePair } from './season-record.js';
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433207';
-import { db } from './firebase.js?v=33';
-import { getUrlParams, escapeHtml } from './utils.js?v=443383';
-import { checkAuth } from './auth.js?v=4433211';
-import { writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp } from './firebase.js?v=33';
-import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
+import { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433212';
+import { db } from './firebase.js?v=4433197';
+import { getUrlParams, escapeHtml } from './utils.js?v=443388';
+import { checkAuth } from './auth.js?v=4433217';
+import { writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp } from './firebase.js?v=4433197';
+import { getAI, getGenerativeModel, GoogleAIBackend } from './firebase-ai.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
-import { canApplySubstitution, applySubstitution } from './live-tracker-integrity.js?v=3';
+import { canApplySubstitution, applySubstitution, canApplySubstitutionQueue, canApplyQueuedSubstitution } from './live-tracker-integrity.js?v=3';
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
 import { restoreBadgeScoreboard, buildPersistedResumeClockState, buildResumeLineupElapsedMs, buildResumeLogFromLiveEvents, deriveResumeClockState } from './live-tracker-resume.js?v=9';
 import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
@@ -16,7 +16,7 @@ import { resolveFinalScore } from './live-tracker-email.js?v=2';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { buildVideoTimestampMetadata, hasConfiguredLiveStream } from './live-stream-utils.js?v=3';
-import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=55';
+import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=60';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
 import { resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';
 import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=6';
@@ -2235,9 +2235,11 @@ function setPeriod(p) {
     }
   });
 
-  // Log period changes during live game
-  if (state.running && previousPeriod !== p) {
+  // Persist and share period changes even while the clock is paused.
+  if (previousPeriod !== p) {
     addLog(`Period changed: ${previousPeriod} → ${p}`);
+    persistLocalTrackerState();
+    syncClockToGameDoc();
     if (liveState.isLive) {
       broadcastEvent(baseLiveEvent({
         type: 'period_change',
@@ -2408,7 +2410,11 @@ function attachEvents() {
     const btn = e.target.closest('[data-sub-in]');
     if (!btn) return;
     state.pendingIn = btn.dataset.subIn;
-    if (!canApplySubstitution(state.onCourt, state.pendingOut, state.pendingIn)) {
+    if (!canApplyPendingSubstitution()) {
+      if (state.queueMode && state.pendingOut && state.pendingIn) {
+        alert('That swap conflicts with the current queue. Choose a different player.');
+      }
+      state.pendingIn = null;
       renderSubPlayers();
       updateSubButton();
       return;
@@ -2435,7 +2441,7 @@ function attachEvents() {
   els.subConfirm.addEventListener('click', () => {
     if (state.queueMode) {
       // Add pending swap to queue if exists
-      if (canApplySubstitution(state.onCourt, state.pendingOut, state.pendingIn)) {
+      if (canApplyPendingSubstitution()) {
         state.subQueue.push({ out: state.pendingOut, in: state.pendingIn });
         state.pendingOut = null;
         state.pendingIn = null;
@@ -2692,8 +2698,15 @@ function updateSubHint() {
   }
 }
 
+function canApplyPendingSubstitution() {
+  if (state.queueMode) {
+    return canApplyQueuedSubstitution(state.onCourt, state.bench, state.subQueue, state.pendingOut, state.pendingIn);
+  }
+  return canApplySubstitution(state.onCourt, state.pendingOut, state.pendingIn);
+}
+
 function updateSubButton() {
-  const pendingValid = canApplySubstitution(state.onCourt, state.pendingOut, state.pendingIn);
+  const pendingValid = canApplyPendingSubstitution();
   if (state.queueMode) {
     const hasQueue = state.subQueue.length > 0;
     els.subConfirm.disabled = !hasQueue && !pendingValid;
@@ -2736,9 +2749,12 @@ function renderSubPlayers() {
   // Render on-court players
   els.subOut.innerHTML = state.onCourt.map(id => {
     const selected = state.pendingOut === id;
-    const cls = selected ? 'bg-teal text-ink border-teal' : 'bg-white border-slate/10';
+    const disabled = state.queueMode && state.subQueue.some(pair => pair.out === id);
+    const cls = disabled
+      ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+      : selected ? 'bg-teal text-ink border-teal' : 'bg-white border-slate/10';
     const p = roster.find(r => r.id === id);
-    return `<button class="w-full px-3 py-2 text-left border-2 rounded-lg font-medium ${cls} flex items-center gap-2" data-sub-out="${id}">
+    return `<button class="w-full px-3 py-2 text-left border-2 rounded-lg font-medium ${cls} flex items-center gap-2" data-sub-out="${id}" ${disabled ? 'disabled aria-disabled="true"' : ''}>
       ${avatarHtml(p, 'h-5 w-5', 'text-[9px]')}
       <span class="truncate">#${escapeHtml(p?.num || '')} ${escapeHtml(p?.name || '')}</span>
     </button>`;
@@ -2747,7 +2763,10 @@ function renderSubPlayers() {
   // Render bench players
   els.subIn.innerHTML = state.bench.map(id => {
     const selected = state.pendingIn === id;
-    const disabled = state.onCourt.includes(id);
+    const queueConflict = state.queueMode && (state.pendingOut
+      ? !canApplyQueuedSubstitution(state.onCourt, state.bench, state.subQueue, state.pendingOut, id)
+      : state.subQueue.some(pair => pair.in === id));
+    const disabled = state.onCourt.includes(id) || queueConflict;
     const cls = disabled
       ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
       : selected ? 'bg-teal text-ink border-teal' : 'bg-white border-slate/10';
@@ -2789,6 +2808,13 @@ function applySub(outId, inId) {
 
 function applyQueue(closeModal = true) {
   if (!state.subQueue.length) {
+    return;
+  }
+  if (!canApplySubstitutionQueue(state.onCourt, state.bench, state.subQueue)) {
+    alert('Queued substitutions conflict. Fix the queue before applying.');
+    renderSubPlayers();
+    renderQueue();
+    updateSubButton();
     return;
   }
   saveHistory(`Applied ${state.subQueue.length} sub${state.subQueue.length > 1 ? 's' : ''}`);

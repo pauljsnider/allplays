@@ -91,3 +91,12 @@ it('cancels selective reads between documents without interpreting unread IDs as
         .toEqual([{ id: 'one', row: null }]);
     expect(getDoc).toHaveBeenCalledTimes(1);
 });
+
+// A second cached Firebase module can reuse stale per-app App Check state.
+it('shares the current Firebase module identity with database and auth consumers', () => {
+    const firebaseImport = text => text.match(/from ['"](\.\/firebase\.js\?v=[^'"]+)['"]/)[1];
+    const database = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
+    const auth = readFileSync(new URL('../../js/auth.js', import.meta.url), 'utf8');
+    expect(firebaseImport(source)).toBe(firebaseImport(database));
+    expect(firebaseImport(source)).toBe(firebaseImport(auth));
+});

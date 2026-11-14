@@ -1,3 +1,5 @@
+import { resolvePublicOrigin } from './adapters/legacyPublicOrigin';
+
 const defaultPublicOrigin = 'https://allplays.ai';
 
 export function getCanonicalPublicOrigin() {
@@ -7,14 +9,6 @@ export function getCanonicalPublicOrigin() {
 export const firebaseActionParameterNames = ['mode', 'oobCode', 'apiKey', 'continueUrl', 'lang', 'tenantId'] as const;
 
 type AppLinkParams = Record<string, string | number | boolean | null | undefined> | URLSearchParams;
-
-function normalizeOrigin(origin = defaultPublicOrigin) {
-  const url = new URL(String(origin || defaultPublicOrigin));
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new Error('ALL PLAYS links require an HTTP(S) origin.');
-  }
-  return url.origin;
-}
 
 export function normalizeAppRoute(route = '/') {
   const value = String(route || '/')
@@ -40,16 +34,13 @@ export function appendAppRouteParams(route: string, params: AppLinkParams = {}) 
 }
 
 export function buildAppUrl(route = '/', params: AppLinkParams = {}, origin = getPublicAppOrigin()) {
-  const url = new URL('/app/', normalizeOrigin(origin));
+  const url = new URL('/app/', resolvePublicOrigin(origin));
   url.hash = appendAppRouteParams(route, params);
   return url.toString();
 }
 
 export function getPublicAppOrigin() {
-  if (typeof window !== 'undefined' && /^https?:$/i.test(window.location.protocol)) {
-    return window.location.origin;
-  }
-  return defaultPublicOrigin;
+  return resolvePublicOrigin(typeof window !== 'undefined' ? window.location.origin : defaultPublicOrigin);
 }
 
 function getHashRoute(url: URL) {

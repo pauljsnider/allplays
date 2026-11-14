@@ -18,6 +18,7 @@ const nativeAuthMocks = vi.hoisted(() => ({
     signOut: vi.fn(),
     getIdToken: vi.fn(),
     getCurrentUser: vi.fn(),
+    reload: vi.fn(),
     deleteUser: vi.fn()
 }));
 
@@ -92,7 +93,7 @@ vi.mock('../../apps/app/node_modules/@capacitor-firebase/authentication/dist/plu
 vi.mock('../../apps/app/src/lib/firebaseAuthRuntime.ts', () => firebaseMocks);
 vi.mock('../../apps/app/src/lib/nativeCallable.ts', () => nativeCallableMocks);
 
-vi.mock('../../js/firebase.js?v=33', () => firebaseMocks);
+vi.mock('../../js/firebase.js?v=4433197', () => firebaseMocks);
 vi.mock('../../js/db.js', () => dbMocks);
 vi.mock('../../js/admin-invite.js', () => ({
     redeemAdminInviteAcceptance: vi.fn()
@@ -282,6 +283,7 @@ beforeEach(() => {
     capacitorState.platform = 'android';
     capacitorState.plugins = new Set(['FirebaseAuthentication']);
     firebaseMocks.auth.currentUser = null;
+    nativeAuthMocks.reload.mockResolvedValue(undefined);
     firebaseMocks.signInWithCustomToken.mockImplementation(async () => {
         const user = {
             uid: 'native-google-user',
@@ -443,6 +445,7 @@ describe('React app native Google auth', () => {
             body: JSON.stringify({ data: { code: 'FRIEND12' } })
         });
         expect(dbMocks.redeemFriendInvite).not.toHaveBeenCalled();
+        expect(nativeAuthMocks.reload).toHaveBeenCalledTimes(1);
         expect(dbMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
     });
 });

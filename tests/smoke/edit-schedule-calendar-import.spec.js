@@ -267,7 +267,7 @@ export function getApp() {
     return {};
 }
 `,
-    '/js/vendor/firebase-ai.js': `
+    '/js/firebase-ai.js': `
 const state = () => window.__editScheduleTestState || {};
 
 export function getAI() {

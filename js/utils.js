@@ -1,4 +1,4 @@
-import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
+import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=2';
 
 export function getUrlParams() {
   // Combine params from both search (?) and hash (#)
@@ -180,7 +180,7 @@ export function renderHeader(container, user) {
 
     // Keep shared-header logout on the same auth bundle as page consumers.
     navLogout.addEventListener('click', async () => {
-      const { logout } = await import('./auth.js?v=4433211');
+      const { logout } = await import('./auth.js?v=4433217');
       await logout();
       window.location.href = 'index.html';
     });
@@ -192,7 +192,7 @@ export function renderHeader(container, user) {
   // Keep telemetry available on new pages that use the shared header but miss
   // the global module tag.
   try {
-    import('./telemetry.js?v=5').catch((e) => console.warn('[Telemetry] Failed to load:', e));
+    import('./telemetry.js?v=6').catch((e) => console.warn('[Telemetry] Failed to load:', e));
   } catch (e) {
     console.warn('[Telemetry] Failed to initialize:', e);
   }
@@ -200,7 +200,7 @@ export function renderHeader(container, user) {
   // Global search: injected into the shared header in one place.
   // Lazy-import to avoid adding weight to initial render and to avoid circular deps.
   try {
-    import('./global-search.js?v=443364')
+    import('./global-search.js?v=443369')
       .then(({ setupHeaderSearch }) => {
         if (typeof setupHeaderSearch === 'function') {
           setupHeaderSearch({ user, headerContainer: container });

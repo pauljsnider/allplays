@@ -18,6 +18,19 @@ the `firebase-admin` SDK against production using Application Default Credential
 
 ## Scripts
 
+### remove-social-post-author-emails.js
+
+Removes the legacy `authorEmail` field from `socialPosts` in bounded pages. If
+the stored `authorName` exactly equals that email, it is replaced with the
+non-email public label used for new posts. The script is a dry run unless
+`--apply` is passed, and apply mode requires an exact project confirmation.
+
+```bash
+node _migration/remove-social-post-author-emails.js --project game-flow-c6311
+node _migration/remove-social-post-author-emails.js --apply \
+  --project game-flow-c6311 --confirm-project game-flow-c6311
+```
+
 ### backfill-public-user-profiles.js
 
 Rebuilds the `publicUserProfiles/{uid}` Friends-discovery projection for

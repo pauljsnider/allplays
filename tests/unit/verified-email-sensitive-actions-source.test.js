@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+const parentInviteRedemptionSource = readFileSync(new URL('../../functions/parent-invite-redemption-core.cjs', import.meta.url), 'utf8');
 
 describe('verified-email sensitive action coverage', () => {
   it('routes high-impact server mutations through the shared staged guard', () => {
@@ -44,7 +45,8 @@ describe('verified-email sensitive action coverage', () => {
     const redeemCoParentStart = functionsSource.indexOf('exports.redeemCoParentInvite');
     const redeemAdminStart = functionsSource.indexOf('exports.redeemAdminInvite');
     expect(functionsSource.slice(queueVerificationStart, queueInviteStart)).not.toContain('assertSensitiveEmailVerified');
-    expect(functionsSource.slice(redeemInviteStart, redeemHouseholdStart)).toContain('resolveAuthenticatedFamilyInviteEmail({');
+    expect(functionsSource.slice(redeemInviteStart, redeemHouseholdStart)).toContain('redeemParentInviteHandler');
+    expect(parentInviteRedemptionSource).toContain('resolveAuthenticatedFamilyInviteEmail({');
     expect(functionsSource.slice(redeemHouseholdStart, redeemCoParentStart)).toContain('resolveAuthenticatedFamilyInviteEmail({');
     expect(functionsSource.slice(redeemCoParentStart, redeemAdminStart)).toContain('resolveAuthenticatedFamilyInviteEmail({');
   });

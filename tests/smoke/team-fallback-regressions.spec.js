@@ -574,6 +574,11 @@ const MEDIA_UTILS_STUB = `
 export function canManageTeamMedia() {
     return false;
 }
+export function mergeFilteredMediaOrder(items = [], reorderedIds = []) {
+    const reordered = new Map(reorderedIds.map((id) => [id, items.find((item) => item.id === id)]));
+    let index = 0;
+    return items.map((item) => reordered.has(item.id) ? reordered.get(reorderedIds[index++]) : item);
+}
 export function canContributeTeamMedia() {
     return false;
 }
@@ -627,6 +632,11 @@ export function sortByMediaOrder(items = []) {
 const MEDIA_UTILS_ADMIN_STUB = `
 export function canManageTeamMedia() {
     return true;
+}
+export function mergeFilteredMediaOrder(items = [], reorderedIds = []) {
+    const reordered = new Map(reorderedIds.map((id) => [id, items.find((item) => item.id === id)]));
+    let index = 0;
+    return items.map((item) => reordered.has(item.id) ? reordered.get(reorderedIds[index++]) : item);
 }
 export function canContributeTeamMedia() {
     return true;
@@ -1090,7 +1100,7 @@ async function routeCommonPageStubs(page) {
     await page.route(/\/js\/firebase\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_STUB }));
     await page.route(/\/js\/diamond-legacy-game-context\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DIAMOND_LEGACY_GAME_CONTEXT_STUB }));
     await page.route(/\/js\/vendor\/firebase-app\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
-    await page.route(/\/js\/vendor\/firebase-ai\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
+    await page.route(/\/js\/firebase-ai\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
 }
 
 async function routeLiveGameStubs(page, { authStub = AUTH_STUB } = {}) {
@@ -1117,7 +1127,7 @@ async function routeLiveGameStubs(page, { authStub = AUTH_STUB } = {}) {
     await page.route(/\/js\/live-sport-config\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_SPORT_CONFIG_STUB }));
     await page.route(/\/js\/diamond-live-engagement-subscriptions\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_DIAMOND_ENGAGEMENT_STUB }));
     await page.route('**/js/vendor/firebase-app.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
-    await page.route('**/js/vendor/firebase-ai.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
+    await page.route('**/js/firebase-ai.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
     await page.route('https://cdn.example.test/replay.mp4', (route) => route.fulfill({ status: 200, contentType: 'video/mp4', body: '' }));
     return {
         getTelemetryStubRequestCount: () => telemetryStubRequestCount

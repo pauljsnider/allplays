@@ -57,7 +57,7 @@ export async function generateScheduleAiImportRows(input: ScheduleAiImportInput)
   } catch (error: any) {
     return {
       rows: [],
-      errors: [error?.message ? `AI could not parse the schedule: ${error.message}` : 'AI could not parse the schedule. Try clearer text, a sharper image, or a text-based PDF.']
+      errors: [error?.code === 'ai/app-check-unavailable' ? error.message : error?.message ? `AI could not parse the schedule: ${error.message}` : 'AI could not parse the schedule. Try clearer text, a sharper image, or a text-based PDF.']
     };
   }
 }

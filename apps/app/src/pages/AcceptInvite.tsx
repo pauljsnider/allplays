@@ -3,6 +3,9 @@ import type { FormEvent } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, KeyRound, LogIn, ShieldCheck, UserPlus, XCircle } from 'lucide-react';
 import { AuthFrame } from '../components/AuthFrame';
+import { completeAuthNavigation, getSafeAuthNextRoute } from '../lib/authNextRoute';
+import { isNativeRuntime } from '../lib/nativeRuntime';
+import { openPublicUrl } from '../lib/publicActions';
 import {
   clearPendingInvite,
   completeEmailLink,
@@ -27,6 +30,7 @@ function readEmailForSignIn() {
 export function AcceptInvite({ auth }: { auth: AuthState }) {
   const [searchParams] = useSearchParams();
   const location = useLocation();
+  const nextRoute = getSafeAuthNextRoute(searchParams.get('next'));
   const navigate = useNavigate();
   const pendingInvite = readPendingInvite();
   const urlCode = (searchParams.get('code') || '').trim().toUpperCase();
@@ -41,8 +45,8 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
   const currentPathnameRef = useRef(location.pathname);
 
   const authUrl = useMemo(() => {
-    return buildInviteAuthUrl(code, inviteType);
-  }, [code, inviteType]);
+    return buildInviteAuthUrl(code, inviteType, nextRoute);
+  }, [code, inviteType, nextRoute]);
 
   useEffect(() => {
     currentPathnameRef.current = location.pathname;
@@ -57,55 +61,66 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
     };
   }, []);
 
-  const scheduleRedirect = useCallback((path: string) => {
-    if (!path) return;
+  const scheduleRedirect = useCallback(
+    (path: string) => {
+      if (!path) return;
 
-    if (redirectTimerRef.current !== null) {
-      window.clearTimeout(redirectTimerRef.current);
-    }
+      if (redirectTimerRef.current !== null) {
+        window.clearTimeout(redirectTimerRef.current);
+      }
 
-    redirectTimerRef.current = window.setTimeout(() => {
-      redirectTimerRef.current = null;
-      if (!isCurrentInviteRoute(currentPathnameRef.current)) {
+      redirectTimerRef.current = window.setTimeout(() => {
+        redirectTimerRef.current = null;
+        if (!isCurrentInviteRoute(currentPathnameRef.current)) {
+          return;
+        }
+        void completeAuthNavigation(nextRoute || path, navigate, { nativeRuntime: isNativeRuntime(), openHostedAuth: openPublicUrl });
+      }, 700);
+    },
+    [navigate, nextRoute]
+  );
+
+  const redeem = useCallback(
+    async (codeToRedeem: string) => {
+      const normalizedCode = normalizeInviteCode(codeToRedeem);
+      if (!auth.user) {
+        rememberPendingInvite(normalizedCode, inviteType);
+        navigate(`${buildInviteAuthUrl(normalizedCode, inviteType, nextRoute)}&mode=login`);
         return;
       }
-      navigate(path, { replace: true });
-    }, 700);
-  }, [navigate]);
 
-  const redeem = useCallback(async (codeToRedeem: string) => {
-    const normalizedCode = normalizeInviteCode(codeToRedeem);
-    if (!auth.user) {
-      rememberPendingInvite(normalizedCode, inviteType);
-      navigate(`${buildInviteAuthUrl(normalizedCode, inviteType)}&mode=login`);
-      return;
-    }
+      const key = `${auth.user.uid}:${normalizedCode}`;
+      if (processedKeyRef.current === key) {
+        return;
+      }
+      processedKeyRef.current = key;
 
-    const key = `${auth.user.uid}:${normalizedCode}`;
-    if (processedKeyRef.current === key) {
-      return;
-    }
-    processedKeyRef.current = key;
+      setState('processing');
+      setMessage('Processing invite...');
 
-    setState('processing');
-    setMessage('Processing invite...');
-
-    try {
-      const result = await redeemSignedInInvite({
-        userId: auth.user.uid,
-        code: normalizedCode,
-        email: auth.user.email,
-        refresh: auth.refresh
-      });
-      setState('success');
-      setMessage(result.message);
-      scheduleRedirect(result.redirectPath);
-    } catch (error: any) {
-      processedKeyRef.current = '';
-      setState('error');
-      setMessage(error?.message || 'Unable to accept this invite.');
-    }
-  }, [auth.refresh, auth.user, inviteType, navigate, scheduleRedirect]);
+      try {
+        const result = await redeemSignedInInvite({
+          userId: auth.user.uid,
+          code: normalizedCode,
+          email: auth.user.email,
+          refresh: auth.refresh
+        });
+        setState('success');
+        setMessage(result.message);
+        scheduleRedirect(result.redirectPath);
+      } catch (error: any) {
+        processedKeyRef.current = '';
+        if (error?.details?.reason === 'email-verification-required') {
+          rememberPendingInvite(normalizedCode, error.details.inviteType || inviteType);
+          navigate(nextRoute ? `/verify-pending?next=${encodeURIComponent(nextRoute)}` : '/verify-pending', { replace: true });
+          return;
+        }
+        setState('error');
+        setMessage(error?.message || 'Unable to accept this invite.');
+      }
+    },
+    [auth.refresh, auth.user, inviteType, navigate, nextRoute, scheduleRedirect]
+  );
 
   useEffect(() => {
     if (isEmailLink(window.location.href) && !auth.user) {
@@ -157,20 +172,22 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
   return (
     <AuthFrame eyebrow="Join with code" backTo="/auth" backLabel="Back to sign in">
       <div className="flex items-start gap-3">
-        <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
+        <div className="bg-primary-50 text-primary-700 flex h-11 w-11 flex-none items-center justify-center rounded-xl">
           <UserPlus className="h-6 w-6" aria-hidden="true" />
         </div>
         <div>
           <h1 className="text-2xl font-black text-gray-950">Join ALL PLAYS</h1>
-          <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">Apply any ALL PLAYS join code, connect everything it grants, then continue to the right place.</p>
+          <p className="mt-1 text-sm leading-6 font-semibold text-gray-600">
+            Apply any ALL PLAYS join code, connect everything it grants, then continue to the right place.
+          </p>
         </div>
       </div>
 
       {code && !auth.user && state !== 'email-link' ? (
-        <div className="mt-4 rounded-xl border border-primary-100 bg-primary-50 p-3">
-          <div className="text-xs font-extrabold uppercase tracking-[0.04em] text-primary-700">Join code entered</div>
-          <div className="mt-1 font-mono text-lg font-black tracking-widest text-primary-900">{code}</div>
-          <p className="mt-1 text-sm font-semibold text-primary-800">We’ll verify this code after you sign in or create your account.</p>
+        <div className="border-primary-100 bg-primary-50 mt-4 rounded-xl border p-3">
+          <div className="text-primary-700 text-xs font-extrabold tracking-[0.04em] uppercase">Join code entered</div>
+          <div className="text-primary-900 mt-1 font-mono text-lg font-black tracking-widest">{code}</div>
+          <p className="text-primary-800 mt-1 text-sm font-semibold">We’ll verify this code after you sign in or create your account.</p>
           <div className="mt-3 grid gap-2">
             <Link to={`${authUrl}&mode=login`} className="primary-button justify-center">
               <LogIn className="h-4 w-4" aria-hidden="true" />
@@ -186,19 +203,41 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
 
       {state === 'email-link' ? (
         <form className="mt-4 space-y-3" onSubmit={handleEmailLink}>
-          <p className="text-sm font-semibold leading-6 text-gray-600">Enter the email address that received this invite link.</p>
-          <input className="auth-input" type="email" inputMode="email" autoComplete="email" enterKeyHint="next" value={email} onChange={(event) => setEmail(event.target.value)} required placeholder="you@example.com" />
-          <button type="submit" className="primary-button w-full justify-center">Continue</button>
+          <p className="text-sm leading-6 font-semibold text-gray-600">Enter the email address that received this invite link.</p>
+          <input
+            className="auth-input"
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            enterKeyHint="next"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            required
+            placeholder="you@example.com"
+          />
+          <button type="submit" className="primary-button w-full justify-center">
+            Continue
+          </button>
         </form>
       ) : null}
 
       <form className="mt-4 space-y-3" onSubmit={handleManualSubmit}>
         <label className="block">
-          <span className="mb-1.5 flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">
+          <span className="mb-1.5 flex items-center gap-1.5 text-xs font-extrabold tracking-[0.04em] text-gray-500 uppercase">
             <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
             Join code
           </span>
-          <input className="auth-input text-center font-mono uppercase tracking-widest" value={manualCode} onChange={(event) => setManualCode(event.target.value.toUpperCase())} maxLength={8} placeholder="XXXXXXXX" inputMode="text" autoCapitalize="characters" autoComplete="one-time-code" enterKeyHint="go" />
+          <input
+            className="auth-input text-center font-mono tracking-widest uppercase"
+            value={manualCode}
+            onChange={(event) => setManualCode(event.target.value.toUpperCase())}
+            maxLength={8}
+            placeholder="XXXXXXXX"
+            inputMode="text"
+            autoCapitalize="characters"
+            autoComplete="one-time-code"
+            enterKeyHint="go"
+          />
         </label>
         <button type="submit" className="secondary-button w-full justify-center" disabled={state === 'processing'}>
           {auth.user ? 'Apply code' : 'Continue with code'}
@@ -223,8 +262,9 @@ function isCurrentInviteRoute(fallbackPathname: string) {
   return fallbackPathname === '/accept-invite';
 }
 
-function buildInviteAuthUrl(code: string, inviteType: string) {
+function buildInviteAuthUrl(code: string, inviteType: string, nextRoute = '') {
   const params = new URLSearchParams();
+  if (nextRoute) params.set('next', nextRoute);
   const normalizedCode = code.trim().toUpperCase();
   if (normalizedCode) {
     params.set('code', normalizedCode);

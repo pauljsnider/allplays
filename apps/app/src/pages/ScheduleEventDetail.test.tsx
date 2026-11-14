@@ -2872,13 +2872,17 @@ describe('ScheduleEventDetail assignments', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Live reactions' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Heart' })).toBeTruthy());
-    expect(liveGameReactionsServiceMocks.subscribeToLiveGameReactions).toHaveBeenCalledWith(
-      'team-1',
-      'game-1',
-      expect.any(Function),
-      expect.any(Function),
-      { diamond: { trackingEngine: 'diamond-v2', instanceId } }
-    );
+    // Controls render before the passive effect subscribes after lazy loading.
+    // Wait for the service boundary itself, as the chat assertion above does.
+    await waitFor(() => {
+      expect(liveGameReactionsServiceMocks.subscribeToLiveGameReactions).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        expect.any(Function),
+        expect.any(Function),
+        { diamond: { trackingEngine: 'diamond-v2', instanceId } }
+      );
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Heart' }));
     await waitFor(() => {
       expect(liveGameReactionsServiceMocks.sendLiveGameReaction).toHaveBeenCalledWith(
@@ -4663,7 +4667,7 @@ describe('ScheduleEventDetail assignments', () => {
     ];
 
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
-      events: [buildEvent({ assignments })],
+      events: [buildEvent({ myRsvp: 'going', assignments })],
       children: []
     });
     scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
@@ -4700,11 +4704,19 @@ describe('ScheduleEventDetail assignments', () => {
 
     const snacksCard = screen.getByText('Snacks').closest('article');
     expect(snacksCard).toBeTruthy();
-    fireEvent.click(within(snacksCard as HTMLElement).getByRole('button', { name: 'Sign up' }));
+    const signUpButton = within(snacksCard as HTMLElement).getByRole('button', { name: 'Sign up' });
+    expect(signUpButton).toHaveProperty('disabled', false);
+    expect(signUpButton.getAttribute('data-claim-readiness')).toBe('ready');
+    fireEvent.click(signUpButton);
 
     await waitFor(() => {
       expect(screen.getByText('Snacks claimed.')).toBeTruthy();
     });
+    expect(scheduleServiceMocks.claimParentScheduleAssignmentSlot).toHaveBeenCalledWith(
+      expect.objectContaining({ myRsvp: 'going' }),
+      auth.user,
+      'Snacks'
+    );
     await waitFor(() => {
       expect(screen.getByText('4 posted · 0 open')).toBeTruthy();
     });
@@ -4729,6 +4741,33 @@ describe('ScheduleEventDetail assignments', () => {
     expect(screen.getByRole('button', { name: 'Hide filled assignments' }).getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('Setup')).toBeTruthy();
     expect(screen.getByText('Scorebook')).toBeTruthy();
+  });
+
+  it('releases an existing claim regardless of RSVP state', async () => {
+    const assignments = [
+      { role: 'Snacks', value: '', claimable: true, claim: { id: 'Snacks', claimedByUserId: 'coach-1', claimedByName: 'Coach Carter' } }
+    ];
+
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ myRsvp: 'not_going', assignments })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentScheduleAssignments.mockResolvedValue(assignments);
+    scheduleServiceMocks.releaseParentScheduleAssignmentClaim.mockResolvedValue(undefined);
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=assignments');
+
+    const releaseButton = await screen.findByRole('button', { name: 'Release' });
+    expect(releaseButton).toHaveProperty('disabled', false);
+    fireEvent.click(releaseButton);
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.releaseParentScheduleAssignmentClaim).toHaveBeenCalledWith(
+        expect.objectContaining({ myRsvp: 'not_going' }),
+        'Snacks'
+      );
+    });
+    expect(screen.getByText('Snacks released.')).toBeTruthy();
   });
 });
 

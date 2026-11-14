@@ -43,7 +43,7 @@ describe('help and workflow page inventory', () => {
             const html = readRepoFile(file);
             const headingIds = extractHeadingIds(html);
 
-            expect(html, `${file} should load shared help context`).toContain('./js/help-context.js?v=1');
+            expect(html, `${file} should load shared help context`).toContain('./js/help-context.js?v=2');
             expect(html, `${file} should include the contextual help back link`).toContain('data-help-back-link');
             expect(html, `${file} should expose a desktop TOC container`).toContain('id="workflow-toc"');
             expect(html, `${file} should expose a mobile TOC container`).toContain('id="workflow-mobile-toc"');

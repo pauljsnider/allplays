@@ -155,6 +155,7 @@ import {
   isValidAuthEmail,
   observeFirebaseUser,
   reloadCurrentUser,
+  readPendingInvite,
   redeemInviteForUser,
   revokeCurrentAppleAuthorizationForDeletion,
   resendVerificationEmail,
@@ -162,6 +163,7 @@ import {
   signInWithEmail,
   signInWithAppleAccount,
   signInWithGoogleAccount,
+  mapLegacyRedirectToAppRoute,
   signOut,
   signUpWithEmail
 } from './authService';
@@ -1204,6 +1206,19 @@ describe('signUpWithEmail', () => {
     );
   });
 
+  it('replaces stale app invitation state with the authoritative deferred signup invitation', async () => {
+    window.localStorage.setItem('allplays-app-pending-invite-code', 'OLD12345');
+    window.localStorage.setItem('allplays-app-pending-invite-type', 'admin');
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockResolvedValue({
+      user: { uid: 'new-user', email: 'player@example.com' },
+      pendingFamilyInvite: { code: 'NEW12345', type: 'friend' }
+    });
+
+    await signUpWithEmail('player@example.com', 'secret1', 'NEW12345');
+
+    expect(readPendingInvite()).toEqual({ code: 'NEW12345', type: 'friend' });
+  });
+
   it('sends native signup verification through the Resend-backed callable', async () => {
     nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'native-signup-id-token' });
     nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
@@ -1306,9 +1321,12 @@ describe('signInWithGoogleAccount invite redemption', () => {
 
   beforeEach(() => {
     isNativePlatformMock.mockReturnValue(false);
+    authState.currentUser = null;
+    window.localStorage.clear();
     signInWithPopupMock.mockReset();
     signInWithRedirectMock.mockReset();
     legacyAuthMocks.validateAccessCode.mockReset();
+    legacyAuthMocks.redeemParentInvite.mockReset();
     legacyAuthMocks.redeemHouseholdInvite.mockReset();
     legacyAuthMocks.redeemCoParentInvite.mockReset();
     legacyAuthMocks.redeemFriendInvite.mockReset();
@@ -1318,13 +1336,19 @@ describe('signInWithGoogleAccount invite redemption', () => {
     legacyAuthMocks.updateUserProfile.mockReset();
     legacyAuthMocks.updateUserProfile.mockResolvedValue(undefined);
     legacyAdminInviteMocks.redeemAdminInviteAcceptance.mockReset();
+    nativeAuthenticationMocks.reload.mockReset();
+    nativeAuthenticationMocks.reload.mockResolvedValue(undefined);
     legacyInviteFlowMocks.processInvite.mockReset();
     legacyInviteFlowMocks.processInvite.mockResolvedValue({ success: true, redirectUrl: 'dashboard.html' });
     legacyInviteFlowMocks.createInviteProcessor.mockReset();
     legacyInviteFlowMocks.createInviteProcessor.mockReturnValue(legacyInviteFlowMocks.processInvite);
+    legacyAuthEmailMocks.queueCurrentUserVerificationEmail.mockReset();
+    legacyAuthEmailMocks.queueCurrentUserVerificationEmail.mockResolvedValue({ queued: true });
   });
 
   afterEach(() => {
+    authState.currentUser = null;
+    window.localStorage.clear();
     isNativePlatformMock.mockReturnValue(true);
     window.sessionStorage.clear();
   });
@@ -1368,6 +1392,169 @@ describe('signInWithGoogleAccount invite redemption', () => {
 
     expect(legacyInviteFlowMocks.processInvite).toHaveBeenCalledWith('existing-google-user', 'SITE1234', 'member@example.com');
     expect(result).toMatchObject({ activationCodeRedeemed: true, wasNewUser: false });
+  });
+
+  it.each([
+    ['parent', legacyAuthMocks.redeemParentInvite],
+    ['household', legacyAuthMocks.redeemHouseholdInvite],
+    ['coparent', legacyAuthMocks.redeemCoParentInvite],
+    ['admin', legacyAdminInviteMocks.redeemAdminInviteAcceptance],
+    ['friend', legacyAuthMocks.redeemFriendInvite]
+  ] as const)('preserves a new provider account and pending %s invite when email verification is required', async (type, redeem) => {
+    const user = {
+      uid: 'google-user',
+      email: 'recipient@example.com',
+      emailVerified: false,
+      metadata: {
+        creationTime: '2026-03-01T11:00:00.000Z',
+        lastSignInTime: '2026-03-01T11:00:00.000Z'
+      },
+      reload: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined)
+    };
+    authState.currentUser = user as never;
+    signInWithPopupMock.mockResolvedValue({ user } as never);
+    legacyAuthMocks.validateAccessCode.mockResolvedValue({
+      valid: true,
+      type: `${type}_invite`,
+      codeId: 'authoritative-invite',
+      data: { code: 'CANON123' }
+    });
+    redeem.mockRejectedValue(
+      Object.assign(new Error('Verify your email first.'), {
+        details: { reason: 'email-verification-required' }
+      })
+    );
+    window.localStorage.setItem('allplays-app-pending-invite-code', 'STALE123');
+    window.localStorage.setItem('allplays-app-pending-invite-type', 'admin');
+
+    const result = await signInWithGoogleAccount('alias123');
+
+    expect(result).toMatchObject({ user, wasNewUser: true });
+    expect(result?.activationCodeRedeemed).not.toBe(true);
+    expect(readPendingInvite()).toEqual({ code: 'CANON123', type });
+    expect(window.sessionStorage.getItem('pendingActivationCode')).toBeNull();
+    expect(legacyAuthMocks.updateUserProfile).toHaveBeenCalledWith(
+      'google-user',
+      expect.objectContaining({
+        email: 'recipient@example.com',
+        emailVerificationRequired: true
+      })
+    );
+    expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledTimes(1);
+    expect(user.delete).not.toHaveBeenCalled();
+    expect(webAuthRuntimeMocks.signOut).not.toHaveBeenCalled();
+    expect(legacyAuthMocks.rollbackParentInviteRedemption).not.toHaveBeenCalled();
+    expect(legacyAuthMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
+    if (type === 'friend') expect(redeem).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('uses the current friend recipient verification state (%s) before calling the backend', async (emailVerified) => {
+    authState.currentUser = {
+      uid: 'existing-user',
+      email: 'recipient@example.com',
+      emailVerified
+    } as never;
+    legacyAuthMocks.redeemFriendInvite.mockResolvedValue({ success: true });
+    legacyInviteFlowMocks.createInviteProcessor.mockImplementation(
+      (dependencies: { redeemFriendInvite: (userId: string, code: string, email: string) => Promise<unknown> }) =>
+        (userId: string, code: string, email: string) =>
+          dependencies.redeemFriendInvite(userId, code, email)
+    );
+
+    const redemption = redeemInviteForUser('existing-user', 'friend12', 'recipient@example.com');
+
+    if (emailVerified) {
+      await expect(redemption).resolves.toEqual({ success: true });
+      expect(legacyAuthMocks.redeemFriendInvite).toHaveBeenCalledWith('existing-user', 'FRIEND12', 'recipient@example.com');
+    } else {
+      await expect(redemption).rejects.toMatchObject({ details: { reason: 'email-verification-required' } });
+      expect(legacyAuthMocks.redeemFriendInvite).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each([false, true])('checks native friend identity without blocking verified phone recipients (phone=%s)', async (phoneVerified) => {
+    vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
+    nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
+      user: {
+        uid: 'native-recipient',
+        email: 'recipient@example.com',
+        emailVerified: false,
+        phoneNumber: phoneVerified ? '+13125551212' : null
+      }
+    });
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({ uid: 'native-recipient', email: 'recipient@example.com', provider: 'native-plugin' })
+    );
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue({ ok: true, json: async () => ({ result: { success: true } }) } as Response);
+    legacyInviteFlowMocks.createInviteProcessor.mockImplementation(
+      (dependencies: any) => (uid: string, code: string, email: string) => dependencies.redeemFriendInvite(uid, code, email)
+    );
+    const redemption = redeemInviteForUser('native-recipient', 'FRIEND12', 'recipient@example.com');
+    if (phoneVerified) {
+      await expect(redemption).resolves.toEqual({ success: true });
+    } else {
+      await expect(redemption).rejects.toMatchObject({ details: { reason: 'email-verification-required' } });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }
+    fetchSpy.mockRestore();
+  });
+
+  it('reloads the native account before checking friend recipient verification', async () => {
+    vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
+    let reloaded = false;
+    nativeAuthenticationMocks.reload.mockImplementation(async () => {
+      reloaded = true;
+    });
+    nativeAuthenticationMocks.getCurrentUser.mockImplementation(async () => ({
+      user: {
+        uid: 'native-recipient',
+        email: 'recipient@example.com',
+        emailVerified: reloaded
+      }
+    }));
+    nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'native-recipient-token' });
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({ uid: 'native-recipient', email: 'recipient@example.com', provider: 'native-plugin' })
+    );
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue({ ok: true, json: async () => ({ result: { success: true } }) } as Response);
+    legacyInviteFlowMocks.createInviteProcessor.mockImplementation(
+      (dependencies: any) => (uid: string, code: string, email: string) => dependencies.redeemFriendInvite(uid, code, email)
+    );
+
+    await expect(redeemInviteForUser('native-recipient', 'FRIEND12', 'recipient@example.com')).resolves.toEqual({ success: true });
+
+    expect(nativeAuthenticationMocks.reload).toHaveBeenCalledTimes(1);
+    expect(nativeAuthenticationMocks.getCurrentUser).toHaveBeenCalled();
+    const currentUserCalls = nativeAuthenticationMocks.getCurrentUser.mock.invocationCallOrder;
+    const lastCurrentUserCall = currentUserCalls[currentUserCalls.length - 1];
+    expect(nativeAuthenticationMocks.reload.mock.invocationCallOrder[0]).toBeLessThan(lastCurrentUserCall);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    fetchSpy.mockRestore();
+  });
+
+  it('resumes verification for an existing provider account without deleting it', async () => {
+    const user = {
+      uid: 'existing-user',
+      email: 'friend@example.com',
+      emailVerified: false,
+      metadata: { creationTime: 'old', lastSignInTime: 'new' },
+      delete: vi.fn()
+    };
+    signInWithPopupMock.mockResolvedValue({ user } as any);
+    legacyInviteFlowMocks.processInvite.mockRejectedValue(
+      Object.assign(new Error('Verify email'), { details: { reason: 'email-verification-required', inviteType: 'friend' } })
+    );
+    const result = await signInWithGoogleAccount('FRIEND12');
+    expect(result).toMatchObject({ wasNewUser: false, pendingFamilyInvite: { code: 'FRIEND12', type: 'friend' } });
+    expect(result?.activationCodeRedeemed).toBeUndefined();
+    expect(user.delete).not.toHaveBeenCalled();
   });
 
   it('redeems household invites instead of claiming them as standard activation codes', async () => {
@@ -1414,6 +1601,7 @@ describe('signInWithGoogleAccount invite redemption', () => {
 
     await signInWithGoogleAccount('friend12');
 
+    expect(mapLegacyRedirectToAppRoute('/app/#/home?section=friends')).toBe('/home?section=friends');
     expect(legacyAuthMocks.redeemFriendInvite).toHaveBeenCalledWith('google-user', 'FRIEND12', 'friend@example.com');
     expect(legacyAuthMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
   });
@@ -1440,7 +1628,7 @@ describe('signInWithGoogleAccount invite redemption', () => {
     expect(legacyAuthMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
   });
 
-  it('releases a consumed parent invite before deleting a failed new Google signup', async () => {
+  it.each(['parent', 'friend'])('keeps accepted %s signup when its later profile sync fails', async (type) => {
     const deleteUser = vi.fn().mockResolvedValue(undefined);
     signInWithPopupMock.mockResolvedValue({
       user: {
@@ -1457,18 +1645,17 @@ describe('signInWithGoogleAccount invite redemption', () => {
     } as any);
     legacyAuthMocks.validateAccessCode.mockResolvedValue({
       valid: true,
-      type: 'parent_invite',
+      type: `${type}_invite`,
       codeId: 'parent-code-id',
       data: { code: 'PARENT12' }
     });
     legacyAuthMocks.redeemParentInvite.mockResolvedValue({ success: true });
     legacyAuthMocks.updateUserProfile.mockRejectedValue(new Error('profile write failed'));
 
-    await expect(signInWithGoogleAccount('parent12')).rejects.toThrow('profile write failed');
+    await expect(signInWithGoogleAccount('parent12')).resolves.toMatchObject({ activationCodeRedeemed: true, wasNewUser: true });
 
-    expect(legacyAuthMocks.rollbackParentInviteRedemption).toHaveBeenCalledWith('google-user', 'PARENT12');
-    expect(deleteUser).toHaveBeenCalledTimes(1);
-    expect(legacyAuthMocks.rollbackParentInviteRedemption.mock.invocationCallOrder[0]).toBeLessThan(deleteUser.mock.invocationCallOrder[0]);
+    expect(legacyAuthMocks.rollbackParentInviteRedemption).not.toHaveBeenCalled();
+    expect(deleteUser).not.toHaveBeenCalled();
   });
 });
 

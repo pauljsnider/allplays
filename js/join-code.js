@@ -1,3 +1,5 @@
+import { resolvePublicOrigin } from './public-origin.js?v=1';
+
 export const JOIN_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const JOIN_CODE_LENGTH = 8;
 
@@ -75,7 +77,7 @@ export function buildLegacyJoinUrl(code, type = '', origin = '') {
         return path;
     }
 
-    return new URL(`/${path}`, String(origin).replace(/\/$/, '')).toString();
+    return new URL(`/${path}`, resolvePublicOrigin(origin)).toString();
 }
 
 export function buildAppJoinUrl(code, type = '', origin = '') {
@@ -90,11 +92,7 @@ export function buildAppJoinUrl(code, type = '', origin = '') {
         searchParams.set('type', normalizedType);
     }
 
-    const baseOrigin = origin
-        ? new URL(String(origin)).origin
-        : (typeof window !== 'undefined' && /^https?:$/i.test(window.location.protocol)
-            ? window.location.origin
-            : 'https://allplays.ai');
+    const baseOrigin = resolvePublicOrigin(origin || (typeof window !== 'undefined' ? window.location.origin : undefined));
     const url = new URL('/app/', baseOrigin);
     url.hash = `/accept-invite?${searchParams.toString()}`;
     return url.toString();

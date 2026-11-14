@@ -12,7 +12,7 @@ const firebaseMocks = vi.hoisted(() => ({
     query: vi.fn((collectionRef, ...constraints) => ({ collectionRef, constraints }))
 }));
 
-vi.mock('../../js/firebase.js?v=33', () => ({
+vi.mock('../../js/firebase.js?v=4433197', () => ({
     db: {},
     auth: { currentUser: null },
     storage: {},
@@ -60,7 +60,7 @@ const {
     getLiveEvents,
     getLiveChatHistory,
     getLiveReactions
-} = await import('../../js/db.js?v=4433203-live-events');
+} = await import('../../js/db.js?v=4433212-live-events');
 
 function createEventDocs(count) {
     return Array.from({ length: count }, (_, index) => ({

@@ -24,18 +24,28 @@ const pages = {
 
 window.__teamSearchCalls = [];
 window.__runtimeZipFallbackCalls = 0;
+window.__teamFailures = { browse: true, search: true };
 
 export async function discoverPublicTeams(options = {}) {
   window.__teamSearchCalls.push(options);
   const filter = String(options.searchText || '').trim().toLowerCase();
   if (!filter) {
     if (options.cursor === 'page-2') {
+      if (window.__teamFailures.browse) {
+        window.__teamFailures.browse = false;
+        throw new Error('browse pagination failed');
+      }
       return { teams: pages.browseNext, nextCursor: null };
     }
     return { teams: pages.browse, nextCursor: 'page-2' };
   }
   if (filter.includes('kansas')) {
     if (options.cursor === 'search-page-2') {
+      if (window.__teamFailures.search) {
+        window.__teamFailures.search = false;
+        throw new Error('filtered pagination failed');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
       return { teams: pages.kansasNext, nextCursor: null };
     }
     return { teams: pages.kansas, nextCursor: 'search-page-2' };
@@ -90,7 +100,15 @@ test('browse teams location search paginates filtered results and clear restores
     await expect.poll(() => page.evaluate(() => window.__teamSearchCalls)).toEqual([{ cursor: null, pageSize: 24 }]);
 
     await page.getByRole('button', { name: 'Load more teams' }).click();
+    await expect(page.getByText('Alpha Soccer')).toBeVisible();
+    await expect(page.getByText('Unable to load more teams. Please try again.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Retry loading teams' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Load more teams' })).toBeVisible();
+    await page.getByRole('button', { name: 'Retry loading teams' }).click();
     await expect(page.getByText('Kansas City Current')).toBeVisible();
+    await expect(page.getByText('Alpha Soccer')).toBeVisible();
+    await expect(page.getByText('Unable to load more teams. Please try again.')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Retry loading teams' })).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({ cursor: 'page-2', pageSize: 24 });
 
     await page.locator('#location-search-input').fill('Kansas');
@@ -105,8 +123,19 @@ test('browse teams location search paginates filtered results and clear restores
     await page.getByRole('button', { name: 'Load more teams' }).click();
 
     await expect(page.getByText('Kansas City Current')).toBeVisible();
+    await expect(page.getByText('Unable to load more teams. Please try again.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Retry loading teams' })).toBeVisible();
+    await page.getByRole('button', { name: 'Retry loading teams' }).evaluate((button) => {
+      button.click();
+      button.click();
+    });
     await expect(page.getByText('KC Wave')).toBeVisible();
+    await expect(page.getByText('Kansas City Current')).toHaveCount(1);
+    await expect(page.getByText('KC Wave')).toHaveCount(1);
+    await expect(page.getByText('Unable to load more teams. Please try again.')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Retry loading teams' })).toHaveCount(0);
     await expect(page.getByText('Alpha Soccer')).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.filter((call) => call.cursor === 'search-page-2').length)).toBe(2);
     await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({ searchText: 'Kansas', cursor: 'search-page-2', pageSize: 24 });
     await expect.poll(() => page.evaluate(() => window.__runtimeZipFallbackCalls)).toBe(0);
     expect(new URL(page.url()).pathname).toMatch(/\/teams\.html$/);

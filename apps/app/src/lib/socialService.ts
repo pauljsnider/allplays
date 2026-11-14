@@ -413,7 +413,7 @@ function uniqueStrings(values: unknown[] = []) {
 }
 
 function getUserDisplayName(user: AuthUser | null, fallback = 'ALL PLAYS user') {
-  return compactString(user?.displayName) || compactString(user?.email) || fallback;
+  return compactString(user?.displayName) || fallback;
 }
 
 function mapSocialPost(docData: FirestoreDoc): SocialFeedItem {
@@ -1086,7 +1086,6 @@ export async function createSocialPost(user: AuthUser, input: CreateSocialPostIn
     visibility,
     authorId: user.uid,
     authorName: getUserDisplayName(user),
-    authorEmail: user.email || null,
     authorPhotoUrl: user.photoUrl || null,
     teamId: input.teamId || null,
     teamName: input.teamName || null,

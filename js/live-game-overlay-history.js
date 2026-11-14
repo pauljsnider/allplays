@@ -1,4 +1,4 @@
-import { db, collection, doc, getDoc, getDocs, query, orderBy, limit, startAfter } from './firebase.js?v=33';
+import { db, collection, doc, getDoc, getDocs, query, orderBy, limit, startAfter } from './firebase.js?v=4433197';
 import { decodeSharedGameSyntheticId } from './shared-games.js?v=2';
 
 // Overlay live history is bounded and cancellable between pages. Every list

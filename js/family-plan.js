@@ -1,6 +1,6 @@
-import { readAccountPremiumEntitlement } from './premium-entitlements.js?v=8';
+import { readAccountPremiumEntitlement } from './premium-entitlements.js?v=10';
 import { PREMIUM_FEATURES } from './premium-access-core.js?v=1';
-import { buildAppJoinUrl, generateJoinCode } from './join-code.js?v=2';
+import { buildAppJoinUrl, generateJoinCode } from './join-code.js?v=3';
 
 export const MAX_FAMILY_PLAN_SLOTS = 4;
 
@@ -57,7 +57,7 @@ function normalizePlayerLinks(playerLinks = []) {
 
 function loadFirebase(deps = {}) {
     if (deps.firebase) return Promise.resolve(deps.firebase);
-    return import('./firebase.js?v=33');
+    return import('./firebase.js?v=4433197');
 }
 
 function normalizeAccessLinks(links = []) {

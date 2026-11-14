@@ -6,13 +6,13 @@ describe('co-parent invite workflow regression', () => {
     it('surfaces a shareable co-parent invite link on the parent dashboard', () => {
         const dashboardSource = readFileSync(resolve(process.cwd(), 'parent-dashboard.html'), 'utf8');
 
-        expect(dashboardSource).toContain("import { functions, httpsCallable } from './js/firebase.js?v=33';");
+        expect(dashboardSource).toContain("import { functions, httpsCallable } from './js/firebase.js?v=4433197';");
         expect(dashboardSource).toContain("const createCoParentInvite = httpsCallable(functions, 'createCoParentInvite');");
         expect(dashboardSource).toContain('const response = await createCoParentInvite({');
         expect(dashboardSource).toContain('const invite = response?.data || {};');
         expect(dashboardSource).not.toContain('inviteCoParentToAthlete(currentUserId');
         expect(dashboardSource).toContain("buildAppJoinUrl(inviteCode, 'coparent'");
-        expect(dashboardSource).toContain("import { buildAppJoinUrl } from './js/join-code.js?v=2'");
+        expect(dashboardSource).toContain("import { buildAppJoinUrl } from './js/join-code.js?v=3'");
         expect(dashboardSource).toContain('Co-parent invite created and queued');
         expect(dashboardSource).not.toContain("if (statusEl) {\n                    statusEl.textContent = 'Invitation sent successfully!';");
     });
@@ -21,8 +21,8 @@ describe('co-parent invite workflow regression', () => {
         const acceptInviteSource = readFileSync(resolve(process.cwd(), 'accept-invite.html'), 'utf8');
 
         expect(acceptInviteSource).toContain('redeemCoParentInvite');
-        expect(acceptInviteSource).toContain("./js/db.js?v=4433207");
-        expect(acceptInviteSource).toContain("./js/accept-invite-flow.js?v=443314");
+        expect(acceptInviteSource).toContain("./js/db.js?v=4433212");
+        expect(acceptInviteSource).toContain("./js/accept-invite-flow.js?v=443315");
     });
 
     it('routes co-parent membership grants through a callable instead of browser membership writes', () => {

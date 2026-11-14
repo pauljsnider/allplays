@@ -6,11 +6,14 @@ import {
 } from '../../lib/scheduleLogic';
 import { Pencil, Trash2 } from 'lucide-react';
 
-export function AssignmentCard({ assignment, userId, busy, disabled, canManage = false, onClaim, onRelease, onEdit, onRemove }: {
+export type AssignmentClaimReadiness = 'ready' | 'attendance-follow-up';
+
+export function AssignmentCard({ assignment, userId, busy, disabled, claimReadiness, canManage = false, onClaim, onRelease, onEdit, onRemove }: {
   assignment: ScheduleAssignment;
   userId: string;
   busy: boolean;
   disabled: boolean;
+  claimReadiness: AssignmentClaimReadiness;
   canManage?: boolean;
   onClaim: () => void | Promise<void>;
   onRelease: () => void | Promise<void>;
@@ -72,6 +75,7 @@ export function AssignmentCard({ assignment, userId, busy, disabled, canManage =
               className="min-h-8 rounded-full border border-amber-200 bg-white px-3 text-xs font-black text-amber-800"
               onClick={onClaim}
               disabled={disabled}
+              data-claim-readiness={claimReadiness}
             >
               {busy ? 'Signing up' : 'Sign up'}
             </button>

@@ -15,7 +15,7 @@ import {
     getTelemetryRouteDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
-} from './db.js?v=4433207';
+} from './db.js?v=4433212';
 import {
     db,
     collection,
@@ -29,9 +29,9 @@ import {
     startAfter,
     updateDoc,
     serverTimestamp
-} from './firebase.js?v=33';
-import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443383';
-import { checkAuth } from './auth.js?v=4433211';
+} from './firebase.js?v=4433197';
+import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443388';
+import { checkAuth } from './auth.js?v=4433217';
 import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=3';
 import { loadTelemetryOnTabActivation, reloadTelemetryDashboard } from './admin-telemetry-lazy-load.js?v=1';
 import {
@@ -60,7 +60,7 @@ import {
     normalizeAdminTeamSearchTerm,
     resolveAdminTeamSearchResult,
     searchAdminTeams
-} from './admin-team-search.js?v=7';
+} from './admin-team-search.js?v=9';
 import {
     createDebouncedAdminUserSearch,
     normalizeAdminSearchTerm,
@@ -73,7 +73,7 @@ import {
     formatPerformanceDuration,
     formatPerformanceValue
 } from './telemetry-performance.js?v=4';
-import { createAdminPremiumAccessControl } from './admin-premium-access-control.js?v=7';
+import { createAdminPremiumAccessControl } from './admin-premium-access-control.js?v=9';
 
 let allTeams = [];
 let allUsers = [];
@@ -647,7 +647,7 @@ function updateDashboard() {
                     <p class="text-xs text-gray-500">${escapeHtml(team.sport || 'Unknown')} • ${team.createdAt?.toDate ? team.createdAt.toDate().toLocaleDateString() : 'Unknown date'}</p>
                 </div>
             </div>
-            <a href="edit-team.html?teamId=${team.id}" class="text-xs text-indigo-600 hover:text-indigo-800">View →</a>
+            <a href="edit-team.html?teamId=${encodeURIComponent(team.id)}" class="text-xs text-indigo-600 hover:text-indigo-800">View →</a>
         </div>
     `).join('');
 

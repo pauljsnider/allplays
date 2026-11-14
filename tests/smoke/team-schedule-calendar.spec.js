@@ -555,7 +555,7 @@ document.head.appendChild(smokeStyles);
         contentType: 'application/javascript',
         body: AVAILABILITY_PREFERENCES_STUB
     }));
-    await page.route('**/js/schedule-notifications.js?v=6', (route) => route.fulfill({
+    await page.route('**/js/schedule-notifications.js?v=7', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: SCHEDULE_NOTIFICATIONS_STUB

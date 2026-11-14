@@ -3,7 +3,7 @@ import { buildGameSummaryPrompt as legacyBuildGameSummaryPrompt, buildPracticeFe
 import { resolveLiveStatConfig as legacyResolveLiveStatConfig } from '@legacy/live-game-state.js';
 import { resolveSummaryRecipient as legacyResolveSummaryRecipient } from '@legacy/live-tracker-email.js';
 import { getApp as legacyGetApp } from '@legacy/vendor/firebase-app.js';
-import { getAI as legacyGetAI, getGenerativeModel as legacyGetGenerativeModel, GoogleAIBackend as LegacyGoogleAIBackend } from '@legacy/vendor/firebase-ai.js';
+import { getAI as legacyGetAI, getGenerativeModel as legacyGetGenerativeModel, GoogleAIBackend as LegacyGoogleAIBackend } from '@legacy/firebase-ai.js';
 
 /**
  * Typed adapter boundary for the legacy js/ game wrap-up helpers (#2066). Bindings
