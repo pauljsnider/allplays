@@ -6,7 +6,8 @@ export function getLiveStatsEpoch(game = {}) {
     const value = game.liveResetAt;
     const time = typeof value?.toMillis === 'function' ? value.toMillis()
         : typeof value?.toDate === 'function' ? value.toDate().getTime()
-            : typeof value === 'number' ? value : Date.parse(value);
+            : value instanceof Date ? value.getTime()
+                : typeof value === 'number' ? value : Date.parse(value);
     return Number.isFinite(time) && time > 0 ? `time:${time}` : '';
 }
 

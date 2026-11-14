@@ -37,3 +37,10 @@ atomic commits. Failure can leave partial prior-epoch cleanup. Statsheet import
 retains its existing single-save write bound and commits its replacement atomically.
 Tests use fixtures and injected transaction conflicts; emulator/physical-device
 and production-session acceptance remain separate gates.
+
+Native REST Date values retain millisecond timestamp-only reset identity, matching
+SDK timestamp-derived metadata. Explicit legacy resets also clean historical
+private rows through game/row transactions: a changed reset epoch aborts cleanup,
+and an explicitly tagged current-epoch private save survives delayed deletion.
+This does not make the pre-existing public/event cleanup atomic; denied or partial
+cleanup remains a failed cleanup, never permission to reinterpret ambiguous data.

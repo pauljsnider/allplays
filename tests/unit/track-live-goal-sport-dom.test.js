@@ -111,7 +111,7 @@ function createGoalSportDomHarness() {
     const { getLiveStatsEpoch, readLiveStatsForWrite } = window.__aggregateStats;
     const splitPlayerStatsByVisibility = (_config, stats) => ({ publicStats: stats, privateStats: {} });
     const getPrivatePlayerStatIds = () => new Set();
-    const { persistLiveAggregateSnapshot, persistLiveEpochWrites } = window.__aggregatePersistence;
+    const { persistLiveAggregateSnapshot, persistLiveEpochWrites, clearResetPrivateStats } = window.__aggregatePersistence;
     const runTransaction = async (_db, callback) => callback({
       get: async (ref) => ({ data: () => ref.path.includes('/aggregatedStats/') ? {} : currentGame }),
       set: setDoc, update: async () => {}, delete: async () => {}

@@ -1,16 +1,16 @@
 import { getTeamScorePair } from './season-record.js';
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getGameDayTeamContext, getGame, getPlayers, getConfigs, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './db.js?v=4433214';
+import { getGameDayTeamContext, getGame, getPlayers, getConfigs, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './db.js?v=4433215';
 import { db } from './firebase.js?v=4433197';
-import { getUrlParams, escapeHtml } from './utils.js?v=443390';
-import { checkAuth } from './auth.js?v=4433219';
+import { getUrlParams, escapeHtml } from './utils.js?v=443391';
+import { checkAuth } from './auth.js?v=4433220';
 import { writeBatch, runTransaction, doc, setDoc, addDoc } from './firebase.js?v=4433197';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './firebase-ai.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 import { canApplySubstitution, applySubstitution, canApplySubstitutionQueue, canApplyQueuedSubstitution, resolveFinalScoreForCompletion } from './live-tracker-integrity.js?v=4';
 import { resolveFinalScore, resolveSummaryRecipient } from './live-tracker-email.js?v=2';
-import { commitStandardTrackerFinishData, resetStandardTrackerData } from './track-finish.js?v=4';
-import { getLiveStatsEpoch, readLiveStatsForWrite, liveStatsMatchEpoch } from './live-aggregate-stats.js?v=1';
+import { commitStandardTrackerFinishData, resetStandardTrackerData } from './track-finish.js?v=5';
+import { getLiveStatsEpoch, readLiveStatsForWrite, liveStatsMatchEpoch } from './live-aggregate-stats.js?v=2';
 import { getPrivatePlayerStatIds } from './stat-leaderboards.js?v=4';
 import { hasScorekeepingTeamAccess } from './team-access.js?v=44338';
 

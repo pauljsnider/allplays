@@ -1,4 +1,4 @@
-import { getLiveStatsEpoch, liveStatsMetadata, readLiveStatsForWrite } from './live-aggregate-stats.js?v=1';
+import { getLiveStatsEpoch, liveStatsMetadata, readLiveStatsForWrite } from './live-aggregate-stats.js?v=2';
 import { splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=4';
 
 export const STANDARD_TRACKER_MAX_PRIMARY_BATCH_WRITES = 500;

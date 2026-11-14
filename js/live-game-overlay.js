@@ -1,4 +1,4 @@
-import { applyLiveAggregateTotals } from './live-aggregate-stats.js?v=1';
+import { applyLiveAggregateTotals } from './live-aggregate-stats.js?v=2';
 import { createOverlayFeedController } from './live-game-overlay-feed.js?v=4';
 import {
     applyOverlayEvents,
@@ -36,7 +36,7 @@ import {
     resolveSafeProfilePhotoWriteUrl
 } from './safe-image-url.js?v=1';
 import { buildGameWatchShareUrl } from './game-share-links.js?v=1';
-import { shareOrCopy } from './utils.js?v=443390';
+import { shareOrCopy } from './utils.js?v=443391';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import { DIAMOND_ENGINE, buildDiamondViewerUrl } from './diamond-scorebook-routing.js?v=2';
 
@@ -242,7 +242,7 @@ function usesCompactPanelLayout() {
 }
 
 function loadOverlayDatabase() {
-    return import('./db.js?v=4433214');
+    return import('./db.js?v=4433215');
 }
 
 function getTimestampMs(value) {
@@ -1152,7 +1152,7 @@ async function initializeChatComposer(database, teamId, gameId) {
 
     try {
         const [authTools, chatTools] = await Promise.all([
-            import('./auth.js?v=4433219'),
+            import('./auth.js?v=4433220'),
             import('./live-game-chat.js?v=4')
         ]);
         uiState.chatServices = {
@@ -1994,7 +1994,7 @@ async function startDemoReplayMode(params) {
         { controllableReplay: true }
     );
     uiState.videoDurationMs = 15_000;
-    const stateTools = await import('./live-game-state.js?v=62');
+    const stateTools = await import('./live-game-state.js?v=63');
     await loadReplaySnapshot({
         getLiveEvents: async () => replayEvents,
         getLiveChatHistory: async () => replayChat,
@@ -2157,7 +2157,7 @@ async function startRealMode(params) {
         const [database, videoTools, stateTools, historyTools] = await Promise.all([
             loadOverlayDatabase(),
             import('./live-game-video.js?v=443319'),
-            import('./live-game-state.js?v=62'),
+            import('./live-game-state.js?v=63'),
             import('./live-game-overlay-history.js?v=4')
         ]);
         uiState.optionalTeamStatus = 'pending';

@@ -1,4 +1,4 @@
-import { getLiveStatsEpoch, liveStatsMetadata, readLiveStatsForWrite } from './live-aggregate-stats.js?v=1';
+import { getLiveStatsEpoch, liveStatsMetadata, readLiveStatsForWrite } from './live-aggregate-stats.js?v=2';
 
 // Pure dependency-injected transaction boundary; callers supply existing SDK access.
 export async function persistLiveAggregateSnapshot({ db, runTransaction, gameRef, statsRef,
@@ -65,4 +65,19 @@ export function createLiveStatsReplacementBatch({ db, runTransaction, gameRef, e
             }
         })
     };
+}
+
+// Only explicit reset/cancel flows may remove ambiguous historical private rows.
+// Reread under the game epoch: a saved current-generation row must survive a
+// delayed cleanup, including replacement of a previously captured document ID.
+export async function clearResetPrivateStats({ db, runTransaction, gameRef, privateRef, expectedEpoch }) {
+    if (typeof expectedEpoch !== 'string') throw new Error('Missing player totals reset epoch.');
+    return runTransaction(db, async transaction => {
+        const [gameSnapshot, rowSnapshot] = await Promise.all([transaction.get(gameRef), transaction.get(privateRef)]);
+        const game = gameSnapshot.data();
+        if (!game || getLiveStatsEpoch(game) !== expectedEpoch) throw new Error('Tracking reset changed; private cleanup was not applied.');
+        const row = rowSnapshot.data();
+        if (!row || (row.liveStatsVersion === 1 && row.liveStatsEpoch === expectedEpoch)) return;
+        transaction.delete(privateRef);
+    });
 }

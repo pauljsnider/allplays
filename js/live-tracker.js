@@ -1,12 +1,12 @@
 import { splitPlayerStatsByVisibility, getPrivatePlayerStatIds } from './stat-leaderboards.js?v=4';
-import { getLiveStatsEpoch, readLiveStatsForWrite } from './live-aggregate-stats.js?v=1';
-import { persistLiveAggregateSnapshot, persistLiveEpochWrites } from './live-aggregate-persistence.js?v=2';
+import { getLiveStatsEpoch, readLiveStatsForWrite } from './live-aggregate-stats.js?v=2';
+import { persistLiveAggregateSnapshot, persistLiveEpochWrites, clearResetPrivateStats } from './live-aggregate-persistence.js?v=3';
 import { getTeamScorePair } from './season-record.js';
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433214';
+import { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433215';
 import { db } from './firebase.js?v=4433197';
-import { getUrlParams, escapeHtml } from './utils.js?v=443390';
-import { checkAuth } from './auth.js?v=4433219';
+import { getUrlParams, escapeHtml } from './utils.js?v=443391';
+import { checkAuth } from './auth.js?v=4433220';
 import { writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp, runTransaction } from './firebase.js?v=4433197';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './firebase-ai.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
@@ -19,7 +19,7 @@ import { resolveFinalScore } from './live-tracker-email.js?v=2';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { buildVideoTimestampMetadata, hasConfiguredLiveStream } from './live-stream-utils.js?v=3';
-import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=62';
+import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=63';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
 import { resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';
 import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=8';
@@ -31,7 +31,7 @@ import {
   readPersistedLiveTrackerState,
   writePersistedLiveTrackerState
 } from './live-tracker-queue.js?v=1';
-import { commitFinishPlan, isTransientFinalizationFailure, runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js?v=5';
+import { commitFinishPlan, isTransientFinalizationFailure, runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js?v=6';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -2140,10 +2140,13 @@ async function startStop() {
         const confirmClear = confirm(`This game already has ${eventsSnap.size} tracked event(s). Starting fresh will clear them. Continue?`);
         if (!confirmClear) return;
 
+        const cleanupEpoch = getLiveStatsEpoch(currentGame);
         currentGame.liveResetEventId = crypto.randomUUID();
         await Promise.all(eventsSnap.docs.map(d => deleteDoc(d.ref)));
         const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
         await Promise.all(statsSnap.docs.map(d => deleteDoc(d.ref)));
+        const privateStatsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`));
+        await Promise.all(privateStatsSnap.docs.map(d => clearResetPrivateStats({ db, runTransaction, gameRef: doc(db, `teams/${currentTeamId}/games/${currentGameId}`), privateRef: d.ref, expectedEpoch: cleanupEpoch })));
         const liveEventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));
         await Promise.all(liveEventsSnap.docs.map(d => deleteDoc(d.ref)));
         // Reset game doc scores/opponent stats to avoid mixing old data
@@ -3092,9 +3095,10 @@ async function init() {
         clearPendingEventQueue();
         clearPendingFinalization();
         clearLocalTrackerState();
-        const [eventsSnapshot, statsSnapshot, liveEventsSnapshot] = await Promise.all([
+        const [eventsSnapshot, statsSnapshot, privateStatsSnapshot, liveEventsSnapshot] = await Promise.all([
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/events`), 'events'),
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats'),
+          getDocs(collection(db, `teams/${teamId}/games/${gameId}/privatePlayerStats`)),
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/liveEvents`), 'liveEvents')
         ]);
         const resetAt = Date.now();
@@ -3137,6 +3141,7 @@ async function init() {
         const deletions = [
           ...eventsSnapshot.docs.map(d => deleteDoc(d.ref)),
           ...statsSnapshot.docs.map(d => deleteDoc(d.ref)),
+          ...privateStatsSnapshot.docs.map(d => clearResetPrivateStats({ db, runTransaction, gameRef: doc(db, `teams/${teamId}/games/${gameId}`), privateRef: d.ref, expectedEpoch: getLiveStatsEpoch(currentGame) })),
           ...liveEventsSnapshot.docs.map(d => deleteDoc(d.ref))
         ];
         const results = await Promise.allSettled(deletions);

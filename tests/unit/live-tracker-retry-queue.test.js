@@ -117,7 +117,7 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
 
     source = source.replace(/import[^;]+from '\.\/stat-leaderboards\.js[^']*';/, 'const { splitPlayerStatsByVisibility, getPrivatePlayerStatIds } = deps.statVisibility;');
   source = source.replace(/import[^;]+from '\.\/live-aggregate-stats\.js[^']*';/, 'const { getLiveStatsEpoch, readLiveStatsForWrite } = deps.liveAggregateStats;')
-    .replace(/import[^;]+from '\.\/live-aggregate-persistence\.js[^']*';/, 'const { persistLiveAggregateSnapshot, persistLiveEpochWrites } = deps.liveAggregatePersistence;');
+    .replace(/import[^;]+from '\.\/live-aggregate-persistence\.js[^']*';/, 'const { persistLiveAggregateSnapshot, persistLiveEpochWrites, clearResetPrivateStats } = deps.liveAggregatePersistence;');
   let rewritten = source.replace("import { getTeamScorePair } from './season-record.js';", `const getTeamScorePair = ${getTeamScorePair.toString()};`);
     rewritten = replaceNamedImportByModulePath(
         rewritten,
