@@ -2432,7 +2432,7 @@ for (const scenario of ['allowed', 'denied', 'deleted', 'private', 'error', 'slo
         await stubRealOverlayModules(page);
         await stubReplayPlayback(page, 'allowed');
         await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1${scenario === 'ordinary' ? '' : '&replay=true'}`);
-        await verifyExplicitReplayRevalidation(page, { scenario, selector: '#overlay-video', errors: await errors });
+        await verifyExplicitReplayRevalidation(page, { scenario, selector: '#overlay-video', errors: await errors, reloadOnRestore: true });
     });
 }
 
@@ -2566,4 +2566,31 @@ test('cap-sized real overlay bounds DOM work and throttles visible history reads
         renderedRows: 60, coldScanInvocations: reads, active290sExtraScans: 0,
         hidden900sExtraScans: 0, repeatedStaleResumeExtraScans: 1 } }));
     expect(errors).toEqual([]);
+});
+
+test('playing replay reboots and advances after persisted page restoration', async ({ page, baseURL }) => {
+    await stubYouTubeEmbed(page);
+    await page.addInitScript(() => {
+        window.__overlayBootId = Math.random().toString(36);
+    });
+    await page.goto(`${baseURL}/live-game-overlay.html?demo=1&replay=true&videoId=PK1HyC37doc`);
+    await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
+    const bootId = await page.evaluate(() => window.__overlayBootId);
+    await page.getByRole('button', { name: 'Play replay' }).click();
+    await expect(page.locator('#replay-progress')).not.toHaveValue('0');
+    // Exercise the browser lifecycle handlers on the real page, without
+    // assuming this headless browser chooses to place a navigation in bfcache.
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: false })));
+    expect(await page.evaluate(() => window.__overlayBootId)).toBe(bootId);
+    await Promise.all([
+        page.waitForEvent('domcontentloaded'),
+        page.evaluate(() => {
+            window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+            window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+        })
+    ]);
+    expect(await page.evaluate(() => window.__overlayBootId)).not.toBe(bootId);
+    await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
+    await page.getByRole('button', { name: 'Play replay' }).click();
+    await expect(page.locator('#replay-progress')).not.toHaveValue('0');
 });

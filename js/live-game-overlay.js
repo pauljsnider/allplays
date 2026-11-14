@@ -2091,7 +2091,9 @@ function bindInteractions() {
         else if (event.key.toLowerCase() === 'f') toggleFocusMode();
     });
     window.addEventListener('pageshow', (event) => {
-        if (event.persisted && !uiState.isReplay) window.location.reload();
+        // pagehide tears down both live subscriptions and replay animation.
+        // Rebuild either mode when restoring the discarded execution state.
+        if (event.persisted) window.location.reload();
     });
     window.addEventListener('pagehide', () => {
         window.clearInterval(uiState.clockTimer);

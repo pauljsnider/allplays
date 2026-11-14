@@ -163,7 +163,7 @@ export async function verifyReplayProjectionPolling(page, { scenario, selector, 
     expect(errors).toEqual([]);
 }
 
-export async function verifyExplicitReplayRevalidation(page, { scenario, selector, errors }) {
+export async function verifyExplicitReplayRevalidation(page, { scenario, selector, errors, reloadOnRestore = false }) {
     await expectReplayPlayback(page, 'allowed', selector, errors);
     const player = await page.locator(selector).elementHandle();
     const frame = await player.contentFrame();
@@ -229,6 +229,21 @@ export async function verifyExplicitReplayRevalidation(page, { scenario, selecto
         await page.clock.fastForward(60000);
         expect(await page.evaluate(() => window.__PLAYBACK_READS__.length)).toBe(before + 1);
         await expect(page.locator(selector)).not.toHaveAttribute('src', /youtube.com\/embed/);
+        if (scenario === 'bfcache' && reloadOnRestore) {
+            // The overlay rebuilds its discarded replay lifecycle on restore.
+            // New-document authorization must still reject a now-denied replay;
+            // the old in-flight allowed result must never repopulate its player.
+            await stubReplayPlayback(page, 'denied');
+            await Promise.all([
+                page.waitForEvent('domcontentloaded'),
+                page.evaluate(() => {
+                    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+                    window.__PLAYBACK_PENDING__.forEach(resolve => resolve());
+                })
+            ]);
+            await expectReplayPlayback(page, 'denied', selector, errors);
+            return;
+        }
         await page.evaluate(({ scenario }) => {
             window.__PLAYBACK_OUTCOME__ = 'denied';
             window.__PLAYBACK_HOLD__ = false;
