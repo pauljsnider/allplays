@@ -678,6 +678,12 @@ test.describe('edit schedule Bulk AI image input', () => {
     });
 
     test('previews and applies a recognized practice through the practice persistence path', async ({ page }) => {
+        const aiRequests = [];
+        const pageErrors = [];
+        page.on('request', request => {
+            if (/\/js\/firebase-ai\.js(?:\?|$)/.test(request.url())) aiRequests.push(request.url());
+        });
+        page.on('pageerror', error => pageErrors.push(error.message));
         await page.addInitScript((state) => {
             window.__editScheduleTestState = state;
             window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
@@ -697,10 +703,15 @@ test.describe('edit schedule Bulk AI image input', () => {
         page.on('dialog', (dialog) => dialog.accept());
 
         await page.goto(`${serverOrigin}/edit-schedule.html#teamId=team-1`, { waitUntil: 'domcontentloaded' });
+        await expect(page.locator('#team-name-display')).toHaveText('Wildcats');
+        expect(pageErrors).toEqual([]);
+        expect(aiRequests).toHaveLength(0);
         await page.locator('#tab-bulk-ai').click();
         await page.locator('#bulk-text-input').fill('Mon 13\n- Practice\n- At Overland Trail Elementary\n- 6:00 PM');
         await page.locator('#process-ai-btn').click();
 
+        await expect.poll(() => aiRequests.length).toBe(1);
+        expect(pageErrors).toEqual([]);
         const proposedChange = page.locator('#proposed-changes-list');
         await expect(proposedChange).toContainText('Add Practice');
         await expect(proposedChange.locator('input[placeholder="Location"]')).toHaveValue('Overland Trail Elementary');
