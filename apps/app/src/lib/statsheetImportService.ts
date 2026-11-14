@@ -2,6 +2,9 @@ import { acquireProfilePhoto } from './profilePhotoService'
 import { createLogger } from './logger'
 import {
   addAggregatedStatsWritesToBatch,
+  createLiveStatsReplacementBatch,
+  getLiveStatsEpoch,
+  runTransaction,
   buildTrackStatsheetApplyPlan,
   collection,
   db,
@@ -352,6 +355,12 @@ export async function applyTrackStatsheetImportForApp({
     throw new Error(validation.alertMessage)
   }
 
+  const importGame = await getGame(teamId, gameId)
+  const expectedEpoch = getLiveStatsEpoch(importGame)
+  const statTrackerConfig = importGame?.statTrackerConfigId
+    ? (await getConfigs(teamId)).find((config: any) => config.id === importGame.statTrackerConfigId)
+    : { columns }
+  if (!statTrackerConfig) throw new Error('Stat configuration unavailable; import was not saved.')
   const includedVisitor = (visitorRows || []).filter((row) => row?.include)
   const eventsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/events`))
   const statsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`))
@@ -387,6 +396,7 @@ export async function applyTrackStatsheetImportForApp({
       includedVisitor,
       roster,
       columns,
+      statTrackerConfig,
       homeScore,
       awayScore,
       statSheetPhotoUrl: statSheetPhotoUrl || null
@@ -410,7 +420,8 @@ export async function applyTrackStatsheetImportForApp({
       throw new Error('This statsheet import is too large to apply safely in one save. Please reduce the tracked rows or ask a team admin to clear the game first.')
     }
 
-    const batch = writeBatch(db)
+    const gameRef = doc(db, `teams/${teamId}/games`, gameId)
+    const batch = createLiveStatsReplacementBatch({ db, runTransaction, gameRef, expectedEpoch })
     addAggregatedStatsWritesToBatch({
       aggregatedStatsWrites: applyPlan.aggregatedStatsWrites,
       batch,
@@ -419,7 +430,7 @@ export async function applyTrackStatsheetImportForApp({
       currentGameId: gameId,
       createDocRef: doc
     })
-    const gameRef = doc(db, `teams/${teamId}/games`, gameId)
+    Object.assign(applyPlan.gameUpdate, batch.reset)
     batch.update(gameRef, applyPlan.gameUpdate)
 
     if (replaceExisting) {

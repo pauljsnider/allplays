@@ -1,7 +1,7 @@
 import { getLiveStatsEpoch } from './live-aggregate-stats.js?v=1';
 import { acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker-integrity.js?v=3';
 import { resolveSummaryRecipient } from './live-tracker-email.js?v=2';
-import { buildFinishCompletionPlan, executeFinishNavigationPlan } from './live-tracker-finish.js?v=7';
+import { buildFinishCompletionPlan, executeFinishNavigationPlan } from './live-tracker-finish.js?v=8';
 
 
 const TRANSIENT_FINALIZATION_ERROR_CODES = new Set([

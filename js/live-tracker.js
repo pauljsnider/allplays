@@ -1,11 +1,12 @@
+import { splitPlayerStatsByVisibility, getPrivatePlayerStatIds } from './stat-leaderboards.js?v=4';
 import { getLiveStatsEpoch, readLiveStatsForWrite } from './live-aggregate-stats.js?v=1';
-import { persistLiveAggregateSnapshot, persistLiveEpochWrites } from './live-aggregate-persistence.js?v=1';
+import { persistLiveAggregateSnapshot, persistLiveEpochWrites } from './live-aggregate-persistence.js?v=2';
 import { getTeamScorePair } from './season-record.js';
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433213';
+import { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433214';
 import { db } from './firebase.js?v=4433197';
-import { getUrlParams, escapeHtml } from './utils.js?v=443389';
-import { checkAuth } from './auth.js?v=4433218';
+import { getUrlParams, escapeHtml } from './utils.js?v=443390';
+import { checkAuth } from './auth.js?v=4433219';
 import { writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp, runTransaction } from './firebase.js?v=4433197';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './firebase-ai.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
@@ -18,10 +19,10 @@ import { resolveFinalScore } from './live-tracker-email.js?v=2';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { buildVideoTimestampMetadata, hasConfiguredLiveStream } from './live-stream-utils.js?v=3';
-import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=61';
+import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=62';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
 import { resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';
-import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=7';
+import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=8';
 import {
   readPersistedLiveTrackerQueue,
   writePersistedLiveTrackerQueue,
@@ -30,7 +31,7 @@ import {
   readPersistedLiveTrackerState,
   writePersistedLiveTrackerState
 } from './live-tracker-queue.js?v=1';
-import { commitFinishPlan, isTransientFinalizationFailure, runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js?v=4';
+import { commitFinishPlan, isTransientFinalizationFailure, runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js?v=5';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -352,14 +353,16 @@ function schedulePlayerStatsSync(playerId) {
         statsObj[key] = state.stats[playerId]?.[key] || 0;
       });
       statsObj.fouls = state.stats[playerId]?.fouls || 0;
+      const { publicStats, privateStats } = splitPlayerStatsByVisibility(currentConfig || {}, statsObj);
       const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
       await persistLiveAggregateSnapshot({ db, runTransaction, statsRef,
         gameRef: doc(db, `teams/${currentTeamId}/games/${currentGameId}`), expectedEpoch, payload: {
         playerName: player?.name || '',
         playerNumber: player?.num || '',
-        stats: statsObj,
+        stats: publicStats,
         timeMs: state.stats[playerId]?.time || 0
-      } });
+      }, privateRef: doc(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`, playerId),
+      privatePayload: Object.keys(privateStats).length ? { stats: privateStats } : null });
     } catch (error) {
       console.warn('Failed to sync player stats:', error);
     }
@@ -3183,6 +3186,14 @@ async function init() {
           if (typeof d.data().timeMs === 'number') {
             state.stats[d.id].time = d.data().timeMs;
           }
+        });
+
+        const privateSnapshot = getPrivatePlayerStatIds(currentConfig).size
+          ? await getDocs(collection(db, `teams/${teamId}/games/${gameId}/privatePlayerStats`))
+          : { forEach() {} };
+        privateSnapshot.forEach(d => {
+          if (!state.stats[d.id]) state.stats[d.id] = statDefaults(currentConfig.columns);
+          Object.assign(state.stats[d.id], readLiveStatsForWrite(d.data(), currentGame));
         });
 
         // Recalculate home score if needed based on points column

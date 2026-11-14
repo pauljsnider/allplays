@@ -1,4 +1,4 @@
-import { liveStatsMetadata, readLiveStats, liveStatsMatchEpoch } from './adapters/legacyLiveAggregateStats';
+import { liveStatsMetadata, readLiveStats, liveStatsMatchEpoch, privatePlayerStatIds } from './adapters/legacyLiveAggregateStats';
 import { CapacitorHttp } from '@capacitor/core';
 
 import {
@@ -6921,6 +6921,30 @@ export function buildPlayerScoringLiveEvent({
   return buildPlayerGameStatLiveEvent({ playerId, playerName, playerNumber, statKey, value, homeScore, awayScore, user, game, eventId });
 }
 
+// Quick score controls publish public live events. Configured-private metrics
+// must use the full tracker; never route them through this public-only path.
+function assertPublicQuickStat(config: Record<string, unknown> | null, statKey: string) {
+  if (!config) throw new Error('Stat configuration unavailable; no player stat was published.');
+  if (privatePlayerStatIds(config).has(statKey)) throw new Error('Private player stats require the full tracker.');
+}
+
+async function verifyQuickStatConfig(transaction: any, teamId: string, game: Record<string, unknown>, statKey: string) {
+  const configId = compactString(game.statTrackerConfigId);
+  if (!configId) return;
+  const snapshot = await transaction.get(doc(db, `teams/${teamId}/statTrackerConfigs/${configId}`));
+  assertPublicQuickStat(snapshot.data() || null, statKey);
+}
+
+async function nativeQuickStatConfigWrites(teamId: string, game: Record<string, unknown>, statKey: string) {
+  const configId = compactString(game.statTrackerConfigId);
+  if (!configId) return [];
+  const path = `teams/${teamId}/statTrackerConfigs/${configId}`;
+  const snapshot = await nativeGetDocumentSnapshot(`teams/${encodeURIComponent(teamId)}/statTrackerConfigs/${encodeURIComponent(configId)}`);
+  assertPublicQuickStat(snapshot.exists ? snapshot.document as Record<string, unknown> : null, statKey);
+  if (!snapshot.updateTime) throw new Error('Stat configuration revision unavailable; no player stat was published.');
+  return [{ verify: getFirestoreDocumentName(path), currentDocument: { updateTime: snapshot.updateTime } }];
+}
+
 async function runNativePlayerGameStatWrite(
   teamId: string,
   gameId: string,
@@ -6946,6 +6970,7 @@ async function runNativePlayerGameStatWrite(
       ]);
       const gameDoc = (gameSnapshot.document || {}) as Record<string, unknown>;
       assertGameAllowsLivePublishing(gameDoc);
+      const configWrites = await nativeQuickStatConfigWrites(teamId, gameDoc, stat.statKey);
       const scoreBase = resolveScoreFromIntegrityState(gameDoc, integrityState);
       const statsDoc = (statsSnapshot.document || {}) as Record<string, unknown>;
       const awayScore = scoreBase.awayScore + (statKey === 'pts' && teamSide === 'away' ? value : 0);
@@ -6984,6 +7009,7 @@ async function runNativePlayerGameStatWrite(
       }
 
       await nativeCommitWrites([
+        ...configWrites,
         {
           update: {
             name: getFirestoreDocumentName(gamePath),
@@ -7113,6 +7139,7 @@ export async function recordPlayerGameStat(teamId: string, gameId: string, playe
       ]);
       const gameData = (gameSnap.exists?.() ? gameSnap.data() || {} : {}) as Record<string, unknown>;
       assertGameAllowsLivePublishing(gameData);
+      await verifyQuickStatConfig(transaction, teamId, gameData, stat.statKey);
       const scoreBase = resolveScoreFromIntegrityState(gameData, integrityState);
       const statsData = (statsSnap.exists?.() ? statsSnap.data() || {} : {}) as Record<string, unknown>;
       const scoreUpdatedAt = new Date();
@@ -7285,6 +7312,7 @@ export async function undoRecordedPlayerGameStat(teamId: string, gameId: string,
         transaction.get(statsRef)
       ]);
       const gameData = gameSnap.exists?.() ? gameSnap.data() || {} : {};
+      await verifyQuickStatConfig(transaction, teamId, gameData, stat.statKey);
       const statsData = statsSnap.exists?.() ? statsSnap.data() || {} : {};
       if (!liveStatsMatchEpoch(statsData, gameData)) throw new Error('Player totals were reset; this undo is no longer valid.');
       const originalEvent = await transaction.get(doc(db, `${gamePath}/liveEvents/${stat.liveEventId}`));
@@ -7363,6 +7391,7 @@ export async function undoRecordedPlayerGameStat(teamId: string, gameId: string,
     ]);
     const gameDoc = (gameSnapshot.document || {}) as Record<string, unknown>;
     const statsDoc = (statsSnapshot.document || {}) as Record<string, unknown>;
+    const configWrites = await nativeQuickStatConfigWrites(teamId, gameDoc, stat.statKey);
     if (!liveStatsMatchEpoch(statsDoc, gameDoc)) throw new Error('Player totals were reset; this undo is no longer valid.');
     const originalEventSnapshot = await nativeGetDocumentSnapshot(`${encodedGamePath}/liveEvents/${encodeURIComponent(stat.liveEventId)}`);
     if (!originalEventSnapshot.exists || !liveStatsMatchEpoch((originalEventSnapshot.document || {}) as Record<string, unknown>, gameDoc)) {
@@ -7413,6 +7442,7 @@ export async function undoRecordedPlayerGameStat(teamId: string, gameId: string,
     };
     const statsPatch = { playerName, playerNumber, stats: existingStats, ...liveStatsMetadata(gameDoc) };
     await nativeCommitWrites([
+      ...configWrites,
       ...(originalEventSnapshot.exists ? [{
         verify: getFirestoreDocumentName(`${gamePath}/liveEvents/${stat.liveEventId}`),
         currentDocument: { updateTime: originalEventSnapshot.updateTime }

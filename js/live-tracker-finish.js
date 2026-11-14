@@ -192,6 +192,7 @@ export function buildFinishCompletionPlan({
     };
     if (Object.keys(privateStats).length > 0) {
       write.privateData = {
+        ...(typeof statsEpoch === 'string' ? { liveStatsVersion: 1, liveStatsEpoch: statsEpoch } : {}),
         participated: baseData.participated,
         participationSource: baseData.participationSource,
         stats: privateStats

@@ -1,3 +1,4 @@
+import * as statVisibility from '../../js/stat-leaderboards.js';
 import * as liveAggregateStats from '../../js/live-aggregate-stats.js';
 import * as liveAggregatePersistence from '../../js/live-aggregate-persistence.js';
 import { getTeamScorePair } from '../../js/season-record.js';
@@ -143,6 +144,7 @@ function replaceNamedImportByModulePath(source, modulePath, replacement) {
 function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8')) {
   const authHook = `checkAuth(async (user) => {\n  if (!user) {\n    window.location.href = 'login.html';\n    return;\n  }\n  currentUser = user;\n  await init();\n});`;
 
+  source = source.replace(/import[^;]+from '\.\/stat-leaderboards\.js[^']*';/, 'const { splitPlayerStatsByVisibility, getPrivatePlayerStatIds } = deps.statVisibility;');
   source = source.replace(/import[^;]+from '\.\/live-aggregate-stats\.js[^']*';/, 'const { getLiveStatsEpoch, readLiveStatsForWrite } = deps.liveAggregateStats;')
     .replace(/import[^;]+from '\.\/live-aggregate-persistence\.js[^']*';/, 'const { persistLiveAggregateSnapshot, persistLiveEpochWrites } = deps.liveAggregatePersistence;');
   let rewritten = source.replace("import { getTeamScorePair } from './season-record.js';", `const getTeamScorePair = ${getTeamScorePair.toString()};`);
@@ -308,7 +310,7 @@ async function bootLiveTracker({
   const scheduledTimeouts = new Map();
   let nextTimeoutId = 1;
   const deps = {
-    liveAggregateStats, liveAggregatePersistence,
+    liveAggregateStats, liveAggregatePersistence, statVisibility,
     db: {
       getTeam: async () => ({}),
       getTeams: async () => [],
@@ -487,12 +489,12 @@ describe('live tracker opponent stats harness', () => {
   it('rewrites module imports when cache-buster versions and formatting change', () => {
     const source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8')
       .replace(
-        "import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433213';",
-        "import {\n  getTeam,\n  getTeams,\n  getGame,\n  getPlayers,\n  getConfigs,\n  updateGame,\n  collection,\n  getDocs,\n  deleteDoc,\n  query,\n  broadcastLiveEvent,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  setGameLiveStatus\n} from './db.js?v=4433213';"
+        "import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433214';",
+        "import {\n  getTeam,\n  getTeams,\n  getGame,\n  getPlayers,\n  getConfigs,\n  updateGame,\n  collection,\n  getDocs,\n  deleteDoc,\n  query,\n  broadcastLiveEvent,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  setGameLiveStatus\n} from './db.js?v=4433214';"
       )
       .replace('./firebase.js?v=4433197', './firebase.js?v=4433197')
-      .replace('./utils.js?v=443389', './utils.js?v=443389')
-      .replace('./auth.js?v=4433218', './auth.js?v=4433218');
+      .replace('./utils.js?v=443390', './utils.js?v=443390')
+      .replace('./auth.js?v=4433219', './auth.js?v=4433219');
 
     const rewritten = buildModuleSource(source);
 

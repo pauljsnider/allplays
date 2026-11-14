@@ -8,3 +8,6 @@ export const readLiveStats = read as (
   row: Record<string, unknown>, game: Record<string, unknown>
 ) => Record<string, number>;
 export const liveStatsMatchEpoch = match as (row: Record<string, unknown>, game: Record<string, unknown>) => boolean;
+
+import { getPrivatePlayerStatIds } from '@legacy/stat-leaderboards.js';
+export const privatePlayerStatIds = getPrivatePlayerStatIds as (config: Record<string, unknown>) => Set<string>;

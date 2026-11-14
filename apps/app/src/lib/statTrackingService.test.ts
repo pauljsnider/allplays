@@ -484,8 +484,8 @@ describe('statTrackingService', () => {
       participated: true,
       participationStatus: 'appeared',
       participationSource: 'app-stat-tracker',
-      didNotPlay: false
-    }, { merge: true });
+      didNotPlay: false, stats: {}, liveStatsVersion: 1, liveStatsEpoch: ''
+    }, { mergeFields: ['playerName', 'playerNumber', 'participated', 'participationStatus', 'participationSource', 'didNotPlay', 'stats', 'liveStatsVersion', 'liveStatsEpoch'] });
     expect(dependencies.setDoc).toHaveBeenNthCalledWith(3, { path: 'teams/team-1/games/game-1/privatePlayerStats/player-1' }, expect.objectContaining({
       stats: {
         notes: { __increment: 1 }

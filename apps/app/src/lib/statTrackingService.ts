@@ -268,33 +268,36 @@ async function applyAggregateWrite({
   const basePayload = buildParticipationPayload(playerName, playerNumber);
   const publicRef = dependencies.doc(dependencies.db, `teams/${teamId}/games/${gameId}/aggregatedStats`, playerId);
 
-  if (Object.keys(publicStats).length > 0) {
-    const gameRef = dependencies.doc(dependencies.db, `teams/${teamId}/games/${gameId}`);
-    await dependencies.runTransaction(dependencies.db, async transaction => {
-      const [gameSnapshot, statsSnapshot] = await Promise.all([
-        transaction.get(gameRef), transaction.get(publicRef)
-      ]);
-      const game = gameSnapshot.data() || {};
-      const stats = readLiveStats(statsSnapshot.data() || {}, game);
-      if (liveStatsMatchEpoch(statsSnapshot.data() || {}, game)) {
-        transaction.set(publicRef, { ...basePayload, stats: publicStats, ...liveStatsMetadata(game) }, { merge: true });
+  const gameRef = dependencies.doc(dependencies.db, `teams/${teamId}/games/${gameId}`);
+  const privateRef = dependencies.doc(dependencies.db, `teams/${teamId}/games/${gameId}/privatePlayerStats`, playerId);
+  await dependencies.runTransaction(dependencies.db, async transaction => {
+    const [gameSnapshot, publicSnapshot, privateSnapshot] = await Promise.all([
+      transaction.get(gameRef), transaction.get(publicRef),
+      Object.keys(privateStats).length ? transaction.get(privateRef) : Promise.resolve(null)
+    ]);
+    const game = gameSnapshot.data() || {};
+    const currentPublic = readLiveStats(publicSnapshot.data() || {}, game);
+    const metadata = liveStatsMetadata(game);
+    const publicKey = Object.keys(publicStats)[0];
+    if (publicKey && liveStatsMatchEpoch(publicSnapshot.data() || {}, game)) {
+      transaction.set(publicRef, { ...basePayload, stats: publicStats, ...metadata }, { merge: true });
+    } else {
+      if (publicKey) currentPublic[publicKey] = (currentPublic[publicKey] || 0) + delta;
+      const payload = { ...basePayload, stats: currentPublic, ...metadata };
+      transaction.set(publicRef, payload, { mergeFields: Object.keys(payload) });
+    }
+    if (privateSnapshot) {
+      const currentPrivate = readLiveStats(privateSnapshot.data() || {}, game);
+      if (liveStatsMatchEpoch(privateSnapshot.data() || {}, game)) {
+        transaction.set(privateRef, { ...basePayload, stats: privateStats, ...metadata }, { merge: true });
       } else {
-        stats[statKey] = delta;
-        const payload = { ...basePayload, stats, ...liveStatsMetadata(game) };
-        transaction.set(publicRef, payload, { mergeFields: Object.keys(payload) });
+        const key = Object.keys(privateStats)[0];
+        currentPrivate[key] = (currentPrivate[key] || 0) + delta;
+        const payload = { ...basePayload, stats: currentPrivate, ...metadata };
+        transaction.set(privateRef, payload, { mergeFields: Object.keys(payload) });
       }
-    });
-  } else {
-    await dependencies.setDoc(publicRef, basePayload, { merge: true });
-  }
-
-  if (Object.keys(privateStats).length > 0) {
-    const privateRef = dependencies.doc(dependencies.db, `teams/${teamId}/games/${gameId}/privatePlayerStats`, playerId);
-    await dependencies.setDoc(privateRef, {
-      ...basePayload,
-      stats: privateStats
-    }, { merge: true });
-  }
+    }
+  });
 }
 
 async function applyOpponentStatsWrite({

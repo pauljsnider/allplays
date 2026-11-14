@@ -1,4 +1,4 @@
-import { liveStatsMetadata, readLiveStatsForWrite } from './live-aggregate-stats.js?v=1';
+import { getLiveStatsEpoch, liveStatsMetadata, readLiveStatsForWrite } from './live-aggregate-stats.js?v=1';
 import {
     db,
     auth,
@@ -825,7 +825,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443389'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443390'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -5352,10 +5352,6 @@ export async function updatePlayerStats(teamId, gameId, playerId, statKey, chang
     const split = splitPlayerStatsByVisibility(options.statTrackerConfig || {}, { [normalizedStatKey]: change });
     const subcollectionName = Object.prototype.hasOwnProperty.call(split.privateStats, normalizedStatKey) ? 'privatePlayerStats' : 'aggregatedStats';
     const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/${subcollectionName}`, playerId);
-    if (subcollectionName === 'privatePlayerStats') {
-        await setDoc(docRef, { playerName, playerNumber, stats: { [normalizedStatKey]: increment(change) } }, { merge: true });
-        return;
-    }
     const gameRef = getGameDocRef(teamId, gameId);
     await runTransaction(db, async transaction => {
         const [gameSnapshot, statsSnapshot] = await Promise.all([transaction.get(gameRef), transaction.get(docRef)]);
@@ -5386,19 +5382,15 @@ export async function setCompletedGamePlayerStats(teamId, gameId, playerId, stat
     const publicDocRef = doc(db, `${gameRef.path}/aggregatedStats`, playerId);
     const privateDocRef = doc(db, `${gameRef.path}/privatePlayerStats`, playerId);
 
-    await setDoc(publicDocRef, {
-        ...basePayload,
-        stats: publicStats
-    }, { merge: true });
-
-    if (Object.keys(privateStats).length > 0) {
-        await setDoc(privateDocRef, {
-            ...basePayload,
-            stats: privateStats
-        }, { merge: true });
-    } else {
-        await deleteDoc(privateDocRef);
-    }
+    if (typeof statsPayload.expectedEpoch !== 'string') throw new Error('Missing player totals reset epoch.');
+    await runTransaction(db, async transaction => {
+        const game = (await transaction.get(gameRef)).data();
+        if (!game || getLiveStatsEpoch(game) !== statsPayload.expectedEpoch) throw new Error('Tracking reset changed; edit was not saved.');
+        const metadata = liveStatsMetadata(game);
+        transaction.set(publicDocRef, { ...basePayload, stats: publicStats, ...metadata });
+        if (Object.keys(privateStats).length) transaction.set(privateDocRef, { ...basePayload, stats: privateStats, ...metadata });
+        else transaction.delete(privateDocRef);
+    });
 }
 
 export async function setCompletedGameTeamStats(teamId, gameId, statsPayload = {}) {

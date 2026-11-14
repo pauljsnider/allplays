@@ -3820,6 +3820,130 @@ describe('native live publishing fallbacks', () => {
     expect(globalThis.fetch).toHaveBeenCalled();
   });
 
+  it('binds public quick-stat visibility to the native config revision', async () => {
+    mocks.runTransactionMock.mockRejectedValueOnce(Object.assign(new Error('native fallback'), { status: 500 }));
+    vi.mocked(globalThis.fetch).mockImplementation(async (input: any) => {
+      const url = String(input || '');
+      if (url.includes('/events')) {
+        return { ok: true, json: async () => ({ documents: [] }) } as any;
+      }
+      if (url.includes('/statTrackerConfigs/')) return { ok: true, json: async () => ({
+        name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/statTrackerConfigs/public-config',
+        updateTime: '2026-06-19T16:00:00.000Z', fields: { statDefinitions: { arrayValue: { values: [] } } }
+      }) } as any;
+      if (url.includes('/aggregatedStats/player-1')) {
+        return {
+          ok: true,
+          json: async () => ({
+            name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/aggregatedStats/player-1',
+            updateTime: '2026-06-19T16:00:00.000Z',
+            fields: {
+              stats: {
+                mapValue: {
+                  fields: {
+                    pts: { integerValue: '4' }
+                  }
+                }
+              }
+            }
+          })
+        } as any;
+      }
+      if (url.includes(':commit')) {
+        return { ok: true, json: async () => ({}) } as any;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1',
+          updateTime: '2026-06-19T16:00:00.000Z',
+          fields: {
+            status: { stringValue: 'scheduled' }, statTrackerConfigId: { stringValue: 'public-config' },
+            homeScore: { integerValue: '10' },
+            awayScore: { integerValue: '8' },
+            period: { stringValue: 'Q3' },
+            liveClockMs: { integerValue: '245000' }
+          }
+        })
+      } as any;
+    });
+
+    const result = await recordPlayerGameStat('team-1', 'game-1', 'player-1', {
+      statKey: 'pts',
+      value: 2,
+      playerName: 'Avery Smith',
+      playerNumber: '12'
+    }, user as any);
+
+    expect(result).toMatchObject({
+      playerId: 'player-1',
+      statKey: 'pts',
+      value: 2,
+      committedLifecycle: { liveStatus: 'live' },
+      liveEvent: expect.objectContaining({
+        type: 'stat',
+        playerId: 'player-1',
+        statKey: 'pts',
+        value: 2
+      })
+    });
+    const commits = vi.mocked(globalThis.fetch).mock.calls.filter(([url]) => String(url).includes(':commit'));
+    expect(String(commits[0]?.[1]?.body)).toContain('verify');
+    expect(String(commits[0]?.[1]?.body)).toContain('/statTrackerConfigs/public-config');
+  });
+
+  it('rejects private quick stats on native fallback without a commit', async () => {
+    mocks.runTransactionMock.mockRejectedValueOnce(Object.assign(new Error('native fallback'), { status: 500 }));
+    vi.mocked(globalThis.fetch).mockImplementation(async (input: any) => {
+      const url = String(input || '');
+      if (url.includes('/events')) {
+        return { ok: true, json: async () => ({ documents: [] }) } as any;
+      }
+      if (url.includes('/statTrackerConfigs/')) return { ok: true, json: async () => ({
+        name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/statTrackerConfigs/public-config',
+        updateTime: '2026-06-19T16:00:00.000Z', fields: { statDefinitions: { arrayValue: { values: [{ mapValue: { fields: { id: { stringValue: 'pts' }, scope: { stringValue: 'player' }, visibility: { stringValue: 'private' } } } }] } } }
+      }) } as any;
+      if (url.includes('/aggregatedStats/player-1')) {
+        return {
+          ok: true,
+          json: async () => ({
+            name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/aggregatedStats/player-1',
+            updateTime: '2026-06-19T16:00:00.000Z',
+            fields: {
+              stats: {
+                mapValue: {
+                  fields: {
+                    pts: { integerValue: '4' }
+                  }
+                }
+              }
+            }
+          })
+        } as any;
+      }
+      if (url.includes(':commit')) {
+        return { ok: true, json: async () => ({}) } as any;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1',
+          updateTime: '2026-06-19T16:00:00.000Z',
+          fields: {
+            status: { stringValue: 'scheduled' }, statTrackerConfigId: { stringValue: 'public-config' },
+            homeScore: { integerValue: '10' },
+            awayScore: { integerValue: '8' },
+            period: { stringValue: 'Q3' },
+            liveClockMs: { integerValue: '245000' }
+          }
+        })
+      } as any;
+    });
+
+    await expect(recordPlayerGameStat('team-1', 'game-1', 'player-1', { statKey: 'pts', value: 2 }, user as any)).rejects.toThrow('Private player stats require the full tracker');
+    expect(vi.mocked(globalThis.fetch).mock.calls.filter(([url]) => String(url).includes(':commit'))).toHaveLength(0);
+  });
+
   it('does not claim a lifecycle write when native live-score work is only queued offline', async () => {
     vi.mocked(globalThis.fetch).mockRejectedValue(new Error('offline'));
 
@@ -3959,6 +4083,15 @@ describe('player-attributed live scoring', () => {
       value: 2,
       isOpponent: false
     }));
+  });
+
+  it.each(['pts', 'fouls'] as const)('refuses configured-private %s in public quick controls before any write', async statKey => {
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet.mockImplementation(async (ref: any) => ({ exists: () => true, data: () =>
+      ref.path.includes('/statTrackerConfigs/') ? { statDefinitions: [{ id: statKey, scope: 'player', visibility: 'private' }] }
+        : ref.path.includes('/aggregatedStats/') ? { stats: {} } : { status: 'scheduled', statTrackerConfigId: 'private' } }));
+    await expect(recordPlayerGameStat('team-1', 'game-1', 'player-1', { statKey, value: 1 }, { uid: 'coach-1', displayName: '', email: 'coach@example.com', roles: [] })).rejects.toThrow('Private player stats require the full tracker');
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
   });
 
   it('does not overwrite ambiguous historical aggregates after a reset', async () => {

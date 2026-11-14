@@ -447,14 +447,15 @@
 
     <script type="module">
         import { getTeamScorePair } from './js/season-record.js';
-        import { getTeam, getDelegatedTeamContext, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433213';
+        import { getLiveStatsEpoch } from './js/live-aggregate-stats.js?v=1';
+        import { getTeam, getDelegatedTeamContext, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433214';
         import { generateGameInsights } from './js/post-game-insights.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=443389';
-        import { checkAuth } from './js/auth.js?v=4433218';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=443390';
+        import { checkAuth } from './js/auth.js?v=4433219';
         import { collection, deleteField, doc, functions, getDocs, httpsCallable, query, orderBy, runTransaction } from "./js/firebase.js?v=4433197";
         import { db } from './js/firebase.js?v=4433197';
-        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443364';
-        import { resolveLiveStatConfig } from './js/live-game-state.js?v=61';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443365';
+        import { resolveLiveStatConfig } from './js/live-game-state.js?v=62';
         import { splitPlayerStatsByVisibility } from './js/stat-leaderboards.js?v=4';
         import { formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=8';
         import { normalizeStatKey, resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=11';
@@ -2194,7 +2195,8 @@ Write the match report now:`;
                     if (!isAuthBoundActionCurrent(actionContext) || isDiamondV2Game(game)) return;
                     await setCompletedGamePlayerStats(teamId, gameId, player.id, {
                         ...payload,
-                        statTrackerConfig: resolvedConfig
+                        statTrackerConfig: resolvedConfig,
+                        expectedEpoch: getLiveStatsEpoch(game)
                     });
                     if (!isAuthBoundActionCurrent(actionContext)) return;
                     const { publicStats } = splitPlayerStatsByVisibility(resolvedConfig || {}, payload.stats || {});

@@ -39,7 +39,7 @@ it('does not expose private fields in the public aggregate transaction write', a
     const privateRef = { path: 'fixture/private' };
     await persistLiveAggregateSnapshot({ ...f.options, privateRef, privatePayload: { stats: { privateNotes: 1 } } });
     expect(f.set.mock.calls[0][1]).not.toHaveProperty('privateNotes');
-    expect(f.set.mock.calls[1]).toEqual([privateRef, { stats: { privateNotes: 1 } }]);
+    expect(f.set.mock.calls[1]).toEqual([privateRef, { stats: { privateNotes: 1 }, liveStatsVersion: 1, liveStatsEpoch: '' }]);
 });
 
 it('refuses an older queued finalization with no captured epoch', async () => {
