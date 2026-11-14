@@ -26,7 +26,7 @@ describe('legacy viewer clock', () => {
         vi.useFakeTimers(); vi.setSystemTime(now);
         const state = { game: { liveStatus: 'live' }, gameClockMs: 0, isReplay: false, unsubscribers: [] };
         const els = { clock: { textContent: '' } };
-        const api = new Function('state', 'els', 'window', 'getTimestampMs', 'getOverlayLiveClockMs', 'hasActiveLiveLifecycle', 'formatClock', 'startEngagements', 'startLiveEvents', 'setConnectionBanner', `${extract('syncViewerClock', 'renderScoreboard')}\n${extract('startLiveMode', 'startEngagements')}\n${extract('stopLiveMode', 'showNotLiveOverlay')}\nreturn { syncViewerClock, renderViewerClock, startLiveMode, stopLiveMode };`)(state, els, { setInterval, clearInterval }, t => typeof t === 'number' ? t : t?.toMillis?.(), getOverlayLiveClockMs, g => g.liveStatus === 'live', String, () => {}, () => {}, () => {});
+        const api = new Function('state', 'els', 'window', 'getTimestampMs', 'getOverlayLiveClockMs', 'hasActiveLiveLifecycle', 'formatClock', 'startEngagements', 'startLiveEvents', 'setConnectionBanner', `let aggregateGeneration = 0; let unsubscribeAggregateTotals = null;\n${extract('syncViewerClock', 'renderScoreboard')}\n${extract('startLiveMode', 'startEngagements')}\n${extract('stopLiveMode', 'showNotLiveOverlay')}\nreturn { syncViewerClock, renderViewerClock, startLiveMode, stopLiveMode };`)(state, els, { setInterval, clearInterval }, t => typeof t === 'number' ? t : t?.toMillis?.(), getOverlayLiveClockMs, g => g.liveStatus === 'live', String, () => {}, () => {}, () => {});
         api.syncViewerClock({ type: 'clock_start', gameClockMs: 1000, createdAt: now, liveClockRunning: true });
         api.startLiveMode();
         vi.advanceTimersByTime(5000);

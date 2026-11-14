@@ -3947,8 +3947,8 @@ describe('player-attributed live scoring', () => {
     expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1/aggregatedStats/player-1' }), expect.objectContaining({
       playerName: 'Avery Smith',
       playerNumber: '12',
-      stats: { pts: { __increment: 2 } }
-    }), { merge: true });
+      stats: { pts: 6, reb: 1 }, liveStatsVersion: 1, liveStatsEpoch: ''
+    }), { mergeFields: ['playerName', 'playerNumber', 'stats', 'liveStatsVersion', 'liveStatsEpoch'] });
     expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('teams/team-1/games/game-1/liveEvents') }), expect.objectContaining({
       eventId: expect.stringMatching(/^app-live-/),
       type: 'stat',
@@ -3959,6 +3959,31 @@ describe('player-attributed live scoring', () => {
       value: 2,
       isOpponent: false
     }));
+  });
+
+  it('does not overwrite ambiguous historical aggregates after a reset', async () => {
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 12, awayScore: 0, liveResetAt: 1000 }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { pts: 12, reb: 5 } }) });
+    await expect(recordPlayerGameStat('team-1', 'game-1', 'player-1', {
+      statKey: 'pts', value: 2, playerName: 'Fixture'
+    }, { uid: 'coach-1', displayName: '', email: 'coach@example.com', roles: [] })).rejects.toThrow('unknown reset epoch');
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('starts a proven new epoch without relabeling old player stat keys', async () => {
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 0, awayScore: 0, liveResetEventId: 'new' }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { pts: 12, reb: 5 }, liveStatsVersion: 1, liveStatsEpoch: 'id:old' }) });
+    const result = await recordPlayerGameStat('team-1', 'game-1', 'player-1', {
+      statKey: 'pts', value: 2, playerName: 'Fixture'
+    }, { uid: 'coach-1', displayName: '', email: 'coach@example.com', roles: [] });
+    expect(result.playerStatTotal).toBe(2);
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1/aggregatedStats/player-1' }),
+      expect.objectContaining({ stats: { pts: 2 }, liveStatsVersion: 1, liveStatsEpoch: 'id:new' }),
+      { mergeFields: ['playerName', 'playerNumber', 'stats', 'liveStatsVersion', 'liveStatsEpoch'] });
   });
 
   it('increments away score when the team is the away side', async () => {
@@ -4019,8 +4044,8 @@ describe('player-attributed live scoring', () => {
     });
     expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1' }), expect.not.objectContaining({ homeScore: 12 }), { merge: true });
     expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1/aggregatedStats/player-1' }), expect.objectContaining({
-      stats: { fouls: { __increment: 1 } }
-    }), { merge: true });
+      stats: { pts: 4, reb: 1, fouls: 1 }, liveStatsVersion: 1, liveStatsEpoch: ''
+    }), { mergeFields: ['playerName', 'playerNumber', 'stats', 'liveStatsVersion', 'liveStatsEpoch'] });
     expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('teams/team-1/games/game-1/events/') }), expect.objectContaining({
       text: '#12 Avery Smith FOULS +1',
       gameTime: '04:05',
@@ -4034,11 +4059,24 @@ describe('player-attributed live scoring', () => {
     }));
   });
 
+  it('rejects an old foul undo after reset and a new valid foul without changing totals', async () => {
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ liveResetEventId: 'new', homeScore: 0 }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { fouls: 1 }, liveStatsVersion: 1, liveStatsEpoch: 'id:new' }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ type: 'stat', liveStatsVersion: 1, liveStatsEpoch: 'id:old' }) });
+    await expect(undoRecordedPlayerGameStat('team-1', 'game-1', {
+      trackerEventId: 'old-tracker', liveEventId: 'old-live', playerId: 'player-1', statKey: 'fouls', value: 1
+    }, { uid: 'coach-1', displayName: '', email: 'coach@example.com', roles: [] })).rejects.toThrow('earlier tracking session');
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
   it('undoes a recorded foul by appending compensating live and tracker events', async () => {
     mocks.transactionGet.mockReset();
     mocks.transactionGet
       .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 10, awayScore: 8 }) })
-      .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { fouls: 4 } }) });
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { fouls: 4 } }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ type: 'stat', statKey: 'fouls', value: 1 }) });
 
     const result = await undoRecordedPlayerGameStat('team-1', 'game-1', {
       trackerEventId: 'tracker-foul-1',
@@ -4066,8 +4104,8 @@ describe('player-attributed live scoring', () => {
       })
     });
     expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1/aggregatedStats/player-1' }), expect.objectContaining({
-      stats: { fouls: { __increment: -1 } }
-    }), { merge: true });
+      stats: { fouls: 3 }, liveStatsVersion: 1, liveStatsEpoch: ''
+    }), { mergeFields: ['playerName', 'playerNumber', 'stats', 'liveStatsVersion', 'liveStatsEpoch'] });
     expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('teams/team-1/games/game-1/liveEvents/') }), expect.objectContaining({
       type: 'stat',
       statKey: 'fouls',

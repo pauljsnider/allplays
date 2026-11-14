@@ -1,4 +1,5 @@
-import { createOverlayFeedController } from './live-game-overlay-feed.js?v=3';
+import { applyLiveAggregateTotals } from './live-aggregate-stats.js?v=1';
+import { createOverlayFeedController } from './live-game-overlay-feed.js?v=4';
 import {
     applyOverlayEvents,
     applyOverlayGame,
@@ -35,7 +36,7 @@ import {
     resolveSafeProfilePhotoWriteUrl
 } from './safe-image-url.js?v=1';
 import { buildGameWatchShareUrl } from './game-share-links.js?v=1';
-import { shareOrCopy } from './utils.js?v=443388';
+import { shareOrCopy } from './utils.js?v=443389';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import { DIAMOND_ENGINE, buildDiamondViewerUrl } from './diamond-scorebook-routing.js?v=2';
 
@@ -93,6 +94,7 @@ const elements = {
     insightsPanel: document.querySelector('#insights-panel'),
     onFieldList: document.querySelector('#on-field-list'),
     benchList: document.querySelector('#bench-list'),
+    playerTotalsStatus: document.querySelector('#player-totals-status'),
     leaderList: document.querySelector('#leader-list'),
     opponentList: document.querySelector('#opponent-list'),
     chatList: document.querySelector('#chat-list'),
@@ -240,7 +242,7 @@ function usesCompactPanelLayout() {
 }
 
 function loadOverlayDatabase() {
-    return import('./db.js?v=4433212');
+    return import('./db.js?v=4433213');
 }
 
 function getTimestampMs(value) {
@@ -1150,7 +1152,7 @@ async function initializeChatComposer(database, teamId, gameId) {
 
     try {
         const [authTools, chatTools] = await Promise.all([
-            import('./auth.js?v=4433217'),
+            import('./auth.js?v=4433218'),
             import('./live-game-chat.js?v=4')
         ]);
         uiState.chatServices = {
@@ -1208,6 +1210,18 @@ async function initializeChatComposer(database, teamId, gameId) {
 }
 
 function renderAll() {
+    if (!uiState.isReplay && uiState.aggregateRows) {
+        const game = uiState.game;
+        const epochGame = game.lastResetEventBoundaryMs > getTimestampMs(game.game?.liveResetAt)
+            ? { ...game.game, liveResetEventId: game.lastResetEventId, liveResetAt: game.lastResetEventBoundaryMs }
+            : game.game;
+        applyLiveAggregateTotals(game, uiState.aggregateRows, { epochGame });
+        if (elements.playerTotalsStatus) {
+            elements.playerTotalsStatus.hidden = game.aggregateTotalsStatus === 'ready';
+            elements.playerTotalsStatus.textContent = game.aggregateTotalsStatus === 'ready' ? ''
+                : 'Full-game player totals are not confirmed. Displayed totals may be incomplete.';
+        }
+    }
     renderScoreboard();
     renderEvents();
     renderLineup();
@@ -1981,7 +1995,7 @@ async function startDemoReplayMode(params) {
         { controllableReplay: true }
     );
     uiState.videoDurationMs = 15_000;
-    const stateTools = await import('./live-game-state.js?v=60');
+    const stateTools = await import('./live-game-state.js?v=61');
     await loadReplaySnapshot({
         getLiveEvents: async () => replayEvents,
         getLiveChatHistory: async () => replayChat,
@@ -2144,7 +2158,7 @@ async function startRealMode(params) {
         const [database, videoTools, stateTools, historyTools] = await Promise.all([
             loadOverlayDatabase(),
             import('./live-game-video.js?v=443319'),
-            import('./live-game-state.js?v=60'),
+            import('./live-game-state.js?v=61'),
             import('./live-game-overlay-history.js?v=4')
         ]);
         uiState.optionalTeamStatus = 'pending';
@@ -2446,6 +2460,8 @@ async function startRealMode(params) {
 
         uiState.liveFeeds = createOverlayFeedController({
             subscribeEvents: (next, error) => database.subscribeLiveEvents(teamId, gameId, next, error),
+            subscribeStats: (next, error) => database.subscribeAggregatedStats(teamId, gameId, next, error),
+            onStats: (rows) => { uiState.aggregateRows = rows; renderAll(); },
             subscribeChat: (next, error) => database.subscribeLiveChat(teamId, gameId, { limit: 100 }, next, error),
             loadHistory: (cancelled) => historyTools.getOverlayLiveEventHistory(teamId, gameId, cancelled),
             readEvents: (ids, cancelled) => historyTools.readOverlayLiveEvents(teamId, gameId, ids, cancelled),
@@ -2475,10 +2491,14 @@ async function startRealMode(params) {
                     ? 'Full play history and player totals are incomplete or awaiting refresh. Recent plays and score remain available.'
                     : kind === 'events'
                         ? 'Play-by-play is temporarily unavailable. Other feeds continue independently.'
+                        : kind === 'stats' ? 'Full-game player totals are temporarily unavailable.'
                         : kind === 'chat' ? 'Live chat is temporarily unavailable. Other feeds continue independently.'
                             : 'Some removed plays are awaiting confirmation; totals may be stale.');
             },
             onInvalidate: () => {
+                uiState.aggregateRows = null;
+                uiState.game.hasAggregateTotals = false;
+                uiState.game.stats = {};
                 uiState.lastLiveEvents = [];
                 uiState.hasLiveEventSnapshot = false;
                 processLiveEventSnapshot([], stateTools);

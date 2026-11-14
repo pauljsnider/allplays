@@ -65,7 +65,7 @@ export function createOverlayEventHistory({ maxEvents = 2000 } = {}) {
     };
 }
 
-export function createOverlayFeedController({ subscribeEvents, subscribeChat, loadHistory, readEvents,
+export function createOverlayFeedController({ subscribeEvents, subscribeChat, subscribeStats, onStats = () => {}, loadHistory, readEvents,
     onEvents, onChat, onError, onReady, onInvalidate, onFreshness = () => {}, refreshMs = 300000,
     now = Date.now, isVisible = () => true, schedule = setInterval, unschedule = clearInterval }) {
     let generation = 0;
@@ -89,11 +89,11 @@ export function createOverlayFeedController({ subscribeEvents, subscribeChat, lo
         readFlight = task.catch(() => {});
         return task;
     };
-    const streams = { events: null, chat: null };
-    const tokens = { events: 0, chat: 0 };
+    const streams = { events: null, chat: null, ...(subscribeStats ? { stats: null } : {}) };
+    const tokens = { events: 0, chat: 0, stats: 0 };
     const failed = new Set();
     const terminal = new Set();
-    const retryCounts = { events: 0, chat: 0 };
+    const retryCounts = { events: 0, chat: 0, stats: 0 };
     const deny = error => /permission-denied|unauthenticated/.test(String(error?.code || ''));
     const status = () => onFreshness({ lastConfirmedAt, loading, verifying: !verificationFailed && (checking || pendingChecks.size > 0),
         visible: isVisible(), failed: historyFailures > 0 || verificationFailed });
@@ -156,6 +156,7 @@ export function createOverlayFeedController({ subscribeEvents, subscribeChat, lo
                     void verifyPending();
                     if (history.incomplete) onError('history', new Error('overlay/history-limit'));
                 }
+                else if (kind === 'stats') onStats(rows);
                 else onChat(rows);
                 retryCounts[kind] = 0;
                 onReady(kind);
@@ -168,7 +169,7 @@ export function createOverlayFeedController({ subscribeEvents, subscribeChat, lo
             onError(kind, reason);
         };
         try {
-            streams[kind] = kind === 'events' ? subscribeEvents(success, error) : subscribeChat(success, error);
+            streams[kind] = ({ events: subscribeEvents, chat: subscribeChat, stats: subscribeStats })[kind](success, error);
         } catch (reason) { error(reason); }
     }
 
@@ -242,6 +243,7 @@ export function createOverlayFeedController({ subscribeEvents, subscribeChat, lo
         terminal.clear();
         attach('events');
         attach('chat');
+        if (subscribeStats) attach('stats');
         void refresh();
         timer = schedule(() => {
             status();
@@ -282,7 +284,7 @@ export function createOverlayFeedController({ subscribeEvents, subscribeChat, lo
             principal = next;
             stop();
             onInvalidate();
-            retryCounts.events = retryCounts.chat = 0;
+            retryCounts.events = retryCounts.chat = retryCounts.stats = 0;
             start();
         }
     };

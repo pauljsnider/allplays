@@ -9,7 +9,7 @@ describe('track-live finish playing time persistence', () => {
         expect(finishStatsBlock).toContain('const timeMs = getPlayerFieldElapsedMs(');
         expect(finishStatsBlock).toContain('gameState.playerFieldStatus');
         expect(finishStatsBlock).toContain('gameState.isRunning ? Date.now() : null');
-        expect(finishStatsBlock).toMatch(/batch\.set\(statsRef, \{[\s\S]*stats: stats,[\s\S]*timeMs[\s\S]*\}\);/);
+        expect(finishStatsBlock).toMatch(/persistPlayerStatsForEpoch\(statsRef, \{[\s\S]*stats: stats,[\s\S]*timeMs[\s\S]*\}, finishStatsEpoch\);/);
     });
 
     it('persists appeared players who logged field time without recording a stat', () => {

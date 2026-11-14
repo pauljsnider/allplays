@@ -225,6 +225,7 @@ describe('live tracker save-and-complete workflow', () => {
     expect(zeroStatWrite).toEqual({
       ref: { kind: 'doc', path: 'teams/team-1/games/game-9/aggregatedStats/p-zero' },
       data: {
+        liveStatsVersion: 1, liveStatsEpoch: '',
         playerName: 'Zero Stat',
         playerNumber: '12',
         timeMs: 0,
@@ -259,6 +260,7 @@ describe('live tracker save-and-complete workflow', () => {
     expect(zeroStatWrite).toEqual({
       ref: { kind: 'doc', path: 'teams/team-1/games/game-9/aggregatedStats/p-zero' },
       data: {
+        liveStatsVersion: 1, liveStatsEpoch: '',
         playerName: 'Zero Stat',
         playerNumber: '12',
         timeMs: 0,

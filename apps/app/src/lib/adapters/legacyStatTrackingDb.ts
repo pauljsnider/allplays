@@ -1,4 +1,4 @@
-import { db as legacyDb, deleteDoc as legacyDeleteDoc, doc as legacyDoc, increment as legacyIncrement, setDoc as legacySetDoc } from '@legacy/firebase.js';
+import { runTransaction as legacyRunTransaction, db as legacyDb, deleteDoc as legacyDeleteDoc, doc as legacyDoc, increment as legacyIncrement, setDoc as legacySetDoc } from '@legacy/firebase.js';
 import { splitPlayerStatsByVisibility as legacySplitPlayerStatsByVisibility } from '@legacy/stat-leaderboards.js';
 
 /**
@@ -16,3 +16,5 @@ export const splitPlayerStatsByVisibility = legacySplitPlayerStatsByVisibility a
   statConfig: Record<string, unknown>,
   stats: Record<string, unknown>
 ) => { publicStats: Record<string, unknown>; privateStats: Record<string, unknown> };
+
+export const runTransaction = legacyRunTransaction as (db: unknown, callback: (transaction: any) => Promise<unknown>) => Promise<unknown>;

@@ -1,9 +1,11 @@
+import { applyLiveAggregateTotals } from './live-aggregate-stats.js?v=1';
 import { getTeamScorePair } from './season-record.js';
 import {
   getGameDayTeamContext,
   getGame,
   getPlayers,
   subscribeLiveEvents,
+  subscribeAggregatedStats,
   subscribeLiveChat,
   postLiveChatMessage,
   subscribeReactions,
@@ -18,12 +20,12 @@ import {
   updateGame,
   uploadGameClip,
   deleteUploadedMediaObjects
-} from './db.js?v=4433212';
-import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443388';
+} from './db.js?v=4433213';
+import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443389';
 import { hasFullTeamAccess } from './team-access.js?v=44338';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
 import { computePanelVisibility } from './live-stream-utils.js?v=2';
-import { checkAuth } from './auth.js?v=4433217';
+import { checkAuth } from './auth.js?v=4433218';
 import { isViewerChatEnabled } from './live-game-chat.js?v=4';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import {
@@ -41,7 +43,7 @@ import { buildGameReportShareUrl, buildGameWatchShareUrl } from './game-share-li
 import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=11';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './firebase-ai.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=60';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=61';
 import { getDefaultLivePeriod } from './live-sport-config.js?v=2';
 import { BROADCAST_STREAM_HEARTBEAT_MS, buildBroadcastRuntimeSession } from './game-day-broadcast.js?v=5';
 import { createSafeImageElement, resolveSafeProfilePhotoUrl, resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';
@@ -150,6 +152,7 @@ const els = {
   announcerStatus: q('#announcer-status'),
   statsList: q('#stats-list'),
   opponentStats: q('#opponent-stats'),
+  playerTotalsStatus: q('#player-totals-status'),
   lineupOnCourt: q('#lineup-oncourt'),
   lineupBench: q('#lineup-bench'),
 
@@ -1890,6 +1893,18 @@ function renderStats() {
 }
 
 function renderLineup() {
+  if (state.isLive && state.aggregateRows) {
+    const epochGame = state.aggregateResetMarker && state.aggregateResetMarker.at > getTimestampMs(state.game?.liveResetAt)
+      ? { ...state.game, liveResetEventId: state.aggregateResetMarker.id, liveResetAt: state.aggregateResetMarker.at }
+      : state.game;
+    applyLiveAggregateTotals(state, state.aggregateRows, { epochGame });
+  }
+  if (els.playerTotalsStatus) {
+    const incomplete = state.isLive && state.game?.trackingEngine !== DIAMOND_ENGINE &&
+      (state.aggregateTotalsError || state.aggregateTotalsStatus !== 'ready');
+    els.playerTotalsStatus.textContent = incomplete ? 'Full-game player totals are not confirmed. Displayed totals may be incomplete.' : '';
+    els.playerTotalsStatus.classList.toggle('hidden', !incomplete);
+  }
   if (!els.lineupOnCourt || !els.lineupBench) return;
   const rendered = renderViewerLineupSections({
     players: state.players,
@@ -2438,6 +2453,26 @@ function startEngagements() {
   }
 }
 
+let aggregateGeneration = 0;
+let unsubscribeAggregateTotals = null;
+function startAggregateTotals() {
+  const generation = ++aggregateGeneration;
+  unsubscribeAggregateTotals?.();
+  state.aggregateRows = null;
+  state.hasAggregateTotals = false;
+  if (!state.isLive || state.game?.trackingEngine === DIAMOND_ENGINE) return;
+  unsubscribeAggregateTotals = subscribeAggregatedStats(state.teamId, state.gameId, rows => {
+    if (generation !== aggregateGeneration || !state.isLive) return;
+    state.aggregateRows = rows;
+    state.aggregateTotalsError = false;
+    renderLineup();
+  }, error => {
+    if (generation !== aggregateGeneration) return;
+    state.aggregateTotalsError = true;
+    renderLineup();
+  });
+}
+
 function startLiveEvents() {
   // Diamond plays come from the sanitized revisioned projection. Never attach
   // the classic flat listener, where a same-path recreation could expose an
@@ -2445,6 +2480,7 @@ function startLiveEvents() {
   if (state.game?.trackingEngine === DIAMOND_ENGINE) return;
   if (state.liveEventsActive) return;
   state.liveEventsActive = true;
+  startAggregateTotals();
   state.liveEventsFirstLoad = true;
   const unsubEvents = subscribeLiveEvents(state.teamId, state.gameId, (events) => {
     setConnectionBanner(false);
@@ -2463,6 +2499,12 @@ function startLiveEvents() {
       }
     }
     state.liveEventsFirstLoad = false;
+    for (const event of events) {
+      const at = getTimestampMs(event.createdAt);
+      if (event.type === 'reset' && at > (state.aggregateResetMarker?.at || 0)) {
+        state.aggregateResetMarker = { id: event.id, at };
+      }
+    }
     processNewEvents(events, {
       announce: !isInitialLiveEventsLoad,
       preserveSeededOpponentGoalStats: isInitialLiveEventsLoad
@@ -2481,6 +2523,11 @@ function startLiveEvents() {
 }
 
 function stopLiveMode() {
+  aggregateGeneration += 1;
+  unsubscribeAggregateTotals?.();
+  unsubscribeAggregateTotals = null;
+  state.aggregateRows = null;
+  state.hasAggregateTotals = false;
   state.isLive = false;
   if (state.liveClockTimer) window.clearInterval(state.liveClockTimer);
   state.liveClockTimer = null;
@@ -3181,7 +3228,13 @@ async function init() {
   }
 
   checkAuth(async (user) => {
+    const changedPrincipal = state.user?.uid !== user?.uid;
     state.user = user;
+    if (changedPrincipal && state.isLive) {
+      state.aggregateRows = null; state.hasAggregateTotals = false; state.stats = {};
+      renderLineup();
+      startAggregateTotals();
+    }
     state.broadcastRsvp = null;
     const streamingMode = String(state.team?.teamPermissions?.streaming?.mode || '').toLowerCase();
     const legacyStreamingMode = String(state.team?.streamAccessMode || '').toLowerCase();

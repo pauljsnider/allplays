@@ -1,3 +1,5 @@
+import * as liveAggregateStats from '../../js/live-aggregate-stats.js';
+import * as liveAggregatePersistence from '../../js/live-aggregate-persistence.js';
 import { getTeamScorePair } from '../../js/season-record.js';
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -182,6 +184,8 @@ function replaceNamedImportByModulePath(source, modulePath, replacement) {
 function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8')) {
   const authHook = `checkAuth(async (user) => {\n  if (!user) {\n    window.location.href = 'login.html';\n    return;\n  }\n  currentUser = user;\n  await init();\n});`;
 
+  source = source.replace(/import[^;]+from '\.\/live-aggregate-stats\.js[^']*';/, 'const { getLiveStatsEpoch, readLiveStatsForWrite } = deps.liveAggregateStats;')
+    .replace(/import[^;]+from '\.\/live-aggregate-persistence\.js[^']*';/, 'const { persistLiveAggregateSnapshot, persistLiveEpochWrites } = deps.liveAggregatePersistence;');
   let rewritten = source.replace("import { getTeamScorePair } from './season-record.js';", `const getTeamScorePair = ${getTeamScorePair.toString()};`);
   rewritten = replaceNamedImportByModulePath(
     rewritten,
@@ -377,7 +381,7 @@ async function bootLiveTracker({ game, snapshots }) {
   ];
   const config = { baseType: 'Basketball', columns: ['PTS', 'AST'] };
 
-  const deps = {
+  const deps = { liveAggregateStats, liveAggregatePersistence,
     db: {
       getGameDayTeamContext: async () => homeTeam,
       getTeam: async (teamId) => {

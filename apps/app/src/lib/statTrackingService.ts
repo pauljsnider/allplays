@@ -1,5 +1,6 @@
+import { liveStatsMetadata, readLiveStats, liveStatsMatchEpoch } from './adapters/legacyLiveAggregateStats';
 import { buildTrackerEventDocument, type TrackerEventDocument, type TrackerEventInput, type TrackerOpponentStatsEntry, type TrackerUndoData, type TrackerUser } from './statTrackingEvent';
-import { db, deleteDoc, doc, increment, setDoc, splitPlayerStatsByVisibility } from './adapters/legacyStatTrackingDb';
+import { db, deleteDoc, doc, increment, setDoc, runTransaction, splitPlayerStatsByVisibility } from './adapters/legacyStatTrackingDb';
 
 export type TrackerScoreState = {
   homeScore: number;
@@ -29,6 +30,7 @@ export type TrackerLogEntry = {
 };
 
 type StatTrackingDependencies = {
+  runTransaction: typeof runTransaction;
   doc: typeof doc;
   setDoc: typeof setDoc;
   deleteDoc: typeof deleteDoc;
@@ -267,10 +269,21 @@ async function applyAggregateWrite({
   const publicRef = dependencies.doc(dependencies.db, `teams/${teamId}/games/${gameId}/aggregatedStats`, playerId);
 
   if (Object.keys(publicStats).length > 0) {
-    await dependencies.setDoc(publicRef, {
-      ...basePayload,
-      stats: publicStats
-    }, { merge: true });
+    const gameRef = dependencies.doc(dependencies.db, `teams/${teamId}/games/${gameId}`);
+    await dependencies.runTransaction(dependencies.db, async transaction => {
+      const [gameSnapshot, statsSnapshot] = await Promise.all([
+        transaction.get(gameRef), transaction.get(publicRef)
+      ]);
+      const game = gameSnapshot.data() || {};
+      const stats = readLiveStats(statsSnapshot.data() || {}, game);
+      if (liveStatsMatchEpoch(statsSnapshot.data() || {}, game)) {
+        transaction.set(publicRef, { ...basePayload, stats: publicStats, ...liveStatsMetadata(game) }, { merge: true });
+      } else {
+        stats[statKey] = delta;
+        const payload = { ...basePayload, stats, ...liveStatsMetadata(game) };
+        transaction.set(publicRef, payload, { mergeFields: Object.keys(payload) });
+      }
+    });
   } else {
     await dependencies.setDoc(publicRef, basePayload, { merge: true });
   }
@@ -590,6 +603,7 @@ export function createDefaultStatTrackingService(options: {
     ...options,
     dependencies: {
       db,
+      runTransaction,
       doc,
       setDoc,
       deleteDoc,

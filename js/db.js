@@ -1,3 +1,4 @@
+import { liveStatsMetadata, readLiveStatsForWrite } from './live-aggregate-stats.js?v=1';
 import {
     db,
     auth,
@@ -824,7 +825,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443388'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443389'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -5351,13 +5352,19 @@ export async function updatePlayerStats(teamId, gameId, playerId, statKey, chang
     const split = splitPlayerStatsByVisibility(options.statTrackerConfig || {}, { [normalizedStatKey]: change });
     const subcollectionName = Object.prototype.hasOwnProperty.call(split.privateStats, normalizedStatKey) ? 'privatePlayerStats' : 'aggregatedStats';
     const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/${subcollectionName}`, playerId);
-    await setDoc(docRef, {
-        playerName,
-        playerNumber,
-        stats: {
-            [normalizedStatKey]: increment(change)
-        }
-    }, { merge: true });
+    if (subcollectionName === 'privatePlayerStats') {
+        await setDoc(docRef, { playerName, playerNumber, stats: { [normalizedStatKey]: increment(change) } }, { merge: true });
+        return;
+    }
+    const gameRef = getGameDocRef(teamId, gameId);
+    await runTransaction(db, async transaction => {
+        const [gameSnapshot, statsSnapshot] = await Promise.all([transaction.get(gameRef), transaction.get(docRef)]);
+        const game = gameSnapshot.data() || {};
+        const stats = readLiveStatsForWrite(statsSnapshot.data() || {}, game);
+        stats[normalizedStatKey] = (stats[normalizedStatKey] || 0) + change;
+        const payload = { playerName, playerNumber, stats, ...liveStatsMetadata(game) };
+        transaction.set(docRef, payload, { mergeFields: Object.keys(payload) });
+    });
 }
 
 export async function setCompletedGamePlayerStats(teamId, gameId, playerId, statsPayload = {}) {

@@ -1,3 +1,4 @@
+import * as liveAggregateStats from '../../js/live-aggregate-stats.js';
 import { getOverlayLiveClockMs } from '../../js/live-game-overlay-model.js';
 import { getTeamScorePair } from '../../js/season-record.js';
 import { describe, expect, it, vi } from 'vitest';
@@ -226,10 +227,11 @@ function createEnvironment() {
 
 function buildModuleSource() {
     return readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8')
+        .replace(/import[^;]+from '\.\/live-aggregate-stats\.js[^']*';/, 'const { applyLiveAggregateTotals } = deps.liveAggregateStats;')
         .replace("import { getTeamScorePair } from './season-record.js';", `const getTeamScorePair = ${getTeamScorePair.toString()};`)
         .replace(
             /import\s+\{[\s\S]*?deleteUploadedMediaObjects\s*\}\s+from\s+'\.\/db\.js\?v=\d+';/,
-            'const { getGameDayTeamContext, getGame, getPlayers, subscribeLiveEvents, subscribeLiveChat, postLiveChatMessage, subscribeReactions, sendReaction, trackViewerPresence, getLiveEvents, getLiveChatHistory, getLiveReactions, getConfigs, getMyRsvp, subscribeGame, updateGame, uploadGameClip, deleteUploadedMediaObjects } = deps.db;'
+            'const { getGameDayTeamContext, getGame, getPlayers, subscribeAggregatedStats, subscribeLiveEvents, subscribeLiveChat, postLiveChatMessage, subscribeReactions, sendReaction, trackViewerPresence, getLiveEvents, getLiveChatHistory, getLiveReactions, getConfigs, getMyRsvp, subscribeGame, updateGame, uploadGameClip, deleteUploadedMediaObjects } = deps.db;'
         )
         .replace(
             /import \{ getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy \} from '\.\/utils\.js\?v=\d+';/,
@@ -403,7 +405,9 @@ async function bootReplayPage({
     const subscribeReactions = vi.fn(() => () => {});
     const trackViewerPresence = vi.fn(() => () => {});
     const deps = {
+        liveAggregateStats,
         db: {
+            subscribeAggregatedStats: () => () => {},
             getGameDayTeamContext: async () => {
                 if (teamContextError) throw teamContextError;
                 return { id: 'T1', name: 'Raptors', sport: 'basketball', ...teamOverrides };

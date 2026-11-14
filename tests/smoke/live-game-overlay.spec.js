@@ -461,6 +461,12 @@ async function stubRealOverlayModules(page) {
                 callback([]);
                 return () => {};
             }
+            export function subscribeAggregatedStats(_teamId, _gameId, callback, onError) {
+                window.__OVERLAY_STATS_CALLBACK__ = callback;
+                window.__OVERLAY_STATS_ERROR__ = onError;
+                callback([]);
+                return () => {};
+            }
             export function subscribeLiveChat(_teamId, _gameId, _options, callback, onError) {
                 window.__OVERLAY_LIVE_SUBSCRIPTIONS__ = (window.__OVERLAY_LIVE_SUBSCRIPTIONS__ || 0) + 1;
                 window.__OVERLAY_CHAT_CALLBACK__ = callback;
@@ -2595,4 +2601,21 @@ test('playing replay reboots and advances after persisted page restoration', asy
     await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
     await page.getByRole('button', { name: 'Play replay' }).click();
     await expect(page.locator('#replay-progress')).not.toHaveValue('0');
+});
+
+test('canonical aggregate totals survive bounded event updates and clear on authoritative deletion', async ({ page, baseURL }) => {
+    const errors = collectPageErrors(page);
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => page.evaluate(() => typeof window.__OVERLAY_STATS_CALLBACK__)).toBe('function');
+    await page.evaluate(() => window.__OVERLAY_STATS_CALLBACK__([{ id: 'p9', stats: { goals: 2012 }, liveStatsVersion: 1, liveStatsEpoch: '' }]));
+    await expect(page.locator('#leader-list')).toContainText('2012 GOALS');
+    await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([]));
+    await expect(page.locator('#leader-list')).toContainText('2012 GOALS');
+    await page.evaluate(() => window.__OVERLAY_STATS_CALLBACK__([{ id: 'p9', stats: { goals: 12 }, liveStatsVersion: 1, liveStatsEpoch: '' }]));
+    await expect(page.locator('#leader-list')).toContainText('12 GOALS');
+    await page.evaluate(() => window.__OVERLAY_STATS_CALLBACK__([]));
+    await expect(page.locator('#leader-list')).not.toContainText('12 GOALS');
+    expect(errors).toEqual([]);
 });

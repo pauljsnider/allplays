@@ -30,7 +30,7 @@ vi.mock('../../js/firebase.js?v=4433197', () => ({
     signInWithEmailLink: vi.fn(),
     updatePassword: vi.fn()
 }));
-vi.mock('../../js/db.js?v=4433212', () => ({
+vi.mock('../../js/db.js?v=4433213', () => ({
     ...mocks,
     getUserProfile: vi.fn(),
     getUserTeams: vi.fn(),

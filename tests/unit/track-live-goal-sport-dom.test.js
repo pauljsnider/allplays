@@ -1,3 +1,5 @@
+import * as aggregateStats from '../../js/live-aggregate-stats.js';
+import * as aggregatePersistence from '../../js/live-aggregate-persistence.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
@@ -65,6 +67,7 @@ function createGoalSportDomHarness() {
   const alert = vi.fn();
 
   Object.assign(dom.window, {
+    __aggregateStats: aggregateStats, __aggregatePersistence: aggregatePersistence,
     __goalSportHelpers: { applyGoalSportScore, buildGoalSportEvent, resolveGoalSportScorer },
     __noteHelpers: {
       appendGameSummaryLine,
@@ -105,6 +108,12 @@ function createGoalSportDomHarness() {
     const writeBatch = () => ({ set() {}, update() {}, delete() {}, commit: async () => {} });
     const doc = (...parts) => ({ path: parts.join('/') });
     const setDoc = window.__dbCalls.setDoc;
+    const { getLiveStatsEpoch, readLiveStatsForWrite } = window.__aggregateStats;
+    const { persistLiveAggregateSnapshot, persistLiveEpochWrites } = window.__aggregatePersistence;
+    const runTransaction = async (_db, callback) => callback({
+      get: async (ref) => ({ data: () => ref.path.includes('/aggregatedStats/') ? {} : currentGame }),
+      set: setDoc, update: async () => {}, delete: async () => {}
+    });
     const addDoc = async () => ({ id: 'doc-1' });
     const onSnapshot = () => () => {};
     const orderBy = () => ({});
@@ -268,7 +277,7 @@ describe('track-live Simple goal-sport DOM recording', () => {
       playerNumber: '9',
       stats: { goals: 1 },
       timeMs: 0
-    }), { merge: true });
+    }), { mergeFields: ['playerName', 'playerNumber', 'stats', 'timeMs', 'liveStatsVersion', 'liveStatsEpoch'] });
   });
 
   it('records an away goal with opponent stat sync and resolved opponent display name in the live note', async () => {

@@ -1,10 +1,12 @@
+import { getLiveStatsEpoch, readLiveStatsForWrite } from './live-aggregate-stats.js?v=1';
+import { persistLiveAggregateSnapshot, persistLiveEpochWrites } from './live-aggregate-persistence.js?v=1';
 import { getTeamScorePair } from './season-record.js';
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433212';
+import { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433213';
 import { db } from './firebase.js?v=4433197';
-import { getUrlParams, escapeHtml } from './utils.js?v=443388';
-import { checkAuth } from './auth.js?v=4433217';
-import { writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp } from './firebase.js?v=4433197';
+import { getUrlParams, escapeHtml } from './utils.js?v=443389';
+import { checkAuth } from './auth.js?v=4433218';
+import { writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp, runTransaction } from './firebase.js?v=4433197';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './firebase-ai.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
@@ -16,10 +18,10 @@ import { resolveFinalScore } from './live-tracker-email.js?v=2';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { buildVideoTimestampMetadata, hasConfiguredLiveStream } from './live-stream-utils.js?v=3';
-import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=60';
+import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=61';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
 import { resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';
-import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=6';
+import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=7';
 import {
   readPersistedLiveTrackerQueue,
   writePersistedLiveTrackerQueue,
@@ -28,7 +30,7 @@ import {
   readPersistedLiveTrackerState,
   writePersistedLiveTrackerState
 } from './live-tracker-queue.js?v=1';
-import { commitFinishPlan, isTransientFinalizationFailure, runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js?v=3';
+import { commitFinishPlan, isTransientFinalizationFailure, runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js?v=4';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -273,6 +275,7 @@ function queuePendingFinalization(finishPlan, error) {
     queuedAt: Date.now(),
     lastError: error?.message || '',
     finishPlan: {
+      statsEpoch: finishPlan.statsEpoch,
       finalHome: finishPlan.finalHome,
       finalAway: finishPlan.finalAway,
       eventWrites: finishPlan.eventWrites,
@@ -337,8 +340,10 @@ function schedulePlayerStatsSync(playerId) {
   if (!currentTeamId || !currentGameId) return;
   if (!playerId) return;
   if (liveSync.playerTimeouts.has(playerId)) return;
+  const expectedEpoch = getLiveStatsEpoch(currentGame);
   const timeout = setTimeout(async () => {
     liveSync.playerTimeouts.delete(playerId);
+    if (expectedEpoch !== getLiveStatsEpoch(currentGame)) return;
     try {
       const player = roster.find(r => r.id === playerId);
       const statsObj = {};
@@ -348,12 +353,13 @@ function schedulePlayerStatsSync(playerId) {
       });
       statsObj.fouls = state.stats[playerId]?.fouls || 0;
       const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
-      await setDoc(statsRef, {
+      await persistLiveAggregateSnapshot({ db, runTransaction, statsRef,
+        gameRef: doc(db, `teams/${currentTeamId}/games/${currentGameId}`), expectedEpoch, payload: {
         playerName: player?.name || '',
         playerNumber: player?.num || '',
         stats: statsObj,
         timeMs: state.stats[playerId]?.time || 0
-      }, { merge: true });
+      } });
     } catch (error) {
       console.warn('Failed to sync player stats:', error);
     }
@@ -1406,7 +1412,7 @@ async function broadcastEvent(eventData) {
 
 async function broadcastResetEvent(description = 'Tracker reset. Live viewer state cleared.') {
   if (!currentTeamId || !currentGameId) return;
-  await broadcastEvent(buildLiveResetEvent({
+  await broadcastEvent({ ...buildLiveResetEvent({
     period: state.period || getDefaultLivePeriod({ game: currentGame, team: currentTeam, config: currentConfig }),
     gameClockMs: 0,
     homeScore: 0,
@@ -1417,7 +1423,7 @@ async function broadcastResetEvent(description = 'Tracker reset. Live viewer sta
     periods: currentConfig?.periods || null,
     createdBy: currentUser?.uid || null,
     description
-  }));
+  }), eventId: currentGame.liveResetEventId });
 }
 
 async function drainPendingLiveEventQueue() {
@@ -1490,7 +1496,9 @@ async function syncPendingFinalizationNow() {
     currentGameId,
     createBatch: writeBatch,
     createCollectionRef: collection,
-    createDocRef: doc
+    createDocRef: doc,
+    persistFinishWrites,
+    persistStats: persistFinishStats
   });
   await endLiveBroadcast();
   clearPendingFinalization();
@@ -2002,6 +2010,20 @@ function generateEmailRecap() {
   addLog('Email recap generated');
 }
 
+async function persistFinishWrites(writes, expectedEpoch) {
+  return persistLiveEpochWrites({ db, runTransaction, expectedEpoch, writes,
+    gameRef: doc(db, `teams/${currentTeamId}/games/${currentGameId}`) });
+}
+
+async function persistFinishStats(write, expectedEpoch) {
+  await persistLiveAggregateSnapshot({ db, runTransaction, expectedEpoch,
+    gameRef: doc(db, `teams/${currentTeamId}/games/${currentGameId}`),
+    statsRef: doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, write.playerId),
+    payload: write.data,
+    privateRef: doc(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`, write.playerId),
+    privatePayload: write.privateData });
+}
+
 async function saveAndComplete() {
   if (liveState.pendingFinish) {
     await retryPendingFinalizationNow({ resetBackoff: true });
@@ -2027,6 +2049,8 @@ async function saveAndComplete() {
     createBatch: writeBatch,
     createCollectionRef: collection,
     createDocRef: doc,
+    persistFinishWrites,
+    persistStats: persistFinishStats,
     renderLog,
     endLiveBroadcast,
     generateEmailBody,
@@ -2113,6 +2137,7 @@ async function startStop() {
         const confirmClear = confirm(`This game already has ${eventsSnap.size} tracked event(s). Starting fresh will clear them. Continue?`);
         if (!confirmClear) return;
 
+        currentGame.liveResetEventId = crypto.randomUUID();
         await Promise.all(eventsSnap.docs.map(d => deleteDoc(d.ref)));
         const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
         await Promise.all(statsSnap.docs.map(d => deleteDoc(d.ref)));
@@ -2123,6 +2148,8 @@ async function startStop() {
           homeScore: 0, 
           awayScore: 0, 
           liveStatus: 'scheduled',
+          liveResetAt: serverTimestamp(),
+          liveResetEventId: currentGame.liveResetEventId,
           liveHasData: false,
           opponentStats: {},
           // Preserve opponent fields
@@ -3068,6 +3095,8 @@ async function init() {
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/liveEvents`), 'liveEvents')
         ]);
         const resetAt = Date.now();
+        const resetEventId = crypto.randomUUID();
+        currentGame.liveResetEventId = resetEventId;
         const resetLineup = { onCourt: [], bench: roster.map(r => r.id) };
         try {
           await updateGame(teamId, gameId, {
@@ -3077,6 +3106,7 @@ async function init() {
             liveStatus: 'scheduled',
             liveHasData: false,
             liveResetAt: serverTimestamp(),
+            liveResetEventId: resetEventId,
             liveClockMs: 0,
             liveClockRunning: false,
             liveClockPeriod: 'Q1',
@@ -3148,7 +3178,7 @@ async function init() {
         // Load existing aggregated stats
         statsSnapshot.forEach(d => {
           if (!state.stats[d.id]) state.stats[d.id] = statDefaults(currentConfig.columns);
-          const existing = d.data().stats || {};
+          const existing = readLiveStatsForWrite(d.data(), currentGame);
           Object.assign(state.stats[d.id], existing);
           if (typeof d.data().timeMs === 'number') {
             state.stats[d.id].time = d.data().timeMs;

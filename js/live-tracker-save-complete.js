@@ -1,6 +1,7 @@
+import { getLiveStatsEpoch } from './live-aggregate-stats.js?v=1';
 import { acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker-integrity.js?v=3';
 import { resolveSummaryRecipient } from './live-tracker-email.js?v=2';
-import { buildFinishCompletionPlan, executeFinishNavigationPlan } from './live-tracker-finish.js?v=6';
+import { buildFinishCompletionPlan, executeFinishNavigationPlan } from './live-tracker-finish.js?v=7';
 
 
 const TRANSIENT_FINALIZATION_ERROR_CODES = new Set([
@@ -139,11 +140,14 @@ export async function commitFinishPlan({
   createBatch,
   createCollectionRef,
   createDocRef,
+  persistStats = null,
+  persistFinishWrites = null,
   maxPrimaryBatchWrites = LIVE_TRACKER_MAX_PRIMARY_BATCH_WRITES,
   maxEventBatchWrites = LIVE_TRACKER_MAX_EVENT_BATCH_WRITES,
   maxAggregatedStatsBatchWrites = LIVE_TRACKER_MAX_AGGREGATED_STATS_BATCH_WRITES,
   beforePrimaryCommit = null
 } = {}) {
+  if (persistStats && !persistFinishWrites) throw new Error('Missing epoch-checked finish writer.');
   const eventWrites = finishPlan?.eventWrites || [];
   const aggregatedStatsWrites = finishPlan?.aggregatedStatsWrites || [];
   const legacyPrimaryBatchWriteCount = eventWrites.length + 1;
@@ -167,7 +171,13 @@ export async function commitFinishPlan({
       startIndex: i
     });
     eventBatchSizes.push(eventChunk.length);
-    await eventBatch.commit();
+    if (persistFinishWrites) {
+      await persistFinishWrites(eventChunk.map(({ data }, index) => ({
+        kind: 'set',
+        ref: createDocRef(db, `teams/${currentTeamId}/games/${currentGameId}/events`, buildLiveTrackerFinishEventDocumentId(i + index)),
+        data
+      })), finishPlan.statsEpoch);
+    } else await eventBatch.commit();
   }
 
   const aggregatedStatsBatchSizes = [];
@@ -184,6 +194,11 @@ export async function commitFinishPlan({
       statsBatchWriteCount += writeCount;
       i += 1;
     }
+    if (persistStats) {
+      for (const write of statsChunk) await persistStats(write, finishPlan.statsEpoch);
+      aggregatedStatsBatchSizes.push(statsBatchWriteCount);
+      continue;
+    }
     addAggregatedStatsWritesToBatch({
       aggregatedStatsWrites: statsChunk,
       batch: statsBatch,
@@ -199,7 +214,8 @@ export async function commitFinishPlan({
   const gameUpdateBatch = createBatch(db);
   const gameRef = createDocRef(db, `teams/${currentTeamId}/games`, currentGameId);
   gameUpdateBatch.update(gameRef, finishPlan.gameUpdate);
-  await gameUpdateBatch.commit();
+  if (persistFinishWrites) await persistFinishWrites([{ kind: 'update', ref: gameRef, data: finishPlan.gameUpdate }], finishPlan.statsEpoch);
+  else await gameUpdateBatch.commit();
 
   return {
     primaryBatchWriteCount: legacyPrimaryBatchWriteCount,
@@ -229,6 +245,8 @@ export async function runSaveAndCompleteWorkflow({
   createBatch,
   createCollectionRef,
   createDocRef,
+  persistStats = null,
+  persistFinishWrites = null,
   renderLog = () => {},
   endLiveBroadcast = async () => {},
   generateEmailBody = () => '',
@@ -286,6 +304,7 @@ export async function runSaveAndCompleteWorkflow({
     recipientEmail,
     columns: currentConfig?.columns || [],
     statTrackerConfig: currentConfig || {},
+    statsEpoch: getLiveStatsEpoch(currentGame),
     roster,
     statsByPlayerId: state.stats,
     activePlayerIds: state.onCourt,
@@ -328,6 +347,8 @@ export async function runSaveAndCompleteWorkflow({
       createBatch,
       createCollectionRef,
       createDocRef,
+      persistStats,
+      persistFinishWrites,
       beforePrimaryCommit: beforeFinalizationCommit
     });
     await endLiveBroadcast();

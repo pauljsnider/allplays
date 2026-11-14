@@ -94,6 +94,7 @@ export function buildFinishCompletionPlan({
   substitutions = [],
   opponentEntries = [],
   currentUserUid = null,
+  statsEpoch,
   buildEmailBody = () => ''
 } = {}) {
   const privateStatIds = getPrivatePlayerStatIds(statTrackerConfig);
@@ -185,6 +186,7 @@ export function buildFinishCompletionPlan({
       playerId: player.id,
       data: {
         ...baseData,
+        ...(typeof statsEpoch === 'string' ? { liveStatsVersion: 1, liveStatsEpoch: statsEpoch } : {}),
         stats: publicStats
       }
     };
@@ -238,6 +240,7 @@ export function buildFinishCompletionPlan({
   return {
     finalHome,
     finalAway,
+    ...(typeof statsEpoch === 'string' ? { statsEpoch } : {}),
     scoreReconciliation,
     reconciliationNote,
     eventWrites,
