@@ -35,7 +35,7 @@ import {
 } from './safe-image-url.js?v=1';
 import { buildGameWatchShareUrl } from './game-share-links.js?v=1';
 import { shareOrCopy } from './utils.js?v=443388';
-import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
+import { createPlayAnnouncer } from './live-game-announcer.js?v=2';
 import { DIAMOND_ENGINE, buildDiamondViewerUrl } from './diamond-scorebook-routing.js?v=2';
 
 const elements = {
