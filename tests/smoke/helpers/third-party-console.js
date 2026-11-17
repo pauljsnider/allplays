@@ -42,3 +42,25 @@ export function isGoogleReportOnlyFrameDiagnostic(page, message) {
         return false;
     }
 }
+
+// Evidence only: this never changes the classification above. Use fixed
+// categories, not raw URLs, query strings, credentials, frame names or errors.
+export function googleReportOnlyFrameContext(page, message) {
+    const diagnostic = `Framing 'https://www.google.com/' violates the following report-only Content Security Policy directive: "frame-ancestors 'self'". The violation has been logged, but no further action has been taken.`;
+    if (message.type() !== 'error' || message.text().trimEnd() !== diagnostic) return '';
+    let top = 'unavailable';
+    let frames = 'unavailable';
+    let location = 'unavailable';
+    try {
+        const url = new URL(page.url());
+        top = !url.username && !url.password && productionOrigins.has(url.origin) ? 'allowed' : 'rejected';
+    } catch { /* Keep the fixed unavailable category. */ }
+    try {
+        frames = page.frames().some(frame => frame.parentFrame() && isRecaptchaAnchor(frame.url()))
+            ? 'anchor-present' : 'no-anchor';
+    } catch { /* Never serialize the failure or frame URL. */ }
+    try {
+        location = isRecaptchaAnchor(message.location().url) ? 'anchor' : 'other';
+    } catch { /* Console location is optional. */ }
+    return ` [google-frame-context:top=${top};frames=${frames};location=${location}]`;
+}
