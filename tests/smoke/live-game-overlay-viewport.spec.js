@@ -26,6 +26,8 @@ for (const dynamicViewportSupported of [true, false]) {
 }
 
 test('denied browser storage does not stop overlay boot or controls', async ({ page }) => {
+    // This interaction opens the compact mobile panel; desktop starts with it open.
+    await page.setViewportSize({ width: 390, height: 844 });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/*', async route => {
