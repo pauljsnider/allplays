@@ -268,7 +268,7 @@ function buildModuleSource() {
             'const { getLiveChatHistory: getDiamondLiveChatHistory, getLiveReactions: getDiamondLiveReactions, postDiamondLiveChat, postDiamondLiveReaction, subscribeLiveChat: subscribeDiamondLiveChat, subscribeReactions: subscribeDiamondReactions } = deps.diamondLiveEngagement;'
         )
         .replace(
-            "import { createPlayAnnouncer } from './live-game-announcer.js?v=1';",
+            "import { createPlayAnnouncer } from './live-game-announcer.js?v=2';",
             'const { createPlayAnnouncer } = deps.liveGameAnnouncer;'
         )
         .replace(
