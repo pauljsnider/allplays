@@ -25,6 +25,15 @@ export function buildPlayAnnouncement(event = {}) {
     return parts.join('. ');
 }
 
+function getDefaultStorage() {
+    try {
+        return globalThis.localStorage;
+    } catch {
+        // Some restricted browser contexts deny access to the property itself.
+        return null;
+    }
+}
+
 function safeGetStorage(storage, key) {
     try {
         return storage?.getItem?.(key) || null;
@@ -51,7 +60,7 @@ function getAnnouncementEventKey(event = {}, playbackSessionId = 'live') {
 export function createPlayAnnouncer({
     speechSynthesis = globalThis.speechSynthesis,
     SpeechSynthesisUtterance = globalThis.SpeechSynthesisUtterance,
-    storage = globalThis.localStorage,
+    storage = getDefaultStorage(),
     storageKey = DEFAULT_STORAGE_KEY
 } = {}) {
     const announcedEventIds = new Set();
