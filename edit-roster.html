@@ -598,6 +598,8 @@
         let latestRosterStaffEntries = [];
         let latestRosterPrintContactsByPlayerId = new Map();
         let trackingStatusRenderToken = 0;
+        let rosterLoadGeneration = 0;
+        let trackingItemsLoadToken = 0;
         function hasAccess(team, user) {
             if (!team || !user) return false;
             return hasFullTeamAccess(user, { ...team, id: team.id || currentTeamId });
@@ -725,14 +727,12 @@
             currentTeam = team;
             await refreshRosterFieldDefinitions();
 
-            // Fetch unread count and render banner
-            let unreadCount = 0;
-            try {
-                unreadCount = await getUnreadChatCount(currentUser.uid, teamId);
-            } catch (e) {
-                console.warn('Failed to get unread count:', e);
-            }
-            renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'roster', unreadCount });
+            // Chat badge hydration must not hold the roster behind unrelated reads.
+            renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'roster', unreadCount: 0 });
+            void getUnreadChatCount(currentUser.uid, teamId).then((unreadCount) => {
+                if (currentTeamId !== teamId) return;
+                renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'roster', unreadCount });
+            }).catch((error) => console.warn('Failed to get unread count:', error));
 
             document.getElementById('team-name-display').textContent = team.name;
             renderRegistrationRosterImport(team);
@@ -755,7 +755,12 @@
         }
 
         async function refreshTrackingItems() {
-            trackingItems = await listTeamTrackingItems(currentTeamId);
+            const teamId = currentTeamId;
+            const generation = rosterLoadGeneration;
+            const token = ++trackingItemsLoadToken;
+            const items = await listTeamTrackingItems(teamId);
+            if (teamId !== currentTeamId || generation !== rosterLoadGeneration || token !== trackingItemsLoadToken) return false;
+            trackingItems = items;
             if (!selectedTrackingItemId && trackingItems.length > 0) {
                 selectedTrackingItemId = trackingItems[0].id;
             }
@@ -763,6 +768,7 @@
                 selectedTrackingItemId = trackingItems[0]?.id || '';
             }
             renderTrackingItemSelect();
+            return true;
         }
 
         function renderTrackingItemSelect() {
@@ -1519,29 +1525,32 @@
 
         async function loadRoster() {
             const tbody = document.getElementById('roster-list');
-            try {
-                await refreshTrackingItems();
-            } catch (err) {
-                console.warn('Failed to load tracking items for roster:', err);
-                trackingItems = [];
-                selectedTrackingItemId = '';
-                renderTrackingItemSelect();
-            }
-
+            const generation = ++rosterLoadGeneration;
+            const isCurrentLoad = () => generation === rosterLoadGeneration;
             let players = [];
             try {
                 players = await getPlayersWithPrivateRosterContacts(currentTeamId, { includeInactive: true });
             } catch (err) {
+                if (!isCurrentLoad()) return;
                 console.error('Error loading roster players:', err);
                 tbody.innerHTML = `<tr><td colspan="3" class="px-6 py-4 text-center text-red-600">Unable to load roster players: ${escapeHtml(err?.message || 'Please try again.')}</td></tr>`;
                 return;
             }
 
+            if (!isCurrentLoad()) return;
+            // Show authoritative player data immediately. Contacts/actions are explicitly
+            // pending, not an empty or complete result, until their reads finish.
+            tbody.innerHTML = players.length ? players.map((player) => `
+                <tr><td class="px-6 py-4">${escapeHtml(player.number || '-')}</td>
+                <td class="px-6 py-4">${escapeHtml(player.name || 'Unnamed player')}</td>
+                <td class="px-6 py-4 text-sm text-gray-500" role="status">Loading contacts and actions…</td></tr>
+            `).join('') : '<tr><td colspan="3" class="px-6 py-4 text-center text-gray-500">No players yet.</td></tr>';
             const [games, membershipRequests, forms] = await Promise.all([
                 loadOptionalRosterData('games for roster links', () => getGames(currentTeamId), []),
                 loadOptionalRosterData('parent membership requests for roster', () => listTeamParentMembershipRequests(currentTeamId), []),
                 loadOptionalRosterData('registration forms for roster', () => listTeamRegistrationForms(currentTeamId), [])
             ]);
+            if (!isCurrentLoad()) return;
             latestRosterStaffEntries = buildRosterStaffEntries(currentTeam, [currentUser].filter(Boolean));
             renderRosterStaffSection(latestRosterStaffEntries);
             latestRosterPlayers = players;
@@ -1553,8 +1562,16 @@
                 selectedRegistrationFormId = registrationForms[0].id;
             }
             renderRegistrationFormFilter();
-            await loadRegistrationReviews();
-            await renderTrackingStatusMatrix();
+            // Independent panels never gate the main roster rows.
+            void loadRegistrationReviews();
+            void refreshTrackingItems().then((applied) => {
+                if (applied && isCurrentLoad()) return renderTrackingStatusMatrix();
+            }).catch((error) => {
+                if (!isCurrentLoad()) return;
+                console.warn('Failed to load roster tracking:', error);
+                document.getElementById('tracking-status-summary').textContent = 'Tracking unavailable. Reload to retry.';
+                document.getElementById('tracking-status-matrix').innerHTML = '<p class="text-sm text-red-600">Unable to load tracking. Previous values are not current.</p>';
+            });
             const latestGameId = [...games].sort((a, b) => {
                 const aDate = a.date.toDate ? a.date.toDate() : new Date(a.date);
                 const bDate = b.date.toDate ? b.date.toDate() : new Date(b.date);
@@ -1608,6 +1625,7 @@
                     existing.push(request);
                     pendingRequestsByPlayerId.set(request.playerId, existing);
                 });
+            if (!isCurrentLoad()) return;
             latestRosterPrintContactsByPlayerId = parentsByPlayerId;
 
             if (players.length === 0) {
