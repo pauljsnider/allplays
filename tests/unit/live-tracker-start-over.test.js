@@ -187,7 +187,7 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
 
   source = source.replace(/import[^;]+from '\.\/stat-leaderboards\.js[^']*';/, 'const { splitPlayerStatsByVisibility, getPrivatePlayerStatIds } = deps.statVisibility;');
   source = source.replace(/import[^;]+from '\.\/live-aggregate-stats\.js[^']*';/, 'const { getLiveStatsEpoch, readLiveStatsForWrite } = deps.liveAggregateStats;')
-    .replace(/import[^;]+from '\.\/live-aggregate-persistence\.js[^']*';/, 'const { persistLiveAggregateSnapshot, persistLiveEpochWrites, clearResetPrivateStats } = deps.liveAggregatePersistence;');
+    .replace(/import[^;]+from '\.\/live-aggregate-persistence\.js[^']*';/, 'const { persistLiveAggregateSnapshot, persistLiveEpochWrites, clearResetPrivateStats, resetLiveTrackerData } = deps.liveAggregatePersistence;');
   let rewritten = source.replace("import { getTeamScorePair } from './season-record.js';", `const getTeamScorePair = ${getTeamScorePair.toString()};`);
   rewritten = replaceNamedImportByModulePath(
     rewritten,
@@ -416,7 +416,14 @@ async function bootLiveTracker({ game, snapshots }) {
       db: {},
       writeBatch: () => ({ set() {}, update() {}, commit: async () => {} }),
       doc: (_db, ...parts) => ({ path: parts.join('/') }),
-      runTransaction: async (_db, fn) => fn({get: async ref => ({data: () => ref.path === 'teams/team-1/games/game-1' ? game : {stats:{secret:7}}}), delete: ref => deleteCalls.push(ref.path)}),
+      runTransaction: async (_db, fn) => fn({
+        get: async ref => ({ data: () => ref.path === 'teams/team-1/games/game-1' ? game : { stats: { secret: 7 } } }),
+        update: (_ref, payload) => { updateCalls.push(payload); Object.assign(game, payload); },
+        delete: ref => deleteCalls.push(ref.path),
+        set: (ref, payload) => {
+          if (ref.path.includes('/liveEvents/')) broadcastCalls.push(payload);
+        }
+      }),
       setDoc: async () => {},
       addDoc: async () => {},
       onSnapshot: () => () => {},

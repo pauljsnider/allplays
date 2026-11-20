@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { commitStandardTrackerFinishData, resetStandardTrackerData } from '../../js/track-finish.js';
+import { persistLiveEpochWrites, resetLiveTrackerData } from '../../js/live-aggregate-persistence.js';
 import { applyLiveAggregateTotals, readLiveStatsForWrite, liveStatsMetadata } from '../../js/live-aggregate-stats.js';
 
 const gamePath = 'teams/t/games/g';
@@ -161,6 +162,26 @@ describe('standard/Beta reset publication', () => {
             opponentStats: {}, status: 'scheduled', summary: ''
         });
     });
+    it('preserves a current-epoch private save that replaces a captured cleanup row', async () => {
+        const f = fixture({ before: (call, docs) => {
+            if (call === 2) {
+                docs.set(privatePlayerPath, {
+                    stats: { effort: 8 },
+                    liveStatsVersion: 1,
+                    liveStatsEpoch: 'id:fresh'
+                });
+            }
+        } });
+        f.documents.set(privatePlayerPath, { stats: { effort: 3 } });
+
+        await resetStandardTrackerData(resetPayload(f));
+
+        expect(f.documents.get(privatePlayerPath)).toEqual({
+            stats: { effort: 8 },
+            liveStatsVersion: 1,
+            liveStatsEpoch: 'id:fresh'
+        });
+    });
     it('cannot delete new-epoch rows when another reset wins between cleanup chunks', async () => {
         const f = fixture({ before: (n, docs) => {
             if (n === 2) {
@@ -180,6 +201,68 @@ describe('standard/Beta reset publication', () => {
         const beta = readFileSync(new URL('../../js/track-basketball.js', import.meta.url), 'utf8');
         const privateBlock = beta.slice(beta.indexOf('privateStatsSnapshot.forEach'));
         expect(privateBlock).toContain('readLiveStatsForWrite(d.data(), currentGame)');
+    });
+    it('publishes Live Tracker start-over before scanning and preserves accepted current-epoch rows', async () => {
+        const f = fixture();
+        const liveEventPath = `${gamePath}/liveEvents/old-live`;
+        f.documents.set(playerPath, { stats: { pts: 4 }, ...liveStatsMetadata({ liveResetAt: 1000 }) });
+        f.documents.set(privatePlayerPath, { stats: { effort: 3 } });
+        f.documents.set(liveEventPath, { type: 'stat' });
+        let staleFinishRejected = false;
+        const collectionRefs = ['events', 'aggregatedStats', 'privatePlayerStats', 'liveEvents']
+            .map(name => ({ path: `${gamePath}/${name}` }));
+        const patch = await resetLiveTrackerData({
+            db: f.payload.db,
+            runTransaction: f.payload.runTransaction,
+            gameRef: { path: gamePath },
+            collectionRefs,
+            getDocs: async ref => {
+                expect(f.documents.get(gamePath).liveResetEventId).toBe('live-fresh');
+                if (ref.path.endsWith('/events')) {
+                    await expect(commitStandardTrackerFinishData({ ...f.payload,
+                        gameLog: [{ text: 'stale finish' }]
+                    })).rejects.toThrow('reset changed');
+                    await expect(persistLiveEpochWrites({
+                        db: f.payload.db,
+                        runTransaction: f.payload.runTransaction,
+                        gameRef: { path: gamePath },
+                        expectedEpoch: 'time:1000',
+                        writes: [{ kind: 'set', ref: { path: `${gamePath}/liveEvents/delayed-old` }, data: { type: 'stat' } }]
+                    })).rejects.toThrow('reset changed');
+                    staleFinishRejected = true;
+                }
+                if (ref.path.endsWith('/privatePlayerStats')) {
+                    f.documents.set(privatePlayerPath, {
+                        stats: { effort: 9 }, liveStatsVersion: 1, liveStatsEpoch: 'id:live-fresh'
+                    });
+                }
+                return { docs: [...f.documents.keys()]
+                    .filter(path => path.startsWith(`${ref.path}/`))
+                    .map(path => ({ ref: { path } })) };
+            },
+            expectedEpoch: 'time:1000',
+            resetEventId: 'live-fresh',
+            resetAt: 3000,
+            gamePatch: {
+                homeScore: 0, awayScore: 0, status: 'scheduled', summary: '',
+                liveStatus: 'scheduled', liveHasData: false, opponentStats: {}
+            }
+        });
+
+        expect(staleFinishRejected).toBe(true);
+        expect(patch).toMatchObject({ liveResetEventId: 'live-fresh', status: 'scheduled', summary: '' });
+        expect(f.documents.has(playerPath)).toBe(false);
+        expect(f.documents.has(liveEventPath)).toBe(false);
+        expect(f.documents.get(privatePlayerPath)?.stats.effort).toBe(9);
+        expect(f.documents.get(gamePath)).toMatchObject({
+            liveResetEventId: 'live-fresh', homeScore: 0, awayScore: 0,
+            status: 'scheduled', summary: '', liveStatus: 'scheduled', liveHasData: false
+        });
+        const liveTracker = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
+        expect(liveTracker).toContain('const resetPatch = await resetLiveTrackerData({');
+        expect(liveTracker.indexOf('const resetPatch = await resetLiveTrackerData({')).toBeLessThan(
+            liveTracker.indexOf("await broadcastResetEvent('Tracker reset before restart. Live viewer state cleared.');")
+        );
     });
     it.each(['../../track.html', '../../js/track-basketball.js'])('uses guarded reset and updates local epoch only after success in %s', path => {
         const source = readFileSync(new URL(path, import.meta.url), 'utf8');

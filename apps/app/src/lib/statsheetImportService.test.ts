@@ -60,7 +60,7 @@ vi.mock('../../../../js/firebase-ai.js', () => firebaseAiMocks)
 vi.mock('./profilePhotoService', () => ({ acquireProfilePhoto: vi.fn() }))
 
 
-import { analyzeTrackStatsheetPhoto, applyTrackStatsheetImportForApp, buildTrackStatsheetReviewModel } from './statsheetImportService'
+import { analyzeTrackStatsheetPhoto, applyTrackStatsheetImportForApp, buildTrackStatsheetReviewModel, countTrackStatsheetReplacementWrites } from './statsheetImportService'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -179,6 +179,20 @@ describe('analyzeTrackStatsheetPhoto', () => {
 })
 
 describe('applyTrackStatsheetImportForApp', () => {
+  it('counts the private set or delete for every mixed statsheet row at the transaction boundary', () => {
+    const nearLimit = Array.from({ length: 249 }, (_, index) => ({
+      playerId: `p${index}`,
+      data: { stats: { pts: index } },
+      ...(index % 2 ? { privateData: { stats: { effort: index } } } : {})
+    }))
+
+    expect(countTrackStatsheetReplacementWrites(nearLimit)).toBe(499)
+    expect(countTrackStatsheetReplacementWrites([...nearLimit, {
+      playerId: 'overflow',
+      data: { stats: { pts: 1 } }
+    }])).toBe(501)
+  })
+
   it('batches replacement cleanup into the same commit as the new statsheet writes', async () => {
     firebaseMocks.getDocs
       .mockResolvedValueOnce({ size: 1, docs: [{ id: 'event-1', ref: { path: 'teams/team-1/games/game-1/events/event-1' } }] })

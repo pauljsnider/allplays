@@ -128,8 +128,17 @@ export function addAggregatedStatsWritesToBatch({
   });
 }
 
-function getAggregatedStatsWriteOperationCount() {
+export function getAggregatedStatsWriteOperationCount() {
+  // Every player stages a public set and either a private set or a private
+  // delete, so both public-only and public/private rows consume two writes.
   return 2;
+}
+
+export function countAggregatedStatsWriteOperations(aggregatedStatsWrites = []) {
+  return aggregatedStatsWrites.reduce(
+    (total, write) => total + getAggregatedStatsWriteOperationCount(write),
+    0
+  );
 }
 
 export async function commitFinishPlan({

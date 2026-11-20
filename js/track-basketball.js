@@ -9,7 +9,7 @@ import { getAI, getGenerativeModel, GoogleAIBackend } from './firebase-ai.js?v=1
 import { getApp } from './vendor/firebase-app.js';
 import { canApplySubstitution, applySubstitution, canApplySubstitutionQueue, canApplyQueuedSubstitution, resolveFinalScoreForCompletion } from './live-tracker-integrity.js?v=4';
 import { resolveFinalScore, resolveSummaryRecipient } from './live-tracker-email.js?v=2';
-import { commitStandardTrackerFinishData, resetStandardTrackerData } from './track-finish.js?v=6';
+import { commitStandardTrackerFinishData, resetStandardTrackerData } from './track-finish.js?v=7';
 import { getLiveStatsEpoch, readLiveStatsForWrite, liveStatsMatchEpoch } from './live-aggregate-stats.js?v=2';
 import { getPrivatePlayerStatIds } from './stat-leaderboards.js?v=4';
 import { hasScorekeepingTeamAccess } from './team-access.js?v=44338';

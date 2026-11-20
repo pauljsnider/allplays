@@ -1,9 +1,9 @@
 import { splitPlayerStatsByVisibility, getPrivatePlayerStatIds } from './stat-leaderboards.js?v=4';
 import { getLiveStatsEpoch, readLiveStatsForWrite } from './live-aggregate-stats.js?v=2';
-import { persistLiveAggregateSnapshot, persistLiveEpochWrites, clearResetPrivateStats } from './live-aggregate-persistence.js?v=3';
+import { persistLiveAggregateSnapshot, persistLiveEpochWrites, resetLiveTrackerData } from './live-aggregate-persistence.js?v=4';
 import { getTeamScorePair } from './season-record.js';
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433215';
+import { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, query, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433215';
 import { db } from './firebase.js?v=4433197';
 import { getUrlParams, escapeHtml } from './utils.js?v=443391';
 import { checkAuth } from './auth.js?v=4433220';
@@ -31,7 +31,7 @@ import {
   readPersistedLiveTrackerState,
   writePersistedLiveTrackerState
 } from './live-tracker-queue.js?v=1';
-import { commitFinishPlan, isTransientFinalizationFailure, runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js?v=6';
+import { commitFinishPlan, isTransientFinalizationFailure, runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js?v=7';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -1399,10 +1399,38 @@ function startVoiceNote() {
   recognition.start();
 }
 
+async function persistBroadcastEvent(eventData) {
+  if (typeof eventData?.liveStatsEpoch !== 'string') {
+    throw new Error('Missing live event reset epoch.');
+  }
+  const eventWithEpoch = {
+    ...eventData,
+    liveStatsVersion: 1
+  };
+  const eventWithId = withStableLiveEventId(eventWithEpoch);
+  await persistLiveEpochWrites({
+    db,
+    runTransaction,
+    gameRef: doc(db, `teams/${currentTeamId}/games`, currentGameId),
+    expectedEpoch: eventWithId.liveStatsEpoch,
+    writes: [{
+      kind: 'set',
+      ref: doc(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`, eventWithId.eventId),
+      data: { ...eventWithId, createdAt: serverTimestamp() }
+    }]
+  });
+  return eventWithId;
+}
+
 async function broadcastEvent(eventData) {
-  const eventWithId = withStableLiveEventId(eventData);
+  const eventWithId = withStableLiveEventId({
+    ...eventData,
+    liveStatsEpoch: typeof eventData?.liveStatsEpoch === 'string'
+      ? eventData.liveStatsEpoch
+      : getLiveStatsEpoch(currentGame)
+  });
   try {
-    await broadcastLiveEvent(currentTeamId, currentGameId, eventWithId);
+    await persistBroadcastEvent(eventWithId);
     renderLiveSyncStatus();
   } catch (error) {
     console.error('Broadcast failed (will retry):', error);
@@ -1443,7 +1471,7 @@ async function drainPendingLiveEventQueue() {
       persistPendingEventQueue();
     }
     try {
-      await broadcastLiveEvent(currentTeamId, currentGameId, event);
+      await persistBroadcastEvent(event);
       liveState.eventQueue.shift();
       liveState.retryAttempt = 0;
       persistPendingEventQueue();
@@ -2140,35 +2168,45 @@ async function startStop() {
         const confirmClear = confirm(`This game already has ${eventsSnap.size} tracked event(s). Starting fresh will clear them. Continue?`);
         if (!confirmClear) return;
 
-        const cleanupEpoch = getLiveStatsEpoch(currentGame);
-        currentGame.liveResetEventId = crypto.randomUUID();
-        await Promise.all(eventsSnap.docs.map(d => deleteDoc(d.ref)));
-        const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
-        await Promise.all(statsSnap.docs.map(d => deleteDoc(d.ref)));
-        const privateStatsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`));
-        await Promise.all(privateStatsSnap.docs.map(d => clearResetPrivateStats({ db, runTransaction, gameRef: doc(db, `teams/${currentTeamId}/games/${currentGameId}`), privateRef: d.ref, expectedEpoch: cleanupEpoch })));
-        const liveEventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));
-        await Promise.all(liveEventsSnap.docs.map(d => deleteDoc(d.ref)));
-        // Reset game doc scores/opponent stats to avoid mixing old data
-        await updateGame(currentTeamId, currentGameId, { 
-          homeScore: 0, 
-          awayScore: 0, 
-          liveStatus: 'scheduled',
-          liveResetAt: serverTimestamp(),
-          liveResetEventId: currentGame.liveResetEventId,
-          liveHasData: false,
-          opponentStats: {},
-          // Preserve opponent fields
-          opponent: currentGame.opponent,
-          opponentTeamId: currentGame.opponentTeamId,
-          opponentTeamName: currentGame.opponentTeamName,
-          opponentTeamPhoto: currentGame.opponentTeamPhoto
+        const resetAt = Date.now();
+        const resetLineup = { onCourt: [], bench: roster.map(player => player.id) };
+        clearPendingEventQueue();
+        clearPendingFinalization();
+        const gameRef = doc(db, `teams/${currentTeamId}/games`, currentGameId);
+        const resetPatch = await resetLiveTrackerData({
+          db,
+          runTransaction,
+          gameRef,
+          expectedEpoch: getLiveStatsEpoch(currentGame),
+          resetAt: serverTimestamp(),
+          gamePatch: {
+            homeScore: 0,
+            awayScore: 0,
+            status: 'scheduled',
+            summary: '',
+            liveStatus: 'scheduled',
+            liveHasData: false,
+            opponentStats: {},
+            liveClockMs: 0,
+            liveClockRunning: false,
+            liveClockPeriod: 'Q1',
+            liveClockUpdatedAt: resetAt,
+            liveLineup: resetLineup,
+            // Preserve opponent fields.
+            opponent: currentGame.opponent,
+            opponentTeamId: currentGame.opponentTeamId,
+            opponentTeamName: currentGame.opponentTeamName,
+            opponentTeamPhoto: currentGame.opponentTeamPhoto
+          },
+          collectionRefs: [
+            collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`),
+            collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`),
+            collection(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`),
+            collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`)
+          ],
+          getDocs
         });
-        currentGame.liveStatus = 'scheduled';
-        currentGame.liveHasData = false;
-        currentGame.homeScore = 0;
-        currentGame.awayScore = 0;
-        currentGame.opponentStats = {};
+        Object.assign(currentGame, resetPatch);
         await broadcastResetEvent('Tracker reset before restart. Live viewer state cleared.');
       }
     }
@@ -3095,60 +3133,42 @@ async function init() {
         clearPendingEventQueue();
         clearPendingFinalization();
         clearLocalTrackerState();
-        const [eventsSnapshot, statsSnapshot, privateStatsSnapshot, liveEventsSnapshot] = await Promise.all([
-          safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/events`), 'events'),
-          safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats'),
-          getDocs(collection(db, `teams/${teamId}/games/${gameId}/privatePlayerStats`)),
-          safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/liveEvents`), 'liveEvents')
-        ]);
         const resetAt = Date.now();
-        const resetEventId = crypto.randomUUID();
-        currentGame.liveResetEventId = resetEventId;
         const resetLineup = { onCourt: [], bench: roster.map(r => r.id) };
-        try {
-          await updateGame(teamId, gameId, {
+        const resetPatch = await resetLiveTrackerData({
+          db,
+          runTransaction,
+          gameRef: doc(db, `teams/${teamId}/games`, gameId),
+          expectedEpoch: getLiveStatsEpoch(currentGame),
+          resetAt: serverTimestamp(),
+          gamePatch: {
             homeScore: 0,
             awayScore: 0,
+            status: 'scheduled',
+            summary: '',
             opponentStats: {},
             liveStatus: 'scheduled',
             liveHasData: false,
-            liveResetAt: serverTimestamp(),
-            liveResetEventId: resetEventId,
             liveClockMs: 0,
             liveClockRunning: false,
             liveClockPeriod: 'Q1',
             liveClockUpdatedAt: resetAt,
             liveLineup: resetLineup,
-            // Preserve opponent fields
+            // Preserve opponent fields.
             opponent: game.opponent,
             opponentTeamId: game.opponentTeamId,
             opponentTeamName: game.opponentTeamName,
             opponentTeamPhoto: game.opponentTeamPhoto
-          });
-          currentGame.liveStatus = 'scheduled';
-          currentGame.liveHasData = false;
-          currentGame.homeScore = 0;
-          currentGame.awayScore = 0;
-          currentGame.opponentStats = {};
-          currentGame.liveLineup = resetLineup;
-        } catch (error) {
-          console.warn('Failed to reset game metadata:', error);
-        }
-        currentGame.liveClockMs = 0;
-        currentGame.liveClockRunning = false;
-        currentGame.liveClockPeriod = 'Q1';
-        currentGame.liveClockUpdatedAt = resetAt;
-        const deletions = [
-          ...eventsSnapshot.docs.map(d => deleteDoc(d.ref)),
-          ...statsSnapshot.docs.map(d => deleteDoc(d.ref)),
-          ...privateStatsSnapshot.docs.map(d => clearResetPrivateStats({ db, runTransaction, gameRef: doc(db, `teams/${teamId}/games/${gameId}`), privateRef: d.ref, expectedEpoch: getLiveStatsEpoch(currentGame) })),
-          ...liveEventsSnapshot.docs.map(d => deleteDoc(d.ref))
-        ];
-        const results = await Promise.allSettled(deletions);
-        const failedDeletes = results.filter(r => r.status === 'rejected');
-        if (failedDeletes.length) {
-          console.warn('Some live data could not be deleted:', failedDeletes);
-        }
+          },
+          collectionRefs: [
+            collection(db, `teams/${teamId}/games/${gameId}/events`),
+            collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`),
+            collection(db, `teams/${teamId}/games/${gameId}/privatePlayerStats`),
+            collection(db, `teams/${teamId}/games/${gameId}/liveEvents`)
+          ],
+          getDocs
+        });
+        Object.assign(currentGame, resetPatch);
         state.home = 0;
         state.away = 0;
         state.opp = [];

@@ -156,8 +156,8 @@ export async function commitStandardTrackerFinishData({
                         if (write.kind === 'delete') transaction.delete(write.ref);
                         else if (write.kind === 'update') transaction.update(write.ref, write.data);
                         else {
-                            const isStats = /\/(aggregatedStats|privatePlayerStats)\//.test(write.ref.path);
-                            transaction.set(write.ref, isStats ? { ...write.data, ...liveStatsMetadata(game) } : write.data);
+                            const isEpochBound = /\/(events|aggregatedStats|privatePlayerStats)\//.test(write.ref.path);
+                            transaction.set(write.ref, isEpochBound ? { ...write.data, ...liveStatsMetadata(game) } : write.data);
                         }
                     }
                 });
@@ -289,7 +289,7 @@ export async function resetStandardTrackerData({ db, runTransaction, doc, collec
             if (!game || getLiveStatsEpoch(game) !== epoch) {
                 throw new Error('Tracking reset changed; reload before resetting again.');
             }
-            callback(transaction);
+            await callback(transaction, game);
         });
     }
     await transact(expectedEpoch, transaction => transaction.update(gameRef, patch));
@@ -298,7 +298,15 @@ export async function resetStandardTrackerData({ db, runTransaction, doc, collec
         getDocs(collection(db, `teams/${teamId}/games/${gameId}/${name}`))));
     const refs = snapshots.flatMap(snapshot => snapshot.docs.map(row => row.ref));
     for (let start = 0; start < refs.length; start += 450) {
-        await transact(resetEpoch, transaction => refs.slice(start, start + 450).forEach(ref => transaction.delete(ref)));
+        const chunk = refs.slice(start, start + 450);
+        await transact(resetEpoch, async transaction => {
+            const rows = await Promise.all(chunk.map(ref => transaction.get(ref)));
+            rows.forEach((row, index) => {
+                const data = row.data();
+                if (data?.liveStatsVersion === 1 && data.liveStatsEpoch === resetEpoch) return;
+                transaction.delete(chunk[index]);
+            });
+        });
     }
     await transact(resetEpoch, transaction => transaction.update(gameRef, patch));
     return patch;

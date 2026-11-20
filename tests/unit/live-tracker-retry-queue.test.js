@@ -117,7 +117,7 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
 
     source = source.replace(/import[^;]+from '\.\/stat-leaderboards\.js[^']*';/, 'const { splitPlayerStatsByVisibility, getPrivatePlayerStatIds } = deps.statVisibility;');
   source = source.replace(/import[^;]+from '\.\/live-aggregate-stats\.js[^']*';/, 'const { getLiveStatsEpoch, readLiveStatsForWrite } = deps.liveAggregateStats;')
-    .replace(/import[^;]+from '\.\/live-aggregate-persistence\.js[^']*';/, 'const { persistLiveAggregateSnapshot, persistLiveEpochWrites, clearResetPrivateStats } = deps.liveAggregatePersistence;');
+    .replace(/import[^;]+from '\.\/live-aggregate-persistence\.js[^']*';/, 'const { persistLiveAggregateSnapshot, persistLiveEpochWrites, clearResetPrivateStats, resetLiveTrackerData } = deps.liveAggregatePersistence;');
   let rewritten = source.replace("import { getTeamScorePair } from './season-record.js';", `const getTeamScorePair = ${getTeamScorePair.toString()};`);
     rewritten = replaceNamedImportByModulePath(
         rewritten,
@@ -127,7 +127,7 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
     rewritten = replaceImport(
         rewritten,
         /import\s*\{(?=[\s\S]*\bdb\b)[\s\S]*?\}\s*from\s*['"]\.\/firebase\.js(?:\?v=[^'"]+)?['"];?\s*/,
-        'const { db, writeBatch, doc, setDoc, addDoc, onSnapshot } = deps.firebase;'
+        'const { db, writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp, runTransaction } = deps.firebase;'
     );
     rewritten = replaceNamedImportByModulePath(rewritten, './utils.js', 'const { getUrlParams, escapeHtml } = deps.utils;');
     rewritten = replaceNamedImportByModulePath(rewritten, './auth.js', 'const { checkAuth } = deps.auth;');
@@ -170,6 +170,7 @@ return {
   setContext(context = {}) {
     currentTeamId = context.teamId || null;
     currentGameId = context.gameId || null;
+    currentGame = context.game || {};
   }
 };`);
 }
@@ -190,7 +191,10 @@ async function bootHarness({ broadcastImpl, commitImpl = async () => {}, setGame
     const { document } = createEnvironment();
     const scheduledTimeouts = new Map();
     let nextTimeoutId = 1;
-    const deps = { liveAggregateStats, liveAggregatePersistence, statVisibility,
+    const deps = { liveAggregateStats, liveAggregatePersistence: {
+            ...liveAggregatePersistence,
+            persistLiveEpochWrites: async ({ writes }) => broadcastImpl('team-1', 'game-9', writes[0].data)
+        }, statVisibility,
         db: {
             getTeam: async () => ({}),
             getTeams: async () => [],
@@ -210,10 +214,12 @@ async function bootHarness({ broadcastImpl, commitImpl = async () => {}, setGame
         firebase: {
             db: {},
             writeBatch: () => ({ set() {}, update() {}, commit: async () => {} }),
-            doc: () => ({}),
+            doc: (_db, ...parts) => ({ path: parts.join('/') }),
             setDoc: async () => {},
             addDoc: async () => {},
-            onSnapshot: () => () => {}
+            onSnapshot: () => () => {},
+            serverTimestamp: () => ({ _methodName: 'serverTimestamp' }),
+            runTransaction: async () => {}
         },
         utils: {
             getUrlParams: () => ({}),
@@ -362,14 +368,17 @@ describe('live tracker retry queue persistence', () => {
         });
         expect(Date.parse(queuedEvent.clientCreatedAt)).toBeGreaterThan(0);
         expect(attempts).toEqual([queuedEvent]);
-        expect(page.liveState.eventQueue).toEqual([queuedEvent]);
-        expect(readPersistedLiveTrackerQueue(page.storage, 'team-1', 'game-9')).toEqual([queuedEvent]);
+        expect(page.liveState.eventQueue).toHaveLength(1);
+        expect(page.liveState.eventQueue[0]).toMatchObject({
+            type: 'stat', statKey: 'pts', value: 2, eventId: 'live-event-1', liveStatsEpoch: ''
+        });
+        expect(readPersistedLiveTrackerQueue(page.storage, 'team-1', 'game-9')).toEqual(page.liveState.eventQueue);
         errorSpy.mockRestore();
     });
 
     it('keeps remaining pending events persisted until each replay succeeds', async () => {
-        const firstEvent = { type: 'stat', statKey: 'pts', value: 2 };
-        const secondEvent = { type: 'lineup', onCourt: ['p1', 'p2', 'p3', 'p4', 'p5'] };
+        const firstEvent = { type: 'stat', statKey: 'pts', value: 2, liveStatsEpoch: '' };
+        const secondEvent = { type: 'lineup', onCourt: ['p1', 'p2', 'p3', 'p4', 'p5'], liveStatsEpoch: '' };
         const randomUUID = vi.fn()
             .mockReturnValueOnce('event-1')
             .mockReturnValueOnce('event-2');
@@ -405,8 +414,13 @@ describe('live tracker retry queue persistence', () => {
         ]);
         expect(attempts[0]).toMatchObject({ ...firstEvent, eventId: 'live-event-1' });
         expect(Date.parse(attempts[0].clientCreatedAt)).toBeGreaterThan(0);
-        expect(page.liveState.eventQueue).toEqual([queuedSecondEvent]);
-        expect(readPersistedLiveTrackerQueue(page.storage, 'team-1', 'game-9')).toEqual([queuedSecondEvent]);
+        expect(page.liveState.eventQueue).toHaveLength(1);
+        expect(page.liveState.eventQueue[0]).toMatchObject({
+            ...secondEvent,
+            eventId: 'live-event-2',
+            liveStatsEpoch: ''
+        });
+        expect(readPersistedLiveTrackerQueue(page.storage, 'team-1', 'game-9')).toEqual(page.liveState.eventQueue);
 
         await page.flushOneTimer();
 
@@ -490,7 +504,7 @@ describe('live tracker retry queue persistence', () => {
         });
 
         page.setContext({ teamId: 'team-1', gameId: 'game-9' });
-        page.liveState.eventQueue = [{ type: 'stat', statKey: 'pts', value: 2 }];
+        page.liveState.eventQueue = [{ type: 'stat', statKey: 'pts', value: 2, liveStatsEpoch: '' }];
         page.persistPendingEventQueue();
         page.liveState.pendingFinish = pendingFinish;
         page.persistPendingFinalization();

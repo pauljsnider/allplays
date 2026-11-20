@@ -34,9 +34,51 @@ export async function persistLiveEpochWrites({ db, runTransaction, gameRef, expe
         }
         for (const write of writes) {
             if (write.kind === 'update') transaction.update(write.ref, write.data);
-            else transaction.set(write.ref, write.data);
+            else {
+                const isEvent = /\/(events|liveEvents)\//.test(write.ref.path);
+                transaction.set(write.ref, isEvent ? { ...write.data, ...liveStatsMetadata(game) } : write.data);
+            }
         }
     });
+}
+
+// Live Tracker start-over has the same reset boundary as Standard/Beta: publish
+// the new epoch first, then remove only rows that do not belong to that epoch.
+// A final guarded patch makes completion fields authoritative after cleanup.
+export async function resetLiveTrackerData({ db, runTransaction, gameRef, collectionRefs = [], getDocs,
+    expectedEpoch, gamePatch = {}, resetEventId = crypto.randomUUID(), resetAt = Date.now(), chunkSize = 200 }) {
+    if (typeof expectedEpoch !== 'string' || !resetEventId || typeof getDocs !== 'function') {
+        throw new Error('Missing live tracker reset boundary.');
+    }
+    const patch = { ...gamePatch, liveResetEventId: resetEventId, liveResetAt: resetAt };
+    const resetEpoch = getLiveStatsEpoch(patch);
+
+    async function transact(epoch, callback) {
+        await runTransaction(db, async transaction => {
+            const game = (await transaction.get(gameRef)).data();
+            if (!game || getLiveStatsEpoch(game) !== epoch) {
+                throw new Error('Tracking reset changed; reload before resetting again.');
+            }
+            await callback(transaction, game);
+        });
+    }
+
+    await transact(expectedEpoch, transaction => transaction.update(gameRef, patch));
+    const snapshots = await Promise.all(collectionRefs.map(ref => getDocs(ref)));
+    const refs = snapshots.flatMap(snapshot => snapshot.docs.map(row => row.ref));
+    for (let start = 0; start < refs.length; start += chunkSize) {
+        const chunk = refs.slice(start, start + chunkSize);
+        await transact(resetEpoch, async transaction => {
+            const rows = await Promise.all(chunk.map(ref => transaction.get(ref)));
+            rows.forEach((row, index) => {
+                const data = row.data();
+                if (data?.liveStatsVersion === 1 && data.liveStatsEpoch === resetEpoch) return;
+                transaction.delete(chunk[index]);
+            });
+        });
+    }
+    await transact(resetEpoch, transaction => transaction.update(gameRef, patch));
+    return patch;
 }
 
 // A reviewed statsheet is a replacement generation. Keep the existing batch

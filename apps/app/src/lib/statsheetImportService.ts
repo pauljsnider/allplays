@@ -2,6 +2,7 @@ import { acquireProfilePhoto } from './profilePhotoService'
 import { createLogger } from './logger'
 import {
   addAggregatedStatsWritesToBatch,
+  countAggregatedStatsWriteOperations,
   createLiveStatsReplacementBatch,
   getLiveStatsEpoch,
   runTransaction,
@@ -63,6 +64,10 @@ type TrackStatsheetRosterPlayer = {
   id: string;
   name?: string;
   number?: string | number;
+}
+
+export function countTrackStatsheetReplacementWrites(aggregatedStatsWrites: any[] = [], cleanupWriteCount = 0) {
+  return countAggregatedStatsWriteOperations(aggregatedStatsWrites) + 1 + cleanupWriteCount
 }
 
 export function normalizeTrackStatsheetNumber(value: unknown) {
@@ -413,9 +418,10 @@ export async function applyTrackStatsheetImportForApp({
       ...privateStatsSnap.docs.filter((entry: any) => !plannedPlayerIds.has(getTrackedDocId(entry)))
     ]
 
-    const primaryBatchWrites = (applyPlan.aggregatedStatsWrites || []).length * 2
-      + 1
-      + (replaceExisting ? cleanupDocs.length : 0)
+    const primaryBatchWrites = countTrackStatsheetReplacementWrites(
+      applyPlan.aggregatedStatsWrites || [],
+      replaceExisting ? cleanupDocs.length : 0
+    )
     if (primaryBatchWrites > FIRESTORE_BATCH_WRITE_LIMIT) {
       throw new Error('This statsheet import is too large to apply safely in one save. Please reduce the tracked rows or ask a team admin to clear the game first.')
     }
