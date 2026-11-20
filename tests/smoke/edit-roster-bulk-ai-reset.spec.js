@@ -362,3 +362,50 @@ test('CSV roster review saves family contacts and sends imported invitations', a
         { code: 'INVITE123' }
     ]);
 });
+
+
+test('roster boots without loading optional AI and loads it only when selected', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    const aiRequests = [];
+    page.on('pageerror', error => pageErrors.push(error.message));
+    page.on('request', request => {
+        if (/\/js\/firebase-ai\.js(?:\?|$)/.test(request.url())) aiRequests.push(request.url());
+    });
+    await mockEditRosterDependencies(page);
+    await page.goto(`${baseURL}/edit-roster.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+    expect(pageErrors).toEqual([]);
+    await expect(page.locator('#roster-list')).toContainText('No players yet.');
+    expect(pageErrors).toEqual([]);
+    expect(aiRequests).toHaveLength(0);
+    await page.click('#tab-bulk-ai');
+    await page.fill('#bulk-text-input', '#22 Jordan Reed');
+    await page.click('#process-ai-btn');
+    await expect(page.locator('#proposed-changes-section')).toBeVisible();
+    expect(pageErrors).toEqual([]);
+    expect(aiRequests).toHaveLength(1);
+    expect(await page.evaluate(() => (globalThis.__bulkAiCalls || []).length)).toBe(1);
+    await page.click('#cancel-changes-btn');
+    await page.fill('#bulk-text-input', '#23 Casey Reed');
+    await page.click('#process-ai-btn');
+    await expect(page.locator('#proposed-changes-section')).toBeVisible();
+    expect(aiRequests).toHaveLength(1);
+    expect(await page.evaluate(() => (globalThis.__bulkAiCalls || []).length)).toBe(2);
+});
+
+test('unavailable optional AI does not block roster or manual entry', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    const aiRequests = [];
+    page.on('pageerror', error => pageErrors.push(error.message));
+    await mockEditRosterDependencies(page);
+    await page.route(/\/js\/firebase-ai\.js(?:\?v=\d+)?$/, route => {
+        aiRequests.push(route.request().url());
+        return route.abort('failed');
+    });
+    await page.goto(`${baseURL}/edit-roster.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+    expect(pageErrors).toEqual([]);
+    await expect(page.locator('#roster-list')).toContainText('No players yet.');
+    await page.click('#tab-add-player');
+    await expect(page.locator('#content-add-player')).toBeVisible();
+    expect(aiRequests).toHaveLength(0);
+    expect(pageErrors).toEqual([]);
+});
