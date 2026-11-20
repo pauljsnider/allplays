@@ -1,3 +1,4 @@
+import { boundedMap } from '../../js/bounded-map.js';
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
@@ -23,6 +24,8 @@ function buildGetAllEvents(overrides = {}) {
     const source = readTeamPage();
     const body = extractAsyncFunctionBody(source, 'getAllEvents', 'async function renderSchedule');
     const deps = {
+        boundedMap,
+        isTeamAuthContextCurrent: () => true,
         currentTeamId: 'team-1',
         getTrackedCalendarEventUids: async () => [],
         fetchAndParseCalendar: async () => [],
@@ -41,6 +44,8 @@ function buildGetAllEvents(overrides = {}) {
 
     const createGetAllEvents = new Function('deps', `
         const {
+            boundedMap,
+            isTeamAuthContextCurrent,
             currentTeamId,
             getTrackedCalendarEventUids,
             fetchAndParseCalendar,
@@ -182,4 +187,18 @@ describe('team page schedule event normalization', () => {
             { id: 'shareable-inactive-game', type: 'game', shareable: true, date: '2099-03-10T20:00:00.000Z' }
         ])).toBe(true);
     });
+});
+
+it('stops starting queued RSVP reads after auth changes', async () => {
+    let current = true, reads = 0;
+    const getAllEvents = buildGetAllEvents({
+        currentUser: { uid: 'admin', isAdmin: true },
+        currentTeamAccessInfo: { hasAccess:true, accessLevel:'full' },
+        canManageTeamAvailability: () => true,
+        isTeamAuthContextCurrent: () => current,
+        getRsvps: async () => { reads++; current = false; return []; }
+    });
+    const events = await getAllEvents({calendarUrls:[]}, Array.from({length:30}, (_, i) => ({id:`game-${i}`, date:'2099-03-10', type:'game'})));
+    expect(events).toBeNull();
+    expect(reads).toBe(1);
 });
