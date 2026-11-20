@@ -699,6 +699,30 @@ describe('resendVerificationEmail', () => {
     expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith();
   });
 
+  it('carries a pending family invite in the verification continuation (#5200)', async () => {
+    authState.currentUser = { reload: vi.fn().mockResolvedValue(undefined), email: 'parent@example.com' } as any;
+    legacyAuthEmailMocks.queueCurrentUserVerificationEmail.mockResolvedValue({ queued: true });
+    window.localStorage.setItem('allplays-app-pending-invite-code', 'ABCDEFGH');
+    window.localStorage.setItem('allplays-app-pending-invite-type', 'parent_invite');
+
+    try {
+      await resendVerificationEmail();
+      expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenLastCalledWith(
+        '',
+        '/accept-invite?code=ABCDEFGH&type=parent'
+      );
+
+      await resendVerificationEmail('/schedule?teamId=team-1');
+      expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenLastCalledWith(
+        '',
+        '/accept-invite?code=ABCDEFGH&type=parent&next=%2Fschedule%3FteamId%3Dteam-1'
+      );
+    } finally {
+      window.localStorage.removeItem('allplays-app-pending-invite-code');
+      window.localStorage.removeItem('allplays-app-pending-invite-type');
+    }
+  });
+
   it.each([
     ['static Diamond viewer', '/live-game-diamond-v2.html?teamId=team%2Fone&gameId=game+one&replay=true'],
     ['family fee', '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1'],
@@ -1282,6 +1306,25 @@ describe('signUpWithEmail', () => {
     await signUpWithEmail('player@example.com', 'secret1', '85NSBZ7K', familyFeeRoute);
 
     expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith('', familyFeeRoute);
+  });
+
+  it('sends the signup verification email with the invite the signup flow just stored as pending (#5200)', async () => {
+    vi.mocked(Capacitor.isNativePlatform).mockReturnValue(false);
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockImplementation(async (options: any) => {
+      // js/signup-flow.js preservePendingInvite runs before the verification email is queued.
+      window.localStorage.setItem('allplays-app-pending-invite-code', 'ABCDEFGH');
+      window.localStorage.setItem('allplays-app-pending-invite-type', 'parent');
+      await options.dependencies.sendVerificationEmail();
+      return { user: { uid: 'new-user', email: 'parent@example.com' }, pendingFamilyInvite: { code: 'ABCDEFGH', type: 'parent' } };
+    });
+
+    try {
+      await signUpWithEmail('parent@example.com', 'secret1', 'ABCDEFGH');
+      expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith('', '/accept-invite?code=ABCDEFGH&type=parent');
+    } finally {
+      window.localStorage.removeItem('allplays-app-pending-invite-code');
+      window.localStorage.removeItem('allplays-app-pending-invite-type');
+    }
   });
 
   it('drops an unsafe next route from native signup verification email delivery', async () => {

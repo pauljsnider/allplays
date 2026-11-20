@@ -4,14 +4,20 @@ import { CheckCircle2, LogOut, Mail, Send } from 'lucide-react';
 import { AuthFrame, DocumentAuthLink } from '../components/AuthFrame';
 import { getRouteForUser, readPendingInvite, reloadCurrentUser, resendVerificationEmail } from '../lib/authService';
 import type { AuthState } from '../lib/types';
-import { completeAuthNavigation, getDocumentAuthNextRoute, getSafeAuthNextRoute } from '../lib/authNextRoute';
+import {
+  buildPendingInviteRoute,
+  completeAuthNavigation,
+  getDocumentAuthNextRoute,
+  getVerificationContinuationRoute,
+  isAcceptInviteRoute
+} from '../lib/authNextRoute';
 import { isNativeRuntime } from '../lib/nativeRuntime';
 import { openPublicUrl } from '../lib/publicActions';
 
 export function VerifyPending({ auth }: { auth: AuthState }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const nextRoute = getSafeAuthNextRoute(searchParams.get('next'));
+  const nextRoute = getVerificationContinuationRoute(searchParams.get('next'));
   const fallbackRoute = nextRoute || getRouteForUser(auth.user);
   const documentFallbackRoute = getDocumentAuthNextRoute(fallbackRoute);
   const signedOutRoute = nextRoute ? `/auth?next=${encodeURIComponent(nextRoute)}` : '/auth';
@@ -33,12 +39,12 @@ export function VerifyPending({ auth }: { auth: AuthState }) {
       const refreshedUser = await auth.refresh();
       if (refreshedUser?.emailVerified === true) {
         const pendingInvite = readPendingInvite();
-        const pendingInviteRoute = pendingInvite.code
-          ? `/accept-invite?code=${encodeURIComponent(pendingInvite.code)}&type=${encodeURIComponent(pendingInvite.type)}`
-          : '';
-        const continuation = pendingInviteRoute
-          ? `${pendingInviteRoute}${nextRoute ? `&next=${encodeURIComponent(nextRoute)}` : ''}`
-          : nextRoute || getRouteForUser(refreshedUser);
+        // A verification email opened in another browser carries the invite in
+        // `next`; this browser's storage may hold no pending invite at all.
+        const pendingInviteRoute = isAcceptInviteRoute(nextRoute)
+          ? nextRoute
+          : buildPendingInviteRoute(pendingInvite.code, pendingInvite.type, nextRoute);
+        const continuation = pendingInviteRoute || nextRoute || getRouteForUser(refreshedUser);
         await completeAuthNavigation(continuation, navigate, {
           nativeRuntime: isNativeRuntime(),
           openHostedAuth: openPublicUrl

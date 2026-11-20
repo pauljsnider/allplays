@@ -31,6 +31,35 @@ export function getSafeAuthNextRoute(value: string | null | undefined) {
   }
 }
 
+const verifyPendingPathname = '/verify-pending';
+const acceptInvitePathname = '/accept-invite';
+
+function getAuthRoutePathname(route: string) {
+  return route ? new URL(route, authRouteOrigin).pathname : '';
+}
+
+// A verification continuation that points back at the verification screen is
+// not a destination: following it bounces a verified user to the same page.
+export function getVerificationContinuationRoute(value: string | null | undefined) {
+  const route = getSafeAuthNextRoute(value);
+  return getAuthRoutePathname(route) === verifyPendingPathname ? '' : route;
+}
+
+export function isAcceptInviteRoute(value: string | null | undefined) {
+  return getAuthRoutePathname(getSafeAuthNextRoute(value)) === acceptInvitePathname;
+}
+
+export function buildPendingInviteRoute(code: string, type: string, nextRoute = '') {
+  const normalizedCode = String(code || '')
+    .trim()
+    .toUpperCase();
+  if (!normalizedCode) return '';
+  const next = getVerificationContinuationRoute(nextRoute);
+  const route = `${acceptInvitePathname}?code=${encodeURIComponent(normalizedCode)}&type=${encodeURIComponent(type || 'parent')}`;
+  const withNext = next && !isAcceptInviteRoute(next) ? `${route}&next=${encodeURIComponent(next)}` : route;
+  return getSafeAuthNextRoute(withNext) || route;
+}
+
 export function getDocumentAuthNextRoute(value: string | null | undefined) {
   const route = getSafeAuthNextRoute(value);
   if (!route) return '';
