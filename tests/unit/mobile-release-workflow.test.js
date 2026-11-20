@@ -8,6 +8,20 @@ const workflowSource = readFileSync(resolve(process.cwd(), workflowPath), 'utf8'
 const workflow = parseYaml(workflowSource);
 
 describe('mobile release workflow', () => {
+    it('allows one-platform recovery without changing approval or upload defaults', () => {
+        expect(workflow.on.workflow_dispatch.inputs.platform).toMatchObject({
+            type: 'choice', default: 'both', options: ['both', 'android', 'ios']
+        });
+        expect(workflow.jobs['android-release'].if).toBe("inputs.platform == 'both' || inputs.platform == 'android'");
+        expect(workflow.jobs['ios-release'].if).toBe("inputs.platform == 'both' || inputs.platform == 'ios'");
+        for (const platform of ['android', 'ios']) {
+            expect(workflow.jobs[`${platform}-release`].environment).toBe('mobile-release');
+            expect(workflow.on.workflow_dispatch.inputs[`upload_${platform}`].default).toBe(false);
+        }
+        expect(workflow.on.workflow_dispatch.inputs.sync_android_listing.default).toBe(false);
+        expect(workflow.jobs['play-listing'].needs).toBe('android-release');
+    });
+
     it('installs supported Android packages without the retired tools package', () => {
         const setup = workflow.jobs['android-release'].steps.find(
             (step) => step.uses?.startsWith('android-actions/setup-android@')

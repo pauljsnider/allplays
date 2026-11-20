@@ -3,6 +3,15 @@ name: mobile-release
 on:
   workflow_dispatch:
     inputs:
+      platform:
+        description: Platform to build (select Android for Android-only recovery)
+        type: choice
+        required: true
+        default: both
+        options:
+          - both
+          - android
+          - ios
       version_name:
         description: Store version, for example 1.0.0
         required: true
@@ -52,6 +61,7 @@ jobs:
         run: npm run store:play:sync
 
   android-release:
+    if: inputs.platform == 'both' || inputs.platform == 'android'
     runs-on: ubuntu-latest
     environment: mobile-release
     steps:
@@ -169,6 +179,7 @@ jobs:
         run: node scripts/upload-play-internal.mjs
 
   ios-release:
+    if: inputs.platform == 'both' || inputs.platform == 'ios'
     runs-on: macos-15
     environment: mobile-release
     env:
