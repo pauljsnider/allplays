@@ -308,6 +308,58 @@ test('replays the completed auto-linked outcome for the same operation without q
   assert.equal(getDocsWithPrefix(harness.docs, 'mail/').length, 0);
 });
 
+test('renews an expired or revoked invite for the same operation', async (t) => {
+  for (const terminalState of ['expired', 'revoked']) {
+    await t.test(terminalState, async () => {
+      const codes = ['PARENT12', 'PARENT34'];
+      const harness = createHarness({ createInviteCode: () => codes.shift() });
+      const input = inviteInput({ idempotencyKey: 'legacy-roster-import:team-1:player-1:parent@example.com' });
+      const first = await harness.handler(input, harness.ownerContext);
+      const accessPath = `accessCodes/${first.code}`;
+
+      if (terminalState === 'expired') {
+        harness.setNowMillis(NOW_MILLIS + (8 * 24 * 60 * 60 * 1000));
+      } else {
+        harness.docs.set(accessPath, {
+          ...harness.docs.get(accessPath),
+          active: false,
+          revoked: true,
+          status: 'revoked'
+        });
+      }
+
+      const renewed = await harness.handler(input, harness.ownerContext);
+
+      assert.equal(renewed.created, true);
+      assert.equal(renewed.code, 'PARENT34');
+      assert.notEqual(renewed.code, first.code);
+      assert.equal(getDocsWithPrefix(harness.docs, 'accessCodes/').length, 2);
+      assert.deepEqual(
+        getDocsWithPrefix(harness.docs, 'teams/team-1/inviteIdempotency/')
+          .map(([, value]) => value.accessCode),
+        ['PARENT34', 'PARENT34']
+      );
+    });
+  }
+});
+
+test('rejects reusing an operation key for a different parent invite request', async () => {
+  const codes = ['PARENT12', 'PARENT34'];
+  const harness = createHarness({ createInviteCode: () => codes.shift() });
+  const idempotencyKey = 'legacy-roster-import:team-1:player-1:parent@example.com';
+  await harness.handler(inviteInput({ idempotencyKey }), harness.ownerContext);
+
+  await assert.rejects(
+    harness.handler(
+      inviteInput({ email: 'other@example.com', idempotencyKey }),
+      harness.ownerContext
+    ),
+    (error) => error.code === 'failed-precondition'
+  );
+
+  assert.equal(getDocsWithPrefix(harness.docs, 'accessCodes/').length, 1);
+});
+
 test('reuses the server-owned active coordinate beyond ten historical invites', async () => {
   const historical = Object.fromEntries(Array.from({ length: 12 }, (_, index) => [
     `accessCodes/HISTORY${String(index).padStart(2, '0')}`,
