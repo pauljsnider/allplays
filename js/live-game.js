@@ -27,7 +27,7 @@ import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } f
 import { computePanelVisibility } from './live-stream-utils.js?v=2';
 import { checkAuth } from './auth.js?v=4433220';
 import { isViewerChatEnabled } from './live-game-chat.js?v=4';
-import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
+import { createPlayAnnouncer } from './live-game-announcer.js?v=2';
 import {
   buildReplaySessionState,
   collectReplayEventWindow,

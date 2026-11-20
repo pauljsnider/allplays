@@ -2,6 +2,9 @@
 
 const { hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
 const {
+  buildPublicUserProfileProjection
+} = require('./public-user-profile-projection-core.cjs');
+const {
   normalizeParentInviteEmail,
   appendUniqueParentLink,
   appendUniqueValue,
@@ -13,7 +16,8 @@ function createAutoAcceptParentInviteHandler({
   Timestamp,
   HttpsError,
   normalizeFirestoreId,
-  validateCode
+  validateCode,
+  buildPublicProfilePayload = buildPublicUserProfileProjection
 }) {
   function getCompletedAutoLink(data = {}) {
     const userId = String(data.usedBy || '').trim();
@@ -82,10 +86,13 @@ function createAutoAcceptParentInviteHandler({
 
     const transactionResult = await firestore.runTransaction(async (transaction) => {
       const playerRef = firestore.doc(`teams/${teamId}/players/${playerId}`);
-      const [latestCodeSnap, latestPlayerSnap, latestUserSnap] = await Promise.all([
+      const privateProfileRef = firestore.doc(`teams/${teamId}/players/${playerId}/private/profile`);
+      const publicProfileRef = firestore.doc(`publicUserProfiles/${userRef.id}`);
+      const [latestCodeSnap, latestPlayerSnap, latestUserSnap, privateProfileSnap] = await Promise.all([
         transaction.get(codeRef),
         transaction.get(playerRef),
-        transaction.get(userRef)
+        transaction.get(userRef),
+        transaction.get(privateProfileRef)
       ]);
 
       if (!latestCodeSnap.exists) {
@@ -114,27 +121,36 @@ function createAutoAcceptParentInviteHandler({
       const player = latestPlayerSnap.data() || {};
       const parentLink = buildAutoAcceptedParentLink({ codeData: latestCodeData, team, player });
       const playerKey = `${teamId}::${playerId}`;
-      transaction.update(userRef, {
+      const nextUserData = {
+        ...latestUserData,
         parentOf: appendUniqueParentLink(latestUserData.parentOf, parentLink),
         parentTeamIds: appendUniqueValue(latestUserData.parentTeamIds, teamId),
         parentPlayerKeys: appendUniqueValue(latestUserData.parentPlayerKeys, playerKey),
         roles: appendUniqueValue(latestUserData.roles, 'parent')
+      };
+      transaction.update(userRef, {
+        parentOf: nextUserData.parentOf,
+        parentTeamIds: nextUserData.parentTeamIds,
+        parentPlayerKeys: nextUserData.parentPlayerKeys,
+        roles: nextUserData.roles
       });
+      transaction.set(publicProfileRef, {
+        ...buildPublicProfilePayload(nextUserData, { trustedEmail: inviteEmail }),
+        updatedAt: now
+      }, { merge: true });
 
-      const playerData = latestPlayerSnap.data() || {};
-      const existingParents = Array.isArray(playerData.parents) ? [...playerData.parents] : [];
-      const alreadyLinked = existingParents.some((parent) => parent?.userId === userRef.id);
+      const privateProfileData = privateProfileSnap.exists ? privateProfileSnap.data() || {} : {};
+      const privateParents = Array.isArray(privateProfileData.parents) ? [...privateProfileData.parents] : [];
+      const alreadyLinked = privateParents.some((parent) => parent?.userId === userRef.id);
       if (!alreadyLinked) {
-        existingParents.push({
+        privateParents.push({
           userId: userRef.id,
           email: inviteEmail,
           relation: latestCodeData.relation || null,
-          addedAt: now,
-          status: 'active',
-          source: 'parent_invite'
+          addedAt: now
         });
-        transaction.update(latestPlayerSnap.ref, { parents: existingParents });
       }
+      transaction.set(privateProfileRef, { parents: privateParents }, { merge: true });
 
       transaction.update(codeRef, {
         used: true,

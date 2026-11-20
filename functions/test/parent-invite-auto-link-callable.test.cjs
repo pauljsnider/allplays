@@ -67,18 +67,24 @@ function createFirestore(initialDocs) {
       };
     },
     async runTransaction(updateFn) {
-      const stagedUpdates = [];
+      const stagedWrites = [];
       const transaction = {
         get: async (ref) => makeSnapshot(ref.path),
+        set(ref, values, options) {
+          stagedWrites.push([ref.path, clone(values), 'set', clone(options)]);
+        },
         update(ref, values) {
-          stagedUpdates.push([ref.path, clone(values)]);
+          stagedWrites.push([ref.path, clone(values), 'update']);
         }
       };
       const result = await updateFn(transaction);
-      for (const [path, values] of stagedUpdates) {
-        assert.ok(docs.has(path), `transaction update target must exist: ${path}`);
-        docs.set(path, { ...docs.get(path), ...clone(values) });
-        calls.updates.push([path, clone(values)]);
+      for (const [path, values, operation, options] of stagedWrites) {
+        if (operation === 'update') {
+          assert.ok(docs.has(path), `transaction update target must exist: ${path}`);
+        }
+        const current = operation === 'set' && !options?.merge ? {} : docs.get(path) || {};
+        docs.set(path, { ...current, ...clone(values) });
+        calls.updates.push([path, clone(values), operation, clone(options)]);
       }
       calls.transactionCount += 1;
       return result;
@@ -99,7 +105,8 @@ function createHarness({
   actorEmail = 'owner@example.com',
   authEmail = actorEmail,
   team = {},
-  includeParent = true
+  includeParent = true,
+  privateProfile
 } = {}) {
   const initialDocs = {
     'accessCodes/code-1': {
@@ -120,8 +127,7 @@ function createHarness({
     'teams/team-1/players/player-1': {
       name: 'Player One',
       number: '7',
-      photoUrl: 'https://images.example/player.png',
-      parents: []
+      photoUrl: 'https://images.example/player.png'
     },
     [`users/${actorUid}`]: {
       email: actorEmail,
@@ -131,11 +137,15 @@ function createHarness({
   if (includeParent) {
     initialDocs['users/parent-1'] = {
       email: 'parent@example.com',
+      displayName: 'Pat Parent',
       roles: ['fan'],
       parentOf: [],
       parentTeamIds: [],
       parentPlayerKeys: []
     };
+  }
+  if (privateProfile !== undefined) {
+    initialDocs['teams/team-1/players/player-1/private/profile'] = clone(privateProfile);
   }
 
   const store = createFirestore(initialDocs);
@@ -152,6 +162,13 @@ function createHarness({
       if (data.type !== 'parent_invite' || data.used) {
         throw new TestHttpsError('failed-precondition', 'Parent invite is no longer available.');
       }
+    },
+    buildPublicProfilePayload(user, options) {
+      return {
+        displayName: user.displayName || null,
+        discoveryTeamIds: clone(user.parentTeamIds),
+        emailHash: `hash:${options.trustedEmail}`
+      };
     }
   });
 
@@ -251,11 +268,13 @@ test('existing user is linked to the player and invite atomically in one transac
   assert.equal(harness.calls.transactionCount, 1);
   assert.deepEqual(harness.calls.updates.map(([path]) => path), [
     'users/parent-1',
-    'teams/team-1/players/player-1',
+    'publicUserProfiles/parent-1',
+    'teams/team-1/players/player-1/private/profile',
     'accessCodes/code-1'
   ]);
   assert.deepEqual(harness.read('users/parent-1'), {
     email: 'parent@example.com',
+    displayName: 'Pat Parent',
     roles: ['fan', 'parent'],
     parentOf: [{
       teamId: 'team-1',
@@ -269,14 +288,25 @@ test('existing user is linked to the player and invite atomically in one transac
     parentTeamIds: ['team-1'],
     parentPlayerKeys: ['team-1::player-1']
   });
-  assert.deepEqual(harness.read('teams/team-1/players/player-1').parents, [{
-    userId: 'parent-1',
-    email: 'parent@example.com',
-    relation: 'Guardian',
-    addedAt: NOW,
-    status: 'active',
-    source: 'parent_invite'
-  }]);
+  assert.deepEqual(harness.read('teams/team-1/players/player-1'), {
+    name: 'Player One',
+    number: '7',
+    photoUrl: 'https://images.example/player.png'
+  });
+  assert.deepEqual(harness.read('publicUserProfiles/parent-1'), {
+    displayName: 'Pat Parent',
+    discoveryTeamIds: ['team-1'],
+    emailHash: 'hash:parent@example.com',
+    updatedAt: NOW
+  });
+  assert.deepEqual(harness.read('teams/team-1/players/player-1/private/profile'), {
+    parents: [{
+      userId: 'parent-1',
+      email: 'parent@example.com',
+      relation: 'Guardian',
+      addedAt: NOW
+    }]
+  });
   assert.deepEqual(harness.read('accessCodes/code-1'), {
     type: 'parent_invite',
     teamId: 'team-1',
@@ -291,6 +321,29 @@ test('existing user is linked to the player and invite atomically in one transac
     autoAccepted: true,
     autoAcceptedAt: NOW
   });
+});
+
+test('auto-link preserves an existing private parent link without duplicating it', async () => {
+  const existingParent = {
+    userId: 'parent-1',
+    email: 'existing@example.com',
+    relation: 'Parent',
+    addedAt: { seconds: 1_700_000_000, nanoseconds: 0 }
+  };
+  const harness = createHarness({
+    privateProfile: {
+      medicalNotes: 'private',
+      parents: [existingParent]
+    }
+  });
+
+  await harness.handler({ codeId: 'code-1' }, harness.context);
+
+  assert.deepEqual(harness.read('teams/team-1/players/player-1/private/profile'), {
+    medicalNotes: 'private',
+    parents: [existingParent]
+  });
+  assert.equal(harness.read('teams/team-1/players/player-1').parents, undefined);
 });
 
 test('a repeated auto-link call returns the completed result without another transaction', async () => {
