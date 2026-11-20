@@ -274,31 +274,32 @@ export async function commitStandardTrackerFinishData({
     };
 }
 
-// Delete under the old epoch, then publish the new epoch last. A finish that
-// interleaves before publication remains old-epoch data; one after it rejects.
-// Every cleanup chunk also checks the old epoch, so another reset cannot cause
-// this operation to delete newly accepted rows after its epoch has advanced.
+// Publish the new epoch before cleanup so an old-session finish cannot recreate
+// rows after their cleanup chunk. Every cleanup chunk checks the new epoch, so
+// another reset cannot cause this operation to delete its accepted rows.
 export async function resetStandardTrackerData({ db, runTransaction, doc, collection, getDocs,
     teamId, gameId, expectedEpoch, resetEventId = crypto.randomUUID(), resetAt = Date.now() }) {
     if (typeof expectedEpoch !== 'string' || !resetEventId) throw new Error('Missing reset epoch.');
     const gameRef = doc(db, `teams/${teamId}/games`, gameId);
-    const snapshots = await Promise.all(['events', 'aggregatedStats', 'privatePlayerStats'].map(name =>
-        getDocs(collection(db, `teams/${teamId}/games/${gameId}/${name}`))));
-    const refs = snapshots.flatMap(snapshot => snapshot.docs.map(row => row.ref));
     const patch = { liveResetEventId: resetEventId, liveResetAt: resetAt,
-        homeScore: 0, awayScore: 0, opponentStats: {} };
-    async function transact(callback) {
+        homeScore: 0, awayScore: 0, opponentStats: {}, status: 'scheduled', summary: '' };
+    async function transact(epoch, callback) {
         await runTransaction(db, async transaction => {
             const game = (await transaction.get(gameRef)).data();
-            if (!game || getLiveStatsEpoch(game) !== expectedEpoch) {
+            if (!game || getLiveStatsEpoch(game) !== epoch) {
                 throw new Error('Tracking reset changed; reload before resetting again.');
             }
             callback(transaction);
         });
     }
+    await transact(expectedEpoch, transaction => transaction.update(gameRef, patch));
+    const resetEpoch = getLiveStatsEpoch(patch);
+    const snapshots = await Promise.all(['events', 'aggregatedStats', 'privatePlayerStats'].map(name =>
+        getDocs(collection(db, `teams/${teamId}/games/${gameId}/${name}`))));
+    const refs = snapshots.flatMap(snapshot => snapshot.docs.map(row => row.ref));
     for (let start = 0; start < refs.length; start += 450) {
-        await transact(transaction => refs.slice(start, start + 450).forEach(ref => transaction.delete(ref)));
+        await transact(resetEpoch, transaction => refs.slice(start, start + 450).forEach(ref => transaction.delete(ref)));
     }
-    await transact(transaction => transaction.update(gameRef, patch));
+    await transact(resetEpoch, transaction => transaction.update(gameRef, patch));
     return patch;
 }

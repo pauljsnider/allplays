@@ -137,6 +137,30 @@ describe('standard/Beta reset publication', () => {
         await commitStandardTrackerFinishData({ ...f.payload, expectedEpoch: 'id:fresh' });
         expect(f.documents.get(playerPath).liveStatsEpoch).toBe('id:fresh');
     });
+    it('publishes the reset epoch before cleanup so an old finish cannot recreate deleted rows', async () => {
+        const f = fixture();
+        const oldFinish = { ...f.payload, gameLog: [{ text: 'old-session score' }] };
+        f.documents.set(playerPath, { stats: { pts: 4 }, ...liveStatsMetadata({ liveResetAt: 1000 }) });
+        const payload = resetPayload(f);
+        const getDocs = payload.getDocs;
+        payload.getDocs = async ref => {
+            const snapshot = await getDocs(ref);
+            if (ref.path.endsWith('/events')) {
+                await expect(commitStandardTrackerFinishData(oldFinish)).rejects.toThrow('reset changed');
+            }
+            return snapshot;
+        };
+
+        const patch = await resetStandardTrackerData(payload);
+
+        expect(patch).toMatchObject({ liveResetEventId: 'fresh', status: 'scheduled', summary: '' });
+        expect(f.documents.has(`${gamePath}/events/finish-log-000001`)).toBe(false);
+        expect(f.documents.has(playerPath)).toBe(false);
+        expect(f.documents.get(gamePath)).toMatchObject({
+            liveResetEventId: 'fresh', homeScore: 0, awayScore: 0,
+            opponentStats: {}, status: 'scheduled', summary: ''
+        });
+    });
     it('cannot delete new-epoch rows when another reset wins between cleanup chunks', async () => {
         const f = fixture({ before: (n, docs) => {
             if (n === 2) {
