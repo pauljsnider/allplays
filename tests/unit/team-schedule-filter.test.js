@@ -1,3 +1,4 @@
+import { boundedMap } from '../../js/bounded-map.js';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { filterScheduleEventsForPrint, getDefaultSchedulePrintOptions } from '../../js/schedule-print.js';
@@ -31,7 +32,7 @@ function loadGetAllEvents() {
     }
 
     const functionSource = source.slice(start, end);
-    return new Function('context', `
+    const run = new Function('context', 'boundedMap', `
         let currentTeamId = context.currentTeamId;
         let currentUser = context.currentUser;
         let currentTeamAccessInfo = context.currentTeamAccessInfo;
@@ -54,6 +55,7 @@ function loadGetAllEvents() {
         ${functionSource}
         return getAllEvents(context.team, context.dbGames);
     `);
+    return (context) => run(context, boundedMap);
 }
 
 function loadGetDefaultSchedulePrintEvents() {
