@@ -12,7 +12,8 @@ const authServiceMocks = vi.hoisted(() => ({
   mapLegacyRedirectToAppRoute: vi.fn(() => '/home'),
   readPendingInvite: vi.fn(() => ({ code: '', type: '' })),
   redeemInviteForUser: vi.fn(),
-  rememberPendingInvite: vi.fn()
+  rememberPendingInvite: vi.fn(),
+  resendVerificationEmail: vi.fn(async () => undefined)
 }));
 
 const inviteRedemptionMocks = vi.hoisted(() => ({
@@ -169,5 +170,53 @@ describe('AcceptInvite', () => {
 
     expect(screen.getByText('Reset route')).toBeTruthy();
     expect(screen.queryByText('Home route')).toBeNull();
+  });
+  it('queues a verification email when redemption requires verification (#5202)', async () => {
+    inviteRedemptionMocks.redeemSignedInInvite.mockRejectedValue(
+      Object.assign(new Error('Verify your email.'), {
+        details: { reason: 'email-verification-required', inviteType: 'parent' }
+      })
+    );
+    renderAcceptInvite('/accept-invite?code=ABCDEFGH&type=parent&next=%2Fteams');
+
+    expect(await screen.findByText('Verify route')).toBeTruthy();
+    expect(authServiceMocks.resendVerificationEmail).toHaveBeenCalledTimes(1);
+    expect(authServiceMocks.resendVerificationEmail).toHaveBeenCalledWith('/teams');
+  });
+
+  it('still reaches the verification screen when the verification email cannot be queued (#5202)', async () => {
+    authServiceMocks.resendVerificationEmail.mockRejectedValueOnce(new Error('cooldown'));
+    inviteRedemptionMocks.redeemSignedInInvite.mockRejectedValue(
+      Object.assign(new Error('Verify your email.'), {
+        details: { reason: 'email-verification-required', inviteType: 'parent' }
+      })
+    );
+    renderAcceptInvite();
+
+    expect(await screen.findByText('Verify route')).toBeTruthy();
+  });
+
+  it.each(['Code has expired', 'Code already used', 'This invite was sent to other@example.com. Sign in with that email to accept it.'])(
+    'clears the pending invite after a terminal failure: %s (#5204)',
+    async (message) => {
+      inviteRedemptionMocks.redeemSignedInInvite.mockRejectedValue(new Error(message));
+      renderAcceptInvite();
+
+      expect(await screen.findByText(message)).toBeTruthy();
+      expect(authServiceMocks.clearPendingInvite).toHaveBeenCalledTimes(1);
+      expect(authServiceMocks.resendVerificationEmail).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    Object.assign(new Error('Service unavailable'), { code: 'functions/unavailable' }),
+    Object.assign(new Error('Too many access-code validation attempts.'), { code: 'functions/resource-exhausted' }),
+    new Error('A network error occurred.')
+  ])('keeps the pending invite after a retryable failure (#5204)', async (error) => {
+    inviteRedemptionMocks.redeemSignedInInvite.mockRejectedValue(error);
+    renderAcceptInvite();
+
+    expect(await screen.findByText(error.message)).toBeTruthy();
+    expect(authServiceMocks.clearPendingInvite).not.toHaveBeenCalled();
   });
 });
