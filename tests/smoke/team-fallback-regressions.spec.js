@@ -1,5 +1,6 @@
 import { stubReplayPlayback, expectReplayPlayback, RAW_REPLAY_AUTH_FIXTURE, stubDelayedProfileAuth, verifyRawReplayAuthIsolation, verifyReplayProjectionPolling, verifyExplicitReplayRevalidation } from './replay-playback-fixture.js';
 import { test, expect } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 import { shouldReloadVideoPlayback } from '../../js/live-game-video.js';
 
 const PERMISSION_ERROR = `
@@ -1478,6 +1479,31 @@ test('live game archived replay Team Pass gate is off by default', async ({ page
         elements.every((element) => element.getBoundingClientRect().height >= 44)
     ))).toBe(true);
     expect(liveGameStubs.getTelemetryStubRequestCount()).toBeGreaterThan(0);
+    expect(pageErrors).toEqual([]);
+});
+
+test('live game boots when browser storage access is denied', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await page.addInitScript(() => {
+        Object.defineProperty(window, 'localStorage', {
+            configurable: true,
+            get() { throw new DOMException('Storage blocked', 'SecurityError'); }
+        });
+        window.__LIVE_GAME_TEAM__ = {};
+        window.__LIVE_GAME_GAME__ = { status: 'completed', liveStatus: 'scheduled' };
+    });
+    await routeLiveGameStubs(page);
+    await page.unroute(/\/js\/live-game-announcer\.js(?:\?v=\d+)?$/);
+    await page.route(/\/js\/live-game-announcer\.js(?:\?v=\d+)?$/, route => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: readFileSync(new URL('../../js/live-game-announcer.js', import.meta.url), 'utf8')
+    }));
+
+    await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#recorded-replay-video')).toBeVisible();
+    await expect(page.locator('#ended-overlay')).toBeVisible();
     expect(pageErrors).toEqual([]);
 });
 
