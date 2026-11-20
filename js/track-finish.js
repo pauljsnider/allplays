@@ -135,8 +135,8 @@ export async function commitStandardTrackerFinishData({
         throw new Error('Missing player totals reset epoch or transaction support.');
     }
     const gameRef = doc(db, `teams/${teamId}/games`, gameId);
-    // Stage each bounded chunk, then validate its epoch and all existing public
-    // rows before any writes. SDK retries re-read the game after a racing reset.
+    // Stage each bounded chunk, then validate its epoch and every existing stat
+    // destination before any writes. SDK retries re-read after a racing reset.
     function writeBatch() {
         const writes = [];
         return {
@@ -149,8 +149,8 @@ export async function commitStandardTrackerFinishData({
                     if (!game || getLiveStatsEpoch(game) !== expectedEpoch) {
                         throw new Error('Tracking reset changed; finish was not saved.');
                     }
-                    const publicWrites = writes.filter(write => write.ref.path.includes('/aggregatedStats/'));
-                    const rows = await Promise.all(publicWrites.map(write => transaction.get(write.ref)));
+                    const statWrites = writes.filter(write => /\/(aggregatedStats|privatePlayerStats)\//.test(write.ref.path));
+                    const rows = await Promise.all(statWrites.map(write => transaction.get(write.ref)));
                     rows.forEach(row => readLiveStatsForWrite(row.data() || {}, game));
                     for (const write of writes) {
                         if (write.kind === 'delete') transaction.delete(write.ref);

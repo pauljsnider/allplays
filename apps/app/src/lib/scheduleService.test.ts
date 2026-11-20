@@ -3639,9 +3639,10 @@ describe('live score publishing', () => {
     mocks.transactionGet
       .mockResolvedValueOnce({
         exists: () => true,
-        data: () => ({ homeScore: 10, awayScore: 8, period: 'Q3', liveClockMs: 245000 })
+        data: () => ({ homeScore: 10, awayScore: 8, period: 'Q3', liveClockMs: 245000, statTrackerConfigId: 'public' })
       })
-      .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { pts: 4 } }) });
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { pts: 4 } }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ statDefinitions: [] }) });
 
     const result = await recordPlayerGameStat('team-1', 'game-1', 'player-1', {
       statKey: 'pts',
@@ -3761,6 +3762,10 @@ describe('native live publishing fallbacks', () => {
       if (url.includes('/events')) {
         return { ok: true, json: async () => ({ documents: [] }) } as any;
       }
+      if (url.includes('/statTrackerConfigs/public')) return { ok: true, json: async () => ({
+        name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/statTrackerConfigs/public',
+        updateTime: '2026-06-19T16:00:00.000Z', fields: { statDefinitions: { arrayValue: { values: [] } } }
+      }) } as any;
       if (url.includes('/aggregatedStats/player-1')) {
         return {
           ok: true,
@@ -3789,6 +3794,7 @@ describe('native live publishing fallbacks', () => {
           updateTime: '2026-06-19T16:00:00.000Z',
           fields: {
             status: { stringValue: 'scheduled' },
+            statTrackerConfigId: { stringValue: 'public' },
             homeScore: { integerValue: '10' },
             awayScore: { integerValue: '8' },
             period: { stringValue: 'Q3' },
@@ -3818,6 +3824,26 @@ describe('native live publishing fallbacks', () => {
       })
     });
     expect(globalThis.fetch).toHaveBeenCalled();
+  });
+
+  it('fails closed on native fallback when the game has no stat configuration', async () => {
+    mocks.runTransactionMock.mockRejectedValueOnce(Object.assign(new Error('native fallback'), { status: 500 }));
+    vi.mocked(globalThis.fetch).mockImplementation(async (input: any) => {
+      const url = String(input || '');
+      if (url.includes('/events')) return { ok: true, json: async () => ({ documents: [] }) } as any;
+      if (url.includes('/aggregatedStats/player-1')) return { ok: true, json: async () => ({
+        name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/aggregatedStats/player-1',
+        updateTime: '2026-06-19T16:00:00.000Z', fields: { stats: { mapValue: { fields: {} } } }
+      }) } as any;
+      if (url.includes(':commit')) return { ok: true, json: async () => ({}) } as any;
+      return { ok: true, json: async () => ({
+        name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1',
+        updateTime: '2026-06-19T16:00:00.000Z', fields: { status: { stringValue: 'scheduled' } }
+      }) } as any;
+    });
+
+    await expect(recordPlayerGameStat('team-1', 'game-1', 'player-1', { statKey: 'pts', value: 2 }, user as any)).rejects.toThrow('Stat configuration unavailable');
+    expect(vi.mocked(globalThis.fetch).mock.calls.filter(([url]) => String(url).includes(':commit'))).toHaveLength(0);
   });
 
   it('binds public quick-stat visibility to the native config revision', async () => {
@@ -4010,8 +4036,9 @@ describe('player-attributed live scoring', () => {
     (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
     vi.clearAllMocks();
     mocks.transactionGet
-      .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 10, awayScore: 8, period: 'Q3', liveClockMs: 245000 }) })
-      .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { pts: 4, reb: 1 } }) });
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 10, awayScore: 8, period: 'Q3', liveClockMs: 245000, statTrackerConfigId: 'public' }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { pts: 4, reb: 1 } }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ statDefinitions: [] }) });
   });
 
   it('builds a player-attributed +2 live event payload', () => {
@@ -4094,11 +4121,20 @@ describe('player-attributed live scoring', () => {
     expect(mocks.transactionSet).not.toHaveBeenCalled();
   });
 
+  it.each(['pts', 'fouls'] as const)('fails closed when %s quick controls have no stat configuration', async statKey => {
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet.mockImplementation(async (ref: any) => ({ exists: () => true, data: () =>
+      ref.path.includes('/aggregatedStats/') ? { stats: {} } : { status: 'scheduled' } }));
+    await expect(recordPlayerGameStat('team-1', 'game-1', 'player-1', { statKey, value: 1 }, { uid: 'coach-1', displayName: '', email: 'coach@example.com', roles: [] })).rejects.toThrow('Stat configuration unavailable');
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
   it('does not overwrite ambiguous historical aggregates after a reset', async () => {
     mocks.transactionGet.mockReset();
     mocks.transactionGet
-      .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 12, awayScore: 0, liveResetAt: 1000 }) })
-      .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { pts: 12, reb: 5 } }) });
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 12, awayScore: 0, liveResetAt: 1000, statTrackerConfigId: 'public' }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { pts: 12, reb: 5 } }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ statDefinitions: [] }) });
     await expect(recordPlayerGameStat('team-1', 'game-1', 'player-1', {
       statKey: 'pts', value: 2, playerName: 'Fixture'
     }, { uid: 'coach-1', displayName: '', email: 'coach@example.com', roles: [] })).rejects.toThrow('unknown reset epoch');
@@ -4108,8 +4144,9 @@ describe('player-attributed live scoring', () => {
   it('starts a proven new epoch without relabeling old player stat keys', async () => {
     mocks.transactionGet.mockReset();
     mocks.transactionGet
-      .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 0, awayScore: 0, liveResetEventId: 'new' }) })
-      .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { pts: 12, reb: 5 }, liveStatsVersion: 1, liveStatsEpoch: 'id:old' }) });
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 0, awayScore: 0, liveResetEventId: 'new', statTrackerConfigId: 'public' }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { pts: 12, reb: 5 }, liveStatsVersion: 1, liveStatsEpoch: 'id:old' }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ statDefinitions: [] }) });
     const result = await recordPlayerGameStat('team-1', 'game-1', 'player-1', {
       statKey: 'pts', value: 2, playerName: 'Fixture'
     }, { uid: 'coach-1', displayName: '', email: 'coach@example.com', roles: [] });
@@ -4195,8 +4232,9 @@ describe('player-attributed live scoring', () => {
   it('rejects an old foul undo after reset and a new valid foul without changing totals', async () => {
     mocks.transactionGet.mockReset();
     mocks.transactionGet
-      .mockResolvedValueOnce({ exists: () => true, data: () => ({ liveResetEventId: 'new', homeScore: 0 }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ liveResetEventId: 'new', homeScore: 0, statTrackerConfigId: 'public' }) })
       .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { fouls: 1 }, liveStatsVersion: 1, liveStatsEpoch: 'id:new' }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ statDefinitions: [] }) })
       .mockResolvedValueOnce({ exists: () => true, data: () => ({ type: 'stat', liveStatsVersion: 1, liveStatsEpoch: 'id:old' }) });
     await expect(undoRecordedPlayerGameStat('team-1', 'game-1', {
       trackerEventId: 'old-tracker', liveEventId: 'old-live', playerId: 'player-1', statKey: 'fouls', value: 1
@@ -4207,8 +4245,9 @@ describe('player-attributed live scoring', () => {
   it('undoes a recorded foul by appending compensating live and tracker events', async () => {
     mocks.transactionGet.mockReset();
     mocks.transactionGet
-      .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 10, awayScore: 8 }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 10, awayScore: 8, statTrackerConfigId: 'public' }) })
       .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { fouls: 4 } }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ statDefinitions: [] }) })
       .mockResolvedValueOnce({ exists: () => true, data: () => ({ type: 'stat', statKey: 'fouls', value: 1 }) });
 
     const result = await undoRecordedPlayerGameStat('team-1', 'game-1', {

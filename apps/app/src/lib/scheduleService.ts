@@ -6930,14 +6930,14 @@ function assertPublicQuickStat(config: Record<string, unknown> | null, statKey: 
 
 async function verifyQuickStatConfig(transaction: any, teamId: string, game: Record<string, unknown>, statKey: string) {
   const configId = compactString(game.statTrackerConfigId);
-  if (!configId) return;
+  if (!configId) assertPublicQuickStat(null, statKey);
   const snapshot = await transaction.get(doc(db, `teams/${teamId}/statTrackerConfigs/${configId}`));
   assertPublicQuickStat(snapshot.data() || null, statKey);
 }
 
 async function nativeQuickStatConfigWrites(teamId: string, game: Record<string, unknown>, statKey: string) {
   const configId = compactString(game.statTrackerConfigId);
-  if (!configId) return [];
+  if (!configId) assertPublicQuickStat(null, statKey);
   const path = `teams/${teamId}/statTrackerConfigs/${configId}`;
   const snapshot = await nativeGetDocumentSnapshot(`teams/${encodeURIComponent(teamId)}/statTrackerConfigs/${encodeURIComponent(configId)}`);
   assertPublicQuickStat(snapshot.exists ? snapshot.document as Record<string, unknown> : null, statKey);

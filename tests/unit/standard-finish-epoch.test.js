@@ -5,6 +5,7 @@ import { applyLiveAggregateTotals, readLiveStatsForWrite, liveStatsMetadata } fr
 
 const gamePath = 'teams/t/games/g';
 const playerPath = `${gamePath}/aggregatedStats/p`;
+const privatePlayerPath = `${gamePath}/privatePlayerStats/p`;
 function fixture({ before = () => {}, retry = () => false, game = { liveResetAt: 1000 } } = {}) {
     const documents = new Map([[gamePath, game]]);
     let calls = 0;
@@ -99,6 +100,14 @@ describe('standard and Basketball Beta epoch-safe finish', () => {
         const f = fixture(); f.documents.set(playerPath, { stats: { pts: 99 } });
         await expect(commitStandardTrackerFinishData(f.payload)).rejects.toThrow('unknown reset epoch');
         expect(f.documents.get(playerPath)).toEqual({ stats: { pts: 99 } });
+        expect(f.committed).toHaveLength(0);
+    });
+    it('rejects a concurrently created ambiguous private row without certifying or deleting it', async () => {
+        const f = fixture({ before: (call, docs) => {
+            if (call === 1) docs.set(privatePlayerPath, { stats: { effort: 99 } });
+        } });
+        await expect(commitStandardTrackerFinishData(f.payload)).rejects.toThrow('unknown reset epoch');
+        expect(f.documents.get(privatePlayerPath)).toEqual({ stats: { effort: 99 } });
         expect(f.committed).toHaveLength(0);
     });
     it.each(['../../track.html', '../../js/track-basketball.js'])('pins %s to the loaded session, not a newly fetched reset', path => {
