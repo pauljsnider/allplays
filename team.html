@@ -324,6 +324,7 @@
     </div>
 
     <script type="module">
+        import { boundedMap } from './js/bounded-map.js?v=1';
         import { getTeam, getPlayers, getGames, getPublicTeamCalendarEvents, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, grantStreamScoreAccess, revokeStreamScoreAccess, getRsvps, getMyRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=4433215';
         import { normalizeExternalWebsiteUrl, selectRotatingSponsor } from './js/local-attractions.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, expandRecurrence, escapeHtml, shareOrCopy } from './js/utils.js?v=443391';
@@ -380,6 +381,7 @@
         let currentTeamAccessInfo = { hasAccess: false, accessLevel: null };
         let currentPlayers = [];
         let currentTeamMemberUsers = [];
+        let teamMemberDiscoveryState = 'idle';
         let showPractices = false;
         let latestGameId = null;
         let nextGameCountdown = null;
@@ -478,6 +480,7 @@
             currentTeamId = null;
             currentPlayers = [];
             currentTeamMemberUsers = [];
+            teamMemberDiscoveryState = 'idle';
             teamGames = [];
             gamesById = {};
             allScheduleEvents = [];
@@ -543,6 +546,7 @@
         window.openScheduleDayModal = openScheduleDayModal;
         window.closeScheduleDayModal = closeScheduleDayModal;
         window.saveAvailabilityPreferences = saveAvailabilityPreferences;
+        window.loadAdditionalTeamMembers = loadAdditionalTeamMembers;
         window.toggleScorekeeperGrant = toggleScorekeeperGrant;
         window.toggleStreamScoreGrant = toggleStreamScoreGrant;
 
@@ -652,14 +656,26 @@
                 .sort((a, b) => a.name.localeCompare(b.name));
         }
 
-        async function loadScorekeeperGrantUsers(teamId) {
-            if (!teamId || !canManageScorekeeperGrants()) return [];
+        // Legacy profiles may only carry parentOf links. Discover these only on
+        // explicit demand; never scan the global user collection to show a team.
+        async function loadAdditionalTeamMembers(button) {
+            const context = captureTeamAuthContext();
+            if (!button || button.disabled || !isButtonFromTeamContext(button, context)
+                || !isTeamAuthContextCurrent(context, { requireManager: true })) return;
+            button.disabled = true;
+            teamMemberDiscoveryState = 'loading';
+            renderScorekeeperGrantControls(currentTeam, currentPlayers);
             try {
-                return await getAllUsers();
+                const users = await getAllUsers();
+                if (!isTeamAuthContextCurrent(context, { requireManager: true })) return;
+                currentTeamMemberUsers = users;
+                teamMemberDiscoveryState = 'complete';
             } catch (error) {
-                console.warn('Failed to load linked team members for scorekeeper grants:', error);
-                return [];
+                if (!isTeamAuthContextCurrent(context, { requireManager: true })) return;
+                console.warn('Failed to discover additional linked team members:', error);
+                teamMemberDiscoveryState = 'error';
             }
+            renderScorekeeperGrantControls(currentTeam, currentPlayers);
         }
 
         function getSelectedPermissionIds(team, kind) {
@@ -731,7 +747,8 @@
                                 `;
                             }).join('')}
                         </div>
-                    ` : '<p class="text-sm text-gray-500">No linked team member accounts found on the roster yet.</p>'}
+                    ` : '<p class="text-sm text-gray-500">No account links stored on this roster. Additional legacy links have not been checked.</p>'}
+                    ${teamMemberDiscoveryState !== 'complete' ? `<button type="button" data-team-generation="${teamLoadGeneration}" data-team-id="${escapeAttr(currentTeamId)}" onclick="loadAdditionalTeamMembers(this)" ${teamMemberDiscoveryState === 'loading' ? 'disabled' : ''} class="mt-3 text-sm text-primary-700 underline">${teamMemberDiscoveryState === 'loading' ? 'Loading additional linked accounts…' : teamMemberDiscoveryState === 'error' ? 'Could not check additional accounts. Retry' : 'Find additional linked accounts'}</button>` : ''}
                     <div id="team-scorekeeper-status" class="mt-2 text-xs text-gray-500" aria-live="polite"></div>
                 </div>
             `;
@@ -2372,17 +2389,8 @@
                     const accessInfo = getTeamAccessInfo(currentUser, { ...team, id: teamId });
                     currentTeamAccessInfo = accessInfo;
                     if (accessInfo.hasAccess) {
-                        // Fetch unread count for chat badge
-                        let unreadCount = 0;
-                        try {
-                            const counts = await getUnreadChatCounts(currentUser.uid, [teamId]);
-                            if (!isCurrentLoad()) return;
-                            unreadCount = counts[teamId] || 0;
-                        } catch (e) {
-                            if (!isCurrentLoad()) return;
-                            console.error('Error fetching unread counts:', e);
-                        }
-
+                        // The chat badge is optional; never hold core team content for it.
+                        const unreadCount = 0;
                         if (!isCurrentLoad()) return;
                         renderTeamAdminBanner(
                             document.getElementById('team-nav-banner'),
@@ -2395,6 +2403,15 @@
                                 exitUrl: accessInfo.exitUrl
                             }
                         );
+                        void getUnreadChatCounts(currentUser.uid, [teamId]).then((counts) => {
+                            if (!isCurrentLoad()) return;
+                            renderTeamAdminBanner(document.getElementById('team-nav-banner'), {
+                                team, teamId,
+                                active: getUrlParams().section === 'staff-permissions' ? 'permissions' : 'view',
+                                unreadCount: counts[teamId] || 0,
+                                accessLevel: accessInfo.accessLevel, exitUrl: accessInfo.exitUrl
+                            });
+                        }).catch((error) => console.warn('Chat badge unavailable:', error));
                     }
                 } else {
                     currentTeamAccessInfo = { hasAccess: false, accessLevel: null };
@@ -2402,9 +2419,6 @@
 
                 const pendingAdminInvites = canManageTeamAvailability() ? await loadPendingAdminInvites(teamId) : [];
                 if (!isCurrentLoad()) return;
-                const teamMemberUsers = await loadScorekeeperGrantUsers(teamId);
-                if (!isCurrentLoad()) return;
-                currentTeamMemberUsers = teamMemberUsers;
                 renderScorekeeperGrantControls(team, players);
                 renderAvailabilitySettings(team);
                 renderStaffPermissionsSection(team, pendingAdminInvites);
@@ -3062,7 +3076,8 @@
                 }
             }
 
-            for (const entry of scheduleEntries) {
+            const enrichedEvents = await boundedMap(scheduleEntries, async (entry) => {
+                if (!isContextCurrent()) return null;
                 const { game, date: gameDate, id, title, location, notes } = entry;
                 const isPractice = game.type === 'practice';
                 const status = String(game.status || '').trim().toLowerCase();
@@ -3097,7 +3112,7 @@
                         myRsvp = null;
                     }
                 }
-                allEvents.push({
+                return {
                     type: 'db',
                     id,
                     gameId: id,
@@ -3123,8 +3138,10 @@
                     availabilityNotes,
                     isCancelled,
                     isPractice
-                });
-            }
+                };
+            });
+            if (!isContextCurrent()) return null;
+            allEvents.push(...enrichedEvents.filter(Boolean));
 
             allEvents.sort((a, b) => a.date - b.date);
             if (!isContextCurrent()) return null;
