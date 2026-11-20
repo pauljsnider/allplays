@@ -6,7 +6,10 @@ const assert = require('node:assert/strict');
 const admin = require('firebase-admin');
 const { Firestore } = require('firebase-admin/firestore');
 const projectId = 'demo-allplays-resource';
-if (process.env.GCLOUD_PROJECT !== projectId || process.env.FIRESTORE_EMULATOR_HOST !== '127.0.0.1:8280' || process.env.FIREBASE_AUTH_EMULATOR_HOST !== '127.0.0.1:9299') throw new Error('Isolated trigger stack required');
+const firestoreHost = process.env.FIRESTORE_EMULATOR_HOST || '';
+const authHost = process.env.FIREBASE_AUTH_EMULATOR_HOST || '';
+const functionsPort = Number(process.env.RESOURCE_PACKETS_FUNCTIONS_PORT || 5201);
+if (process.env.GCLOUD_PROJECT !== projectId || !/^127\.0\.0\.1:\d+$/.test(firestoreHost) || !/^127\.0\.0\.1:\d+$/.test(authHost) || !Number.isSafeInteger(functionsPort)) throw new Error('Isolated trigger stack required');
 admin.initializeApp({ projectId, credential: { getAccessToken: async () => ({ access_token: 'local-only', expires_in: 3600 }) } });
 const db = new Firestore({ projectId });
 async function eventually(check) {
@@ -20,14 +23,14 @@ test('real outbox and Auth deletion triggers use isolated sinks', async () => {
     const email = `${uid}@example.invalid`; const password = 'LocalTriggerFixture-123!';
     await admin.auth().createUser({ uid, email, password, emailVerified: true });
     await db.doc(`users/${uid}`).set({ active: true, parentTeamIds: ['trigger-team'], parentPlayerKeys: uid === 'trigger-parent' || uid === 'trigger-disabled' ? ['trigger-team::child'] : ['trigger-team::other-child'], notifications: { enabled: uid !== 'trigger-disabled' } });
-    const response = await fetch('http://127.0.0.1:9299/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=local-only', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, returnSecureToken: true }) });
+    const response = await fetch(`http://${authHost}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=local-only`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, returnSecureToken: true }) });
     tokens[uid] = (await response.json()).idToken; assert.ok(tokens[uid]);
   }
   await db.doc('teams/trigger-team').set({ ownerId: 'trigger-staff', active: true });
   await db.doc('teams/trigger-team/players/child').set({ name: 'Synthetic child', active: true });
   let n = 0;
   async function command(uid, data) {
-    const response = await fetch(`http://127.0.0.1:5201/${projectId}/us-central1/resourcePacketsCommand`, { method: 'POST', headers: { Authorization: `Bearer ${tokens[uid]}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ data: { teamId: 'trigger-team', requestId: `trigger-${++n}`, ...data } }) });
+    const response = await fetch(`http://127.0.0.1:${functionsPort}/${projectId}/us-central1/resourcePacketsCommand`, { method: 'POST', headers: { Authorization: `Bearer ${tokens[uid]}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ data: { teamId: 'trigger-team', requestId: `trigger-${++n}`, ...data } }) });
     const result = await response.json(); assert.equal(response.status, 200, JSON.stringify(result)); return result.result;
   }
   await command('trigger-staff', { action: 'saveResource', resourceId: 'resource', expectedRevision: 0, title: 'Footwork', teachingPoint: 'Stay balanced', url: 'https://example.com/resource' });

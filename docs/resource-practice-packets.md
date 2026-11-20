@@ -6,8 +6,11 @@ In the modern web app, open a team's Drills and its assignment link, or use
 Schedule → Packets → Manage team assignments. The assignments dashboard shows
 completed-player counts. Choose **Share a video**, paste an HTTPS link and give
 it a short title, or choose an existing resource/drill. Add an optional coaching
-note. The current team and whole roster are the default context; change the
-visible audience, due date or notification preference as needed.
+instruction. The ordinary path is link, preview, instruction, audience/due and
+assign. Video-level details, extra videos, library reuse, AI help and assignment
+metadata stay collapsed until requested. The current team and whole roster are
+the default context; change the visible audience, due date or notification
+preference as needed.
 
 YouTube links show a thumbnail when available; other links show their source.
 **Preview video** opens the external site without recording completion.
@@ -17,10 +20,13 @@ using eligible existing channels/preferences; email is not guaranteed. There is
 no separate save-resource/reselect/draft/publication wizard. An uncertain send
 can only retry the same frozen publication, not silently send a new one.
 
-Use **View progress → Outstanding** for players who have not opened every item.
-Notification delivery is shown separately and never proves viewing. Text-only
-corrections retain completion for unchanged item IDs and exact destinations;
-new or replaced videos require an open. Old version evidence remains retained.
+Use **View progress → Outstanding** for players who have not reported practicing
+every item. **Opened** remains visible as a separate link-handoff signal and is
+never labeled watched. Notification delivery is shown separately and never proves
+viewing. Text-only corrections retain activity for unchanged item IDs and exact
+destinations; new or replaced videos require a new practice acknowledgment. Old
+version evidence remains retained. Legacy assignments keep their original
+open-to-complete policy and are labeled as legacy rather than silently relabeled.
 
 ## Family experience and truthful evidence
 
@@ -29,17 +35,19 @@ Notifications open the specific assignment. One eligible assigned child opens
 directly; siblings require deliberate child selection. The assignment destination
 survives sign-in. Existing Schedule and player-resource links remain supported.
 
-**Watch** opens the external video and records an authenticated **Link opened**
-event. That item becomes **Complete — video opened** without another checkbox
-or Save action. A multi-video assignment is complete when all items were opened.
-This records a click, not playback or viewing time. A broken external destination
-can still have an opened-link record. Reads, previews, hover and AI never record
-opens. Blocked popups do not record completion. Failed writes do not report
-success; explicit retry retains its idempotency identity.
+**Open video** authorizes the exact current task, hands the external URL to the
+browser/native runtime, and only then records an authenticated **Link opened**
+event. It never claims playback or viewing time and does not complete a new
+assignment. After returning, the family uses **We practiced this** for each video;
+**Undo** reverses that self-report. A multi-video assignment is complete only when
+every item has that persisted acknowledgment. Failed or blocked handoffs record
+no open. Reads, previews, hover and AI record neither opens nor practice. Failed
+writes do not report success; explicit retry retains its idempotency identity.
 
-Optional practiced feedback is secondary. Existing watched/practiced evidence
-is retained without being relabeled as verified playback. Co-guardians share
-child completion; one child's click never completes a sibling's task.
+Existing open/practiced evidence is retained without being relabeled as verified
+playback. Co-guardians share child activity; one child's action never completes a
+sibling's task. Direct child task routes resolve the authorized child and team
+names instead of displaying placeholder context.
 
 Contextual AI entry points prepare editable coaching assistance or reminder text
 and answer authorized progress questions. Composer help opens a new tab with every
@@ -93,11 +101,13 @@ needed. The browser suite mounts the real feature pages against real emulated
 callables and Auth; its library adapter uses local Firestore to avoid initializing
 the separate image project. With RESOURCE_PACKET_FULL_SHELL=1 it also exercises the real App/Auth route and exact-assignment login return. The unrelated public-profile projection callable explicitly returns unavailable in this fixture; it does not fake a successful profile sync.
 
-Browser fixtures demonstrate desktop coach creation and mobile-width family
-viewing, deliberate click recording, optional self-report and sibling/family
-separation. They also exercise resource revisions, multi-item publication, a
-Chicago due date, keyboard confirmation, touch opening, a synthetic external
-404 and offline retry without duplicate evidence. They use only synthetic names and example.invalid identities.
+Browser fixtures demonstrate mobile coach creation and the real Home action into
+the exact child task, deliberate link recording, practice acknowledgment/Undo,
+return-to-Home completion, same-session account changes and sibling/family
+separation. They also exercise Assign again, resource revisions, multi-item
+publication, a Chicago due date, keyboard confirmation, touch opening, a
+synthetic external 404 and offline retry without duplicate evidence. They use
+only synthetic names and example.invalid identities.
 
 ## Authorization and release gates
 

@@ -1,4 +1,5 @@
 import type { ParentHomeTeam } from './homeLogic';
+import { resourcePacketsAvailable } from './resourcePacketsService';
 
 export type TeamNavigationKind = 'native' | 'website';
 
@@ -128,6 +129,13 @@ export function buildTeamNavigation(team: ParentHomeTeam): TeamNavigationSection
       href: `/teams/${encodeURIComponent(teamId)}/fees`,
       kind: 'native'
     },
+    ...(resourcePacketsAvailable() ? [{
+      id: 'assign-practice',
+      label: 'Assign practice',
+      detail: 'Share a video, choose players, and follow practice acknowledgments',
+      href: `/teams/${encodeURIComponent(teamId)}/resources`,
+      kind: 'native' as const
+    }] : []),
     {
       id: 'practice-command',
       label: 'Team drills',
