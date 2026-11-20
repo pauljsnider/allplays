@@ -14,6 +14,26 @@ function createStorage(initial = {}) {
 }
 
 describe('live game play announcer', () => {
+    it('does not abort viewer startup when the localStorage getter is denied', () => {
+        const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+        Object.defineProperty(globalThis, 'localStorage', {
+            configurable: true,
+            get() { throw new DOMException('Storage blocked', 'SecurityError'); }
+        });
+        try {
+            const announcer = createPlayAnnouncer({
+                speechSynthesis: { speak: vi.fn(), cancel: vi.fn() },
+                SpeechSynthesisUtterance: function MockUtterance(text) { this.text = text; }
+            });
+            expect(announcer.isEnabled()).toBe(false);
+            expect(announcer.setEnabled(true)).toBe(true);
+            expect(announcer.announceEvent({ id: 'restricted', description: 'Goal' })).toBe(true);
+        } finally {
+            if (original) Object.defineProperty(globalThis, 'localStorage', original);
+            else delete globalThis.localStorage;
+        }
+    });
+
     it('sanitizes event descriptions before speaking', () => {
         expect(cleanAnnouncementText('  <b>Goal</b> &amp; assist&nbsp; ')).toBe('Goal & assist');
         expect(buildPlayAnnouncement({ period: 'Q2', description: '<span>Layup</span>' })).toBe('Q2. Layup');

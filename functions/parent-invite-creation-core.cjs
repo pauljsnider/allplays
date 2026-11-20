@@ -56,6 +56,20 @@ function isCompletedParentInvite(invite = {}, expected = {}) {
     && (invite.used === true || status === 'accepted');
 }
 
+function isRenewableParentInvite(invite = {}, expected = {}, nowMillis = Date.now()) {
+  const status = String(invite.status || '').trim().toLowerCase();
+  const expiresAtMillis = getTimestampMillis(invite.expiresAt);
+  return isMatchingParentInvite(invite, expected)
+    && invite.used !== true
+    && status !== 'accepted'
+    && (
+      invite.revoked === true
+      || invite.active === false
+      || ['cancelled', 'expired', 'removed', 'revoked'].includes(status)
+      || (Number.isFinite(expiresAtMillis) && expiresAtMillis <= nowMillis)
+    );
+}
+
 function buildParentInviteResult(snapshot, invite, fallback = {}) {
   const completed = isCompletedParentInvite(invite, fallback.expected);
   const autoLinked = completed && invite.autoAccepted === true && Boolean(String(invite.usedBy || '').trim());
@@ -213,6 +227,7 @@ function createParentInviteHandler({
       const nowMillis = getTimestampMillis(now);
       const expected = { teamId, playerId, email };
       let reusableSnap = null;
+      let renewableOperation = false;
       if (idempotencySnap.exists) {
         const existingCode = String(idempotencySnap.data()?.accessCode || '').trim().toUpperCase();
         if (/^[A-Z0-9]{8}$/.test(existingCode)) {
@@ -223,9 +238,12 @@ function createParentInviteHandler({
             || (idempotencyKey && isCompletedParentInvite(candidate, expected))
           )) {
             reusableSnap = candidateSnap;
+          } else if (candidateSnap.exists
+            && isRenewableParentInvite(candidate, expected, nowMillis)) {
+            renewableOperation = true;
           }
         }
-        if (idempotencyKey && !reusableSnap) {
+        if (idempotencyKey && !reusableSnap && !renewableOperation) {
           throw new HttpsError(
             'failed-precondition',
             'The prior parent invite outcome for this operation could not be replayed.'
