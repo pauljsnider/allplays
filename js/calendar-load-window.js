@@ -50,6 +50,32 @@ export function addCalendarLoadedRange(loadedRanges, range) {
     return merged;
 }
 
+export async function mapWithConcurrency(items, mapper, concurrency) {
+    if (!Number.isInteger(concurrency) || concurrency < 1) {
+        throw new Error('Calendar load concurrency must be a positive integer');
+    }
+
+    const results = new Array(items.length);
+    let nextIndex = 0;
+    let firstError = null;
+
+    const worker = async () => {
+        while (true) {
+            const index = nextIndex++;
+            if (index >= items.length) return;
+            try {
+                results[index] = await mapper(items[index], index);
+            } catch (error) {
+                firstError ||= error;
+            }
+        }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+    if (firstError) throw firstError;
+    return results;
+}
+
 export function createLatestCalendarRangeLoader(loadRange) {
     let pendingRequest = null;
     let activePromise = null;
