@@ -2156,7 +2156,7 @@ async function startRealMode(params) {
     try {
         const [database, videoTools, stateTools, historyTools] = await Promise.all([
             loadOverlayDatabase(),
-            import('./live-game-video.js?v=443319'),
+            import('./live-game-video.js?v=443320'),
             import('./live-game-state.js?v=63'),
             import('./live-game-overlay-history.js?v=4')
         ]);

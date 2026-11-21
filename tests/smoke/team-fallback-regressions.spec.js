@@ -940,6 +940,9 @@ export function buildBroadcastSetupSession({ existingSession = {}, sessionName =
         permissions
     };
 }
+export function buildHighlightReelPlaylist() {
+    return [];
+}
 export function buildHighlightShareUrl() {
     return '';
 }

@@ -560,6 +560,9 @@ async function stubRealOverlayModules(page) {
                     && (!liveStatus || completedStatuses.has(liveStatus) || liveStatus === 'scheduled'))
                 || (!status && completedStatuses.has(liveStatus));
         }
+        export function buildHighlightReelPlaylist() {
+            return [];
+        }
         export function resolveReplayVideoOptions({ game = {}, isReplay = false } = {}) {
             if (window.__OVERLAY_THROW_VIDEO__) throw new Error('provider refresh failed');
             if (window.__OVERLAY_NO_RESOLVED_VIDEO__) {

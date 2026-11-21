@@ -803,6 +803,10 @@ async function installMocks(
     `;
 
   const liveGameVideoModule = `
+        export function buildHighlightReelPlaylist(clips = []) {
+            return clips.filter((clip) => Number.isFinite(clip?.startMs) && Number.isFinite(clip?.endMs) && clip.endMs > clip.startMs && !clip.mediaUrl);
+        }
+
         export function buildHighlightShareUrl() {
             return '';
         }
@@ -964,6 +968,116 @@ async function installMocks(
       contentType: "application/javascript",
       body: firebaseAppModule,
     }),
+  );
+}
+
+async function installLiveGameReplayMocks(page, scenario) {
+  await page.addInitScript(() => {
+    let currentTime = 0;
+    Object.defineProperty(HTMLMediaElement.prototype, "currentTime", {
+      configurable: true,
+      get() {
+        return currentTime;
+      },
+      set(value) {
+        currentTime = Number(value);
+      },
+    });
+    HTMLMediaElement.prototype.play = function play() {
+      window.__HIGHLIGHT_REEL_PLAY_CALLS__ =
+        (window.__HIGHLIGHT_REEL_PLAY_CALLS__ || 0) + 1;
+      return Promise.resolve();
+    };
+    HTMLMediaElement.prototype.pause = function pause() {
+      window.__HIGHLIGHT_REEL_PAUSE_CALLS__ =
+        (window.__HIGHLIGHT_REEL_PAUSE_CALLS__ || 0) + 1;
+    };
+  });
+
+  const dbModule = `
+    const scenario = ${JSON.stringify(scenario)};
+    const clone = (value) => JSON.parse(JSON.stringify(value));
+    export async function getGameDayTeamContext() { return clone(scenario.team); }
+    export async function getGame() { return clone(scenario.game); }
+    export async function getPlayers() { return clone(scenario.players || []); }
+    export async function getConfigs() { return []; }
+    export async function getMyRsvp() { return null; }
+    export async function getLiveEvents() { return []; }
+    export async function getLiveChatHistory() { return []; }
+    export async function getLiveReactions() { return []; }
+    export function subscribeLiveEvents() { return () => {}; }
+    export function subscribeAggregatedStats() { return () => {}; }
+    export function subscribeLiveChat() { return () => {}; }
+    export function subscribeReactions() { return () => {}; }
+    export function subscribeGame() { return () => {}; }
+    export function trackViewerPresence() { return () => {}; }
+    export async function postLiveChatMessage() {}
+    export async function sendReaction() {}
+    export async function updateGame() {}
+    export async function uploadGameClip() { return { url: "" }; }
+    export async function deleteUploadedMediaObjects() {}
+  `;
+  const utilsModule = `
+    export function getUrlParams() {
+      return Object.fromEntries(new URLSearchParams(window.location.search));
+    }
+    export function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+    export function renderHeader() {}
+    export function renderFooter() {}
+    export function formatShortDate(value) { return String(value || ""); }
+    export function formatTime(value) { return String(value || ""); }
+    export async function shareOrCopy() { return { status: "copied" }; }
+  `;
+  const authModule = `
+    export function checkAuth(callback) { callback(null); }
+  `;
+  const firebaseAiModule = `
+    export class GoogleAIBackend {}
+    export function getAI() { return {}; }
+    export function getGenerativeModel() {
+      return { generateContent: async () => ({ response: { text: () => "" } }) };
+    }
+  `;
+  const firebaseAppModule = `
+    export function getApp() { return {}; }
+  `;
+  const diamondEngagementModule = `
+    export async function getLiveChatHistory() { return []; }
+    export async function getLiveReactions() { return []; }
+    export async function postDiamondLiveChat() {}
+    export async function postDiamondLiveReaction() {}
+    export function subscribeLiveChat() { return () => {}; }
+    export function subscribeReactions() { return () => {}; }
+  `;
+
+  const fulfillModule = (body) => (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/javascript",
+      body,
+    });
+
+  await page.route(/\/js\/db\.js\?v=\d+$/, fulfillModule(dbModule));
+  await page.route(/\/js\/utils\.js\?v=\d+$/, fulfillModule(utilsModule));
+  await page.route(/\/js\/auth\.js\?v=\d+$/, fulfillModule(authModule));
+  await page.route(
+    /\/js\/firebase-ai\.js(?:\?.*)?$/,
+    fulfillModule(firebaseAiModule),
+  );
+  await page.route(
+    /\/js\/vendor\/firebase-app\.js(?:\?.*)?$/,
+    fulfillModule(firebaseAppModule),
+  );
+  await page.route(
+    /\/js\/diamond-live-engagement-subscriptions\.js(?:\?.*)?$/,
+    fulfillModule(diamondEngagementModule),
   );
 }
 
@@ -2641,6 +2755,77 @@ for (const action of ["save", "remove"]) {
     expect((await readStore(page)).runTransactionCalls).toHaveLength(1);
   });
 }
+
+test("mobile viewer watches two stored highlights as one highlight reel", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.setViewportSize({ width: 390, height: 844 });
+  const scenario = createScenario();
+  scenario.game.replayVideo = {
+    url: "https://cdn.example.com/games/game-1.mp4",
+    publicUrl: "https://video.example.com/games/game-1",
+    durationMs: 120000,
+    status: "ready",
+  };
+  scenario.game.highlightClips = [
+    { title: "Opening steal", startMs: 5000, endMs: 15000, order: 1 },
+    { title: "Winning shot", startMs: 30000, endMs: 40000, order: 2 },
+    {
+      type: "score-linked",
+      title: "Uploaded interview",
+      mediaUrl: "https://cdn.example.com/clips/interview.mp4",
+    },
+  ];
+  await installLiveGameReplayMocks(page, scenario);
+
+  await page.goto(
+    `${baseURL}/live-game.html?teamId=team-1&gameId=game-1&replay=true`,
+    { waitUntil: "domcontentloaded" },
+  );
+  const start = page.getByRole("button", { name: "Watch highlight reel" });
+  await expect(start).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+
+  await start.click();
+  await expect(page.locator("#highlight-reel-status")).toContainText(
+    "Opening steal · 1 of 2",
+  );
+  await expect
+    .poll(() =>
+      page.locator("#recorded-replay-video").evaluate((video) => video.currentTime),
+    )
+    .toBe(5);
+
+  await page.locator("#recorded-replay-video").evaluate((video) => {
+    video.currentTime = 15;
+    video.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#highlight-reel-status")).toContainText(
+    "Winning shot · 2 of 2",
+  );
+  await expect
+    .poll(() =>
+      page.locator("#recorded-replay-video").evaluate((video) => video.currentTime),
+    )
+    .toBe(30);
+
+  await page.locator("#recorded-replay-video").evaluate((video) => {
+    video.currentTime = 40;
+    video.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(start).toBeVisible();
+  await expect(page.locator("#highlight-reel-stop")).toBeHidden();
+  await expect(page.locator("#highlight-reel-status")).toBeHidden();
+  expect(await page.evaluate(() => window.__HIGHLIGHT_REEL_PLAY_CALLS__)).toBe(2);
+  expect(pageErrors).toEqual([]);
+});
 
 test("completed statsheet game with only an attached clip does not advertise a full replay", async ({
   page,

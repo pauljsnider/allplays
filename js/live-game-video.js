@@ -619,6 +619,50 @@ export function normalizeSavedHighlightClips(game, options = {}) {
         .sort((a, b) => (a.order - b.order) || (a.startMs - b.startMs));
 }
 
+export function buildHighlightReelPlaylist(clips = [], options = {}) {
+    const durationMs = toFiniteNumber(options.durationMs);
+    const replaySourceUrl = normalizeSafeVideoUrl(options.replaySourceUrl);
+
+    return toArray(clips)
+        .map((clip, index) => {
+            if (!clip || typeof clip !== 'object' || clip.mediaUrl) return null;
+
+            const explicitVideoValue = firstSafeString([
+                clip.videoUrl,
+                clip.sourceUrl
+            ]);
+            const explicitVideoUrl = normalizeSafeVideoUrl(explicitVideoValue);
+            if (explicitVideoValue && (!explicitVideoUrl || !replaySourceUrl || explicitVideoUrl !== replaySourceUrl)) {
+                return null;
+            }
+
+            const rawStartMs = toFiniteNumber(clip.startMs);
+            const rawEndMs = toFiniteNumber(clip.endMs);
+            if (!Number.isFinite(rawStartMs) || rawStartMs < 0 || !Number.isFinite(rawEndMs) || rawEndMs <= rawStartMs) {
+                return null;
+            }
+
+            const normalized = createHighlightClipDraft({
+                startMs: rawStartMs,
+                endMs: rawEndMs,
+                durationMs,
+                title: clip.title || `Highlight ${index + 1}`
+            }, options);
+            if (!normalized) return null;
+
+            return {
+                title: normalized.title || `Highlight ${index + 1}`,
+                startMs: normalized.startMs,
+                endMs: normalized.endMs,
+                order: toFiniteNumber(clip.order ?? clip.sortOrder ?? clip.sequence ?? clip.rank) ?? index,
+                index
+            };
+        })
+        .filter(Boolean)
+        .sort((a, b) => (a.order - b.order) || (a.startMs - b.startMs) || (a.index - b.index))
+        .map(({ title, startMs, endMs }) => ({ title, startMs, endMs }));
+}
+
 export function normalizeGameRecapHighlightClips(game, options = {}) {
     const durationMs = toFiniteNumber(options.durationMs);
     const recorded = hasCompletedReplayLifecycle(game) ? getRecordedReplayConfig(game) : null;

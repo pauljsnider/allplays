@@ -145,7 +145,7 @@ describe('live game overlay page', () => {
         expect(source).toContain('stateTools.applyResetEventState');
         expect(source).toContain('reconcileOverlayLiveEvents');
         expect(source).toContain("from './live-game-overlay-model.js?v=34'");
-        expect(source).toContain("import('./live-game-video.js?v=443319')");
+        expect(source).toContain("import('./live-game-video.js?v=443320')");
         expect(source).not.toContain('loadPublicGameResetIdentity');
         expect(source).toContain('resolvePublicProjectionVideoOptions');
         expect(source).toContain('getSafeOverlayProviderUrl(publicUrl)');
@@ -161,7 +161,7 @@ describe('live game overlay page', () => {
         expect(source).toContain("import('./auth.js?v=4433220')");
         expect(source).toContain("import('./live-game-chat.js?v=4')");
         expect(currentLiveGameSource).toContain("from './live-game-overlay-model.js?v=34'");
-        expect(currentLiveGameSource).toContain("from './live-game-video.js?v=443319'");
+        expect(currentLiveGameSource).toContain("from './live-game-video.js?v=443320'");
         expect(currentLiveGameSource).toContain("from './live-game-chat.js?v=4'");
         expect(modelSource).toContain("from './game-replay-video.js?v=3'");
         expect(videoSource).toContain("from './game-replay-video.js?v=3'");

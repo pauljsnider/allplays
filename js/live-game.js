@@ -37,7 +37,7 @@ import {
   getReplayTimestampMs,
   rebaseReplayStartTimeMs
 } from './live-game-replay.js?v=3';
-import { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, hasActiveLiveLifecycle, hasCompletedReplayLifecycle, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=443319';
+import { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightReelPlaylist, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, hasActiveLiveLifecycle, hasCompletedReplayLifecycle, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=443320';
 import { resolvePublicProjectionVideoOptions, getOverlayLiveClockMs } from './live-game-overlay-model.js?v=34';
 import { buildGameReportShareUrl, buildGameWatchShareUrl } from './game-share-links.js?v=1';
 import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=11';
@@ -123,6 +123,9 @@ const state = {
   videoPlayback: null,
   clipStartMs: null,
   clipEndMs: null,
+  highlightReelPlaylist: [],
+  highlightReelIndex: -1,
+  highlightReelActive: false,
   selectedClipEvent: null,
   savingBroadcastSession: false,
   broadcastRsvp: null,
@@ -211,6 +214,9 @@ const els = {
   highlightSetEnd: q('#highlight-set-end'),
   highlightShareBtn: q('#highlight-share-btn'),
   highlightSaveBtn: q('#highlight-save-btn'),
+  highlightReelStart: q('#highlight-reel-start'),
+  highlightReelStop: q('#highlight-reel-stop'),
+  highlightReelStatus: q('#highlight-reel-status'),
   savedHighlightsList: q('#saved-highlights-list'),
   videoEmptyState: q('#video-empty-state'),
   streamScoreStatus: q('#stream-score-status'),
@@ -845,6 +851,11 @@ function refreshVideoPanel(options) {
 async function refreshVideoPanelNow({ force = false } = {}) {
   const requestId = ++replayPlaybackRequestId;
   let nextPlayback = resolveVideoPlayback();
+  const projectedPlaybackMetadata = {
+    savedHighlights: nextPlayback?.savedHighlights,
+    mediaHub: nextPlayback?.mediaHub,
+    gameClips: nextPlayback?.gameClips
+  };
   if (state.game?.isPublicProjection === true && (state.game?.hasRecordedReplay === true
       || (typeof state.game?.hasRecordedReplay !== 'boolean' && !state.game?.videoUrl))
       && hasCompletedReplayLifecycle(state.game)) {
@@ -861,10 +872,16 @@ async function refreshVideoPanelNow({ force = false } = {}) {
     try {
       const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=5');
       if (requestId !== replayPlaybackRequestId) return false;
-      nextPlayback = await resolveAuthorizedReplayPlayback({
+      const authorizedPlayback = await resolveAuthorizedReplayPlayback({
         teamId: state.teamId, gameId: state.gameId,
         clipStartMs: state.clipStartMs, clipEndMs: state.clipEndMs
       });
+      nextPlayback = {
+        ...authorizedPlayback,
+        savedHighlights: authorizedPlayback.savedHighlights ?? projectedPlaybackMetadata.savedHighlights,
+        mediaHub: authorizedPlayback.mediaHub ?? projectedPlaybackMetadata.mediaHub,
+        gameClips: authorizedPlayback.gameClips ?? projectedPlaybackMetadata.gameClips
+      };
     } catch {
       nextPlayback = { ...unavailable, replayState: { status: 'unavailable', message: 'Replay video is temporarily unavailable. Reload to try again.' } };
     }
@@ -906,6 +923,9 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
   const recordedVideo = els.recordedReplayVideo;
   const previousPlayback = state.videoPlayback;
   const shouldReloadPlayback = shouldReloadVideoPlayback(previousPlayback, nextPlayback);
+  if (shouldReloadPlayback && state.highlightReelActive) {
+    stopHighlightReel();
+  }
   state.videoPlayback = nextPlayback;
   if (iframe) {
     iframe.title = state.videoPlayback?.isRecordedReplay === true
@@ -1325,6 +1345,117 @@ function applyHighlightSelection(clip, { updateHistory = true, autoplay = false 
   }
 }
 
+function getHighlightReelPlaylist() {
+  if (state.videoPlayback?.mode !== 'recorded'
+      || state.videoPlayback?.isRecordedReplay !== true
+      || state.videoPlayback?.isAttachedClip === true
+      || !state.videoPlayback?.sourceUrl) {
+    return [];
+  }
+
+  return buildHighlightReelPlaylist(state.videoPlayback.savedHighlights, {
+    durationMs: getCurrentReplayVideoDurationMs(),
+    replaySourceUrl: state.videoPlayback.sourceUrl
+  });
+}
+
+function resetHighlightReelState() {
+  state.highlightReelActive = false;
+  state.highlightReelPlaylist = [];
+  state.highlightReelIndex = -1;
+  state.clipStartMs = null;
+  state.clipEndMs = null;
+  if (state.videoPlayback) {
+    state.videoPlayback = {
+      ...state.videoPlayback,
+      clipStartMs: null,
+      clipEndMs: null
+    };
+  }
+}
+
+function renderHighlightReelControls() {
+  const playlist = state.highlightReelActive
+    ? state.highlightReelPlaylist
+    : getHighlightReelPlaylist();
+  const isEligible = playlist.length >= 2;
+  const activeClip = state.highlightReelActive
+    ? playlist[state.highlightReelIndex]
+    : null;
+
+  if (els.highlightReelStart) {
+    els.highlightReelStart.disabled = !isEligible || state.highlightReelActive;
+    els.highlightReelStart.classList.toggle('hidden', !isEligible || state.highlightReelActive);
+  }
+  els.highlightReelStop?.classList.toggle('hidden', !state.highlightReelActive);
+  if (els.highlightReelStatus) {
+    els.highlightReelStatus.textContent = activeClip
+      ? `${activeClip.title || `Highlight ${state.highlightReelIndex + 1}`} · ${state.highlightReelIndex + 1} of ${playlist.length}`
+      : '';
+    els.highlightReelStatus.classList.toggle('hidden', !activeClip);
+  }
+}
+
+function stopHighlightReel({ pause = true } = {}) {
+  if (pause) {
+    els.recordedReplayVideo?.pause();
+  }
+  resetHighlightReelState();
+  renderHighlightReelControls();
+}
+
+function playHighlightReelItem(index) {
+  const clip = state.highlightReelPlaylist[index];
+  const video = els.recordedReplayVideo;
+  if (!clip || !video) {
+    stopHighlightReel();
+    return;
+  }
+
+  state.highlightReelActive = true;
+  state.highlightReelIndex = index;
+  applyHighlightSelection(clip, { updateHistory: false, autoplay: false });
+  renderHighlightReelControls();
+
+  const pendingPlay = video.play();
+  if (pendingPlay?.catch) {
+    pendingPlay.catch(() => {
+      if (state.highlightReelActive && state.highlightReelIndex === index) {
+        stopHighlightReel({ pause: false });
+      }
+    });
+  }
+}
+
+function startHighlightReel() {
+  const playlist = getHighlightReelPlaylist();
+  if (playlist.length < 2 || !els.recordedReplayVideo) return;
+
+  const replaySourceUrl = state.videoPlayback.sourceUrl;
+  const currentSourceUrl = els.recordedReplayVideo.currentSrc || els.recordedReplayVideo.src;
+  if (currentSourceUrl !== replaySourceUrl) {
+    els.recordedReplayVideo.src = replaySourceUrl;
+    els.recordedReplayVideo.load();
+  }
+
+  state.highlightReelPlaylist = playlist;
+  state.highlightReelIndex = -1;
+  state.highlightReelActive = true;
+  playHighlightReelItem(0);
+}
+
+function completeHighlightReel() {
+  const clip = state.highlightReelPlaylist[state.highlightReelIndex];
+  if (els.recordedReplayVideo) {
+    els.recordedReplayVideo.pause();
+    if (clip) {
+      els.recordedReplayVideo.currentTime = clip.endMs / 1000;
+    }
+  }
+  resetHighlightReelState();
+  renderHighlightReelControls();
+}
+
 function renderSavedHighlights() {
   if (!els.savedHighlightsList) return;
   const clips = state.videoPlayback?.savedHighlights || [];
@@ -1419,6 +1550,7 @@ async function handleGameClipAction(action, clip) {
 function renderRecordedReplayTools() {
   if (state.videoPlayback?.mode !== 'recorded') {
     els.recordedReplayTools?.classList.add('hidden');
+    renderHighlightReelControls();
     return;
   }
 
@@ -1460,6 +1592,7 @@ function renderRecordedReplayTools() {
   }
 
   renderSavedHighlights();
+  renderHighlightReelControls();
 }
 
 async function shareHighlightClip(clip) {
@@ -1490,6 +1623,7 @@ async function saveHighlightClip() {
     return;
   }
 
+  stopHighlightReel();
   applyHighlightSelection(draft);
   if (!state.user) {
     await shareHighlightClip(draft);
@@ -1626,6 +1760,17 @@ function initRecordedReplayControls() {
       }
     });
     els.recordedReplayVideo.addEventListener('timeupdate', () => {
+      if (state.highlightReelActive) {
+        const clip = state.highlightReelPlaylist[state.highlightReelIndex];
+        if (!clip || els.recordedReplayVideo.currentTime < clip.endMs / 1000) return;
+        if (state.highlightReelIndex + 1 < state.highlightReelPlaylist.length) {
+          playHighlightReelItem(state.highlightReelIndex + 1);
+        } else {
+          completeHighlightReel();
+        }
+        return;
+      }
+
       if (!Number.isFinite(state.videoPlayback?.clipEndMs)) return;
       const clipEndSeconds = state.videoPlayback.clipEndMs / 1000;
       if (els.recordedReplayVideo.currentTime >= clipEndSeconds) {
@@ -1633,6 +1778,15 @@ function initRecordedReplayControls() {
         els.recordedReplayVideo.currentTime = clipEndSeconds;
       }
     });
+  }
+
+  if (els.highlightReelStart && !els.highlightReelStart.dataset.bound) {
+    els.highlightReelStart.dataset.bound = 'true';
+    els.highlightReelStart.addEventListener('click', startHighlightReel);
+  }
+  if (els.highlightReelStop && !els.highlightReelStop.dataset.bound) {
+    els.highlightReelStop.dataset.bound = 'true';
+    els.highlightReelStop.addEventListener('click', () => stopHighlightReel());
   }
 
   if (els.highlightSetStart && !els.highlightSetStart.dataset.bound) {
@@ -1657,6 +1811,7 @@ function initRecordedReplayControls() {
         showToast('Pick a valid highlight range.');
         return;
       }
+      stopHighlightReel();
       applyHighlightSelection(draft);
       await shareHighlightClip(draft);
     });
@@ -1672,6 +1827,7 @@ function initRecordedReplayControls() {
       if (!button) return;
       const clip = state.videoPlayback?.savedHighlights?.[Number(button.dataset.highlightIndex)];
       if (!clip) return;
+      stopHighlightReel();
       if (clip.mediaUrl) {
         state.clipStartMs = null;
         state.clipEndMs = null;
@@ -1680,6 +1836,7 @@ function initRecordedReplayControls() {
           sourceUrl: clip.mediaUrl,
           publicUrl: clip.mediaUrl,
           title: clip.title || state.videoPlayback?.title || null,
+          isAttachedClip: true,
           durationMs: null,
           clipStartMs: null,
           clipEndMs: null
@@ -1706,6 +1863,7 @@ function initRecordedReplayControls() {
       if (playButton) {
         const clip = state.videoPlayback?.mediaHub?.highlights?.[Number(playButton.dataset.mediaHighlightPlayIndex)];
         if (!canPlayMediaHubHighlight(clip)) return;
+        stopHighlightReel();
         if (els.highlightTitleInput) {
           els.highlightTitleInput.value = clip.title || '';
         }
