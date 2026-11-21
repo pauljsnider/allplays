@@ -3158,7 +3158,7 @@ async function loadTeamDetailOverviewSchedule(teamId: string, teamName: string, 
   return withTimeout(loadTeamOverviewSchedule(teamId, teamName, user), 'Optional team calendar', optionalCalendarTimeoutMs);
 }
 
-export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUser | null): Promise<TeamDetailModel> {
+export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUser | null, options: { includeOverviewSchedule?: boolean } = {}): Promise<TeamDetailModel> {
   const { team: loadedTeam, players: publicPlayers } = await loadTeamDetailBaseSnapshot(teamId, { includeGamesAndConfigs: false });
   const team = await recoverAuthoritativeManagedTeam(teamId, user, loadedTeam);
 
@@ -3168,7 +3168,7 @@ export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUs
 
   const accessUser = await hydrateTeamDetailAccessUser(user, teamId, players);
   const linkedPlayerIds = getLinkedPlayerIds(accessUser, teamId, players);
-  const overviewSchedule = await loadTeamDetailOverviewSchedule(teamId, cleanString(team?.name) || teamId, accessUser).catch((error) => {
+  const overviewSchedule = options.includeOverviewSchedule === false ? null : await loadTeamDetailOverviewSchedule(teamId, cleanString(team?.name) || teamId, accessUser).catch((error) => {
     logger.warn('Unable to merge imported calendar events into team overview.', {
       operation: 'team-overview-schedule-load',
       teamId,
