@@ -398,6 +398,11 @@
             <button id="highlight-share-btn" type="button" class="rounded-lg bg-teal px-4 py-2 text-sm font-medium text-ink">Copy Clip Link</button>
             <button id="highlight-save-btn" type="button" class="rounded-lg border border-teal/25 px-4 py-2 text-sm font-medium text-sand hover:bg-ink/80">Save Highlight</button>
           </div>
+          <div class="mt-4 flex flex-wrap items-center gap-2">
+            <button id="highlight-reel-start" type="button" class="hidden min-h-11 rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-60" disabled>Watch highlight reel</button>
+            <button id="highlight-reel-stop" type="button" class="hidden min-h-11 rounded-lg border border-coral/40 px-4 py-2 text-sm font-semibold text-coral hover:bg-coral/10">Stop reel</button>
+            <span id="highlight-reel-status" class="hidden min-w-0 flex-1 text-sm text-sand/75" role="status" aria-live="polite"></span>
+          </div>
           <div class="mt-4">
             <div class="text-[11px] uppercase tracking-[0.25em] text-teal/70">Saved Highlights</div>
             <div id="saved-highlights-list" class="mt-2 space-y-2"></div>
@@ -609,6 +614,6 @@
 
   <div id="footer-container"></div>
 
-    <script type="module" src="js/live-game.js?v=443382"></script>
+    <script type="module" src="js/live-game.js?v=443383"></script>
 </body>
 </html>

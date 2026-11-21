@@ -5,6 +5,7 @@ import {
     BROADCAST_PROVIDER_TYPES,
     MAX_HIGHLIGHT_CLIP_MS,
     buildBroadcastSetupSession,
+    buildHighlightReelPlaylist,
     buildHighlightShareUrl,
     buildStreamScoreContext,
     createHighlightClipDraft,
@@ -485,6 +486,33 @@ describe('live game replay video helpers', () => {
             { title: 'Layup', startMs: 5_000, endMs: 55_000, description: 'Layup' },
             { title: 'Too long', startMs: 0, endMs: 60_000, description: 'Too long' }
         ]);
+    });
+
+    it('builds an ordered same-replay highlight reel without mutating saved clips', () => {
+        const replaySourceUrl = 'https://cdn.example.com/games/game-1.mp4';
+        const clips = [
+            { title: 'Late winner', order: 3, startMs: 90_000, endMs: 200_000 },
+            { title: 'Opening run', order: 1, startMs: 5_000, endMs: 90_000 },
+            { title: 'Same-source save', order: 2, startMs: 70_000, endMs: 80_000, videoUrl: replaySourceUrl },
+            { title: 'Backwards', order: 0, startMs: 20_000, endMs: 10_000 },
+            { title: 'Standalone upload', order: 0, startMs: 10_000, endMs: 20_000, mediaUrl: 'https://cdn.example.com/clips/upload.mp4' },
+            { title: 'External range', order: 0, startMs: 25_000, endMs: 35_000, videoUrl: 'https://video.example.com/other.mp4' },
+            { title: 'Unsafe source', order: 0, startMs: 35_000, endMs: 45_000, videoUrl: 'javascript:alert(1)' },
+            { title: 'Past duration', order: 4, startMs: 130_000, endMs: 140_000 }
+        ];
+        const before = structuredClone(clips);
+
+        const playlist = buildHighlightReelPlaylist(clips, {
+            durationMs: 120_000,
+            replaySourceUrl
+        });
+
+        expect(playlist).toEqual([
+            { title: 'Opening run', startMs: 5_000, endMs: 65_000 },
+            { title: 'Same-source save', startMs: 70_000, endMs: 80_000 },
+            { title: 'Late winner', startMs: 90_000, endMs: 120_000 }
+        ]);
+        expect(clips).toEqual(before);
     });
 
     it('normalizes game recap clip metadata with context players and links', () => {

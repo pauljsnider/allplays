@@ -53,10 +53,19 @@ class MockElement {
         this.style = {};
         this.attributes = new Map();
         this.listeners = new Map();
-        this.classList = new MockClassList(id === 'chat-locked-notice' || id === 'replay-controls' || id === 'ended-overlay' ? ['hidden'] : []);
+        const initiallyHidden = new Set([
+            'chat-locked-notice',
+            'replay-controls',
+            'ended-overlay',
+            'highlight-reel-start',
+            'highlight-reel-stop',
+            'highlight-reel-status'
+        ]);
+        this.classList = new MockClassList(initiallyHidden.has(id) ? ['hidden'] : []);
         this._textContent = '';
         this._innerHTML = '';
         this.value = '';
+        this.selectedOptions = [];
         this.disabled = false;
         this.href = '';
         this.src = '';
@@ -64,6 +73,8 @@ class MockElement {
         this.currentTime = 0;
         this.duration = Number.NaN;
         this.paused = true;
+        this.playCalls = 0;
+        this.pauseCalls = 0;
         this.scrollTop = 0;
     }
 
@@ -79,6 +90,19 @@ class MockElement {
         const handlers = this.listeners.get(type) || [];
         handlers.push(handler);
         this.listeners.set(type, handlers);
+    }
+
+    dispatchEvent(event) {
+        const nextEvent = typeof event === 'string' ? { type: event } : event;
+        if (!nextEvent?.type) return false;
+        if (!nextEvent.target) nextEvent.target = this;
+        if (!nextEvent.currentTarget) nextEvent.currentTarget = this;
+        (this.listeners.get(nextEvent.type) || []).forEach((handler) => handler(nextEvent));
+        return true;
+    }
+
+    click() {
+        this.dispatchEvent({ type: 'click' });
     }
 
     appendChild(child) {
@@ -162,11 +186,13 @@ class MockElement {
     setSelectionRange() {}
 
     play() {
+        this.playCalls += 1;
         this.paused = false;
         return Promise.resolve();
     }
 
     pause() {
+        this.pauseCalls += 1;
         this.paused = true;
     }
 
@@ -278,8 +304,8 @@ function buildModuleSource() {
             'const { buildReplaySessionState, collectReplayEventWindow, collectReplayStreamWindow, getReplayElapsedMs, getReplayStartTimeAfterSpeedChange, getReplayTimestampMs, rebaseReplayStartTimeMs } = deps.liveGameReplay;'
         )
         .replace(
-            /import\s+\{\s*BROADCAST_SETUP_STATUSES,\s*BROADCAST_STREAM_STATUSES,\s*MAX_HIGHLIGHT_CLIP_MS,\s*buildBroadcastSetupSession,\s*buildHighlightShareUrl,\s*buildStreamScoreContext,\s*canAccessNativeCameraCapture,\s*canSaveBroadcastSetupSession,\s*createHighlightClipDraft,\s*hasActiveLiveLifecycle,\s*hasCompletedReplayLifecycle,\s*resolveBroadcastProviderMetadata,\s*resolveBroadcastStreamControlState,\s*resolveReplayVideoOptions,\s*shouldReloadVideoPlayback\s*\}\s+from\s+'\.\/live-game-video\.js\?v=\d+';/,
-            'const { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, hasActiveLiveLifecycle, hasCompletedReplayLifecycle, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
+            /import\s+\{\s*BROADCAST_SETUP_STATUSES,\s*BROADCAST_STREAM_STATUSES,\s*MAX_HIGHLIGHT_CLIP_MS,\s*buildBroadcastSetupSession,\s*buildHighlightReelPlaylist,\s*buildHighlightShareUrl,\s*buildStreamScoreContext,\s*canAccessNativeCameraCapture,\s*canSaveBroadcastSetupSession,\s*createHighlightClipDraft,\s*hasActiveLiveLifecycle,\s*hasCompletedReplayLifecycle,\s*resolveBroadcastProviderMetadata,\s*resolveBroadcastStreamControlState,\s*resolveReplayVideoOptions,\s*shouldReloadVideoPlayback\s*\}\s+from\s+'\.\/live-game-video\.js\?v=\d+';/,
+            'const { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightReelPlaylist, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, hasActiveLiveLifecycle, hasCompletedReplayLifecycle, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
         )
         .replaceAll(
             "import('./game-replay-playback.js?v=5')",
@@ -355,6 +381,7 @@ async function bootReplayPage({
     configsError = null,
     playersError = null,
     videoOptions = null,
+    authorizedVideoOptions = videoOptions,
     publicProjectionVideoOptions = null,
     teamPassGateEnabled = false,
     videoUnlocked = false
@@ -553,6 +580,17 @@ async function bootReplayPage({
             },
             MAX_HIGHLIGHT_CLIP_MS: 60000,
             buildBroadcastSetupSession: () => ({}),
+            buildHighlightReelPlaylist: (clips = [], { durationMs, replaySourceUrl } = {}) => clips
+                .map((clip, index) => ({ clip, index }))
+                .filter(({ clip }) => !clip?.mediaUrl && (!clip?.videoUrl || clip.videoUrl === replaySourceUrl))
+                .map(({ clip, index }) => {
+                    const startMs = Number(clip?.startMs);
+                    const rawEndMs = Number(clip?.endMs);
+                    const endMs = Math.min(rawEndMs, startMs + 60000, Number.isFinite(durationMs) ? durationMs : rawEndMs);
+                    if (!Number.isFinite(startMs) || !Number.isFinite(rawEndMs) || startMs < 0 || endMs <= startMs) return null;
+                    return { title: clip.title || `Highlight ${index + 1}`, startMs, endMs };
+                })
+                .filter(Boolean),
             buildHighlightShareUrl: () => '',
             buildStreamScoreContext: () => null,
             canAccessNativeCameraCapture: () => false,
@@ -595,7 +633,7 @@ async function bootReplayPage({
             createReplayPlaybackRevalidator: ({ refresh }) => ({ refresh, invalidateAndRefresh: refresh, stop: () => {} }),
             observeReplayPlaybackAuth: async () => () => {},
             unavailableReplayPlayback: () => ({ mode: 'none', hasVideo: false, sourceUrl: null }),
-            resolveAuthorizedReplayPlayback: async () => videoOptions
+            resolveAuthorizedReplayPlayback: async () => authorizedVideoOptions
         },
         liveGameOverlayModel: {
             getOverlayLiveClockMs,
@@ -704,11 +742,139 @@ async function bootReplayPage({
         overlayViewLinkLabel: ensureElement('overlay-view-link-label'),
         videoPaywall: ensureElement('video-paywall'),
         videoIframe: ensureElement('youtube-stream-iframe'),
+        recordedReplayVideo: ensureElement('recorded-replay-video'),
+        highlightReelStart: ensureElement('highlight-reel-start'),
+        highlightReelStop: ensureElement('highlight-reel-stop'),
+        highlightReelStatus: ensureElement('highlight-reel-status'),
         state: moduleInstance.state
     };
 }
 
 describe('live game replay initialization', () => {
+    const recordedReplayWithHighlights = (savedHighlights) => ({
+        mode: 'recorded',
+        isRecordedReplay: true,
+        isPublicProjectionVideo: false,
+        hasVideo: true,
+        sourceUrl: 'https://cdn.example.com/games/game-1.mp4',
+        publicUrl: 'https://video.example.com/games/game-1',
+        durationMs: 120_000,
+        clipStartMs: null,
+        clipEndMs: null,
+        savedHighlights,
+        mediaHub: { highlights: savedHighlights },
+        gameClips: [],
+        replayState: null
+    });
+
+    it('plays two stored timestamp highlights sequentially and completes the reel', async () => {
+        const page = await bootReplayPage({
+            videoOptions: recordedReplayWithHighlights([
+                { title: 'Opening steal', startMs: 5_000, endMs: 15_000 },
+                { title: 'Winning shot', startMs: 30_000, endMs: 40_000 },
+                { title: 'Uploaded interview', mediaUrl: 'https://cdn.example.com/interview.mp4' }
+            ])
+        });
+
+        expect(page.highlightReelStart.classList.contains('hidden')).toBe(false);
+        page.highlightReelStart.click();
+        await Promise.resolve();
+
+        expect(page.recordedReplayVideo.currentTime).toBe(5);
+        expect(page.recordedReplayVideo.playCalls).toBe(1);
+        expect(page.highlightReelStatus.textContent).toContain('Opening steal');
+        expect(page.highlightReelStatus.textContent).toContain('1 of 2');
+        expect(page.highlightReelStop.classList.contains('hidden')).toBe(false);
+
+        page.recordedReplayVideo.currentTime = 15;
+        page.recordedReplayVideo.dispatchEvent('timeupdate');
+        await Promise.resolve();
+
+        expect(page.recordedReplayVideo.currentTime).toBe(30);
+        expect(page.recordedReplayVideo.playCalls).toBe(2);
+        expect(page.highlightReelStatus.textContent).toContain('Winning shot');
+        expect(page.highlightReelStatus.textContent).toContain('2 of 2');
+
+        page.recordedReplayVideo.currentTime = 40;
+        page.recordedReplayVideo.dispatchEvent('timeupdate');
+
+        expect(page.recordedReplayVideo.paused).toBe(true);
+        expect(page.recordedReplayVideo.currentTime).toBe(40);
+        expect(page.highlightReelStart.classList.contains('hidden')).toBe(false);
+        expect(page.highlightReelStop.classList.contains('hidden')).toBe(true);
+        expect(page.highlightReelStatus.classList.contains('hidden')).toBe(true);
+        expect(page.state.videoPlayback.clipEndMs).toBeNull();
+    });
+
+    it('stops a reel without advancing on later time updates', async () => {
+        const page = await bootReplayPage({
+            videoOptions: recordedReplayWithHighlights([
+                { title: 'First range', startMs: 10_000, endMs: 20_000 },
+                { title: 'Second range', startMs: 50_000, endMs: 60_000 }
+            ])
+        });
+
+        page.highlightReelStart.click();
+        await Promise.resolve();
+        page.highlightReelStop.click();
+        page.recordedReplayVideo.currentTime = 20;
+        page.recordedReplayVideo.dispatchEvent('timeupdate');
+
+        expect(page.recordedReplayVideo.currentTime).toBe(20);
+        expect(page.recordedReplayVideo.playCalls).toBe(1);
+        expect(page.recordedReplayVideo.paused).toBe(true);
+        expect(page.highlightReelStart.classList.contains('hidden')).toBe(false);
+        expect(page.state.videoPlayback.clipEndMs).toBeNull();
+    });
+
+    it('hides the reel action when external clips leave fewer than two playable ranges', async () => {
+        const page = await bootReplayPage({
+            videoOptions: recordedReplayWithHighlights([
+                { title: 'Only replay range', startMs: 10_000, endMs: 20_000 },
+                { title: 'Standalone upload', mediaUrl: 'https://cdn.example.com/upload.mp4' },
+                { title: 'Different source', startMs: 30_000, endMs: 40_000, videoUrl: 'https://cdn.example.com/other.mp4' }
+            ])
+        });
+
+        expect(page.highlightReelStart.classList.contains('hidden')).toBe(true);
+        expect(page.highlightReelStart.disabled).toBe(true);
+    });
+
+    it('preserves sanitized highlights when an authorized public replay source is released', async () => {
+        const savedHighlights = [
+            { title: 'First public range', startMs: 5_000, endMs: 15_000 },
+            { title: 'Second public range', startMs: 20_000, endMs: 30_000 }
+        ];
+        const page = await bootReplayPage({
+            game: {
+                status: 'completed',
+                liveStatus: 'scheduled',
+                isPublicProjection: true,
+                hasRecordedReplay: true
+            },
+            videoOptions: {
+                mode: 'none',
+                hasVideo: false,
+                sourceUrl: null,
+                savedHighlights,
+                mediaHub: { highlights: savedHighlights },
+                gameClips: []
+            },
+            authorizedVideoOptions: {
+                mode: 'recorded',
+                isRecordedReplay: true,
+                isPublicProjectionVideo: true,
+                hasVideo: true,
+                sourceUrl: 'https://cdn.example.com/authorized/game-1.mp4',
+                durationMs: 120_000,
+                replayState: null
+            }
+        });
+
+        expect(page.state.videoPlayback.savedHighlights).toEqual(savedHighlights);
+        expect(page.highlightReelStart.classList.contains('hidden')).toBe(false);
+    });
+
     it.each(['team-pass-enabled', 'team-pass-disabled'])('does not let the public %s query override replay authorization config', async (config) => {
         const page = await bootReplayPage({
             config,
