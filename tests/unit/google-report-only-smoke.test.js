@@ -87,3 +87,51 @@ describe('Google report-only framing diagnostic in app smoke', () => {
         expect(issues.map(issue => issue.split(':')[0])).toEqual(['pageerror', 'console', 'network', 'response']);
     });
 });
+
+
+describe('rejected Google diagnostic evidence', () => {
+    it('captures missing frame evidence without later reclassifying the issue', () => {
+        const page = fixture();
+        page.frames = () => [];
+        const issues = collectAppRuntimeIssues(page);
+        emit(page, diagnostic);
+        expect(issues).toHaveLength(1);
+        expect(issues[0]).toContain('[google-frame-context:top=allowed;frames=no-anchor;location=unavailable]');
+        page.frames = () => [{ parentFrame: () => ({}), url: () => 'https://www.google.com/recaptcha/enterprise/anchor' }];
+        expect(issues).toHaveLength(1);
+        expect(issues[0]).toContain('frames=no-anchor');
+    });
+
+    it('records only fixed categories for credential-bearing and unknown URLs', () => {
+        const page = fixture('https://secret:short@allplays.ai/app/?token=abc#private',
+            'https://secret:short@www.google.com/recaptcha/enterprise/anchor?token=abc');
+        const issues = collectAppRuntimeIssues(page);
+        page.emit('console', {
+            type: () => 'error', text: () => diagnostic,
+            location: () => ({ url: 'https://private.example/child-name?token=abc' })
+        });
+        expect(issues).toHaveLength(1);
+        expect(issues[0]).toContain('[google-frame-context:top=rejected;frames=no-anchor;location=other]');
+        for (const secret of ['secret', 'short', 'private.example', 'child-name', 'token=abc']) {
+            expect(issues[0]).not.toContain(secret);
+        }
+    });
+
+    it('retains errors when page and frame access throw, without serializing their contents', () => {
+        const page = fixture();
+        page.url = () => { throw new Error('secret-page'); };
+        page.frames = () => { throw new Error('secret-frame'); };
+        const issues = collectAppRuntimeIssues(page);
+        emit(page, diagnostic);
+        expect(issues).toHaveLength(1);
+        expect(issues[0]).toContain('[google-frame-context:top=unavailable;frames=unavailable;location=unavailable]');
+        expect(issues[0]).not.toContain('secret');
+    });
+
+    it('does not attach context to different console errors', () => {
+        const page = fixture();
+        const issues = collectAppRuntimeIssues(page);
+        emit(page, 'Content Security Policy blocked a frame');
+        expect(issues).toEqual(['console:Content Security Policy blocked a frame']);
+    });
+});
