@@ -7,10 +7,11 @@ function collectPageErrors(page) {
     return errors;
 }
 
-async function stubYouTubeEmbed(page) {
+async function stubYouTubeEmbed(page, { responseGate } = {}) {
     const requests = { count: 0 };
-    await page.route('https://www.youtube.com/embed/**', (route) => {
+    await page.route('https://www.youtube.com/embed/**', async (route) => {
         requests.count += 1;
+        if (responseGate) await responseGate;
         return route.fulfill({
             status: 200,
             contentType: 'text/html',
@@ -2147,7 +2148,9 @@ test('replay chat remains aligned when the first tracked event starts mid-game',
     const pageErrors = collectPageErrors(page);
     await page.addInitScript(() => { window.__OVERLAY_RESUMED_REPLAY__ = true; });
     await stubRealOverlayModules(page);
-    await stubYouTubeEmbed(page);
+    let releaseEmbed;
+    const responseGate = new Promise(resolve => { releaseEmbed = resolve; });
+    await stubYouTubeEmbed(page, { responseGate });
 
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('#replay-duration')).toHaveText('21:00');
@@ -2166,6 +2169,10 @@ test('replay chat remains aligned when the first tracked event starts mid-game',
 
     // YouTube may acknowledge rapid seek commands out of order. A delayed
     // echo from the earlier 50% seek must not rewind the latest 100% state.
+    releaseEmbed();
+    // Replay controls can render before the embedded player's navigation commits.
+    // Keep that ordering deterministic and await the frame before injecting echoes.
+    await expect.poll(() => page.frames().some((frame) => frame.url().startsWith('https://www.youtube.com/embed/'))).toBe(true);
     const youtubeFrame = page.frames().find((frame) => frame.url().startsWith('https://www.youtube.com/embed/'));
     expect(youtubeFrame).toBeTruthy();
     await youtubeFrame.evaluate(() => {
