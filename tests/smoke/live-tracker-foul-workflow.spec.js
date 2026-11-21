@@ -290,35 +290,50 @@ async function installModuleMocks(page) {
         }
 
         export async function runTransaction(_db, callback) {
+            if (navigator.onLine === false) {
+                const error = new Error('Smoke mock offline');
+                error.code = 'unavailable';
+                throw error;
+            }
             const store = clone(loadStore());
             const operations = [];
             const result = await callback({
                 get: async ref => {
                     const path = String(ref.path || '');
-                    const value = path.includes('/aggregatedStats/')
-                        ? store.aggregatedStats?.[path.split('/').pop()] : store.game;
+                    const parts = path.split('/');
+                    const collectionName = parts[parts.length - 2];
+                    const value = path.endsWith('/games/game-1')
+                        ? store.game : store[collectionName]?.[parts[parts.length - 1]];
                     return { exists: () => value !== undefined, data: () => value === undefined ? undefined : clone(value) };
                 },
                 set: (ref, data, options = {}) => operations.push({ kind: 'set', ref, data: clone(data), options }),
                 update: (ref, data) => operations.push({ kind: 'update', ref, data: clone(data) }),
                 delete: ref => operations.push({ kind: 'delete', ref })
+            }).catch(error => {
+                window.__smokeTransactionErrors = [...(window.__smokeTransactionErrors || []), error.message];
+                throw error;
             });
             // Publish only after callback success; an epoch rejection commits nothing.
+            // Apply this transaction's writes to current state so an unrelated
+            // concurrent stat/event write is not lost by replacing a stale snapshot.
+            const committed = loadStore();
             for (const operation of operations) {
                 const path = String(operation.ref.path || '');
-                if (path.includes('/aggregatedStats/')) {
-                    const id = path.split('/').pop();
-                    store.aggregatedStats ||= {};
-                    if (operation.kind === 'delete') delete store.aggregatedStats[id];
-                    else store.aggregatedStats[id] = operation.options?.merge || operation.options?.mergeFields
-                        ? { ...store.aggregatedStats[id], ...operation.data } : operation.data;
+                const parts = path.split('/');
+                const collectionName = parts[parts.length - 2];
+                const id = parts[parts.length - 1];
+                if (['aggregatedStats', 'privatePlayerStats', 'liveEvents', 'events'].includes(collectionName)) {
+                    committed[collectionName] ||= {};
+                    if (operation.kind === 'delete') delete committed[collectionName][id];
+                    else committed[collectionName][id] = operation.options?.merge || operation.options?.mergeFields
+                        ? { ...committed[collectionName][id], ...operation.data } : operation.data;
                 } else if (operation.kind === 'update' && path.endsWith('/games/game-1')) {
-                    store.game = { ...store.game, ...operation.data };
+                    committed.game = { ...committed.game, ...operation.data };
                 } else {
-                    store.batchOps = [...(store.batchOps || []), { type: operation.kind, path, data: operation.data }];
+                    committed.batchOps = [...(committed.batchOps || []), { type: operation.kind, path, data: operation.data }];
                 }
             }
-            saveStore(store);
+            saveStore(committed);
             return result;
         }
 
@@ -535,11 +550,12 @@ test('persists offline live scoring events and drains restored queue after recon
 
     await expect.poll(async () => {
         const queue = await readPendingQueue(page);
-        return queue.some((event) => event.playerId === 'p1' && event.statKey === 'pts' && Number(event.value) === 2);
+        return queue.some((event) => event.playerId === 'p1' && event.statKey === 'pts' && Number(event.value) === 2 && event.liveStatsEpoch === '');
     }).toBe(true);
 
     const seededEvent = {
         eventId: 'live-seeded-pending-1',
+        liveStatsEpoch: '',
         type: 'stat',
         playerId: 'p1',
         statKey: 'pts',
@@ -574,8 +590,29 @@ test('persists offline live scoring events and drains restored queue after recon
 
     await expect.poll(async () => {
         const store = await readStore(page);
-        return Object.values(store.liveEvents || {}).some((event) => event.eventId === seededEvent.eventId);
+        return Object.values(store.liveEvents || {}).some((event) => event.eventId === seededEvent.eventId && event.liveStatsVersion === 1 && event.liveStatsEpoch === '');
     }).toBe(true);
+});
+
+test('keeps queued live scoring uncommitted when the game resets before reconnect', async ({ page, baseURL }) => {
+    await seedScenario(page, baseURL, createScenario());
+    await setSmokeOnline(page, false);
+    await loadTracker(page, baseURL);
+    await page.locator('#start-stop').click();
+    await page.locator('#live-players button[data-player="p1"][data-stat="pts"][data-delta="2"]').click();
+    await expect.poll(async () => (await readPendingQueue(page)).some(event => event.playerId === 'p1' && event.liveStatsEpoch === '')).toBe(true);
+
+    await page.evaluate((storeKey) => {
+        const store = JSON.parse(localStorage.getItem(storeKey));
+        store.game.liveResetEventId = 'new-authoritative-reset';
+        localStorage.setItem(storeKey, JSON.stringify(store));
+    }, STORE_KEY);
+    await setSmokeOnline(page, true);
+    await expect.poll(() => page.evaluate(() => (window.__smokeTransactionErrors || []).some(error => error.includes('Tracking reset changed')))).toBe(true);
+
+    expect((await readPendingQueue(page)).some(event => event.playerId === 'p1' && event.liveStatsEpoch === '')).toBe(true);
+    expect(Object.values((await readStore(page)).liveEvents || {}).some(event => event.playerId === 'p1')).toBe(false);
+    await expect(page.locator('#live-sync-pending-pill')).toContainText('pending');
 });
 
 test('persists an opponent foul across refresh and removes it cleanly after resume', async ({ page, baseURL }) => {
