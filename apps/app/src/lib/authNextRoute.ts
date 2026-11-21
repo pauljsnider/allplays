@@ -17,7 +17,7 @@ type CompleteAuthNavigationOptions = {
 };
 
 const authRouteOrigin = 'https://allplays.local';
-const documentAuthNextPathnames = new Set(['/live-game-diamond-v2.html']);
+const documentAuthNextPathnames = new Set(['/live-game-diamond-v2.html', '/live-game-overlay.html']);
 
 export function getSafeAuthNextRoute(value: string | null | undefined) {
   const route = String(value || '').trim();

@@ -1591,8 +1591,8 @@ test('signed-out viewers can read chat but cannot post from the overlay', async 
     await expect(page.locator('#chat-input')).toBeDisabled();
     await expect(page.locator('#chat-status')).toContainText('Sign in to join');
     await expect(page.locator('#chat-sign-in')).toBeVisible();
-    await expect(page.locator('#chat-sign-in')).toHaveAttribute('href', /login\.html\?next=/);
-    await expect(page.locator('#chat-anon-notice')).toBeHidden();
+    await expect(page.locator('#chat-sign-in')).toHaveAttribute('href', '/app/#/auth?next=%2Flive-game-overlay.html%3FteamId%3Dteam-1%26gameId%3Dgame-1');
+    await expect(page.locator('#chat-anon-notice')).toContainText('Chatting as Fan Riley');
     await expect(page.locator('#anon-edit')).toBeHidden();
     expect(await page.evaluate(() => sessionStorage.getItem('liveChatAnonName'))).toBe('Fan Riley');
     await expect(page.locator('#chat-reactions')).toBeHidden();
@@ -1732,37 +1732,77 @@ for (const query of ['demo=1', 'teamId=team-1&gameId=game-1&replay=true']) {
     });
 }
 
-test('signed-in viewers can choose the display name used for their authenticated chat posts', async ({ page, baseURL }) => {
+test('overlay uses the legacy account name instead of a stored chat nickname', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        sessionStorage.setItem('liveChatDisplayName:viewer-1', 'Old chat nickname');
+        sessionStorage.setItem('liveChatAnonName', 'Guest nickname');
+        window.__OVERLAY_AUTH_USER__ = { uid: 'viewer-1', displayName: 'Alexandra Long Account Name' };
+    });
     await stubRealOverlayModules(page);
     await stubYouTubeEmbed(page);
 
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
     await page.locator('[data-panel="chat"]').click();
-    await expect(page.locator('#chat-anon-notice')).toContainText('Chatting as Alex Viewer');
-    await page.locator('#anon-change-btn').click();
-    await page.locator('#anon-input').fill('ALL PLAYS');
-    await page.locator('#anon-save').click();
-    await expect(page.locator('#chat-status')).toContainText('ALL PLAYS is a reserved name.');
-    await expect(page.locator('#anon-edit')).toBeVisible();
-    await page.locator('#anon-input').fill('  Riley   Blue  ');
-    await page.locator('#anon-save').click();
-    await expect(page.locator('#chat-anon-notice')).toContainText('Chatting as Riley Blue');
-    expect(await page.evaluate(() => sessionStorage.getItem('liveChatDisplayName:viewer-1'))).toBe('Riley Blue');
+    expect(pageErrors).toEqual([]);
+    await expect(page.locator('#chat-status')).toHaveText('Chatting as Alexandra Long Account Name');
+    await expect(page.locator('#chat-anon-notice')).toBeHidden();
+    await expect(page.locator('#anon-change-btn')).toBeHidden();
+    await expect(page.locator('#anon-edit')).toBeHidden();
 
-    await page.locator('#chat-input').fill('Authenticated name override');
+    await page.locator('#chat-input').fill('Account name message');
     await page.locator('#chat-form').getByRole('button', { name: 'Send', exact: true }).click();
     await expect.poll(() => page.evaluate(() => window.__OVERLAY_POSTED_CHAT__ || [])).toEqual([{
         teamId: 'team-1',
         gameId: 'game-1',
         message: {
-            text: 'Authenticated name override',
+            text: 'Account name message',
             senderId: 'viewer-1',
-            senderName: 'Riley Blue',
+            senderName: 'Alexandra Long Account Name',
             senderPhotoUrl: null,
             isAnonymous: false
         }
     }]);
+    await page.getByRole('button', { name: 'Send clap reaction' }).click();
+    await expect.poll(() => page.evaluate(() => window.__OVERLAY_POSTED_CHAT__?.[1]?.message.senderName)).toBe('Alexandra Long Account Name');
+    await page.evaluate(() => window.__OVERLAY_AUTH_CALLBACK__({ uid: 'viewer-2', displayName: 'Taylor Account' }));
+    await expect(page.locator('#chat-status')).toHaveText('Chatting as Taylor Account');
+    await page.evaluate(() => window.__OVERLAY_AUTH_CALLBACK__({ uid: 'viewer-3' }));
+    await expect(page.locator('#chat-status')).toHaveText('Chatting as Fan');
+    expect(pageErrors).toEqual([]);
+});
+
+test('overlay keeps legacy guest-name controls separate from the signed-in account', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_AUTH_USER__ = null;
+        sessionStorage.setItem('liveChatAnonName', 'Guest Riley');
+    });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+    const viewerPath = '/live-game-overlay.html?teamId=team-1&gameId=game-1#chat';
+    await page.goto(`${baseURL}${viewerPath}`, { waitUntil: 'domcontentloaded' });
+    await page.locator('[data-panel="chat"]').click();
+    expect(pageErrors).toEqual([]);
+    await expect(page.locator('#chat-sign-in')).toHaveAttribute('href', `/app/#/auth?next=${encodeURIComponent(viewerPath)}`);
+    await expect(page.locator('#chat-anon-notice')).toContainText('Guest Riley');
+    await page.locator('#anon-change-btn').click();
+    await page.locator('#anon-input').fill('ALL PLAYS');
+    await page.locator('#anon-save').click();
+    await expect(page.locator('#chat-status')).toContainText('ALL PLAYS is a reserved name.');
+    await page.locator('#anon-input').fill('  Guest   Taylor  ');
+    await page.locator('#anon-save').click();
+    await expect(page.locator('#chat-anon-notice')).toContainText('Guest Taylor');
+    expect(await page.evaluate(() => sessionStorage.getItem('liveChatAnonName'))).toBe('Guest Taylor');
+    await expect(page.locator('#chat-input')).toBeDisabled();
+    await page.evaluate(() => window.__OVERLAY_AUTH_CALLBACK__({ uid: 'viewer-1', displayName: 'Alex Viewer' }));
+    await expect(page.locator('#chat-status')).toHaveText('Chatting as Alex Viewer');
+    await expect(page.locator('#chat-anon-notice')).toBeHidden();
+    await expect(page.locator('#anon-edit')).toBeHidden();
+    await expect(page.locator('#chat-input')).toBeEnabled();
+    await page.evaluate(() => window.__OVERLAY_AUTH_CALLBACK__(null));
+    await expect(page.locator('#chat-anon-notice')).toContainText('Guest Taylor');
+    expect(await page.evaluate(() => window.__OVERLAY_POSTED_CHAT__ || [])).toEqual([]);
     expect(pageErrors).toEqual([]);
 });
 

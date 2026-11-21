@@ -101,6 +101,13 @@ const scheduleRoute = '/schedule?teamId=team-1&eventId=event-1';
 const hostedDiamondAuthUrl =
   'https://allplays.ai/app/#/auth?next=%2Flive-game-diamond-v2.html%3FteamId%3Dteam%252Fone%26gameId%3Dgame%2Bone%26replay%3Dtrue%26clipStart%3D1200%26clipEnd%3D5600';
 const switchedHostedDiamondAuthUrl = `${hostedDiamondAuthUrl}&switch=1`;
+const overlayViewerRoute = '/live-game-overlay.html?teamId=team%2Fone&gameId=game+one#chat';
+const hostedOverlayAuthUrl =
+  'https://allplays.ai/app/#/auth?next=%2Flive-game-overlay.html%3FteamId%3Dteam%252Fone%26gameId%3Dgame%2Bone%23chat';
+const documentViewerCases = [
+  { label: 'Diamond', viewerRoute: diamondViewerRoute, hostedAuthUrl: hostedDiamondAuthUrl, switchedHostedAuthUrl: switchedHostedDiamondAuthUrl },
+  { label: 'overlay', viewerRoute: overlayViewerRoute, hostedAuthUrl: hostedOverlayAuthUrl, switchedHostedAuthUrl: `${hostedOverlayAuthUrl}&switch=1` }
+];
 
 function renderAuthPage(path = '/auth') {
   return render(
@@ -286,7 +293,7 @@ describe('AuthPage native post-login routing', () => {
     expect(auth.refresh).toHaveBeenCalledTimes(1);
   });
 
-  it('hard-navigates a restored session back to the exact static Diamond viewer', async () => {
+  it.each(documentViewerCases)('hard-navigates a restored session back to the exact static viewer ($label)', async ({ viewerRoute }) => {
     auth.user = {
       uid: 'viewer-1',
       email: 'viewer@example.com',
@@ -295,14 +302,14 @@ describe('AuthPage native post-login routing', () => {
     };
     window.location.hash = '#/auth';
 
-    renderAuthPage(`/auth?next=${encodeURIComponent(diamondViewerRoute)}`);
+    renderAuthPage(`/auth?next=${encodeURIComponent(viewerRoute)}`);
 
-    await waitFor(() => expect(window.location.replace).toHaveBeenCalledWith(diamondViewerRoute));
+    await waitFor(() => expect(window.location.replace).toHaveBeenCalledWith(viewerRoute));
     expect(window.location.hash).toBe('#/auth');
     expect(window.location.reload).not.toHaveBeenCalled();
   });
 
-  it('keeps an exact viewer account-switch request on sign-in before returning as the selected account', async () => {
+  it.each(documentViewerCases)('keeps an exact viewer account-switch request on sign-in before returning as the selected account ($label)', async ({ viewerRoute }) => {
     auth.user = {
       uid: 'wrong-viewer',
       email: 'wrong@example.com',
@@ -319,7 +326,7 @@ describe('AuthPage native post-login routing', () => {
     });
     window.location.hash = '#/auth';
 
-    renderAuthPage(`/auth?next=${encodeURIComponent(diamondViewerRoute)}&switch=1`);
+    renderAuthPage(`/auth?next=${encodeURIComponent(viewerRoute)}&switch=1`);
 
     await waitFor(() => expect(authServiceMocks.completeGoogleRedirect).toHaveBeenCalledTimes(1));
     await act(async () => {
@@ -333,10 +340,10 @@ describe('AuthPage native post-login routing', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => expect(authServiceMocks.signInWithEmail).toHaveBeenCalledWith('right@example.com', 'password123'));
-    await waitFor(() => expect(window.location.replace).toHaveBeenCalledWith(diamondViewerRoute));
+    await waitFor(() => expect(window.location.replace).toHaveBeenCalledWith(viewerRoute));
   });
 
-  it('does not suppress restored-session navigation for a non-exact account-switch value', async () => {
+  it.each(documentViewerCases)('does not suppress restored-session navigation for a non-exact account-switch value ($label)', async ({ viewerRoute }) => {
     auth.user = {
       uid: 'viewer-1',
       email: 'viewer@example.com',
@@ -345,16 +352,16 @@ describe('AuthPage native post-login routing', () => {
     };
     window.location.hash = '#/auth';
 
-    renderAuthPage(`/auth?next=${encodeURIComponent(diamondViewerRoute)}&switch=true`);
+    renderAuthPage(`/auth?next=${encodeURIComponent(viewerRoute)}&switch=true`);
 
-    await waitFor(() => expect(window.location.replace).toHaveBeenCalledWith(diamondViewerRoute));
+    await waitFor(() => expect(window.location.replace).toHaveBeenCalledWith(viewerRoute));
   });
 
-  it('does not navigate a hydrated session until redirect processing has settled', async () => {
+  it.each(documentViewerCases)('does not navigate a hydrated session until redirect processing has settled ($label)', async ({ viewerRoute }) => {
     const redirectResult = createDeferred<any>();
     authServiceMocks.completeGoogleRedirect.mockReturnValueOnce(redirectResult.promise);
     window.location.hash = '#/auth';
-    const view = renderAuthPage(`/auth?next=${encodeURIComponent(diamondViewerRoute)}`);
+    const view = renderAuthPage(`/auth?next=${encodeURIComponent(viewerRoute)}`);
 
     await waitFor(() => expect(authServiceMocks.completeGoogleRedirect).toHaveBeenCalledTimes(1));
     auth.user = {
@@ -364,7 +371,7 @@ describe('AuthPage native post-login routing', () => {
       roles: ['parent']
     };
     view.rerender(
-      <MemoryRouter initialEntries={[`/auth?next=${encodeURIComponent(diamondViewerRoute)}`]}>
+      <MemoryRouter initialEntries={[`/auth?next=${encodeURIComponent(viewerRoute)}`]}>
         <Routes>
           <Route path="/auth" element={<AuthPage auth={auth} />} />
         </Routes>
@@ -380,15 +387,15 @@ describe('AuthPage native post-login routing', () => {
       await redirectResult.promise;
     });
 
-    await waitFor(() => expect(window.location.replace).toHaveBeenCalledWith(diamondViewerRoute));
+    await waitFor(() => expect(window.location.replace).toHaveBeenCalledWith(viewerRoute));
   });
 
-  it('does not hand a native static viewer to the browser until redirect processing has settled', async () => {
+  it.each(documentViewerCases)('does not hand a native static viewer to the browser until redirect processing has settled ($label)', async ({ viewerRoute, hostedAuthUrl }) => {
     nativeRuntimeMocks.native = true;
     const redirectResult = createDeferred<any>();
     authServiceMocks.completeGoogleRedirect.mockReturnValueOnce(redirectResult.promise);
 
-    renderAuthPage(`/auth?next=${encodeURIComponent(diamondViewerRoute)}`);
+    renderAuthPage(`/auth?next=${encodeURIComponent(viewerRoute)}`);
 
     await waitFor(() => expect(authServiceMocks.completeGoogleRedirect).toHaveBeenCalledTimes(1));
     expect(publicActionsMocks.openPublicUrl).not.toHaveBeenCalled();
@@ -400,16 +407,16 @@ describe('AuthPage native post-login routing', () => {
       await redirectResult.promise;
     });
 
-    await waitFor(() => expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith(hostedDiamondAuthUrl));
+    await waitFor(() => expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith(hostedAuthUrl));
     expect(window.location.replace).not.toHaveBeenCalled();
     expect(window.location.reload).not.toHaveBeenCalled();
   });
 
-  it('does not fall through to a restored session when redirect provisioning fails', async () => {
+  it.each(documentViewerCases)('does not fall through to a restored session when redirect provisioning fails ($label)', async ({ viewerRoute }) => {
     const redirectResult = createDeferred<any>();
     authServiceMocks.completeGoogleRedirect.mockReturnValueOnce(redirectResult.promise);
     window.location.hash = '#/auth';
-    const view = renderAuthPage(`/auth?next=${encodeURIComponent(diamondViewerRoute)}`);
+    const view = renderAuthPage(`/auth?next=${encodeURIComponent(viewerRoute)}`);
 
     await waitFor(() => expect(authServiceMocks.completeGoogleRedirect).toHaveBeenCalledTimes(1));
     auth.user = {
@@ -419,7 +426,7 @@ describe('AuthPage native post-login routing', () => {
       roles: ['parent']
     };
     view.rerender(
-      <MemoryRouter initialEntries={[`/auth?next=${encodeURIComponent(diamondViewerRoute)}`]}>
+      <MemoryRouter initialEntries={[`/auth?next=${encodeURIComponent(viewerRoute)}`]}>
         <Routes>
           <Route path="/auth" element={<AuthPage auth={auth} />} />
         </Routes>
@@ -436,7 +443,7 @@ describe('AuthPage native post-login routing', () => {
     expect(publicActionsMocks.openPublicUrl).not.toHaveBeenCalled();
   });
 
-  it('hard-navigates web email sign-in back to the exact static Diamond viewer', async () => {
+  it.each(documentViewerCases)('hard-navigates web email sign-in back to the exact static viewer ($label)', async ({ viewerRoute }) => {
     authServiceMocks.signInWithEmail.mockResolvedValue({
       user: { uid: 'viewer-1', email: 'viewer@example.com' },
       nativeRest: false
@@ -446,17 +453,17 @@ describe('AuthPage native post-login routing', () => {
       profile: {}
     });
 
-    renderAuthPage(`/auth?next=${encodeURIComponent(diamondViewerRoute)}`);
+    renderAuthPage(`/auth?next=${encodeURIComponent(viewerRoute)}`);
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'viewer@example.com' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password123' } });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
-    await waitFor(() => expect(window.location.replace).toHaveBeenCalledWith(diamondViewerRoute));
+    await waitFor(() => expect(window.location.replace).toHaveBeenCalledWith(viewerRoute));
     expect(window.location.hash).toBe('');
     expect(window.location.reload).not.toHaveBeenCalled();
   });
 
-  it('hard-navigates Google popup sign-in back to the exact static Diamond viewer', async () => {
+  it.each(documentViewerCases)('hard-navigates Google popup sign-in back to the exact static viewer ($label)', async ({ viewerRoute }) => {
     authServiceMocks.signInWithGoogleAccount.mockResolvedValue({
       user: { uid: 'viewer-1', email: 'viewer@example.com' },
       nativeRest: false,
@@ -467,29 +474,29 @@ describe('AuthPage native post-login routing', () => {
       profile: {}
     });
 
-    renderAuthPage(`/auth?next=${encodeURIComponent(diamondViewerRoute)}`);
+    renderAuthPage(`/auth?next=${encodeURIComponent(viewerRoute)}`);
     fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }));
 
-    await waitFor(() => expect(window.location.replace).toHaveBeenCalledWith(diamondViewerRoute));
+    await waitFor(() => expect(window.location.replace).toHaveBeenCalledWith(viewerRoute));
     expect(window.location.hash).toBe('');
     expect(window.location.reload).not.toHaveBeenCalled();
   });
 
-  it('hard-navigates Google popup-to-redirect completion back to the exact static Diamond viewer', async () => {
+  it.each(documentViewerCases)('hard-navigates Google popup-to-redirect completion back to the exact static viewer ($label)', async ({ viewerRoute }) => {
     authServiceMocks.completeGoogleRedirect.mockResolvedValueOnce({
       user: { uid: 'viewer-1', email: 'viewer@example.com' },
       wasNewUser: false
     });
 
-    renderAuthPage(`/auth?next=${encodeURIComponent(diamondViewerRoute)}`);
+    renderAuthPage(`/auth?next=${encodeURIComponent(viewerRoute)}`);
 
-    await waitFor(() => expect(window.location.replace).toHaveBeenCalledWith(diamondViewerRoute));
+    await waitFor(() => expect(window.location.replace).toHaveBeenCalledWith(viewerRoute));
     expect(auth.refresh).toHaveBeenCalledTimes(1);
     expect(window.location.hash).toBe('');
     expect(window.location.reload).not.toHaveBeenCalled();
   });
 
-  it('hands native email document return to hosted web auth without building an app hash', async () => {
+  it.each(documentViewerCases)('hands native email document return to hosted web auth without building an app hash ($label)', async ({ viewerRoute, hostedAuthUrl }) => {
     authServiceMocks.signInWithEmail.mockResolvedValue({
       user: { uid: 'viewer-1', email: 'viewer@example.com' },
       nativeRest: true
@@ -499,18 +506,18 @@ describe('AuthPage native post-login routing', () => {
       profile: {}
     });
 
-    renderAuthPage(`/auth?next=${encodeURIComponent(diamondViewerRoute)}`);
+    renderAuthPage(`/auth?next=${encodeURIComponent(viewerRoute)}`);
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'viewer@example.com' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password123' } });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
-    await waitFor(() => expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith(hostedDiamondAuthUrl));
+    await waitFor(() => expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith(hostedAuthUrl));
     expect(window.location.replace).not.toHaveBeenCalled();
     expect(window.location.hash).toBe('');
     expect(window.location.reload).not.toHaveBeenCalled();
   });
 
-  it('hands native Google document return to hosted web auth without building an app hash', async () => {
+  it.each(documentViewerCases)('hands native Google document return to hosted web auth without building an app hash ($label)', async ({ viewerRoute, hostedAuthUrl }) => {
     authServiceMocks.signInWithGoogleAccount.mockResolvedValue({
       user: { uid: 'viewer-1', email: 'viewer@example.com' },
       nativeRest: true,
@@ -521,16 +528,16 @@ describe('AuthPage native post-login routing', () => {
       profile: {}
     });
 
-    renderAuthPage(`/auth?next=${encodeURIComponent(diamondViewerRoute)}`);
+    renderAuthPage(`/auth?next=${encodeURIComponent(viewerRoute)}`);
     fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }));
 
-    await waitFor(() => expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith(hostedDiamondAuthUrl));
+    await waitFor(() => expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith(hostedAuthUrl));
     expect(window.location.replace).not.toHaveBeenCalled();
     expect(window.location.hash).toBe('');
     expect(window.location.reload).not.toHaveBeenCalled();
   });
 
-  it('hands native Apple document return to hosted web auth without building an app hash', async () => {
+  it.each(documentViewerCases)('hands native Apple document return to hosted web auth without building an app hash ($label)', async ({ viewerRoute, hostedAuthUrl }) => {
     nativeRuntimeMocks.native = true;
     authServiceMocks.signInWithAppleAccount.mockResolvedValue({
       user: { uid: 'viewer-1', email: 'viewer@example.com' },
@@ -542,23 +549,23 @@ describe('AuthPage native post-login routing', () => {
       profile: {}
     });
 
-    renderAuthPage(`/auth?next=${encodeURIComponent(diamondViewerRoute)}`);
-    await waitFor(() => expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith(hostedDiamondAuthUrl));
+    renderAuthPage(`/auth?next=${encodeURIComponent(viewerRoute)}`);
+    await waitFor(() => expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith(hostedAuthUrl));
     publicActionsMocks.openPublicUrl.mockClear();
     fireEvent.click(screen.getByRole('button', { name: 'Continue with Apple' }));
 
-    await waitFor(() => expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith(hostedDiamondAuthUrl));
+    await waitFor(() => expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith(hostedAuthUrl));
     expect(window.location.replace).not.toHaveBeenCalled();
     expect(window.location.hash).toBe('');
     expect(window.location.reload).not.toHaveBeenCalled();
   });
 
-  it('hands a native static viewer next to hosted web auth before collecting native credentials', async () => {
+  it.each(documentViewerCases)('hands a native static viewer next to hosted web auth before collecting native credentials ($label)', async ({ viewerRoute, hostedAuthUrl }) => {
     nativeRuntimeMocks.native = true;
 
-    renderAuthPage(`/auth?next=${encodeURIComponent(diamondViewerRoute)}`);
+    renderAuthPage(`/auth?next=${encodeURIComponent(viewerRoute)}`);
 
-    await waitFor(() => expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith(hostedDiamondAuthUrl));
+    await waitFor(() => expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith(hostedAuthUrl));
     expect(authServiceMocks.signInWithEmail).not.toHaveBeenCalled();
     expect(authServiceMocks.signInWithGoogleAccount).not.toHaveBeenCalled();
     expect(authServiceMocks.signInWithAppleAccount).not.toHaveBeenCalled();
@@ -566,12 +573,12 @@ describe('AuthPage native post-login routing', () => {
     expect(window.location.reload).not.toHaveBeenCalled();
   });
 
-  it('preserves an exact viewer account-switch request in the native hosted-auth handoff', async () => {
+  it.each(documentViewerCases)('preserves an exact viewer account-switch request in the native hosted-auth handoff ($label)', async ({ viewerRoute, switchedHostedAuthUrl }) => {
     nativeRuntimeMocks.native = true;
 
-    renderAuthPage(`/auth?next=${encodeURIComponent(diamondViewerRoute)}&switch=1`);
+    renderAuthPage(`/auth?next=${encodeURIComponent(viewerRoute)}&switch=1`);
 
-    await waitFor(() => expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith(switchedHostedDiamondAuthUrl));
+    await waitFor(() => expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith(switchedHostedAuthUrl));
     expect(authServiceMocks.signInWithEmail).not.toHaveBeenCalled();
     expect(authServiceMocks.signInWithGoogleAccount).not.toHaveBeenCalled();
     expect(authServiceMocks.signInWithAppleAccount).not.toHaveBeenCalled();
@@ -597,11 +604,11 @@ describe('AuthPage native post-login routing', () => {
     expect(authServiceMocks.signInWithEmail).not.toHaveBeenCalled();
   });
 
-  it('preserves the static Diamond viewer through a new email user verification handoff', async () => {
+  it.each(documentViewerCases)('preserves the static viewer through a new email user verification handoff ($label)', async ({ viewerRoute }) => {
     authServiceMocks.signUpWithEmail.mockResolvedValue({
       user: { uid: 'viewer-1', email: 'viewer@example.com' }
     });
-    const router = renderNavigableAuthPage(`/auth?mode=signup&next=${encodeURIComponent(diamondViewerRoute)}`);
+    const router = renderNavigableAuthPage(`/auth?mode=signup&next=${encodeURIComponent(viewerRoute)}`);
 
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'viewer@example.com' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password123' } });
@@ -611,10 +618,10 @@ describe('AuthPage native post-login routing', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     await waitFor(() =>
-      expect(authServiceMocks.signUpWithEmail).toHaveBeenCalledWith('viewer@example.com', 'password123', 'ABCD1234', diamondViewerRoute)
+      expect(authServiceMocks.signUpWithEmail).toHaveBeenCalledWith('viewer@example.com', 'password123', 'ABCD1234', viewerRoute)
     );
     await waitFor(() => expect(router.state.location.pathname).toBe('/verify-pending'));
-    expect(new URLSearchParams(router.state.location.search).get('next')).toBe(diamondViewerRoute);
+    expect(new URLSearchParams(router.state.location.search).get('next')).toBe(viewerRoute);
     expect(window.location.replace).not.toHaveBeenCalled();
   });
 
@@ -661,15 +668,15 @@ describe('AuthPage native post-login routing', () => {
     expect(router.state.location.search).toBe('');
   });
 
-  it('preserves the static Diamond viewer through a new Google redirect verification handoff', async () => {
+  it.each(documentViewerCases)('preserves the static viewer through a new Google redirect verification handoff ($label)', async ({ viewerRoute }) => {
     authServiceMocks.completeGoogleRedirect.mockResolvedValueOnce({
       user: { uid: 'viewer-1', email: 'viewer@example.com' },
       wasNewUser: true
     });
-    const router = renderNavigableAuthPage(`/auth?next=${encodeURIComponent(diamondViewerRoute)}`);
+    const router = renderNavigableAuthPage(`/auth?next=${encodeURIComponent(viewerRoute)}`);
 
     await waitFor(() => expect(router.state.location.pathname).toBe('/verify-pending'));
-    expect(new URLSearchParams(router.state.location.search).get('next')).toBe(diamondViewerRoute);
+    expect(new URLSearchParams(router.state.location.search).get('next')).toBe(viewerRoute);
     expect(auth.refresh).toHaveBeenCalledTimes(1);
     expect(window.location.replace).not.toHaveBeenCalled();
   });
