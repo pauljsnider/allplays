@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { completeAuthNavigation } from '../../apps/app/src/lib/authNextRoute.ts';
 
 const html = readFileSync(new URL('../../live-game-overlay.html', import.meta.url), 'utf8');
 const redirect = readFileSync(new URL('../../live-game-overlay-poc.html', import.meta.url), 'utf8');
@@ -63,6 +64,21 @@ function processLiveEventSnapshots(snapshots) {
 }
 
 describe('live game overlay page', () => {
+    it.each([
+        [{ uid: 'viewer-1', displayName: 'Alexandra Long Account Name' }, 'Old nickname', 'Alexandra Long Account Name'],
+        [{ uid: 'viewer-2', displayName: 'Taylor Account' }, 'Old nickname', 'Taylor Account'],
+        [{ uid: 'viewer-3' }, 'Other account nickname', 'Fan'],
+        [{ uid: 'viewer-4', displayName: 'ALL PLAYS' }, 'Old nickname', 'Fan'],
+        [null, 'Guest Riley', 'Guest Riley']
+    ])('uses the current account identity before guest names (%j)', (chatUser, anonName, expected) => {
+        const resolveName = new Function('uiState', `
+            ${extractFunction(source, 'isReservedChatDisplayName')}
+            ${extractFunction(source, 'getChatSenderName')}
+            return getChatSenderName();
+        `);
+        expect(resolveName({ chatUser, anonName })).toBe(expected);
+    });
+
     it('keeps exactly the newest 20 events from overlapping live snapshots in chronological order', () => {
         const events = Array.from({ length: 25 }, (_, index) => ({
             id: `event-${index + 1}`,
@@ -133,7 +149,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
         expect(html).toMatch(/\.panel-tab\s*\{[^}]*min-width:\s*44px;/);
-        expect(html).toContain('js/live-game-overlay.js?v=74');
+        expect(html).toContain('js/live-game-overlay.js?v=75');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
@@ -177,7 +193,7 @@ describe('live game overlay page', () => {
         expect(source).toContain("import('./firebase-ai.js?v=1')");
         expect(source).toContain('handleMentionInput');
         expect(source).toContain('ensureChatDisplayName');
-        expect(source).toContain('liveChatDisplayName:');
+        expect(source).not.toContain('liveChatDisplayName:');
         expect(source).toContain('updateChatUnread');
         expect(source).toContain('text.length > 2000');
         expect(source).toContain('Date.now() - uiState.lastChatSentAt < 1500');
@@ -322,4 +338,22 @@ describe('overlay responsive state', () => {
         update();
         expect(properties['--visible-top']).toBe('0px');
     });
+});
+
+
+it('returns from landscape sign-in to the exact overlay document, query and fragment', async () => {
+    const viewerPath = '/live-game-overlay.html?teamId=team-1&gameId=game-1&view=live%20game#chat';
+    const location = new URL(viewerPath, 'https://allplays.ai');
+    const signInUrl = new Function('window', `
+        ${extractFunction(source, 'getChatSignInUrl')}
+        return getChatSignInUrl();
+    `)({ location });
+    const next = new URLSearchParams(signInUrl.split('?')[1]).get('next');
+    expect(next).toBe(viewerPath);
+    const navigate = vi.fn();
+    const locationObject = { hash: '#/auth', replace: vi.fn(), reload: vi.fn() };
+    await expect(completeAuthNavigation(next, navigate, { locationObject })).resolves.toBe('document');
+    expect(locationObject.replace).toHaveBeenCalledWith(viewerPath);
+    expect(navigate).not.toHaveBeenCalled();
+    expect(locationObject.reload).not.toHaveBeenCalled();
 });

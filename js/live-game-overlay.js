@@ -837,36 +837,28 @@ function updateChatUnread() {
 }
 
 function getChatSenderName() {
-    const name = uiState.anonName || uiState.chatUser?.displayName || 'Fan';
-    return isReservedChatDisplayName(name) ? 'Fan' : String(name).trim().slice(0, 80) || 'Fan';
+    const name = uiState.chatUser?.uid ? uiState.chatUser.displayName : uiState.anonName;
+    return isReservedChatDisplayName(name) ? 'Fan' : String(name || 'Fan').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Fan';
 }
 
 function isReservedChatDisplayName(value) {
     return String(value || '').replace(/\s+/g, ' ').trim().toUpperCase() === 'ALL PLAYS';
 }
 
-function getChatNameStorageKey() {
-    return uiState.chatUser?.uid
-        ? `liveChatDisplayName:${uiState.chatUser.uid}`
-        : 'liveChatAnonName';
-}
-
 function ensureChatDisplayName() {
     if (uiState.anonName) return uiState.anonName;
     let saved = '';
     try {
-        saved = String(sessionStorage.getItem(getChatNameStorageKey()) || '').replace(/\s+/g, ' ').trim().slice(0, 20);
+        saved = String(sessionStorage.getItem('liveChatAnonName') || '').replace(/\s+/g, ' ').trim().slice(0, 20);
     } catch {
         // Storage can be unavailable in privacy-restricted browsers. The
         // generated name still works for this page view.
     }
-    const authenticatedName = String(uiState.chatUser?.displayName || '').replace(/\s+/g, ' ').trim().slice(0, 20);
-    const preferredName = saved.length >= 2 ? saved : authenticatedName;
-    uiState.anonName = preferredName && !isReservedChatDisplayName(preferredName)
-        ? preferredName
+    uiState.anonName = saved.length >= 2 && !isReservedChatDisplayName(saved)
+        ? saved
         : `Fan${Math.floor(1000 + Math.random() * 9000)}`;
     try {
-        sessionStorage.setItem(getChatNameStorageKey(), uiState.anonName);
+        sessionStorage.setItem('liveChatAnonName', uiState.anonName);
     } catch {
         // Display-name persistence is optional and must not affect the game.
     }
@@ -875,7 +867,7 @@ function ensureChatDisplayName() {
 }
 
 function openAnonNameEditor() {
-    if (!elements.anonEdit || !elements.anonInput) return;
+    if (!uiState.chatAuthReady || uiState.chatUser?.uid || !elements.anonEdit || !elements.anonInput) return;
     elements.anonEdit.hidden = false;
     elements.anonInput.value = ensureChatDisplayName();
     elements.anonInput.focus();
@@ -886,7 +878,7 @@ function closeAnonNameEditor() {
 }
 
 function saveAnonName() {
-    if (!elements.anonInput) return;
+    if (!uiState.chatAuthReady || uiState.chatUser?.uid || !elements.anonInput) return;
     const cleaned = elements.anonInput.value.replace(/\s+/g, ' ').trim();
     if (cleaned.length < 2) {
         setChatStatus('Name must be at least 2 characters.', 'error');
@@ -898,7 +890,7 @@ function saveAnonName() {
     }
     uiState.anonName = cleaned.slice(0, 20);
     try {
-        sessionStorage.setItem(getChatNameStorageKey(), uiState.anonName);
+        sessionStorage.setItem('liveChatAnonName', uiState.anonName);
     } catch {
         // The in-memory name remains usable when storage is unavailable.
     }
@@ -1059,7 +1051,7 @@ function setChatStatus(message, tone = 'neutral') {
 
 function getChatSignInUrl() {
     const returnPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    return `login.html?next=${encodeURIComponent(returnPath)}`;
+    return `/app/#/auth?next=${encodeURIComponent(returnPath)}`;
 }
 
 function renderChatComposer(statusOverride = null) {
@@ -1085,15 +1077,15 @@ function renderChatComposer(statusOverride = null) {
         elements.chatSignIn.href = getChatSignInUrl();
         elements.chatSignIn.hidden = !uiState.chatControlsReady || !uiState.chatAuthReady || !uiState.chatEnabled || signedIn;
     }
-    if (signedIn) ensureChatDisplayName();
-    if (elements.chatAnonNotice) elements.chatAnonNotice.hidden = !uiState.chatEnabled || !signedIn;
+    if (uiState.chatAuthReady && !signedIn) ensureChatDisplayName();
+    if (elements.chatAnonNotice) elements.chatAnonNotice.hidden = !uiState.chatEnabled || !uiState.chatAuthReady || signedIn;
     if (elements.chatTip) elements.chatTip.hidden = !uiState.chatEnabled;
     if (elements.chatReactions) elements.chatReactions.hidden = !canSend;
     elements.chatReactionButtons.forEach((button) => {
         if (!button.dataset.cooldown) button.disabled = !canSend;
     });
     if (!canSend) hideMentionMenu();
-    if (!signedIn) closeAnonNameEditor();
+    if (signedIn || !uiState.chatEnabled || !uiState.chatAuthReady) closeAnonNameEditor();
 
     if (statusOverride) {
         setChatStatus(statusOverride.message, statusOverride.tone);
@@ -1215,7 +1207,6 @@ async function initializeChatComposer(database, teamId, gameId) {
             uiState.chatAuthReady = true;
             uiState.liveFeeds?.authChanged(nextUid);
             if (previousUid !== nextUid) uiState.anonName = '';
-            if (user) ensureChatDisplayName();
             refreshChatAvailability();
             if (previousUid !== nextUid) void uiState.refreshReplayPlayback?.();
         }, { skipEmailVerificationCheck: true });
