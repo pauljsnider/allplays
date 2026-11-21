@@ -22,13 +22,15 @@ describe('getSafeAuthNextRoute', () => {
   });
 });
 
-describe('document authentication return routes', () => {
-  const diamondViewerRoute = '/live-game-diamond-v2.html?teamId=team%2Fone&gameId=game+one&replay=true#top';
+describe.each(['live-game-diamond-v2.html', 'live-game-overlay.html'])('document authentication return routes: %s', (page) => {
+  const viewerRoute = `/${page}?teamId=team%2Fone&gameId=game+one&replay=true#top`;
 
-  it('allowlists only the same-origin Diamond viewer and preserves its full route', () => {
-    expect(getDocumentAuthNextRoute(diamondViewerRoute)).toBe(diamondViewerRoute);
+  it('allowlists only exact same-origin viewer documents and preserves its full route', () => {
+    expect(getDocumentAuthNextRoute(viewerRoute)).toBe(viewerRoute);
     expect(getDocumentAuthNextRoute('/live-game.html?teamId=team-1&gameId=game-1')).toBe('');
-    expect(getDocumentAuthNextRoute('/live-game-overlay.html?teamId=team-1&gameId=game-1')).toBe('');
+    expect(getDocumentAuthNextRoute('/live-game-overlay.html.evil?teamId=team-1')).toBe('');
+    expect(getDocumentAuthNextRoute('//evil.example/live-game-overlay.html')).toBe('');
+    expect(getDocumentAuthNextRoute('https://evil.example/live-game-overlay.html')).toBe('');
     expect(getDocumentAuthNextRoute('/live-game-diamond-v2.html.evil?teamId=team-1')).toBe('');
     expect(getDocumentAuthNextRoute('//evil.example/live-game-diamond-v2.html')).toBe('');
     expect(getDocumentAuthNextRoute('https://evil.example/live-game-diamond-v2.html')).toBe('');
@@ -39,12 +41,12 @@ describe('document authentication return routes', () => {
     const locationObject = createLocation();
 
     await expect(
-      completeAuthNavigation(diamondViewerRoute, navigate, {
+      completeAuthNavigation(viewerRoute, navigate, {
         locationObject
       })
     ).resolves.toBe('document');
 
-    expect(locationObject.replace).toHaveBeenCalledWith(diamondViewerRoute);
+    expect(locationObject.replace).toHaveBeenCalledWith(viewerRoute);
     expect(locationObject.hash).toBe('#/auth');
     expect(locationObject.reload).not.toHaveBeenCalled();
     expect(navigate).not.toHaveBeenCalled();
@@ -55,11 +57,11 @@ describe('document authentication return routes', () => {
     const locationObject = createLocation();
     const openHostedAuth = vi.fn(async () => undefined);
     const hostedAuthUrl =
-      'https://allplays.ai/app/#/auth?next=%2Flive-game-diamond-v2.html%3FteamId%3Dteam%252Fone%26gameId%3Dgame%2Bone%26replay%3Dtrue%23top';
+      `https://allplays.ai/app/#/auth?next=%2F${page}%3FteamId%3Dteam%252Fone%26gameId%3Dgame%2Bone%26replay%3Dtrue%23top`;
 
-    expect(getHostedDocumentAuthNextUrl(diamondViewerRoute)).toBe(hostedAuthUrl);
+    expect(getHostedDocumentAuthNextUrl(viewerRoute)).toBe(hostedAuthUrl);
     await expect(
-      completeAuthNavigation(diamondViewerRoute, navigate, {
+      completeAuthNavigation(viewerRoute, navigate, {
         locationObject,
         nativeRuntime: true,
         openHostedAuth
@@ -78,12 +80,12 @@ describe('document authentication return routes', () => {
     const locationObject = createLocation();
     const openHostedAuth = vi.fn(async () => undefined);
     const switchedHostedAuthUrl =
-      'https://allplays.ai/app/#/auth?next=%2Flive-game-diamond-v2.html%3FteamId%3Dteam%252Fone%26gameId%3Dgame%2Bone%26replay%3Dtrue%23top&switch=1';
+      `https://allplays.ai/app/#/auth?next=%2F${page}%3FteamId%3Dteam%252Fone%26gameId%3Dgame%2Bone%26replay%3Dtrue%23top&switch=1`;
 
-    expect(getHostedDocumentAuthNextUrl(diamondViewerRoute, true)).toBe(switchedHostedAuthUrl);
+    expect(getHostedDocumentAuthNextUrl(viewerRoute, true)).toBe(switchedHostedAuthUrl);
     expect(getHostedDocumentAuthNextUrl('/home?switch=1', true)).toBe('');
     await expect(
-      completeAuthNavigation(diamondViewerRoute, navigate, {
+      completeAuthNavigation(viewerRoute, navigate, {
         accountSwitchRequested: true,
         locationObject,
         nativeRuntime: true,
@@ -102,7 +104,7 @@ describe('document authentication return routes', () => {
     const locationObject = createLocation();
 
     await expect(
-      completeAuthNavigation(diamondViewerRoute, navigate, {
+      completeAuthNavigation(viewerRoute, navigate, {
         locationObject,
         nativeRuntime: true
       })
