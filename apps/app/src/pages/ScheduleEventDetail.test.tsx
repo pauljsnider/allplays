@@ -4769,6 +4769,31 @@ describe('ScheduleEventDetail assignments', () => {
     });
     expect(screen.getByText('Snacks released.')).toBeTruthy();
   });
+
+  it.each([
+    ['not_responded', 'RSVP needed'],
+    ['maybe', 'Maybe'],
+    ['not_going', "Can't go"]
+  ] as const)('blocks %s assignment claims and shows current availability', async (myRsvp, availabilityLabel) => {
+    const assignments = [{ role: 'Snacks', value: '', claimable: true, claim: null }];
+    scheduleServiceMocks.claimParentScheduleAssignmentSlot.mockClear();
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ myRsvp, assignments })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentScheduleAssignments.mockResolvedValue(assignments);
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=assignments');
+
+    const card = await screen.findByText('Snacks');
+    const assignmentCard = card.closest('article') as HTMLElement;
+    expect(within(assignmentCard).getByText(`Current availability: ${availabilityLabel}`)).toBeTruthy();
+
+    fireEvent.click(within(assignmentCard).getByRole('button', { name: 'Sign up' }));
+
+    expect(scheduleServiceMocks.claimParentScheduleAssignmentSlot).not.toHaveBeenCalled();
+    expect(await screen.findByText('Update event availability to Going before signing up.')).toBeTruthy();
+  });
 });
 
 describe('ScheduleEventDetail staff RSVP overrides', () => {

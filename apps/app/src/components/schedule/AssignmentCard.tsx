@@ -8,14 +8,16 @@ import { Pencil, Trash2 } from 'lucide-react';
 
 export type AssignmentClaimReadiness = 'ready' | 'attendance-follow-up';
 
-export function AssignmentCard({ assignment, userId, busy, disabled, claimReadiness, canManage = false, onClaim, onRelease, onEdit, onRemove }: {
+export function AssignmentCard({ assignment, userId, busy, disabled, claimReadiness, availabilityLabel, canManage = false, onClaim, onClaimBlocked, onRelease, onEdit, onRemove }: {
   assignment: ScheduleAssignment;
   userId: string;
   busy: boolean;
   disabled: boolean;
   claimReadiness: AssignmentClaimReadiness;
+  availabilityLabel: string;
   canManage?: boolean;
   onClaim: () => void | Promise<void>;
+  onClaimBlocked: () => void;
   onRelease: () => void | Promise<void>;
   onEdit?: () => void;
   onRemove?: () => void | Promise<void>;
@@ -35,6 +37,9 @@ export function AssignmentCard({ assignment, userId, busy, disabled, claimReadin
           </div>
           {assignment.claimable ? (
             <div className="mt-1 text-[11px] font-semibold text-gray-500">Parent sign-up slot</div>
+          ) : null}
+          {assignment.claimable && claimReadiness !== 'ready' ? (
+            <div className="mt-1 text-[11px] font-semibold text-amber-800">Current availability: {availabilityLabel}</div>
           ) : null}
         </div>
         <div className="flex flex-none flex-wrap items-center justify-end gap-2">
@@ -73,7 +78,7 @@ export function AssignmentCard({ assignment, userId, busy, disabled, claimReadin
             <button
               type="button"
               className="min-h-8 rounded-full border border-amber-200 bg-white px-3 text-xs font-black text-amber-800"
-              onClick={onClaim}
+              onClick={claimReadiness === 'ready' ? onClaim : onClaimBlocked}
               disabled={disabled}
               data-claim-readiness={claimReadiness}
             >
