@@ -384,7 +384,7 @@ describe('React app TeamDetail page', () => {
         const { container } = await renderTeamDetail();
 
         expect(teamDetailMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledTimes(1);
-        expect(teamDetailMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledWith('team-1', auth.user);
+        expect(teamDetailMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledWith('team-1', auth.user, { includeOverviewSchedule: false });
         expect(teamDetailMocks.loadParentTeamDetail).not.toHaveBeenCalled();
         expect(teamDetailMocks.loadTeamDetailInsights).not.toHaveBeenCalled();
         expect(container.textContent).toContain('Bears');
