@@ -2076,6 +2076,8 @@
       grid-template-columns: minmax(0, 1fr) 64px minmax(0, 1fr);
       border-radius: 12px;
       transform: none;
+      /* Do not carry the centered transform into the left-anchored layout. */
+      transition-property: opacity, visibility;
     }
     body[data-landscape="true"][data-panel-open="true"]:not([data-score-hidden="true"]) #score-bug {
       visibility: visible;
@@ -2139,7 +2141,11 @@
       opacity: 1;
       pointer-events: auto;
     }
-    body[data-landscape="true"] .replay-timeline { grid-template-columns: minmax(0, 1fr); }
+    body[data-landscape="true"] .replay-timeline {
+      grid-template-columns: minmax(0, 1fr);
+      height: 44px;
+    }
+    body[data-landscape="true"] .replay-progress { margin: 0; }
     body[data-landscape="true"] .replay-time,
     body[data-landscape="true"] .replay-speed-group { display: none; }
     .landscape-speed { display: none; }
