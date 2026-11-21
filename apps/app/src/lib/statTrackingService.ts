@@ -1,5 +1,6 @@
+import { liveStatsMetadata, readLiveStats, liveStatsMatchEpoch } from './adapters/legacyLiveAggregateStats';
 import { buildTrackerEventDocument, type TrackerEventDocument, type TrackerEventInput, type TrackerOpponentStatsEntry, type TrackerUndoData, type TrackerUser } from './statTrackingEvent';
-import { db, deleteDoc, doc, increment, setDoc, splitPlayerStatsByVisibility } from './adapters/legacyStatTrackingDb';
+import { db, deleteDoc, doc, increment, setDoc, runTransaction, splitPlayerStatsByVisibility } from './adapters/legacyStatTrackingDb';
 
 export type TrackerScoreState = {
   homeScore: number;
@@ -29,6 +30,7 @@ export type TrackerLogEntry = {
 };
 
 type StatTrackingDependencies = {
+  runTransaction: typeof runTransaction;
   doc: typeof doc;
   setDoc: typeof setDoc;
   deleteDoc: typeof deleteDoc;
@@ -266,22 +268,36 @@ async function applyAggregateWrite({
   const basePayload = buildParticipationPayload(playerName, playerNumber);
   const publicRef = dependencies.doc(dependencies.db, `teams/${teamId}/games/${gameId}/aggregatedStats`, playerId);
 
-  if (Object.keys(publicStats).length > 0) {
-    await dependencies.setDoc(publicRef, {
-      ...basePayload,
-      stats: publicStats
-    }, { merge: true });
-  } else {
-    await dependencies.setDoc(publicRef, basePayload, { merge: true });
-  }
-
-  if (Object.keys(privateStats).length > 0) {
-    const privateRef = dependencies.doc(dependencies.db, `teams/${teamId}/games/${gameId}/privatePlayerStats`, playerId);
-    await dependencies.setDoc(privateRef, {
-      ...basePayload,
-      stats: privateStats
-    }, { merge: true });
-  }
+  const gameRef = dependencies.doc(dependencies.db, `teams/${teamId}/games/${gameId}`);
+  const privateRef = dependencies.doc(dependencies.db, `teams/${teamId}/games/${gameId}/privatePlayerStats`, playerId);
+  await dependencies.runTransaction(dependencies.db, async transaction => {
+    const [gameSnapshot, publicSnapshot, privateSnapshot] = await Promise.all([
+      transaction.get(gameRef), transaction.get(publicRef),
+      Object.keys(privateStats).length ? transaction.get(privateRef) : Promise.resolve(null)
+    ]);
+    const game = gameSnapshot.data() || {};
+    const currentPublic = readLiveStats(publicSnapshot.data() || {}, game);
+    const metadata = liveStatsMetadata(game);
+    const publicKey = Object.keys(publicStats)[0];
+    if (publicKey && liveStatsMatchEpoch(publicSnapshot.data() || {}, game)) {
+      transaction.set(publicRef, { ...basePayload, stats: publicStats, ...metadata }, { merge: true });
+    } else {
+      if (publicKey) currentPublic[publicKey] = (currentPublic[publicKey] || 0) + delta;
+      const payload = { ...basePayload, stats: currentPublic, ...metadata };
+      transaction.set(publicRef, payload, { mergeFields: Object.keys(payload) });
+    }
+    if (privateSnapshot) {
+      const currentPrivate = readLiveStats(privateSnapshot.data() || {}, game);
+      if (liveStatsMatchEpoch(privateSnapshot.data() || {}, game)) {
+        transaction.set(privateRef, { ...basePayload, stats: privateStats, ...metadata }, { merge: true });
+      } else {
+        const key = Object.keys(privateStats)[0];
+        currentPrivate[key] = (currentPrivate[key] || 0) + delta;
+        const payload = { ...basePayload, stats: currentPrivate, ...metadata };
+        transaction.set(privateRef, payload, { mergeFields: Object.keys(payload) });
+      }
+    }
+  });
 }
 
 async function applyOpponentStatsWrite({
@@ -590,6 +606,7 @@ export function createDefaultStatTrackingService(options: {
     ...options,
     dependencies: {
       db,
+      runTransaction,
       doc,
       setDoc,
       deleteDoc,

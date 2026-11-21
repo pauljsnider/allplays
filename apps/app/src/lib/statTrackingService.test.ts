@@ -4,14 +4,24 @@ import { buildTrackerEventDocument } from './statTrackingEvent';
 import { createStatTrackingService } from './statTrackingService';
 
 function createDependencies() {
-  return {
+  const deps = {
     db: { name: 'db' } as any,
     doc: vi.fn((_db: unknown, ...segments: string[]) => ({ path: segments.join('/') })),
     setDoc: vi.fn(async () => undefined),
     deleteDoc: vi.fn(async () => undefined),
     increment: vi.fn((value: number) => ({ __increment: value })),
-    adjustGameScore: vi.fn(async () => undefined)
+    adjustGameScore: vi.fn(async () => undefined),
+    runTransaction: vi.fn(async (_db: unknown, callback: any) => {
+      const writes: Promise<unknown>[] = [];
+      const result = await callback({
+        get: async () => ({ data: () => ({}) }),
+        set: (...args: any[]) => { writes.push((deps.setDoc as any)(...args)); }
+      });
+      await Promise.all(writes);
+      return result;
+    })
   };
+  return deps;
 }
 
 describe('statTrackingService', () => {
@@ -141,6 +151,7 @@ describe('statTrackingService', () => {
       stats: {
         pts: { __increment: 2 }
       }
+      , liveStatsVersion: 1, liveStatsEpoch: ''
     }, { merge: true });
     expect(dependencies.adjustGameScore).toHaveBeenCalledWith('team-1', 'game-1', {
       homeScore: 2,
@@ -473,8 +484,8 @@ describe('statTrackingService', () => {
       participated: true,
       participationStatus: 'appeared',
       participationSource: 'app-stat-tracker',
-      didNotPlay: false
-    }, { merge: true });
+      didNotPlay: false, stats: {}, liveStatsVersion: 1, liveStatsEpoch: ''
+    }, { mergeFields: ['playerName', 'playerNumber', 'participated', 'participationStatus', 'participationSource', 'didNotPlay', 'stats', 'liveStatsVersion', 'liveStatsEpoch'] });
     expect(dependencies.setDoc).toHaveBeenNthCalledWith(3, { path: 'teams/team-1/games/game-1/privatePlayerStats/player-1' }, expect.objectContaining({
       stats: {
         notes: { __increment: 1 }
@@ -861,6 +872,7 @@ describe('statTrackingService', () => {
         statConfig: { columns: ['PTS'] },
         initialScore: { homeScore: 0, awayScore: 0 },
         dependencies: {
+          ...createDependencies(),
           db: { name: 'db' } as any,
           doc: vi.fn((_db: unknown, ...segments: string[]) => ({ path: segments.join('/') })),
           setDoc: vi.fn(async () => undefined),

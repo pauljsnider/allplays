@@ -10,6 +10,10 @@ const firebaseMocks = vi.hoisted(() => {
   return {
     batch,
     getDocs: vi.fn(),
+    runTransaction: vi.fn(async (_db: unknown, callback: any) => {
+      await callback({ ...batch, get: async () => ({ data: () => ({}) }) });
+      await batch.commit();
+    }),
     deleteDoc: vi.fn(async () => undefined),
     writeBatch: vi.fn(() => batch),
     doc: vi.fn((_db: unknown, ...parts: string[]) => ({ path: parts.join('/') })),
@@ -27,7 +31,7 @@ const dbMocks = vi.hoisted(() => ({
     storage: 'primary'
   })),
   getConfigs: vi.fn(),
-  getGame: vi.fn(),
+  getGame: vi.fn(async () => ({})),
   getPlayers: vi.fn(),
   getTeam: vi.fn()
 }))
@@ -54,18 +58,13 @@ vi.mock('../../../../js/db.js', () => dbMocks)
 vi.mock('../../../../js/vendor/firebase-app.js', () => firebaseAppMocks)
 vi.mock('../../../../js/firebase-ai.js', () => firebaseAiMocks)
 vi.mock('./profilePhotoService', () => ({ acquireProfilePhoto: vi.fn() }))
-vi.mock('../../../../js/live-tracker-save-complete.js', () => ({
-  addAggregatedStatsWritesToBatch: vi.fn(({ aggregatedStatsWrites = [], batch, db, currentTeamId, currentGameId, createDocRef }: any) => {
-    aggregatedStatsWrites.forEach(({ playerId, data }: any) => {
-      batch.set(createDocRef(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId), data)
-    })
-  })
-}))
 
-import { analyzeTrackStatsheetPhoto, applyTrackStatsheetImportForApp, buildTrackStatsheetReviewModel } from './statsheetImportService'
+
+import { analyzeTrackStatsheetPhoto, applyTrackStatsheetImportForApp, buildTrackStatsheetReviewModel, countTrackStatsheetReplacementWrites } from './statsheetImportService'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  dbMocks.getGame.mockResolvedValue({})
   dbMocks.validateStatSheetPhotoUpload.mockImplementation((teamId: string, gameId: string, file: File) => {
     if (!teamId.trim()) throw new Error('Team-scoped stat sheet upload requires a team.')
     if (!gameId.trim()) throw new Error('Game-scoped stat sheet upload requires a game.')
@@ -180,6 +179,20 @@ describe('analyzeTrackStatsheetPhoto', () => {
 })
 
 describe('applyTrackStatsheetImportForApp', () => {
+  it('counts the private set or delete for every mixed statsheet row at the transaction boundary', () => {
+    const nearLimit = Array.from({ length: 249 }, (_, index) => ({
+      playerId: `p${index}`,
+      data: { stats: { pts: index } },
+      ...(index % 2 ? { privateData: { stats: { effort: index } } } : {})
+    }))
+
+    expect(countTrackStatsheetReplacementWrites(nearLimit)).toBe(499)
+    expect(countTrackStatsheetReplacementWrites([...nearLimit, {
+      playerId: 'overflow',
+      data: { stats: { pts: 1 } }
+    }])).toBe(501)
+  })
+
   it('batches replacement cleanup into the same commit as the new statsheet writes', async () => {
     firebaseMocks.getDocs
       .mockResolvedValueOnce({ size: 1, docs: [{ id: 'event-1', ref: { path: 'teams/team-1/games/game-1/events/event-1' } }] })
@@ -199,8 +212,8 @@ describe('applyTrackStatsheetImportForApp', () => {
       replaceExisting: true
     })
 
-    expect(firebaseMocks.writeBatch).toHaveBeenCalledTimes(1)
-    expect(firebaseMocks.batch.delete).toHaveBeenCalledTimes(3)
+    expect(firebaseMocks.runTransaction).toHaveBeenCalledTimes(1)
+    expect(firebaseMocks.batch.delete).toHaveBeenCalledTimes(4)
     expect(firebaseMocks.batch.commit).toHaveBeenCalledTimes(1)
   })
 
@@ -218,7 +231,7 @@ describe('applyTrackStatsheetImportForApp', () => {
     })).rejects.toThrow('Please review or map at least one home player before applying.')
 
     expect(firebaseMocks.getDocs).not.toHaveBeenCalled()
-    expect(firebaseMocks.writeBatch).not.toHaveBeenCalled()
+    expect(firebaseMocks.runTransaction).not.toHaveBeenCalled()
   })
 
   it('returns a replacement confirmation instead of writing over existing game data', async () => {
@@ -240,7 +253,7 @@ describe('applyTrackStatsheetImportForApp', () => {
     })
 
     expect(result).toMatchObject({ requiresReplaceConfirmation: true, hasExistingTrackedData: true })
-    expect(firebaseMocks.writeBatch).not.toHaveBeenCalled()
+    expect(firebaseMocks.runTransaction).not.toHaveBeenCalled()
   })
 
   it('requires replacement when only private tracked stats already exist', async () => {
@@ -262,7 +275,7 @@ describe('applyTrackStatsheetImportForApp', () => {
     })
 
     expect(result).toMatchObject({ requiresReplaceConfirmation: true, hasExistingTrackedData: true })
-    expect(firebaseMocks.writeBatch).not.toHaveBeenCalled()
+    expect(firebaseMocks.runTransaction).not.toHaveBeenCalled()
   })
 
   it('does not create a second cleanup batch for private stats already handled by the apply plan', async () => {
@@ -284,8 +297,8 @@ describe('applyTrackStatsheetImportForApp', () => {
       replaceExisting: true
     })
 
-    expect(firebaseMocks.writeBatch).toHaveBeenCalledTimes(1)
-    expect(firebaseMocks.batch.delete).not.toHaveBeenCalled()
+    expect(firebaseMocks.runTransaction).toHaveBeenCalledTimes(1)
+    expect(firebaseMocks.batch.delete).toHaveBeenCalledExactlyOnceWith({ path: 'teams/team-1/games/game-1/privatePlayerStats/p1' })
     expect(firebaseMocks.batch.commit).toHaveBeenCalledTimes(1)
   })
 
@@ -310,7 +323,7 @@ describe('applyTrackStatsheetImportForApp', () => {
     })
 
     expect(dbMocks.uploadStatSheetPhoto).toHaveBeenCalledWith('team-1', 'game-1', file, { returnUpload: true })
-    expect(firebaseMocks.writeBatch).toHaveBeenCalled()
+    expect(firebaseMocks.runTransaction).toHaveBeenCalled()
     expect(firebaseMocks.batch.update).toHaveBeenCalledWith(
       { path: 'teams/team-1/games/game-1' },
       expect.objectContaining({
@@ -320,7 +333,7 @@ describe('applyTrackStatsheetImportForApp', () => {
         statSheetPhotoPath: 'stat-sheets/team-games/team-1/game-1/user-1/statsheet.png'
       })
     )
-    expect(firebaseMocks.batch.delete).toHaveBeenCalledTimes(3)
+    expect(firebaseMocks.batch.delete).toHaveBeenCalledTimes(4)
     expect(firebaseMocks.batch.delete).toHaveBeenCalledWith({ path: 'teams/team-1/games/game-1/privatePlayerStats/p2' })
     expect(firebaseMocks.batch.commit).toHaveBeenCalledTimes(1)
     expect(result).toMatchObject({
@@ -411,7 +424,26 @@ describe('applyTrackStatsheetImportForApp', () => {
       file: null
     })).rejects.toThrow('This statsheet import is too large to apply safely in one save.')
 
-    expect(firebaseMocks.writeBatch).not.toHaveBeenCalled()
+    expect(firebaseMocks.runTransaction).not.toHaveBeenCalled()
     expect(firebaseMocks.batch.commit).not.toHaveBeenCalled()
   })
+})
+
+
+it('imports configured private points only into private storage with the replacement epoch', async () => {
+  dbMocks.getGame.mockResolvedValue({ liveResetAt: 1000, statTrackerConfigId: 'private-config' } as any)
+  dbMocks.getConfigs.mockResolvedValue([{ id: 'private-config', columns: ['PTS'], statDefinitions: [{ id: 'pts', scope: 'player', visibility: 'private' }] }])
+  firebaseMocks.getDocs.mockResolvedValue({ size: 0, docs: [] })
+  firebaseMocks.runTransaction.mockImplementationOnce(async (_db: unknown, callback: any) => {
+    await callback({ ...firebaseMocks.batch, get: async () => ({ data: () => ({ liveResetAt: 1000 }) }) })
+    await firebaseMocks.batch.commit()
+  })
+  await applyTrackStatsheetImportForApp({ teamId: 't', gameId: 'g', roster: [{ id: 'p', name: 'P', number: '1' }], columns: ['PTS'],
+    homeRows: [{ include: true, mappedPlayerId: 'p', name: 'P', number: '1', fouls: 0, totalPoints: 12 }], visitorRows: [], homeScore: 12, awayScore: 3, file: null })
+  const publicWrite = firebaseMocks.batch.set.mock.calls.find(([ref]: any) => ref.path.includes('/aggregatedStats/')) as any
+  const privateWrite = firebaseMocks.batch.set.mock.calls.find(([ref]: any) => ref.path.includes('/privatePlayerStats/')) as any
+  expect(publicWrite[1].stats).not.toHaveProperty('pts')
+  expect(privateWrite[1].stats.pts).toBe(12)
+  expect(privateWrite[1].liveStatsEpoch).toMatch(/^id:/)
+  expect(publicWrite[1].liveStatsEpoch).toBe(privateWrite[1].liveStatsEpoch)
 })

@@ -74,7 +74,7 @@ function legacyIsPointsColumn(relativePath, currentConfig, statKey) {
 }
 
 function createDependencies() {
-    return {
+    const dependencies = {
         db: {},
         doc: vi.fn((_db, ...segments) => ({ path: segments.join('/') })),
         setDoc: vi.fn(async () => undefined),
@@ -82,6 +82,10 @@ function createDependencies() {
         increment: vi.fn((value) => ({ __increment: value })),
         adjustGameScore: vi.fn(async () => undefined)
     };
+    dependencies.runTransaction = async (_db, callback) => callback({
+        get: async () => ({ data: () => ({}) }), set: dependencies.setDoc
+    });
+    return dependencies;
 }
 
 async function reactTrackerCreditsAsScore(statConfig, statKey) {

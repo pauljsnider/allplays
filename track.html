@@ -275,15 +275,17 @@
 
     <script type="module">
         import { getTeamScorePair } from './js/season-record.js';
-        import { getGameDayTeamContext, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './js/db.js?v=4433212';
+        import { getGameDayTeamContext, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './js/db.js?v=4433215';
         import { db } from './js/firebase.js?v=4433197';
-        import { writeBatch, doc, setDoc, addDoc } from './js/firebase.js?v=4433197';
-        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443388';
-        import { checkAuth } from './js/auth.js?v=4433217';
+        import { writeBatch, runTransaction, doc, setDoc, addDoc } from './js/firebase.js?v=4433197';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443391';
+        import { checkAuth } from './js/auth.js?v=4433220';
         import { isAISummaryEnabled, applyAISummaryAvailability } from './js/track-ai-summary.js';
         import { resolveSummaryRecipient } from './js/live-tracker-email.js?v=1';
         import { hasScorekeepingTeamAccess } from './js/team-access.js?v=44338';
-        import { commitStandardTrackerFinishData } from './js/track-finish.js?v=3';
+        import { commitStandardTrackerFinishData, resetStandardTrackerData } from './js/track-finish.js?v=7';
+        import { getPrivatePlayerStatIds } from './js/stat-leaderboards.js?v=4';
+        import { getLiveStatsEpoch, readLiveStatsForWrite } from './js/live-aggregate-stats.js?v=2';
         import { getApp } from './js/vendor/firebase-app.js';
         import { getDefaultLivePeriod, getSportPeriodLabels } from './js/live-sport-config.js?v=1';
         import { DIAMOND_ENGINE, buildDiamondTrackerUrl } from './js/diamond-scorebook-routing.js?v=2';
@@ -456,13 +458,20 @@
                 const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
                 statsSnapshot.forEach(doc => {
                     const data = doc.data() || {};
-                    gameState.playerStats[doc.id] = data.stats || {};
+                    gameState.playerStats[doc.id] = readLiveStatsForWrite(data, currentGame);
                     gameState.playerParticipationByPlayerId[doc.id] = {
                         participated: data.participated,
                         participationStatus: data.participationStatus,
                         didNotPlay: data.didNotPlay
                     };
                 });
+
+                if (getPrivatePlayerStatIds(currentConfig).size) {
+                    const privateSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/privatePlayerStats`));
+                    privateSnapshot.forEach(row => {
+                        gameState.playerStats[row.id] = { ...(gameState.playerStats[row.id] || {}), ...readLiveStatsForWrite(row.data(), currentGame) };
+                    });
+                }
 
                 // Also load existing scores from aggregated stats
                 let totalHomePoints = 0;
@@ -863,15 +872,9 @@
                             return; // User cancelled
                         }
 
-                        // Clear existing events and stats
-                        console.log('Clearing existing events and stats...');
-                        const deleteEventPromises = eventsSnap.docs.map(doc => deleteDoc(doc.ref));
-                        await Promise.all(deleteEventPromises);
-
-                        // Clear aggregated stats
-                        const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
-                        const deleteStatsPromises = statsSnap.docs.map(doc => deleteDoc(doc.ref));
-                        await Promise.all(deleteStatsPromises);
+                        const resetPatch = await resetStandardTrackerData({ db, runTransaction, doc, collection, getDocs,
+                            teamId: currentTeamId, gameId: currentGameId, expectedEpoch: getLiveStatsEpoch(currentGame) });
+                        Object.assign(currentGame, resetPatch);
 
                         console.log('Cleared existing data. Starting fresh...');
                     }
@@ -897,6 +900,14 @@
 
         async function resetTimer() {
             if (confirm('Reset timer and clear all stats? This will also clear saved stats in the database.')) {
+                try {
+                    const resetPatch = await resetStandardTrackerData({ db, runTransaction, doc, collection, getDocs,
+                        teamId: currentTeamId, gameId: currentGameId, expectedEpoch: getLiveStatsEpoch(currentGame) });
+                    Object.assign(currentGame, resetPatch);
+                } catch (error) {
+                    alert('Error resetting game: ' + error.message);
+                    return;
+                }
                 gameState.startTime = null;
                 gameState.elapsed = 0;
                 gameState.isRunning = false;
@@ -912,14 +923,6 @@
                 document.querySelectorAll('[id^="stat-"]').forEach(el => {
                     el.textContent = '0';
                 });
-
-                // Clear aggregated stats in Firebase
-                try {
-                    const statsSnapshot = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
-                    await Promise.all(statsSnapshot.docs.map(doc => deleteDoc(doc.ref)));
-                } catch (error) {
-                    console.error('Error clearing stats:', error);
-                }
 
                 updateScoreDisplay();
                 renderGameLog();
@@ -1326,7 +1329,8 @@ Write the match report now:`;
 
                 await commitStandardTrackerFinishData({
                     db,
-                    writeBatch,
+                    runTransaction,
+                    expectedEpoch: getLiveStatsEpoch(currentGame),
                     doc,
                     collection,
                     teamId: currentTeamId,

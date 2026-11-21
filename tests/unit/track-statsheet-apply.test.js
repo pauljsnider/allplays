@@ -209,9 +209,9 @@ describe('track statsheet apply helpers', () => {
         expect(trackStatsheetSource).toContain('const FIRESTORE_BATCH_WRITE_LIMIT = 500;');
         expect(trackStatsheetSource).toContain('const replacementCleanupWriteCount = eventsSnap.size + statsSnap.size + privateStatsSnap.size;');
         expect(trackStatsheetSource).toContain('const hasExistingTrackedData = replacementCleanupWriteCount > 0 || liveEventsSnap.size > 0;');
-        expect(trackStatsheetSource).toContain('const replacementWriteCount = replacementCleanupWriteCount + applyPlan.aggregatedStatsWrites.length + 1;');
-        expect(trackStatsheetSource).toMatch(/if \(replacementWriteCount > FIRESTORE_BATCH_WRITE_LIMIT\) \{[\s\S]*Existing game data was not changed\.[\s\S]*\}[\s\S]*const batch = writeBatch\(db\);/);
-        expect(trackStatsheetSource).toContain('const batch = writeBatch(db);');
+        expect(trackStatsheetSource).toContain('const replacementWriteCount = replacementCleanupWriteCount + applyPlan.aggregatedStatsWrites.reduce((sum, row) => sum + 1 + (row.privateData ? 1 : 0), 0) + 1;');
+        expect(trackStatsheetSource).toMatch(/if \(replacementWriteCount > FIRESTORE_BATCH_WRITE_LIMIT\) \{[\s\S]*Existing game data was not changed\.[\s\S]*\}[\s\S]*const batch = createLiveStatsReplacementBatch\(/);
+        expect(trackStatsheetSource).toContain('const batch = createLiveStatsReplacementBatch({ db, runTransaction, gameRef, expectedEpoch: getLiveStatsEpoch(currentGame) });');
         expect(trackStatsheetSource).toMatch(/if \(hasExistingTrackedData\) \{[\s\S]*applyStatus\.textContent = 'Preparing replacement stats…';[\s\S]*eventsSnap\.docs\.forEach\(docItem => batch\.delete\(docItem\.ref\)\);[\s\S]*statsSnap\.docs\.forEach\(docItem => batch\.delete\(docItem\.ref\)\);[\s\S]*privateStatsSnap\.docs\.forEach\(docItem => batch\.delete\(docItem\.ref\)\);[\s\S]*\}/);
         expect(trackStatsheetSource).not.toMatch(/liveEventsSnap\.docs\.forEach\(docItem => batch\.delete/);
         expect(trackStatsheetSource).toContain('const commitPromise = batch.commit();');

@@ -94,6 +94,7 @@ export function buildFinishCompletionPlan({
   substitutions = [],
   opponentEntries = [],
   currentUserUid = null,
+  statsEpoch,
   buildEmailBody = () => ''
 } = {}) {
   const privateStatIds = getPrivatePlayerStatIds(statTrackerConfig);
@@ -185,11 +186,13 @@ export function buildFinishCompletionPlan({
       playerId: player.id,
       data: {
         ...baseData,
+        ...(typeof statsEpoch === 'string' ? { liveStatsVersion: 1, liveStatsEpoch: statsEpoch } : {}),
         stats: publicStats
       }
     };
     if (Object.keys(privateStats).length > 0) {
       write.privateData = {
+        ...(typeof statsEpoch === 'string' ? { liveStatsVersion: 1, liveStatsEpoch: statsEpoch } : {}),
         participated: baseData.participated,
         participationSource: baseData.participationSource,
         stats: privateStats
@@ -238,6 +241,7 @@ export function buildFinishCompletionPlan({
   return {
     finalHome,
     finalAway,
+    ...(typeof statsEpoch === 'string' ? { statsEpoch } : {}),
     scoreReconciliation,
     reconciliationNote,
     eventWrites,

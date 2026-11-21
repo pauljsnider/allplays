@@ -1,3 +1,4 @@
+import { liveStatsMetadata, readLiveStats, liveStatsMatchEpoch, privatePlayerStatIds } from './adapters/legacyLiveAggregateStats';
 import { CapacitorHttp } from '@capacitor/core';
 
 import {
@@ -6875,6 +6876,7 @@ function buildPlayerGameStatLiveEvent({
 }) {
   return {
     eventId,
+    ...liveStatsMetadata(game || {}),
     type: 'stat',
     period: getLiveEventPeriod(game),
     gameClockMs: getLiveEventClockMs(game),
@@ -6919,6 +6921,30 @@ export function buildPlayerScoringLiveEvent({
   return buildPlayerGameStatLiveEvent({ playerId, playerName, playerNumber, statKey, value, homeScore, awayScore, user, game, eventId });
 }
 
+// Quick score controls publish public live events. Configured-private metrics
+// must use the full tracker; never route them through this public-only path.
+function assertPublicQuickStat(config: Record<string, unknown> | null, statKey: string) {
+  if (!config) throw new Error('Stat configuration unavailable; no player stat was published.');
+  if (privatePlayerStatIds(config).has(statKey)) throw new Error('Private player stats require the full tracker.');
+}
+
+async function verifyQuickStatConfig(transaction: any, teamId: string, game: Record<string, unknown>, statKey: string) {
+  const configId = compactString(game.statTrackerConfigId);
+  if (!configId) assertPublicQuickStat(null, statKey);
+  const snapshot = await transaction.get(doc(db, `teams/${teamId}/statTrackerConfigs/${configId}`));
+  assertPublicQuickStat(snapshot.data() || null, statKey);
+}
+
+async function nativeQuickStatConfigWrites(teamId: string, game: Record<string, unknown>, statKey: string) {
+  const configId = compactString(game.statTrackerConfigId);
+  if (!configId) assertPublicQuickStat(null, statKey);
+  const path = `teams/${teamId}/statTrackerConfigs/${configId}`;
+  const snapshot = await nativeGetDocumentSnapshot(`teams/${encodeURIComponent(teamId)}/statTrackerConfigs/${encodeURIComponent(configId)}`);
+  assertPublicQuickStat(snapshot.exists ? snapshot.document as Record<string, unknown> : null, statKey);
+  if (!snapshot.updateTime) throw new Error('Stat configuration revision unavailable; no player stat was published.');
+  return [{ verify: getFirestoreDocumentName(path), currentDocument: { updateTime: snapshot.updateTime } }];
+}
+
 async function runNativePlayerGameStatWrite(
   teamId: string,
   gameId: string,
@@ -6944,11 +6970,12 @@ async function runNativePlayerGameStatWrite(
       ]);
       const gameDoc = (gameSnapshot.document || {}) as Record<string, unknown>;
       assertGameAllowsLivePublishing(gameDoc);
+      const configWrites = await nativeQuickStatConfigWrites(teamId, gameDoc, stat.statKey);
       const scoreBase = resolveScoreFromIntegrityState(gameDoc, integrityState);
       const statsDoc = (statsSnapshot.document || {}) as Record<string, unknown>;
       const awayScore = scoreBase.awayScore + (statKey === 'pts' && teamSide === 'away' ? value : 0);
       const homeScore = scoreBase.homeScore + (statKey === 'pts' && teamSide === 'home' ? value : 0);
-      const existingStats = { ...((statsDoc?.stats || {}) as Record<string, unknown>) };
+      const existingStats = readLiveStats(statsDoc, gameDoc);
       const playerStatTotal = normalizeGameScoreValue(existingStats[statKey]) + value;
       existingStats[statKey] = playerStatTotal;
       const liveGamePatch = buildLiveTrackingGamePatch(gameDoc, user, scoreUpdatedAt);
@@ -6982,6 +7009,7 @@ async function runNativePlayerGameStatWrite(
       }
 
       await nativeCommitWrites([
+        ...configWrites,
         {
           update: {
             name: getFirestoreDocumentName(gamePath),
@@ -7000,11 +7028,12 @@ async function runNativePlayerGameStatWrite(
             fields: buildFirestoreFields({
               playerName,
               playerNumber,
-              stats: existingStats
+              stats: existingStats,
+              ...liveStatsMetadata(gameDoc)
             })
           },
           updateMask: {
-            fieldPaths: ['playerName', 'playerNumber', 'stats']
+            fieldPaths: ['playerName', 'playerNumber', 'stats', 'liveStatsVersion', 'liveStatsEpoch']
           },
           currentDocument: statsSnapshot.exists
             ? { updateTime: statsSnapshot.updateTime }
@@ -7110,6 +7139,7 @@ export async function recordPlayerGameStat(teamId: string, gameId: string, playe
       ]);
       const gameData = (gameSnap.exists?.() ? gameSnap.data() || {} : {}) as Record<string, unknown>;
       assertGameAllowsLivePublishing(gameData);
+      await verifyQuickStatConfig(transaction, teamId, gameData, stat.statKey);
       const scoreBase = resolveScoreFromIntegrityState(gameData, integrityState);
       const statsData = (statsSnap.exists?.() ? statsSnap.data() || {} : {}) as Record<string, unknown>;
       const scoreUpdatedAt = new Date();
@@ -7117,7 +7147,7 @@ export async function recordPlayerGameStat(teamId: string, gameId: string, playe
       const value = Number(stat.value) as 1 | 2;
       const awayScore = scoreBase.awayScore + (statKey === 'pts' && teamSide === 'away' ? value : 0);
       const homeScore = scoreBase.homeScore + (statKey === 'pts' && teamSide === 'home' ? value : 0);
-      const playerStats = (statsData.stats && typeof statsData.stats === 'object' ? statsData.stats : {}) as Record<string, unknown>;
+      const playerStats = readLiveStats(statsData, gameData);
       const playerStatTotal = normalizeGameScoreValue(playerStats[statKey]) + value;
       const liveGamePatch = buildLiveTrackingGamePatch(gameData, user, scoreUpdatedAt);
       const liveEventId = createAppLiveEventId();
@@ -7154,8 +7184,9 @@ export async function recordPlayerGameStat(teamId: string, gameId: string, playe
       transaction.set(statsRef, {
         playerName,
         playerNumber,
-        stats: { [statKey]: increment(value) }
-      }, { merge: true });
+        stats: { ...playerStats, [statKey]: playerStatTotal },
+        ...liveStatsMetadata(gameData)
+      }, { mergeFields: ['playerName', 'playerNumber', 'stats', 'liveStatsVersion', 'liveStatsEpoch'] });
       transaction.set(doc(collection(db, liveEventsPath), liveEventId), liveEvent);
       transaction.set(doc(collection(db, eventsPath), trackerEventId), trackerEvent);
 
@@ -7281,12 +7312,18 @@ export async function undoRecordedPlayerGameStat(teamId: string, gameId: string,
         transaction.get(statsRef)
       ]);
       const gameData = gameSnap.exists?.() ? gameSnap.data() || {} : {};
+      await verifyQuickStatConfig(transaction, teamId, gameData, stat.statKey);
       const statsData = statsSnap.exists?.() ? statsSnap.data() || {} : {};
+      if (!liveStatsMatchEpoch(statsData, gameData)) throw new Error('Player totals were reset; this undo is no longer valid.');
+      const originalEvent = await transaction.get(doc(db, `${gamePath}/liveEvents/${stat.liveEventId}`));
+      if (!originalEvent.exists?.() || !liveStatsMatchEpoch(originalEvent.data?.() || {}, gameData)) {
+        throw new Error('The original stat belongs to an earlier tracking session; this undo is no longer valid.');
+      }
       const scoreUpdatedAt = new Date();
       const value = Number(stat.value) || 0;
       const nextHomeScore = normalizeGameScoreValue(gameData.homeScore) - (stat.statKey === 'pts' && teamSide === 'home' ? value : 0);
       const nextAwayScore = normalizeGameScoreValue(gameData.awayScore) - (stat.statKey === 'pts' && teamSide === 'away' ? value : 0);
-      const playerStatTotal = Math.max(0, normalizeGameScoreValue(statsData?.stats?.[stat.statKey]) - value);
+      const playerStatTotal = Math.max(0, normalizeGameScoreValue(readLiveStats(statsData, gameData)[stat.statKey]) - value);
       const liveEventId = createAppLiveEventId();
       const trackerEventId = createAppLiveEventId();
       const liveEvent = buildPlayerGameStatLiveEvent({
@@ -7327,8 +7364,9 @@ export async function undoRecordedPlayerGameStat(teamId: string, gameId: string,
       transaction.set(statsRef, {
         playerName,
         playerNumber,
-        stats: { [stat.statKey]: increment(-value) }
-      }, { merge: true });
+        stats: { ...readLiveStats(statsData, gameData), [stat.statKey]: playerStatTotal },
+        ...liveStatsMetadata(gameData)
+      }, { mergeFields: ['playerName', 'playerNumber', 'stats', 'liveStatsVersion', 'liveStatsEpoch'] });
       transaction.set(doc(db, `${gamePath}/liveEvents/${liveEventId}`), liveEvent);
       transaction.set(doc(db, `${gamePath}/events/${trackerEventId}`), trackerEvent);
 
@@ -7346,14 +7384,23 @@ export async function undoRecordedPlayerGameStat(teamId: string, gameId: string,
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST player stat undo.', 'player-stat-undo', error, { fallback: 'rest', teamId, gameId, playerId: stat.playerId });
-    const [gameDoc, statsDoc] = await Promise.all([
-      nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`),
-      nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/aggregatedStats/${encodeURIComponent(stat.playerId)}`)
+    const encodedGamePath = `teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`;
+    const [gameSnapshot, statsSnapshot] = await Promise.all([
+      nativeGetDocumentSnapshot(encodedGamePath),
+      nativeGetDocumentSnapshot(`${encodedGamePath}/aggregatedStats/${encodeURIComponent(stat.playerId)}`)
     ]);
+    const gameDoc = (gameSnapshot.document || {}) as Record<string, unknown>;
+    const statsDoc = (statsSnapshot.document || {}) as Record<string, unknown>;
+    const configWrites = await nativeQuickStatConfigWrites(teamId, gameDoc, stat.statKey);
+    if (!liveStatsMatchEpoch(statsDoc, gameDoc)) throw new Error('Player totals were reset; this undo is no longer valid.');
+    const originalEventSnapshot = await nativeGetDocumentSnapshot(`${encodedGamePath}/liveEvents/${encodeURIComponent(stat.liveEventId)}`);
+    if (!originalEventSnapshot.exists || !liveStatsMatchEpoch((originalEventSnapshot.document || {}) as Record<string, unknown>, gameDoc)) {
+      throw new Error('The original stat belongs to an earlier tracking session; this undo is no longer valid.');
+    }
     const value = Number(stat.value) || 0;
     const nextHomeScore = normalizeGameScoreValue(gameDoc?.homeScore) - (stat.statKey === 'pts' && teamSide === 'home' ? value : 0);
     const nextAwayScore = normalizeGameScoreValue(gameDoc?.awayScore) - (stat.statKey === 'pts' && teamSide === 'away' ? value : 0);
-    const existingStats = { ...((statsDoc?.stats || {}) as Record<string, unknown>) };
+    const existingStats = readLiveStats(statsDoc, gameDoc);
     const playerStatTotal = Math.max(0, normalizeGameScoreValue(existingStats[stat.statKey]) - value);
     existingStats[stat.statKey] = playerStatTotal;
     const scoreUpdatedAt = new Date();
@@ -7389,26 +7436,30 @@ export async function undoRecordedPlayerGameStat(teamId: string, gameId: string,
       }
     }, user);
 
-    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, {
+    const gamePatch = {
       ...(stat.statKey === 'pts' ? { homeScore: nextHomeScore, awayScore: nextAwayScore } : {}),
-      scoreUpdatedAt,
-      scoreUpdatedBy: user.uid
-    });
-    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/aggregatedStats/${encodeURIComponent(stat.playerId)}`, {
-      playerName,
-      playerNumber,
-      stats: existingStats
-    });
-    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/liveEvents/${encodeURIComponent(liveEventId)}`, {
-      ...liveEvent,
-      eventId: liveEventId,
-      createdAt: scoreUpdatedAt
-    });
-    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/events/${encodeURIComponent(trackerEventId)}`, {
-      ...trackerEvent,
-      eventId: trackerEventId,
-      timestamp: scoreUpdatedAt.getTime()
-    });
+      scoreUpdatedAt, scoreUpdatedBy: user.uid
+    };
+    const statsPatch = { playerName, playerNumber, stats: existingStats, ...liveStatsMetadata(gameDoc) };
+    await nativeCommitWrites([
+      ...configWrites,
+      ...(originalEventSnapshot.exists ? [{
+        verify: getFirestoreDocumentName(`${gamePath}/liveEvents/${stat.liveEventId}`),
+        currentDocument: { updateTime: originalEventSnapshot.updateTime }
+      }] : []),
+      { update: { name: getFirestoreDocumentName(gamePath), fields: buildFirestoreFields(gamePatch) },
+        updateMask: { fieldPaths: Object.keys(gamePatch) },
+        currentDocument: gameSnapshot.exists ? { updateTime: gameSnapshot.updateTime } : { exists: false } },
+      { update: { name: getFirestoreDocumentName(statsPath), fields: buildFirestoreFields(statsPatch) },
+        updateMask: { fieldPaths: Object.keys(statsPatch) },
+        currentDocument: statsSnapshot.exists ? { updateTime: statsSnapshot.updateTime } : { exists: false } },
+      { update: { name: getFirestoreDocumentName(`${gamePath}/liveEvents/${liveEventId}`),
+        fields: buildFirestoreFields({ ...liveEvent, eventId: liveEventId, createdAt: scoreUpdatedAt }) },
+        currentDocument: { exists: false } },
+      { update: { name: getFirestoreDocumentName(`${gamePath}/events/${trackerEventId}`),
+        fields: buildFirestoreFields({ ...trackerEvent, eventId: trackerEventId, timestamp: scoreUpdatedAt.getTime() }) },
+        currentDocument: { exists: false } }
+    ]);
 
     return {
       homeScore: nextHomeScore,

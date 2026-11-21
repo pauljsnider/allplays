@@ -114,6 +114,7 @@ export function limit(count) { return count; }
 export function writeBatch() { return { set() {}, update() {}, delete() {}, commit: async () => {} }; }
 export function doc(_db, path) { return { path }; }
 export async function setDoc() {}
+export async function runTransaction() { throw new Error('Unexpected transaction in boot-only fixture'); }
 export async function addDoc() { return { id: 'event-1' }; }
 export function onSnapshot() { return () => {}; }
 export function orderBy() { return {}; }

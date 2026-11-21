@@ -1,3 +1,4 @@
+import { getLiveStatsEpoch, liveStatsMetadata, readLiveStatsForWrite } from './live-aggregate-stats.js?v=2';
 import { splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=4';
 
 export const STANDARD_TRACKER_MAX_PRIMARY_BATCH_WRITES = 500;
@@ -108,7 +109,8 @@ export function buildAggregatedStatsWrites({ players = [], playerStatsByPlayerId
 
 export async function commitStandardTrackerFinishData({
     db,
-    writeBatch,
+    runTransaction,
+    expectedEpoch,
     doc,
     collection,
     teamId,
@@ -129,6 +131,39 @@ export async function commitStandardTrackerFinishData({
     maxAggregatedStatsBatchWrites = STANDARD_TRACKER_MAX_AGGREGATED_STATS_BATCH_WRITES,
     includeTimeMs = false
 } = {}) {
+    if (typeof expectedEpoch !== 'string' || typeof runTransaction !== 'function') {
+        throw new Error('Missing player totals reset epoch or transaction support.');
+    }
+    const gameRef = doc(db, `teams/${teamId}/games`, gameId);
+    // Stage each bounded chunk, then validate its epoch and every existing stat
+    // destination before any writes. SDK retries re-read after a racing reset.
+    function writeBatch() {
+        const writes = [];
+        return {
+            set: (ref, data) => writes.push({ kind: 'set', ref, data }),
+            update: (ref, data) => writes.push({ kind: 'update', ref, data }),
+            delete: (ref) => writes.push({ kind: 'delete', ref }),
+            async commit() {
+                await runTransaction(db, async transaction => {
+                    const game = (await transaction.get(gameRef)).data();
+                    if (!game || getLiveStatsEpoch(game) !== expectedEpoch) {
+                        throw new Error('Tracking reset changed; finish was not saved.');
+                    }
+                    const statWrites = writes.filter(write => /\/(aggregatedStats|privatePlayerStats)\//.test(write.ref.path));
+                    const rows = await Promise.all(statWrites.map(write => transaction.get(write.ref)));
+                    rows.forEach(row => readLiveStatsForWrite(row.data() || {}, game));
+                    for (const write of writes) {
+                        if (write.kind === 'delete') transaction.delete(write.ref);
+                        else if (write.kind === 'update') transaction.update(write.ref, write.data);
+                        else {
+                            const isEpochBound = /\/(events|aggregatedStats|privatePlayerStats)\//.test(write.ref.path);
+                            transaction.set(write.ref, isEpochBound ? { ...write.data, ...liveStatsMetadata(game) } : write.data);
+                        }
+                    }
+                });
+            }
+        };
+    }
     const safeGameLog = Array.isArray(gameLog) ? gameLog : [];
     const legacyPrimaryBatchWriteCount = safeGameLog.length + 1;
     const aggregatedStatsWrites = buildAggregatedStatsWrites({
@@ -220,7 +255,6 @@ export async function commitStandardTrackerFinishData({
     await commitStatsBatch();
 
     const gameUpdateBatch = writeBatch(db);
-    const gameRef = doc(db, `teams/${teamId}/games`, gameId);
     gameUpdateBatch.update(gameRef, {
         homeScore: finalHome,
         awayScore: finalAway,
@@ -238,4 +272,42 @@ export async function commitStandardTrackerFinishData({
         aggregatedStatsBatchSizes,
         aggregatedStatsWriteCount: aggregatedStatsBatchSizes.reduce((total, size) => total + size, 0)
     };
+}
+
+// Publish the new epoch before cleanup so an old-session finish cannot recreate
+// rows after their cleanup chunk. Every cleanup chunk checks the new epoch, so
+// another reset cannot cause this operation to delete its accepted rows.
+export async function resetStandardTrackerData({ db, runTransaction, doc, collection, getDocs,
+    teamId, gameId, expectedEpoch, resetEventId = crypto.randomUUID(), resetAt = Date.now() }) {
+    if (typeof expectedEpoch !== 'string' || !resetEventId) throw new Error('Missing reset epoch.');
+    const gameRef = doc(db, `teams/${teamId}/games`, gameId);
+    const patch = { liveResetEventId: resetEventId, liveResetAt: resetAt,
+        homeScore: 0, awayScore: 0, opponentStats: {}, status: 'scheduled', summary: '' };
+    async function transact(epoch, callback) {
+        await runTransaction(db, async transaction => {
+            const game = (await transaction.get(gameRef)).data();
+            if (!game || getLiveStatsEpoch(game) !== epoch) {
+                throw new Error('Tracking reset changed; reload before resetting again.');
+            }
+            await callback(transaction, game);
+        });
+    }
+    await transact(expectedEpoch, transaction => transaction.update(gameRef, patch));
+    const resetEpoch = getLiveStatsEpoch(patch);
+    const snapshots = await Promise.all(['events', 'aggregatedStats', 'privatePlayerStats'].map(name =>
+        getDocs(collection(db, `teams/${teamId}/games/${gameId}/${name}`))));
+    const refs = snapshots.flatMap(snapshot => snapshot.docs.map(row => row.ref));
+    for (let start = 0; start < refs.length; start += 450) {
+        const chunk = refs.slice(start, start + 450);
+        await transact(resetEpoch, async transaction => {
+            const rows = await Promise.all(chunk.map(ref => transaction.get(ref)));
+            rows.forEach((row, index) => {
+                const data = row.data();
+                if (data?.liveStatsVersion === 1 && data.liveStatsEpoch === resetEpoch) return;
+                transaction.delete(chunk[index]);
+            });
+        });
+    }
+    await transact(resetEpoch, transaction => transaction.update(gameRef, patch));
+    return patch;
 }

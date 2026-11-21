@@ -419,8 +419,8 @@ async function installModuleMocks(page) {
 
         export async function getDoc() {
             return {
-                exists() { return false; },
-                data() { return null; }
+                exists() { return true; },
+                data() { return clone(loadStore().game || {}); }
             };
         }
 
@@ -500,14 +500,9 @@ async function installModuleMocks(page) {
         }
 
         export async function runTransaction(_db, callback) {
-            return callback({
-                async get(ref) {
-                    return getDoc(ref);
-                },
-                set() {},
-                update() {},
-                delete() {}
-            });
+            const batch = writeBatch();
+            await callback({ ...batch, async get(ref) { return getDoc(ref); } });
+            await batch.commit();
         }
 
         export function onAuthStateChanged(_auth, callback) { callback(null); return () => {}; }
@@ -849,6 +844,7 @@ test('applies matched rows while unmatched home rows stay available for review',
     expect(matchedOnlyState.commitCalls).toBe(1);
     expect(matchedOnlyState.aggregatedStats).toEqual({
         p1: {
+            liveStatsVersion: 1, liveStatsEpoch: `id:${matchedOnlyState.game.liveResetEventId}`,
             playerName: 'Ava Cole',
             playerNumber: '3',
             participated: true,
@@ -870,6 +866,7 @@ test('applies matched rows while unmatched home rows stay available for review',
     expect(savedState.uploadCount).toBe(1);
     expect(savedState.aggregatedStats).toEqual({
         p1: {
+            liveStatsVersion: 1, liveStatsEpoch: `id:${savedState.game.liveResetEventId}`,
             playerName: 'Ava Cole',
             playerNumber: '3',
             participated: true,
@@ -878,6 +875,7 @@ test('applies matched rows while unmatched home rows stay available for review',
             stats: { pts: 12, fouls: 2 }
         },
         p2: {
+            liveStatsVersion: 1, liveStatsEpoch: `id:${savedState.game.liveResetEventId}`,
             playerName: 'Mia Diaz',
             playerNumber: '5',
             participated: true,
@@ -982,6 +980,7 @@ test('keeps zero-stat statsheet import appearances in player history', async ({ 
 
     const savedState = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
     expect(savedState.aggregatedStats.p3).toEqual({
+        liveStatsVersion: 1, liveStatsEpoch: `id:${savedState.game.liveResetEventId}`,
         playerName: 'Zoe Quinn',
         playerNumber: '0',
         participated: true,

@@ -1,3 +1,4 @@
+import { splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=4';
 export function isTrackStatsheetPointsColumn(colOrKey) {
     const upper = String(colOrKey || '').toUpperCase();
     return upper === 'PTS' || upper === 'POINTS' || upper === 'GOALS';
@@ -48,6 +49,7 @@ export function buildTrackStatsheetApplyPlan({
     includedVisitor = [],
     roster = [],
     columns = [],
+    statTrackerConfig = {},
     homeScore = 0,
     awayScore = 0,
     statSheetPhotoUrl = null
@@ -65,6 +67,7 @@ export function buildTrackStatsheetApplyPlan({
             fouls: Number(row.fouls || 0) || 0
         };
 
+        const { publicStats, privateStats } = splitPlayerStatsByVisibility(statTrackerConfig, stats);
         writes.push({
             playerId: player.id,
             data: {
@@ -73,8 +76,9 @@ export function buildTrackStatsheetApplyPlan({
                 participated: true,
                 participationStatus: 'appeared',
                 participationSource: 'statsheet-import',
-                stats
-            }
+                stats: publicStats
+            },
+            ...(Object.keys(privateStats).length ? { privateData: { stats: privateStats, participated: true, participationSource: 'statsheet-import' } } : {})
         });
         return writes;
     }, []);

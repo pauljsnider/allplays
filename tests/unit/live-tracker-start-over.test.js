@@ -1,3 +1,6 @@
+import * as statVisibility from '../../js/stat-leaderboards.js';
+import * as liveAggregateStats from '../../js/live-aggregate-stats.js';
+import * as liveAggregatePersistence from '../../js/live-aggregate-persistence.js';
 import { getTeamScorePair } from '../../js/season-record.js';
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -182,6 +185,9 @@ function replaceNamedImportByModulePath(source, modulePath, replacement) {
 function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8')) {
   const authHook = `checkAuth(async (user) => {\n  if (!user) {\n    window.location.href = 'login.html';\n    return;\n  }\n  currentUser = user;\n  await init();\n});`;
 
+  source = source.replace(/import[^;]+from '\.\/stat-leaderboards\.js[^']*';/, 'const { splitPlayerStatsByVisibility, getPrivatePlayerStatIds } = deps.statVisibility;');
+  source = source.replace(/import[^;]+from '\.\/live-aggregate-stats\.js[^']*';/, 'const { getLiveStatsEpoch, readLiveStatsForWrite } = deps.liveAggregateStats;')
+    .replace(/import[^;]+from '\.\/live-aggregate-persistence\.js[^']*';/, 'const { persistLiveAggregateSnapshot, persistLiveEpochWrites, clearResetPrivateStats, resetLiveTrackerData } = deps.liveAggregatePersistence;');
   let rewritten = source.replace("import { getTeamScorePair } from './season-record.js';", `const getTeamScorePair = ${getTeamScorePair.toString()};`);
   rewritten = replaceNamedImportByModulePath(
     rewritten,
@@ -191,7 +197,7 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
   rewritten = replaceImport(
     rewritten,
     /import\s*\{(?=[\s\S]*\bdb\b)[\s\S]*?\}\s*from\s*['"]\.\/firebase\.js(?:\?v=[^'"]+)?['"];?\s*/,
-    'const { db, writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp } = deps.firebase;'
+    'const { db, writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp, runTransaction } = deps.firebase;'
   );
   rewritten = replaceNamedImportByModulePath(
     rewritten,
@@ -377,7 +383,7 @@ async function bootLiveTracker({ game, snapshots }) {
   ];
   const config = { baseType: 'Basketball', columns: ['PTS', 'AST'] };
 
-  const deps = {
+  const deps = { liveAggregateStats, liveAggregatePersistence, statVisibility,
     db: {
       getGameDayTeamContext: async () => homeTeam,
       getTeam: async (teamId) => {
@@ -409,7 +415,15 @@ async function bootLiveTracker({ game, snapshots }) {
     firebase: {
       db: {},
       writeBatch: () => ({ set() {}, update() {}, commit: async () => {} }),
-      doc: (...parts) => ({ path: parts.join('/') }),
+      doc: (_db, ...parts) => ({ path: parts.join('/') }),
+      runTransaction: async (_db, fn) => fn({
+        get: async ref => ({ data: () => ref.path === 'teams/team-1/games/game-1' ? game : { stats: { secret: 7 } } }),
+        update: (_ref, payload) => { updateCalls.push(payload); Object.assign(game, payload); },
+        delete: ref => deleteCalls.push(ref.path),
+        set: (ref, payload) => {
+          if (ref.path.includes('/liveEvents/')) broadcastCalls.push(payload);
+        }
+      }),
       setDoc: async () => {},
       addDoc: async () => {},
       onSnapshot: () => () => {},
@@ -567,6 +581,7 @@ describe('live tracker start over reset flow', () => {
         { id: 'evt-1', path: 'teams/team-1/games/game-1/events/evt-1' },
         { id: 'evt-2', path: 'teams/team-1/games/game-1/events/evt-2' }
       ]),
+      'teams/team-1/games/game-1/privatePlayerStats': createSnapshot([{ id: 'p1', path: 'teams/team-1/games/game-1/privatePlayerStats/p1', data: { stats: { secret: 7 } } }]),
       'teams/team-1/games/game-1/aggregatedStats': createSnapshot([
         { id: 'p1', path: 'teams/team-1/games/game-1/aggregatedStats/p1' }
       ]),
@@ -597,6 +612,7 @@ describe('live tracker start over reset flow', () => {
         'teams/team-1/games/game-1/events/evt-1',
         'teams/team-1/games/game-1/events/evt-2',
         'teams/team-1/games/game-1/aggregatedStats/p1',
+        'teams/team-1/games/game-1/privatePlayerStats/p1',
         'teams/team-1/games/game-1/liveEvents/live-1'
       ]));
 

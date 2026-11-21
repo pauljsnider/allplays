@@ -4,7 +4,7 @@ import { expect, test } from '@playwright/test';
 test('legacy Profile generates an email-only friend invite and copies its public link', async ({ page, baseURL }) => {
     const { readFileSync } = await import('node:fs');
     const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
-    const firebaseNames = dbSource.match(/^import \{([\s\S]*?)\} from '\.\/firebase\.js\?v=\d+';/)[1]
+    const firebaseNames = dbSource.match(/^import \{([^}]+)\} from '\.\/firebase\.js\?v=\d+';/m)[1]
         .split(',').map((name) => name.trim()).filter(Boolean);
     const fixtures = {
         db: '{}', storage: '{}', functions: '{}',
