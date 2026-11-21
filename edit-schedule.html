@@ -981,7 +981,6 @@
         import { normalizeOfficialsDirectory } from './js/officiating-slots.js?v=1';
         import { Timestamp, deleteField, auth } from "./js/firebase.js?v=4433197";
         import { getApp } from './js/vendor/firebase-app.js';
-        import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/firebase-ai.js?v=1';
         import { buildPoolStandingsIndex, collectTournamentAdvancementPatches, collectTournamentPoolSeeds, describeTournamentSource, planTournamentPoolAdvancement } from './js/tournament-brackets.js?v=2';
         import { normalizeScheduleNotificationSettings, describeScheduleReminderWindow, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildScheduleNotificationTargets, postScheduleNotificationTargets, buildRsvpReminderMessage, sendPublicRsvpReminderEmails, buildAvailabilityReminderRecipients, buildAvailabilityReminderEmailPreview } from './js/schedule-notifications.js?v=7';
         import { buildTournamentGroupOverrideKey, buildTournamentPoolStandings, buildTournamentPoolOverrideKey } from './js/tournament-standings.js?v=4';
@@ -4866,6 +4865,9 @@
                 const now = new Date();
                 const currentYear = now.getFullYear();
                 const currentMonth = now.getMonth() + 1;
+
+                // Optional AI must not block manual schedule startup.
+                const { getAI, getGenerativeModel, GoogleAIBackend, Schema } = await import('./js/firebase-ai.js?v=1');
 
                 // Define JSON schema for structured output
                 const jsonSchema = Schema.object({

@@ -363,7 +363,6 @@
         import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443366';
         import { loadCompleteAiGameContext } from './js/diamond-legacy-game-context.js?v=3';
         import { functions, httpsCallable } from './js/firebase.js?v=4433197';
-        import { getAI, getGenerativeModel, GoogleAIBackend } from './js/firebase-ai.js?v=1';
         import { getApp } from './js/vendor/firebase-app.js';
 
         const sendAuthorizedDirectMessageCallable = httpsCallable(functions, 'sendAuthorizedDirectMessage');
@@ -2611,6 +2610,9 @@
         }
 
         async function getAiModel() {
+            if (aiModelCache) return aiModelCache;
+            const { getAI, getGenerativeModel, GoogleAIBackend } = await import('./js/firebase-ai.js?v=1');
+            // Concurrent requests may have initialized the model during import.
             if (aiModelCache) return aiModelCache;
             const firebaseApp = getApp();
             const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
