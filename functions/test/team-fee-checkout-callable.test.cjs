@@ -830,9 +830,13 @@ test('replays the exact team-fee Stripe request after an uncertain provider resp
 
     await assert.rejects(loaded.callable(input, context), /provider connection closed/);
     assert.equal(loaded.metrics.createCalls.length, 1);
-    const originalStripeRequest = clone(loaded.metrics.createCalls[0]);
     const reserved = clone(loaded.firestore._state.get(recipientPath));
-    const privateAttempt = loaded.firestore._state.get(attemptPath);
+    const privateAttempt = clone(loaded.firestore._state.get(attemptPath));
+    const persistedStripeRequest = {
+        params: privateAttempt.checkoutCreationRequest.stripeParams,
+        options: { idempotencyKey: privateAttempt.checkoutCreationRequest.idempotencyKey }
+    };
+    assert.deepEqual(loaded.metrics.createCalls[0], persistedStripeRequest);
     assert.equal(Object.prototype.hasOwnProperty.call(reserved, 'checkoutCreationRequest'), false);
     assert.equal(privateAttempt.payerUid, 'owner-1');
     assert.equal(privateAttempt.checkoutCreationRequest.stripeParams.customer_email, 'owner@example.com');
@@ -852,7 +856,7 @@ test('replays the exact team-fee Stripe request after an uncertain provider resp
 
     assert.equal(result.sessionId, 'cs_test_uncertain_retry');
     assert.equal(loaded.metrics.createCalls.length, 2);
-    assert.deepEqual(loaded.metrics.createCalls[1], originalStripeRequest);
+    assert.deepEqual(loaded.metrics.createCalls[1], persistedStripeRequest);
     assert.equal(Object.prototype.hasOwnProperty.call(
         loaded.firestore._state.get(recipientPath),
         'checkoutCreationRequest'
