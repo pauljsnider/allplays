@@ -937,6 +937,8 @@ describe('TeamDetail', () => {
     );
 
     expect(await screen.findByText('Checking schedule…')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(teamDetailServiceMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledWith('team-1', auth.user, { includeOverviewSchedule: false });
     expect(screen.queryByText('Schedule is clear for now')).toBeNull();
     expect(screen.getByRole('link', { name: /Upcoming/ })).toHaveTextContent('—');
 

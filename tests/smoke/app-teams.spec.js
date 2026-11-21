@@ -42,6 +42,7 @@ async function waitForTeamDetailRoute(page, teamName, { pageErrors = [] } = {}) 
 async function mockTeamsModules(page, { scenario = '', managedTeam = false, rosterPlayerCount = 2, privateCalendarEligible = true } = {}) {
     await page.addInitScript(({ scenarioName, shouldManageTeam, teamRosterPlayerCount, canUsePrivateCalendarSync }) => {
         window.__ALLPLAYS_CONFIG__ = {
+            performanceMonitoringEnabled: false,
             firebase: {
                 apiKey: 'demo-api-key',
                 authDomain: 'demo-allplays.firebaseapp.com',
@@ -427,7 +428,8 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                     return [];
                 }
 
-                export async function loadParentTeamDetailBootstrap(teamId) {
+                export async function loadParentTeamDetailBootstrap(teamId, user, options) {
+                    window.__teamBootstrapOptions = options;
                     return loadParentTeamDetail(teamId);
                 }
 
@@ -982,10 +984,14 @@ test.describe('mobile My Teams', () => {
     });
 
     test('keeps team detail tabs reachable while managing a long mobile roster', async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', error => pageErrors.push(error.message));
         await mockTeamsModules(page, { managedTeam: true, rosterPlayerCount: 12 });
         await page.goto(appUrl(baseURL, '/teams/team-1?tab=roster'), { waitUntil: 'domcontentloaded' });
 
-        await waitForTeamDetailRoute(page, 'Bears');
+        await waitForTeamDetailRoute(page, 'Bears', { pageErrors });
+        expect(pageErrors).toEqual([]);
+        expect(await page.evaluate(() => window.__teamBootstrapOptions)).toEqual({ includeOverviewSchedule: false });
         const tabNav = page.getByTestId('team-detail-tab-nav');
         await expect(tabNav).toBeVisible();
         await expect(page.getByText('Add player').first()).toBeVisible();

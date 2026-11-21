@@ -255,7 +255,9 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       setLoading(true);
       setError(null);
       try {
-        const nextModel = await loadParentTeamDetailBootstrap(teamId, authUserRef.current);
+        // The authoritative targeted schedule loads separately below. Do not block
+        // roster/navigation on optional account-wide calendar discovery.
+        const nextModel = await loadParentTeamDetailBootstrap(teamId, authUserRef.current, { includeOverviewSchedule: false });
         if (!cancelled) {
           setModel(nextModel);
           setDetailCollectionsLoaded(false);
@@ -542,7 +544,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     if (!teamId) return;
     const nextModel = detailCollectionsLoaded || activeTab === 'more'
       ? await loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false })
-      : await loadParentTeamDetailBootstrap(teamId, auth.user);
+      : await loadParentTeamDetailBootstrap(teamId, auth.user, { includeOverviewSchedule: false });
     const mergedModel = {
       ...nextModel,
       leaderboards: model?.leaderboards || nextModel.leaderboards,
