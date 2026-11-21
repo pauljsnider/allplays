@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
   <title>Live Game Broadcast - ALL PLAYS</title>
   <meta name="description" content="Watch an ALL PLAYS live game with score, clock, plays, lineup, and chat layered over the video.">
@@ -2033,6 +2033,151 @@
       }
     }
 
+    /* Short landscape uses three reserved regions; video never sits behind a panel. */
+    body[data-landscape="true"] {
+      --land-top: max(8px, env(safe-area-inset-top));
+      --land-bottom: max(8px, env(safe-area-inset-bottom));
+      --land-left: max(8px, env(safe-area-inset-left));
+      --land-right: max(8px, env(safe-area-inset-right));
+      --land-panel: clamp(240px, 34vw, 320px);
+      --land-reserve: 0px;
+    }
+
+    body[data-landscape="true"][data-panel-open="true"] { --land-reserve: calc(var(--land-panel) + 8px); }
+    body[data-landscape="true"] .broadcast-stage {
+      height: var(--visible-height, 100dvh);
+      top: var(--visible-top, 0px);
+    }
+    body[data-landscape="true"] .video-layer {
+      inset: calc(var(--land-top) + 52px) calc(var(--land-right) + var(--land-reserve)) calc(var(--land-bottom) + 52px) var(--land-left);
+      width: auto;
+      height: auto;
+    }
+    body[data-landscape="true"] .broadcast-topbar {
+      top: var(--land-top);
+      right: var(--land-right);
+      left: auto;
+      gap: 0;
+    }
+    body[data-landscape="true"] .top-actions { gap: 4px; }
+    body[data-landscape="true"] .status-cluster,
+    body[data-landscape="true"] .top-actions > :not(#mute-toggle):not(#game-actions-toggle):not(#fullscreen-toggle):not(#game-actions-menu),
+    body[data-landscape="true"] .hero-event,
+    body[data-landscape="true"] .mode-note { display: none; }
+
+    body[data-landscape="true"] #score-bug {
+      top: var(--land-top);
+      left: var(--land-left);
+      bottom: auto;
+      width: calc(100% - var(--land-left) - var(--land-right) - 152px);
+      min-width: 0;
+      min-height: 44px;
+      height: 44px;
+      grid-template-columns: minmax(0, 1fr) 64px minmax(0, 1fr);
+      border-radius: 12px;
+      transform: none;
+    }
+    body[data-landscape="true"][data-panel-open="true"]:not([data-score-hidden="true"]) #score-bug {
+      visibility: visible;
+      opacity: 1;
+      pointer-events: auto;
+    }
+    body[data-landscape="true"] .score-team { padding: 4px 8px; gap: 6px; }
+    body[data-landscape="true"] .team-photo,
+    body[data-landscape="true"] .team-side { display: none; }
+    body[data-landscape="true"] .team-name { font-size: 12px; }
+    body[data-landscape="true"] .team-score { font-size: 26px; min-width: 18px; }
+    body[data-landscape="true"] .clock-block { min-width: 0; padding: 3px; }
+    body[data-landscape="true"] .game-clock { font-size: 18px; margin-top: 2px; }
+    body[data-landscape="true"] .period-label { font-size: 9px; }
+
+    body[data-landscape="true"][data-panel-layout="compact"] #plays-panel,
+    body[data-landscape="true"][data-panel-layout="compact"] #insights-panel {
+      top: calc(var(--land-top) + 52px);
+      right: var(--land-right) !important;
+      bottom: calc(var(--land-bottom) + 52px);
+      left: auto !important;
+      width: var(--land-panel);
+      min-width: 0;
+      height: auto;
+      border-radius: 12px;
+      transform: none;
+      opacity: 1;
+      pointer-events: auto;
+    }
+    body[data-landscape="true"] .panel-heading { padding: 6px 10px; }
+    body[data-landscape="true"] .panel-heading > :not(.announcer-controls) { display: none; }
+    body[data-landscape="true"] #insights-panel .panel-heading { display: none; }
+    body[data-landscape="true"] .announcer-controls { margin: 0; }
+    body[data-landscape="true"] .panel-tabs { margin: 4px; padding: 0; gap: 0; flex-shrink: 0; }
+    body[data-landscape="true"] .panel-tab { font-size: 10px; padding-inline: 2px; }
+    body[data-landscape="true"] .insight-view { padding: 0 8px 8px; }
+    body[data-landscape="true"] .panel-dock {
+      right: var(--land-right);
+      bottom: var(--land-bottom);
+      left: auto;
+      width: var(--land-panel);
+      gap: 4px;
+      opacity: 1;
+      pointer-events: auto;
+    }
+    body[data-landscape="true"] .panel-toggle { flex: 1; padding-inline: 8px; }
+    body[data-landscape="true"] #replay-controls {
+      top: auto;
+      bottom: var(--land-bottom);
+      left: var(--land-left);
+      width: calc(100% - var(--land-left) - var(--land-right) - var(--land-panel) - 8px);
+      min-height: 44px;
+      height: 44px;
+      padding: 0;
+      gap: 4px;
+      grid-template-columns: 44px 44px minmax(0, 1fr) 56px;
+      border: 0;
+      border-radius: 12px;
+      transform: none;
+      visibility: visible;
+      opacity: 1;
+      pointer-events: auto;
+    }
+    body[data-landscape="true"] .replay-timeline { grid-template-columns: minmax(0, 1fr); }
+    body[data-landscape="true"] .replay-time,
+    body[data-landscape="true"] .replay-speed-group { display: none; }
+    .landscape-speed { display: none; }
+    body[data-landscape="true"] .landscape-speed {
+      display: block;
+      width: 56px;
+      height: 44px;
+      color: var(--paper);
+      background: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      font: inherit;
+      font-size: 12px;
+    }
+    body[data-landscape="true"] #chat-view[data-compose="true"]:not([hidden]) { display: flex; gap: 0; }
+    body[data-landscape="true"] #chat-view .chat-list { flex: 1 1 80px; min-height: 80px; }
+    body[data-landscape="true"] #chat-view .chat-composer {
+      min-height: 44px;
+      max-height: 55%;
+      margin-top: 4px;
+      padding: 4px 0 0;
+      border-left: 0;
+      border-top: 1px solid var(--line);
+    }
+    body[data-landscape="true"] .chat-input { font-size: 16px; }
+    body[data-landscape="true"] #connection-message {
+      top: calc(var(--land-top) + 54px);
+      max-width: calc(100% - var(--land-left) - var(--land-right) - var(--land-reserve));
+      visibility: visible;
+      opacity: 1;
+    }
+    /* The software keyboard gets composer space, without changing the selected panel. */
+    body[data-landscape="true"][data-keyboard="true"] #insights-panel .panel-tabs,
+    body[data-landscape="true"][data-keyboard="true"] #chat-view > .section-label,
+    body[data-landscape="true"][data-keyboard="true"] .chat-composer > :not(.chat-compose-row) { display: none; }
+    body[data-landscape="true"][data-keyboard="true"] #chat-view .chat-list { min-height: 0; }
+    body[data-landscape="true"][data-keyboard="true"] #chat-view .chat-composer { flex-shrink: 0; max-height: none; }
+
     @media (prefers-reduced-motion: reduce) {
       *,
       *::before,
@@ -2260,6 +2405,10 @@
         <input id="replay-progress" class="replay-progress" type="range" min="0" max="100" step="0.1" value="0" aria-label="Replay position">
         <time id="replay-duration" class="replay-time" datetime="PT0M0S">0:00</time>
       </div>
+      <select id="landscape-speed" class="landscape-speed" aria-label="Replay speed">
+        <option value="1">1×</option><option value="2">2×</option><option value="3">3×</option><option value="4">4×</option>
+        <option value="10">10×</option><option value="20">20×</option><option value="50">50×</option>
+      </select>
       <div class="replay-speed-group" role="group" aria-label="Replay speed">
         <button class="replay-speed" type="button" data-replay-speed="1" aria-pressed="true">1×</button>
         <button class="replay-speed" type="button" data-replay-speed="2" aria-pressed="false">2×</button>
@@ -2332,6 +2481,6 @@
   </main>
 
   <span id="screen-reader-update" class="visually-hidden" aria-live="polite"></span>
-  <script type="module" src="js/live-game-overlay.js?v=73"></script>
+  <script type="module" src="js/live-game-overlay.js?v=74"></script>
 </body>
 </html>

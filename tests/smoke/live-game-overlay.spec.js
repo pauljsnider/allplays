@@ -2742,3 +2742,136 @@ for (const aggregateFirst of [true, false]) {
         expect(errors).toEqual([]);
     });
 }
+
+// Unlike the older overlap checks, these require all three regions to exist.
+async function expectLandscapeCoexistence(page, replay, panel) {
+    await expect(page.locator('#score-bug')).toBeVisible();
+    await expect(page.locator(panel)).toBeVisible();
+    if (replay) {
+        await expect(page.locator('#replay-play')).toBeInViewport({ ratio: 1 });
+        await expect(page.locator('#replay-progress')).toBeInViewport({ ratio: 1 });
+        await expect(page.locator('#landscape-speed')).toBeInViewport({ ratio: 1 });
+    }
+    const layout = await getResponsiveLayout(page);
+    expectLayoutInsideViewport(layout);
+    expect(layout.score).not.toBeNull();
+    expect(layout.video.width).toBeGreaterThan(200);
+    expect(layout.video.height).toBeGreaterThan(100);
+    const opened = panel === '#plays-panel' ? layout.plays : layout.insights;
+    expect(opened).not.toBeNull();
+    for (const rectangle of [layout.score, opened, layout.dock, ...(replay ? [layout.replay] : [])]) {
+        expect(rectangle).not.toBeNull();
+        expect(rectanglesOverlap(layout.video, rectangle)).toBe(false);
+    }
+    expect(rectanglesOverlap(layout.score, opened)).toBe(false);
+    expect(rectanglesOverlap(layout.dock, opened)).toBe(false);
+    if (replay) {
+        expect(rectanglesOverlap(layout.replay, opened)).toBe(false);
+        expect(rectanglesOverlap(layout.replay, layout.dock)).toBe(false);
+        const rows = await page.locator('#replay-controls').evaluate((controls) =>
+            [...controls.children].filter((el) => getComputedStyle(el).display !== 'none')
+                .map((el) => el.getBoundingClientRect().top));
+        expect(Math.max(...rows) - Math.min(...rows)).toBeLessThanOrEqual(1);
+    }
+}
+
+for (const viewport of [{ width: 568, height: 320 }, { width: 667, height: 375 }, { width: 844, height: 390 }, { width: 932, height: 430 }]) {
+    for (const replay of [false, true]) {
+        test(`landscape regions coexist through toggles and rotation ${viewport.width}x${viewport.height} replay=${replay}`, async ({ page, baseURL }) => {
+            const errors = collectPageErrors(page);
+            await stubYouTubeEmbed(page);
+            await page.setViewportSize(viewport);
+            await page.goto(`${baseURL}/live-game-overlay.html?demo=1${replay ? '&replay=true' : ''}`);
+            await expect(page.locator('#live-status')).toHaveText(replay ? 'REPLAY' : 'LIVE');
+            await expect(page.locator('body')).toHaveAttribute('data-landscape', 'true');
+            const video = await page.locator('#overlay-video').elementHandle();
+            const closed = await page.locator('.video-layer').boundingBox();
+            if (replay) {
+                await page.locator('#landscape-speed').selectOption('2');
+                await expect(page.locator('[data-replay-speed="2"]')).toHaveAttribute('aria-pressed', 'true');
+                await page.locator('#replay-progress').evaluate((input) => {
+                    input.value = '40';
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                });
+            }
+            const position = await page.locator('#replay-progress').inputValue();
+            for (let cycle = 0; cycle < 2; cycle += 1) {
+                for (const [button, panel] of [['plays', '#plays-panel'], ['insights', '#insights-panel'], ['chat', '#insights-panel']]) {
+                    await page.locator(`[data-panel="${button}"]`).click();
+                    await expectLandscapeCoexistence(page, replay, panel);
+                    await page.locator(`[data-panel="${button}"]`).click();
+                    await expect(page.locator(panel)).toBeHidden();
+                    expect((await page.locator('.video-layer').boundingBox()).width).toBe(closed.width);
+                }
+            }
+            await page.locator('[data-panel="chat"]').click();
+            await page.setViewportSize({ width: viewport.height, height: viewport.width });
+            await expect(page.locator('body')).toHaveAttribute('data-landscape', 'false');
+            await expect(page.locator('#chat-view')).toBeVisible();
+            await page.setViewportSize(viewport);
+            await expectLandscapeCoexistence(page, replay, '#insights-panel');
+            expect(await video.evaluate((node) => node === document.querySelector('#overlay-video'))).toBe(true);
+            expect(await page.locator('#replay-progress').inputValue()).toBe(position);
+            if (replay) await expect(page.locator('#landscape-speed')).toHaveValue('2');
+            await page.keyboard.press('Escape');
+            await expect(page.locator('#insights-panel')).toBeHidden();
+            await page.keyboard.press('p');
+            await expectLandscapeCoexistence(page, replay, '#plays-panel');
+            expect(errors).toEqual([]);
+        });
+    }
+}
+
+test('landscape chat keeps input reachable when the visual viewport shrinks', async ({ page, baseURL }) => {
+    // Model the visual viewport signal; this does not simulate an iOS keyboard.
+    await page.addInitScript(() => {
+        const viewport = new EventTarget();
+        Object.assign(viewport, { height: 390, offsetTop: 0 });
+        Object.defineProperty(window, 'visualViewport', { value: viewport, configurable: true });
+    });
+    await page.setViewportSize({ width: 844, height: 390 });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`);
+    await page.locator('[data-panel="chat"]').click();
+    await expect(page.locator('#chat-input')).toBeEnabled();
+    await page.locator('#chat-input').fill('Draft stays through rotation');
+    await page.evaluate(() => {
+        window.visualViewport.height = 210;
+        window.visualViewport.dispatchEvent(new Event('resize'));
+    });
+    await expect(page.locator('body')).toHaveAttribute('data-keyboard', 'true');
+    const input = await page.locator('#chat-input').boundingBox();
+    expect(input.y + input.height).toBeLessThanOrEqual(210);
+    await expect(page.locator('#score-bug')).toBeVisible();
+    await page.evaluate(() => {
+        window.visualViewport.height = 390;
+        window.visualViewport.dispatchEvent(new Event('resize'));
+    });
+    await expect(page.locator('body')).toHaveAttribute('data-keyboard', 'false');
+    await expectLandscapeCoexistence(page, false, '#insights-panel');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 844, height: 390 });
+    await expect(page.locator('#chat-input')).toHaveValue('Draft stays through rotation');
+    await expect(page.locator('#chat-sign-in')).toBeHidden();
+});
+
+
+test('landscape rotation preserves a playing replay and its video frame', async ({ page, baseURL }) => {
+    await stubYouTubeEmbed(page);
+    await page.setViewportSize({ width: 932, height: 430 });
+    await page.goto(`${baseURL}/live-game-overlay.html?demo=1&replay=true`);
+    await expect(page.locator('#replay-play')).toBeEnabled();
+    const frame = await page.locator('#overlay-video').elementHandle();
+    await page.locator('#replay-play').click();
+    await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', 'pause');
+    await page.locator('[data-panel="insights"]').click();
+    await page.setViewportSize({ width: 430, height: 932 });
+    await expect(page.locator('#lineup-view')).toBeVisible();
+    await page.setViewportSize({ width: 932, height: 430 });
+    await expectLandscapeCoexistence(page, true, '#insights-panel');
+    await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', 'pause');
+    expect(await frame.evaluate((node) => node === document.querySelector('#overlay-video'))).toBe(true);
+    await page.locator('#replay-play').click();
+    await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', 'play');
+});

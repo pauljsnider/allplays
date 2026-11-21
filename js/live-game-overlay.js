@@ -136,6 +136,7 @@ const elements = {
     replayCurrent: document.querySelector('#replay-current'),
     replayDuration: document.querySelector('#replay-duration'),
     replaySpeeds: [...document.querySelectorAll('[data-replay-speed]')],
+    landscapeSpeed: document.querySelector('#landscape-speed'),
     replayScanStatus: document.querySelector('#replay-scan-status'),
     replayScanSpeed: document.querySelector('#replay-scan-speed'),
     connectionMessage: document.querySelector('#connection-message'),
@@ -238,8 +239,21 @@ function isValidDocumentId(value) {
     return new TextEncoder().encode(candidate).length <= 1500;
 }
 
+function usesLandscapeLayout() {
+    return window.matchMedia('(orientation: landscape) and (max-height: 500px)').matches;
+}
+
+function updateVisibleViewport() {
+    const viewport = window.visualViewport;
+    const keyboard = usesLandscapeLayout() && document.activeElement === elements.chatInput &&
+        Boolean(viewport && viewport.height < window.innerHeight - 80);
+    elements.body.dataset.keyboard = String(keyboard);
+    elements.body.style.setProperty('--visible-height', `${viewport?.height || window.innerHeight}px`);
+    elements.body.style.setProperty('--visible-top', `${viewport?.offsetTop || 0}px`);
+}
+
 function usesCompactPanelLayout() {
-    return window.matchMedia('(max-width: 900px)').matches ||
+    return usesLandscapeLayout() || window.matchMedia('(max-width: 900px)').matches ||
         (uiState.isReplay && window.matchMedia('(max-width: 1320px)').matches);
 }
 
@@ -1343,6 +1357,7 @@ function setReplayControlState() {
     elements.replaySpeeds.forEach((button) => {
         button.setAttribute('aria-pressed', String(Number(button.dataset.replaySpeed) === uiState.replaySpeed));
     });
+    elements.landscapeSpeed.value = String(uiState.replaySpeed);
     const isScanning = uiState.replayPlaying && uiState.replaySpeed > 2;
     const scanLabel = `${uiState.replaySpeed}× game scan`;
     if (elements.replayScanSpeed.textContent !== scanLabel) {
@@ -1816,6 +1831,8 @@ function getDemoVideoId(params) {
 }
 
 function renderPanelVisibility() {
+    elements.body.dataset.landscape = String(usesLandscapeLayout());
+    updateVisibleViewport();
     const compact = usesCompactPanelLayout();
     if (compact) {
         elements.playsPanel.hidden = uiState.activeMobilePanel !== 'plays';
@@ -1879,6 +1896,7 @@ function togglePanel(panel) {
 }
 
 function toggleFocusMode() {
+    if (usesLandscapeLayout()) return;
     const enabled = elements.body.dataset.focus !== 'true';
     elements.body.dataset.focus = String(enabled);
     elements.focusToggle.setAttribute('aria-pressed', String(enabled));
@@ -2013,6 +2031,13 @@ async function startDemoReplayMode(params) {
 }
 
 function bindInteractions() {
+    elements.landscapeSpeed.addEventListener('change', (event) => {
+        elements.replaySpeeds.find((button) => button.dataset.replaySpeed === event.target.value)?.click();
+    });
+    window.visualViewport?.addEventListener('resize', updateVisibleViewport);
+    window.visualViewport?.addEventListener('scroll', updateVisibleViewport);
+    elements.chatInput.addEventListener('focus', updateVisibleViewport);
+    elements.chatInput.addEventListener('blur', updateVisibleViewport);
     elements.olderPlays?.addEventListener('click', () => { uiState.playPage = (uiState.playPage || 0) + 1; renderEvents(); });
     elements.newerPlays?.addEventListener('click', () => { uiState.playPage = Math.max(0, (uiState.playPage || 0) - 1); renderEvents(); });
     elements.panelToggles.forEach((button) => button.addEventListener('click', () => togglePanel(button.dataset.panel)));
