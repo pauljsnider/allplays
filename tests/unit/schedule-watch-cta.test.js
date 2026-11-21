@@ -229,6 +229,6 @@ describe('schedule watch CTA resolver', () => {
         expect(editSchedulePage).toContain('const hasReplayPlayback = hasReplayLifecycle');
         expect(editSchedulePage).toContain('${hasReplayPlayback ? `<a href="live-game.html');
         expect(gamePage).toContain("from './js/game-replay-video.js?v=3';");
-        expect(gamePage).toContain("from './js/live-game-video.js?v=443319';");
+        expect(gamePage).toContain("from './js/live-game-video.js?v=443320';");
     });
 });
