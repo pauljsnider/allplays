@@ -89,6 +89,11 @@ function makeFirestore(seed = {}) {
     _state: state,
     doc,
     collection,
+    // Shared Functions bootstrap validates this interface even though the
+    // cancellation callable does not use transactions. Keep unexpected use loud.
+    async runTransaction() {
+      throw new Error('Unexpected transaction in cancellation notification fixture.');
+    },
     FieldValue: fieldValue,
     snapshot(path) {
       return clone(state.get(path));
