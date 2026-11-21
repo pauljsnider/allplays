@@ -419,36 +419,26 @@ async function stopStaticServer() {
 }
 
 async function registerRoutes(page) {
-    await page.route('https://www.googletagmanager.com/**', async (route) => {
-        await route.fulfill({
-            status: 200,
-            contentType: 'application/javascript; charset=utf-8',
-            body: ''
-        });
-    });
-
-    await page.route('https://cdn.tailwindcss.com/**', async (route) => {
-        await route.fulfill({
-            status: 200,
-            contentType: 'application/javascript; charset=utf-8',
-            body: 'window.tailwind = window.tailwind || { config: {} };'
-        });
-    });
-
     await page.route('**/*', async (route) => {
         const url = new URL(route.request().url());
-        if (url.origin !== serverOrigin) {
-            await route.continue();
-            return;
+        if (url.origin === 'https://www.googletagmanager.com') {
+            return route.fulfill({ contentType: 'application/javascript', body: '' });
         }
+        if (url.origin === 'https://cdn.tailwindcss.com') {
+            return route.fulfill({
+                contentType: 'application/javascript',
+                // Preserve hidden-state semantics without fetching the remote styling runtime.
+                body: `window.tailwind = { config: {} };
+                    const style = document.createElement('style');
+                    style.textContent = '.hidden { display: none !important; }';
+                    document.head.appendChild(style);`
+            });
+        }
+        if (url.origin !== serverOrigin) return route.abort();
 
         const source = moduleSources[url.pathname];
-        if (!source) {
-            await route.continue();
-            return;
-        }
-
-        await route.fulfill({
+        if (!source) return route.continue();
+        return route.fulfill({
             status: 200,
             contentType: 'application/javascript; charset=utf-8',
             body: source
@@ -677,7 +667,56 @@ test.describe('edit schedule Bulk AI image input', () => {
         await expect(page.locator('#schedule-image-preview-img')).toHaveAttribute('src', /^data:image\/png;base64,/);
     });
 
+    test('keeps manual scheduling usable when optional AI fails and recovers after reload', async ({ page }) => {
+        let blockAi = true;
+        let aiRequests = 0;
+        const errors = [];
+        const dialogs = [];
+        page.on('pageerror', error => errors.push(error.message));
+        page.on('dialog', async dialog => {
+            dialogs.push(dialog.message());
+            await dialog.accept();
+        });
+        await page.route('**/js/firebase-ai.js*', route => {
+            aiRequests += 1;
+            return blockAi ? route.abort() : route.fallback();
+        });
+        await page.addInitScript(state => {
+            window.__editScheduleTestState = state;
+        }, buildState());
+        await page.goto(`${serverOrigin}/edit-schedule.html#teamId=team-1`);
+        await expect(page.locator('#team-name-display')).toHaveText('Wildcats');
+        await page.locator('#opponent').fill('Manual opponent');
+        expect(aiRequests).toBe(0);
+        await page.locator('#tab-bulk-ai').click();
+        await page.locator('#bulk-text-input').fill('Practice next Monday');
+        await page.locator('#process-ai-btn').click();
+        await expect.poll(() => dialogs.some(text => text.startsWith('Error processing schedule with AI:'))).toBe(true);
+        await expect(page.locator('#process-ai-btn')).toBeEnabled();
+        await expect(page.locator('#ai-loading')).toBeHidden();
+        await page.locator('#tab-add-game').click();
+        await expect(page.locator('#opponent')).toHaveValue('Manual opponent');
+        expect(errors).toEqual([]);
+
+        // A failed dynamic import is cached by the browser; a reload allows a fresh request.
+        blockAi = false;
+        await page.reload();
+        await expect(page.locator('#team-name-display')).toHaveText('Wildcats');
+        await page.locator('#tab-bulk-ai').click();
+        await page.locator('#bulk-text-input').fill('Practice next Monday');
+        await page.locator('#process-ai-btn').click();
+        await expect.poll(() => page.evaluate(() => window.__editScheduleTestState.aiPromptParts?.length || 0)).toBeGreaterThan(0);
+        await expect(page.locator('#process-ai-btn')).toBeEnabled();
+        expect(errors).toEqual([]);
+    });
+
     test('previews and applies a recognized practice through the practice persistence path', async ({ page }) => {
+        const aiRequests = [];
+        const pageErrors = [];
+        page.on('request', request => {
+            if (/\/js\/firebase-ai\.js(?:\?|$)/.test(request.url())) aiRequests.push(request.url());
+        });
+        page.on('pageerror', error => pageErrors.push(error.message));
         await page.addInitScript((state) => {
             window.__editScheduleTestState = state;
             window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
@@ -697,10 +736,15 @@ test.describe('edit schedule Bulk AI image input', () => {
         page.on('dialog', (dialog) => dialog.accept());
 
         await page.goto(`${serverOrigin}/edit-schedule.html#teamId=team-1`, { waitUntil: 'domcontentloaded' });
+        await expect(page.locator('#team-name-display')).toHaveText('Wildcats');
+        expect(pageErrors).toEqual([]);
+        expect(aiRequests).toHaveLength(0);
         await page.locator('#tab-bulk-ai').click();
         await page.locator('#bulk-text-input').fill('Mon 13\n- Practice\n- At Overland Trail Elementary\n- 6:00 PM');
         await page.locator('#process-ai-btn').click();
 
+        await expect.poll(() => aiRequests.length).toBe(1);
+        expect(pageErrors).toEqual([]);
         const proposedChange = page.locator('#proposed-changes-list');
         await expect(proposedChange).toContainText('Add Practice');
         await expect(proposedChange.locator('input[placeholder="Location"]')).toHaveValue('Overland Trail Elementary');
