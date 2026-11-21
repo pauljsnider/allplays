@@ -733,13 +733,21 @@
     }
 
     #chat-view .chat-list {
-      flex: 1;
-      min-height: 0;
+      flex: 1 1 120px;
+      min-height: 80px;
+      align-content: start;
       overflow-y: auto;
     }
 
+    #insights-panel[data-view="chat"] .panel-heading {
+      display: none;
+    }
+
     .chat-composer {
-      flex: 0 0 auto;
+      flex: 0 1 auto;
+      min-height: 100px;
+      max-height: 55%;
+      overflow-y: auto;
       margin-top: 12px;
       padding-top: 12px;
       border-top: 1px solid rgba(97, 228, 219, 0.2);
@@ -801,6 +809,10 @@
       opacity: 0.48;
     }
 
+    .chat-send {
+      align-self: start;
+    }
+
     .chat-helper {
       display: flex;
       align-items: center;
@@ -831,10 +843,8 @@
     }
 
     .chat-mention-menu {
-      position: absolute;
-      right: 0;
-      bottom: calc(100% + 7px);
-      left: 0;
+      position: relative;
+      margin-top: 7px;
       z-index: 4;
       overflow: hidden;
       border: 1px solid rgba(97, 228, 219, 0.32);
@@ -988,6 +998,7 @@
       transform: none;
     }
 
+    .chat-sign-in[hidden],
     .chat-mention-menu[hidden],
     .chat-secondary[hidden],
     .chat-anon-editor[hidden],
@@ -1969,6 +1980,57 @@
       .panel-tabs {
         margin: 8px 12px;
       }
+
+      #chat-view[data-compose="true"]:not([hidden]) {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(240px, 0.9fr);
+        grid-template-rows: minmax(0, 1fr);
+        gap: 12px;
+        padding-top: 4px;
+      }
+
+      #chat-view[data-compose="true"] > .section-label {
+        display: none;
+      }
+
+      #chat-view[data-compose="true"] .chat-list {
+        grid-area: 1 / 1;
+        min-height: 0;
+      }
+
+      #chat-view[data-compose="true"] .chat-composer {
+        grid-area: 1 / 2;
+        min-height: 0;
+        max-height: none;
+        margin-top: 0;
+        padding-top: 0;
+        padding-left: 12px;
+        border-top: 0;
+        border-left: 1px solid rgba(97, 228, 219, 0.2);
+      }
+    }
+
+    @media (max-width: 599px) and (max-height: 620px) {
+      body[data-panel-layout="compact"] #insights-panel[data-view="chat"] {
+        height: calc(100dvh - var(--bottom-safe) - 150px);
+      }
+
+      #chat-view[data-compose="true"]:not([hidden]) {
+        display: flex;
+        gap: 0;
+      }
+
+      #chat-view[data-compose="true"] .chat-list {
+        min-height: 80px;
+      }
+
+      #chat-view[data-compose="true"] .chat-composer {
+        min-height: 44px;
+        max-height: 50%;
+        margin-top: 8px;
+        padding-left: 0;
+        border-left: 0;
+      }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -2270,6 +2332,6 @@
   </main>
 
   <span id="screen-reader-update" class="visually-hidden" aria-live="polite"></span>
-  <script type="module" src="js/live-game-overlay.js?v=72"></script>
+  <script type="module" src="js/live-game-overlay.js?v=73"></script>
 </body>
 </html>

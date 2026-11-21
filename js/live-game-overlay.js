@@ -97,6 +97,7 @@ const elements = {
     playerTotalsStatus: document.querySelector('#player-totals-status'),
     leaderList: document.querySelector('#leader-list'),
     opponentList: document.querySelector('#opponent-list'),
+    chatView: document.querySelector('#chat-view'),
     chatList: document.querySelector('#chat-list'),
     chatForm: document.querySelector('#chat-form'),
     chatInput: document.querySelector('#chat-input'),
@@ -189,6 +190,7 @@ const uiState = {
     chatEnabled: false,
     chatBusy: false,
     chatControlsReady: false,
+    chatAuthReady: false,
     chatSubmitBound: false,
     chatParityBound: false,
     unreadChatCount: 0,
@@ -1049,6 +1051,7 @@ function getChatSignInUrl() {
 function renderChatComposer(statusOverride = null) {
     if (!elements.chatForm || !elements.chatInput || !elements.chatSend) return;
     const canShowComposer = !uiState.isDemo && !uiState.isReplay;
+    elements.chatView.dataset.compose = String(canShowComposer);
     elements.chatForm.hidden = !canShowComposer;
     if (!canShowComposer) {
         hideMentionMenu();
@@ -1061,12 +1064,12 @@ function renderChatComposer(statusOverride = null) {
     elements.chatInput.disabled = !canSend;
     elements.chatSend.disabled = !canSend;
     elements.chatInput.placeholder = uiState.chatEnabled
-        ? (signedIn ? 'Send a message…' : 'Sign in to join chat')
+        ? (!uiState.chatAuthReady ? 'Checking sign-in…' : signedIn ? 'Send a message…' : 'Sign in to join chat')
         : 'Chat opens on game day';
 
     if (elements.chatSignIn) {
         elements.chatSignIn.href = getChatSignInUrl();
-        elements.chatSignIn.hidden = !uiState.chatControlsReady || !uiState.chatEnabled || signedIn;
+        elements.chatSignIn.hidden = !uiState.chatControlsReady || !uiState.chatAuthReady || !uiState.chatEnabled || signedIn;
     }
     if (signedIn) ensureChatDisplayName();
     if (elements.chatAnonNotice) elements.chatAnonNotice.hidden = !uiState.chatEnabled || !signedIn;
@@ -1084,6 +1087,8 @@ function renderChatComposer(statusOverride = null) {
         setChatStatus('Chat controls are temporarily unavailable. Live updates continue.', 'error');
     } else if (!uiState.chatEnabled) {
         setChatStatus('Chat is read-only until game day.');
+    } else if (!uiState.chatAuthReady) {
+        setChatStatus('Checking your sign-in…');
     } else if (!signedIn) {
         setChatStatus('Sign in to join the live conversation.');
     } else if (uiState.chatBusy) {
@@ -1193,6 +1198,7 @@ async function initializeChatComposer(database, teamId, gameId) {
             const previousUid = uiState.chatUser?.uid || '';
             const nextUid = user?.uid || '';
             uiState.chatUser = user;
+            uiState.chatAuthReady = true;
             uiState.liveFeeds?.authChanged(nextUid);
             if (previousUid !== nextUid) uiState.anonName = '';
             if (user) ensureChatDisplayName();
@@ -1835,10 +1841,14 @@ function renderPanelVisibility() {
         button.setAttribute('aria-pressed', String(pressed));
         button.setAttribute('aria-expanded', String(pressed));
     });
+    if (uiState.activeInsight === 'chat' && !elements.insightsPanel.hidden) {
+        elements.chatList.scrollTop = elements.chatList.scrollHeight;
+    }
 }
 
 function selectInsight(name) {
     uiState.activeInsight = name;
+    elements.insightsPanel.dataset.view = name;
     if (name === 'chat' && !usesCompactPanelLayout()) markChatSeen();
     elements.insightTabs.forEach((tab) => {
         tab.setAttribute('aria-selected', String(tab.id === `${name}-tab`));

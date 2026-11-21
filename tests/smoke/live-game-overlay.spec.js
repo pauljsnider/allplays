@@ -623,7 +623,7 @@ async function stubRealOverlayModules(page) {
             const user = Object.prototype.hasOwnProperty.call(window, '__OVERLAY_AUTH_USER__')
                 ? window.__OVERLAY_AUTH_USER__
                 : { uid: 'viewer-1', displayName: 'Alex Viewer', photoURL: 'https://images.example/avatar.png' };
-            callback(user);
+            if (!window.__OVERLAY_HOLD_AUTH__) callback(user);
             return () => {};
         }`
     }));
@@ -1647,6 +1647,90 @@ test('signed-out public replay can use a server-approved recording without priva
     expect(await page.evaluate(() => window.__OVERLAY_ENTITLEMENT_READS__ || 0)).toBe(0);
     expect(pageErrors).toEqual([]);
 });
+
+test('signed-in overlay chat hides the sign-in control', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await page.locator('[data-panel="chat"]').click();
+    await expect(page.locator('#chat-input')).toBeEnabled();
+    expect(pageErrors).toEqual([]);
+    await expect(page.locator('#chat-sign-in')).toBeHidden();
+});
+
+test('overlay chat waits for the restored session before asking the viewer to sign in', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => { window.__OVERLAY_HOLD_AUTH__ = true; });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => page.evaluate(() => typeof window.__OVERLAY_AUTH_CALLBACK__)).toBe('function');
+    await page.locator('[data-panel="chat"]').click();
+    expect(pageErrors).toEqual([]);
+    await expect(page.locator('#chat-status')).toHaveText('Checking your sign-in…');
+    await expect(page.locator('#chat-sign-in')).toBeHidden();
+    await expect(page.locator('#chat-input')).toBeDisabled();
+    await page.evaluate(() => window.__OVERLAY_AUTH_CALLBACK__({ uid: 'viewer-1', displayName: 'Alex Viewer' }));
+    await expect(page.locator('#chat-input')).toBeEnabled();
+    await expect(page.locator('#chat-sign-in')).toBeHidden();
+    await page.evaluate(() => window.__OVERLAY_AUTH_CALLBACK__(null));
+    await expect(page.locator('#chat-sign-in')).toBeVisible();
+    await expect(page.locator('#chat-input')).toBeDisabled();
+});
+
+for (const viewport of [{ width: 390, height: 844 }, { width: 390, height: 480 }, { width: 844, height: 390 }, { width: 1280, height: 720 }]) {
+    test(`overlay chat replies stay readable at ${viewport.width}x${viewport.height}`, async ({ page, baseURL }) => {
+        const pageErrors = collectPageErrors(page);
+        await page.setViewportSize(viewport);
+        await stubRealOverlayModules(page);
+        await stubYouTubeEmbed(page);
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+        await page.locator('[data-panel="chat"]').click();
+        await expect(page.locator('#chat-input')).toBeEnabled();
+        expect(pageErrors).toEqual([]);
+        await page.locator('#chat-input').fill('@al');
+        await page.locator('#mention-allplays').click();
+        await page.locator('#chat-input').pressSequentially('status?');
+        await page.locator('#chat-send').click();
+        const reply = page.locator('#chat-list .chat-message').filter({ hasText: 'the press is working' });
+        await expect(reply).toContainText('the press is working');
+        await expect(reply).toBeInViewport({ ratio: 1 });
+        const geometry = await page.locator('#chat-list').evaluate((list) => ({
+            height: list.clientHeight,
+            remaining: list.scrollHeight - list.scrollTop - list.clientHeight
+        }));
+        expect(geometry.height, 'the conversation needs room to show a complete reply').toBeGreaterThanOrEqual(80);
+        expect(geometry.remaining, 'the newest reply must be scrolled into view').toBeLessThanOrEqual(1);
+        await expect(page.locator('#chat-input')).toBeInViewport({ ratio: 1 });
+        await page.locator('[data-panel="insights"]').click();
+        await page.evaluate(() => window.__OVERLAY_CHAT_CALLBACK__(Array.from({ length: 30 }, (_, index) => ({
+            id: `incoming-${index}`, senderName: 'Taylor', text: `Incoming reply ${index}`, createdAt: Date.now() + index
+        }))));
+        await page.locator('[data-panel="chat"]').click();
+        await expect(page.locator('#chat-list .chat-message').filter({ hasText: /^Incoming reply 29$/ })).toBeInViewport({ ratio: 1 });
+        expect(pageErrors).toEqual([]);
+    });
+}
+
+for (const query of ['demo=1', 'teamId=team-1&gameId=game-1&replay=true']) {
+    test(`read-only overlay chat uses the full landscape panel: ${query}`, async ({ page, baseURL }) => {
+        const pageErrors = collectPageErrors(page);
+        await page.setViewportSize({ width: 844, height: 390 });
+        await stubRealOverlayModules(page);
+        await stubYouTubeEmbed(page);
+        await page.goto(`${baseURL}/live-game-overlay.html?${query}`, { waitUntil: 'domcontentloaded' });
+        await expect(page.locator('#live-status')).not.toHaveText('Loading');
+        expect(pageErrors).toEqual([]);
+        await page.locator('[data-panel="chat"]').click();
+        await expect(page.locator('#chat-form')).toBeHidden();
+        const widths = await page.evaluate(() => ({
+            panel: document.querySelector('#chat-view').clientWidth,
+            list: document.querySelector('#chat-list').clientWidth
+        }));
+        expect(widths.list).toBeGreaterThan(widths.panel * 0.9);
+    });
+}
 
 test('signed-in viewers can choose the display name used for their authenticated chat posts', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
