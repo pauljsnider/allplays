@@ -88,7 +88,10 @@ describe('production smoke secret boundary', () => {
             for (const step of job.steps || []) {
                 if (!step.env?.SMOKE_APP_CHECK_DEBUG_TOKEN) continue;
                 expect(job.environment.name).toBe('production-smoke');
-                expect(step.run).toContain('npx playwright test');
+                const command = name === 'post-deploy-smoke' && ['canonical_prod', 'canonical_core'].includes(step.id)
+                    ? 'node scripts/run-production-smoke.mjs'
+                    : 'npx playwright test';
+                expect(step.run.trimStart().startsWith(`${command} `)).toBe(true);
                 expect(step.env.SMOKE_APP_CHECK_REQUIRED).toBe('1');
                 expect(step.env.SMOKE_APP_CHECK_DEBUG_TOKEN).toBe('${{ secrets.SMOKE_APP_CHECK_DEBUG_TOKEN }}');
                 expect(step.run).not.toContain('SMOKE_APP_CHECK_DEBUG_TOKEN');
