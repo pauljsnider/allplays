@@ -22,6 +22,8 @@ import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeR
 import { captureHandledAppError, createAppTimer } from './telemetry';
 import { getFriendInviteTargetError } from './friendInviteCapabilities';
 import { raceFirstSuccessfulRead } from './adapters/legacyHedgedRead';
+import { mergeParentAccessUser } from './parentAccessScope';
+import type { AuthUser } from './types';
 
 export {
   acquireProfilePhoto,
@@ -594,6 +596,26 @@ export async function saveProfileDocument(userId: string, profile: ProfileDocume
     logProfileWarning('Falling back to REST profile save.', 'profile-save', error, { userId });
     await nativeSaveProfileDocument(userId, profile);
   }
+}
+
+/**
+ * Merge the Firestore user profile's parent-scope fields into the in-memory
+ * auth user (#5246, regression of #2525). The auth user is hydrated once at
+ * sign-in, so a parent link created after sign-in (e.g. a web-app invite
+ * auto-link landing while the parent is already signed in, or an account
+ * switch that reuses a stale snapshot) is invisible to every consumer that
+ * reads `user.parentOf` directly. Unioning both stores — instead of letting
+ * one win — keeps a link visible as soon as it exists in either place; the
+ * schedule resolver still validates each link against the live team/player
+ * records, so a stale entry cannot resurrect a removed child.
+ * Fails soft: when the profile cannot be read, the input user is returned
+ * unchanged.
+ */
+export async function hydrateParentAccessUser(user: AuthUser | null): Promise<AuthUser | null> {
+  if (!user?.uid) return user;
+  const profile = await loadProfileDocument(user.uid).catch(() => null) as Record<string, unknown> | null;
+  if (!profile) return user;
+  return mergeParentAccessUser(user, profile);
 }
 
 export async function loadNotificationTeams(userId: string, email?: string | null): Promise<NotificationTeam[]> {

@@ -3214,9 +3214,14 @@ export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): P
 
     if (!team) throw new Error('Team not found.');
 
-    const requestManagerStats = hasFullTeamAccess(user, team);
+    // Hydrate from the Firestore profile (#5246): the in-memory auth user is
+    // a sign-in snapshot, so a parent link created after sign-in would
+    // otherwise read as "0 linked to your account" on the Overview tab even
+    // though the roster shows the parent accepted.
+    const accessUser = await hydrateTeamDetailAccessUser(user, normalizedTeamId, players);
+    const requestManagerStats = hasFullTeamAccess(accessUser, team);
 
-    const linkedPlayerIds = getLinkedPlayerIds(user, normalizedTeamId, players);
+    const linkedPlayerIds = getLinkedPlayerIds(accessUser, normalizedTeamId, players);
     const seasonLabels = listSeasonLabels(games);
     const currentYearLabel = String(new Date().getFullYear());
     const seasonLabel = seasonLabels.includes(currentYearLabel) ? currentYearLabel : seasonLabels[0] || currentYearLabel;

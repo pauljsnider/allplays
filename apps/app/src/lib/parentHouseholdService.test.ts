@@ -17,7 +17,27 @@ const legacyParentToolsMocks = vi.hoisted(() => ({
 vi.mock('./adapters/legacyPlayerDb', () => legacyPlayerDbMocks);
 vi.mock('./adapters/legacyParentTools', () => legacyParentToolsMocks);
 
-import { loadParentHouseholdInviteModel, revokeParentHouseholdMemberAccess } from './parentHouseholdService';
+const profileServiceMocks = vi.hoisted(() => ({
+    loadProfileDocument: vi.fn()
+}));
+
+// Exercise the real parent-scope merge while stubbing only the profile read:
+// the service must hydrate from the Firestore profile before trusting the
+// in-memory auth user (#5246).
+vi.mock('./profileService', async () => {
+    const { mergeParentAccessUser } = await import('./parentAccessScope');
+    return {
+        loadProfileDocument: profileServiceMocks.loadProfileDocument,
+        hydrateParentAccessUser: async (user: any) => {
+            if (!user?.uid) return user;
+            const profile = await profileServiceMocks.loadProfileDocument(user.uid).catch(() => null);
+            if (!profile) return user;
+            return mergeParentAccessUser(user, profile);
+        }
+    };
+});
+
+import { createParentHouseholdMemberInvite, loadParentHouseholdInviteModel, revokeParentHouseholdMemberAccess } from './parentHouseholdService';
 
 function playerSnapshot(id: string, data: Record<string, unknown>) {
     return {
@@ -31,6 +51,7 @@ describe('loadParentHouseholdInviteModel', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         legacyParentToolsMocks.readFamilyMembers.mockResolvedValue([]);
+        profileServiceMocks.loadProfileDocument.mockResolvedValue({});
     });
 
     it('reads each unique linked player document once and normalizes contacts', async () => {
@@ -122,6 +143,66 @@ describe('loadParentHouseholdInviteModel', () => {
         ]);
         expect(legacyParentToolsMocks.getDoc).toHaveBeenCalledTimes(2);
         expect(legacyPlayerDbMocks.getPlayerPrivateProfile).toHaveBeenCalledTimes(2);
+    });
+
+    it('surfaces a child linked in the Firestore profile after sign-in (#5246)', async () => {
+        profileServiceMocks.loadProfileDocument.mockResolvedValue({
+            parentOf: [{ teamId: 'team-2', teamName: 'Hawks', playerId: 'player-2', playerName: 'Will Player' }],
+            parentTeamIds: ['team-2'],
+            parentPlayerKeys: ['team-2::player-2']
+        });
+        legacyParentToolsMocks.getDoc.mockImplementation(async () => playerSnapshot('player-2', {}));
+        legacyPlayerDbMocks.getPlayerPrivateProfile.mockResolvedValue(null);
+
+        const model = await loadParentHouseholdInviteModel({ uid: 'parent-1', parentOf: [] } as any);
+
+        expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledWith('parent-1');
+        expect(model.linkedPlayers).toEqual([
+            expect.objectContaining({ teamId: 'team-2', playerId: 'player-2', playerName: 'Will Player' })
+        ]);
+        expect(legacyParentToolsMocks.getDoc).toHaveBeenCalledWith('teams/team-2/players/player-2');
+    });
+});
+
+describe('createParentHouseholdMemberInvite', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        profileServiceMocks.loadProfileDocument.mockResolvedValue({});
+    });
+
+    it('lets a household invite target a child linked in the profile after sign-in (#5246)', async () => {
+        profileServiceMocks.loadProfileDocument.mockResolvedValue({
+            parentOf: [{ teamId: 'team-2', teamName: 'Hawks', playerId: 'player-2', playerName: 'Will Player' }],
+            parentTeamIds: ['team-2'],
+            parentPlayerKeys: ['team-2::player-2']
+        });
+        legacyParentToolsMocks.readFamilyMembers.mockResolvedValue([]);
+        legacyParentToolsMocks.addPendingFamilyMember.mockResolvedValue({ code: 'ABCDEFGH', inviteUrl: 'https://allplays.ai/app/#/accept-invite?code=ABCDEFGH' });
+
+        const result = await createParentHouseholdMemberInvite(
+            { uid: 'parent-1', parentOf: [] } as any,
+            { playerKey: 'team-2::player-2', email: 'grandma@example.com', relation: 'Grandmother' }
+        );
+
+        expect(result).toEqual(expect.objectContaining({ code: 'ABCDEFGH', email: 'grandma@example.com' }));
+        expect(legacyParentToolsMocks.addPendingFamilyMember).toHaveBeenCalledWith(
+            'parent-1',
+            expect.objectContaining({ teamId: 'team-2', playerId: 'player-2', playerName: 'Will Player' }),
+            { existingMembers: [] }
+        );
+    });
+
+    it('still rejects an unlinked player after profile hydration', async () => {
+        profileServiceMocks.loadProfileDocument.mockResolvedValue({
+            parentOf: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Madison Player' }]
+        });
+        legacyParentToolsMocks.readFamilyMembers.mockResolvedValue([]);
+
+        await expect(createParentHouseholdMemberInvite(
+            { uid: 'parent-1', parentOf: [] } as any,
+            { playerKey: 'team-9::player-9', email: 'grandma@example.com', relation: 'Grandmother' }
+        )).rejects.toThrow('Choose a linked player to share.');
+        expect(legacyParentToolsMocks.addPendingFamilyMember).not.toHaveBeenCalled();
     });
 });
 

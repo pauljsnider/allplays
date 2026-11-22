@@ -100,6 +100,7 @@ import {
   type TournamentScheduleGroupQuery
 } from './tournamentScheduleStandings';
 import { loadManagedTeamsFromNativeCallable, loadProfileDocument, saveProfileDocument } from './profileService';
+import { mergeParentOfLinks, mergeParentScopeStrings } from './parentAccessScope';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { callNativeFirebaseFunction } from './nativeCallable';
 import { startUxTimer } from './uxTiming';
@@ -3451,9 +3452,15 @@ function collectParentScopeLinks(user: AuthUser, profile: Record<string, unknown
 
   const profileParentOf = getProfileArray(profile, 'parentOf');
   const profileParentPlayerKeys = getProfileArray(profile, 'parentPlayerKeys');
-  const hasProfileScope = profileParentOf.length > 0 || profileParentPlayerKeys.length > 0;
-  const parentOf = hasProfileScope ? profileParentOf : getUserArray(user, 'parentOf');
-  const parentPlayerKeys = profileParentPlayerKeys.length > 0 ? profileParentPlayerKeys : getUserArray(user, 'parentPlayerKeys');
+  // Union the Firestore profile and the in-memory auth user instead of
+  // letting one source win (#5246, regression of #2525). Either store can
+  // hold a link the other lacks: the profile may have a parent link created
+  // after sign-in (web-app invite auto-link), while the auth user may carry
+  // a link the stored profile has not been repaired to include yet. Links
+  // are still validated against the live team/player records downstream, so
+  // unioning cannot resurrect a removed or inactive child.
+  const parentOf = mergeParentOfLinks(getUserArray(user, 'parentOf'), profileParentOf);
+  const parentPlayerKeys = mergeParentScopeStrings(getUserArray(user, 'parentPlayerKeys'), profileParentPlayerKeys);
 
   parentOf.forEach(addParentOfEntry);
   parentPlayerKeys

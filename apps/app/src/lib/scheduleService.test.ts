@@ -645,6 +645,77 @@ describe('parent schedule child scope', () => {
     expect(getPlayers).not.toHaveBeenCalled();
   });
 
+  it('unions profile and auth-user parent links instead of letting one source win (#5246)', async () => {
+    const mixedUser = {
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      roles: ['parent'],
+      parentOf: [{ teamId: 'team-2', playerId: 'player-2', teamName: 'Hawks', playerName: 'Will Player' }]
+    } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', teamName: 'Bears', playerName: 'Madison Player' }],
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1']
+    } as any);
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
+      'team-1': { id: 'team-1', name: 'Bears', active: true },
+      'team-2': { id: 'team-2', name: 'Hawks', active: true }
+    }[teamId] || null) as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      if (ref?.path === 'teams/team-1/players/player-1') {
+        return playerSnapshot('player-1', { name: 'Madison Player', active: true }) as any;
+      }
+      if (ref?.path === 'teams/team-2/players/player-2') {
+        return playerSnapshot('player-2', { name: 'Will Player', active: true }) as any;
+      }
+      return playerSnapshot(String(ref?.path || '').split('/').pop() || 'missing', null) as any;
+    });
+
+    const children = await loadParentScheduleChildren(mixedUser);
+
+    expect(children).toHaveLength(2);
+    expect(children).toEqual(expect.arrayContaining([
+      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Madison Player', isLinkedParentChild: true },
+      { teamId: 'team-2', teamName: 'Hawks', playerId: 'player-2', playerName: 'Will Player', isLinkedParentChild: true }
+    ]));
+    expect(getPlayers).not.toHaveBeenCalled();
+  });
+
+  it('keeps a profile parent link when the auth user carries a different child (#5246)', async () => {
+    const mixedUser = {
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      roles: ['parent'],
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', teamName: 'Bears', playerName: 'Madison Player' }]
+    } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-2', playerId: 'player-2', teamName: 'Hawks', playerName: 'Will Player' }],
+      parentTeamIds: ['team-2'],
+      parentPlayerKeys: ['team-2::player-2']
+    } as any);
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
+      'team-1': { id: 'team-1', name: 'Bears', active: true },
+      'team-2': { id: 'team-2', name: 'Hawks', active: true }
+    }[teamId] || null) as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      if (ref?.path === 'teams/team-1/players/player-1') {
+        return playerSnapshot('player-1', { name: 'Madison Player', active: true }) as any;
+      }
+      if (ref?.path === 'teams/team-2/players/player-2') {
+        return playerSnapshot('player-2', { name: 'Will Player', active: true }) as any;
+      }
+      return playerSnapshot(String(ref?.path || '').split('/').pop() || 'missing', null) as any;
+    });
+
+    const children = await loadParentScheduleChildren(mixedUser);
+
+    expect(children).toHaveLength(2);
+    expect(children).toEqual(expect.arrayContaining([
+      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Madison Player', isLinkedParentChild: true },
+      { teamId: 'team-2', teamName: 'Hawks', playerId: 'player-2', playerName: 'Will Player', isLinkedParentChild: true }
+    ]));
+  });
+
   it('loads parent-linked players without requiring a browser window for timeout guards', async () => {
     const previousWindow = (globalThis as any).window;
     delete (globalThis as any).window;

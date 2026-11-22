@@ -70,6 +70,7 @@ import { resolvePrivateTeamCalendarFeedUrl } from './privateCalendarFeedResolver
 import { requireTrustedStripeCheckoutUrl } from './stripeCheckoutUrl';
 import { listParentTeamFeeRecipientsForApp } from './parentFeeRecipientsService';
 import { loadParentScheduleSummary } from './homeService';
+import { hydrateParentAccessUser } from './profileService';
 import { formatEventDateLabel, formatEventTimeLabel, getScheduleLocationLabel, getScheduleTitle, type ParentScheduleEvent } from './scheduleLogic';
 import type { AuthUser } from './types';
 
@@ -414,7 +415,10 @@ export async function submitParentAccessRequest(teamId: string, playerId: string
 
 export async function loadParentFeesForApp(user: AuthUser | null): Promise<ParentFeeAppRecord[]> {
   if (!user?.uid) return [];
-  const rawFees = await listParentTeamFeeRecipientsForApp(user.uid, user.parentOf || []);
+  // Hydrate from the Firestore profile (#5246): the in-memory auth user is
+  // a sign-in snapshot and misses parent links created after sign-in.
+  const accessUser = (await hydrateParentAccessUser(user)) || user;
+  const rawFees = await listParentTeamFeeRecipientsForApp(user.uid, accessUser.parentOf || []);
   return sortParentFeeRecords(rawFees || []).map((fee: any) => toParentFeeAppRecord(fee));
 }
 
@@ -517,8 +521,11 @@ export function getGoogleCalendarFeedUrl(feedUrl: string) {
 
 export async function loadParentHouseholdInviteModel(user: AuthUser | null): Promise<{ linkedPlayers: ParentHouseholdLinkedPlayer[]; members: ParentHouseholdFamilyMember[] }> {
   if (!user?.uid) return { linkedPlayers: [], members: [] };
+  // Hydrate from the Firestore profile (#5246): the in-memory auth user is
+  // a sign-in snapshot and misses parent links created after sign-in.
+  const accessUser = (await hydrateParentAccessUser(user)) || user;
   const [linkedPlayers, members] = await Promise.all([
-    Promise.resolve(normalizeFamilyChildren(user.parentOf || []) as ParentHouseholdLinkedPlayer[]),
+    Promise.resolve(normalizeFamilyChildren(accessUser.parentOf || []) as ParentHouseholdLinkedPlayer[]),
     Promise.resolve(readFamilyMembers(user.uid))
   ]);
   return {
@@ -536,7 +543,10 @@ export async function loadParentHouseholdInviteModel(user: AuthUser | null): Pro
 
 export async function createParentHouseholdMemberInvite(user: AuthUser | null, request: ParentHouseholdInviteRequest): Promise<ParentHouseholdInviteResult> {
   if (!user?.uid) throw new Error('Sign in before creating a household invite.');
-  const linkedPlayers = normalizeFamilyChildren(user.parentOf || []) as ParentHouseholdLinkedPlayer[];
+  // Hydrate from the Firestore profile (#5246) so a player linked after
+  // sign-in can be selected for a household invite.
+  const accessUser = (await hydrateParentAccessUser(user)) || user;
+  const linkedPlayers = normalizeFamilyChildren(accessUser.parentOf || []) as ParentHouseholdLinkedPlayer[];
   if (!linkedPlayers.length) throw new Error('No linked players are available for household invites.');
   const selected = linkedPlayers.find((player) => `${player.teamId}::${player.playerId}` === request.playerKey);
   if (!selected) throw new Error('Choose a linked player to share.');
@@ -571,7 +581,9 @@ export async function createParentHouseholdMemberInvite(user: AuthUser | null, r
 
 export async function loadFamilyShareModel(user: AuthUser | null): Promise<{ children: any[]; tokens: FamilyShareTokenCard[] }> {
   if (!user?.uid) return { children: [], tokens: [] };
-  const children = normalizeFamilyChildren(user.parentOf || []);
+  // Hydrate from the Firestore profile (#5246).
+  const accessUser = (await hydrateParentAccessUser(user)) || user;
+  const children = normalizeFamilyChildren(accessUser.parentOf || []);
   const tokens = await Promise.resolve(listFamilyShareTokens(user.uid));
   return {
     children,
@@ -587,7 +599,9 @@ export async function loadFamilyShareModel(user: AuthUser | null): Promise<{ chi
 
 export async function createParentFamilyShare(user: AuthUser | null, label: string, extraCalendarUrls: string[] = []) {
   if (!user?.uid) throw new Error('Sign in before creating a family share link.');
-  const tokenId = await createFamilyShareToken(user.uid, normalizeFamilyChildren(user.parentOf || []), label, extraCalendarUrls);
+  // Hydrate from the Firestore profile (#5246).
+  const accessUser = (await hydrateParentAccessUser(user)) || user;
+  const tokenId = await createFamilyShareToken(user.uid, normalizeFamilyChildren(accessUser.parentOf || []), label, extraCalendarUrls);
   return { tokenId, url: getFamilyShareUrl(tokenId) };
 }
 
@@ -600,7 +614,10 @@ export async function updateParentFamilyShareCalendars(tokenId: string, urls: st
 }
 
 export async function loadParentRegistrations(user: AuthUser | null): Promise<ParentRegistrationCard[]> {
-  const teamIds = getLinkedTeamIds(user);
+  // Hydrate from the Firestore profile (#5246) so teams linked after
+  // sign-in contribute their registration forms.
+  const accessUser = (await hydrateParentAccessUser(user)) || user;
+  const teamIds = getLinkedTeamIds(accessUser);
   const cards = await Promise.all(teamIds.map(async (teamId) => {
     const [team, forms] = await Promise.all([
       Promise.resolve(getTeam(teamId)).catch(() => null),
@@ -719,7 +736,9 @@ export async function acceptTeamRegistrationOfferForApp(
 }
 
 export async function loadParentCertificates(user: AuthUser | null): Promise<ParentCertificateCard[]> {
-  const children = normalizeFamilyChildren(user?.parentOf || []);
+  // Hydrate from the Firestore profile (#5246).
+  const accessUser = (await hydrateParentAccessUser(user)) || user;
+  const children = normalizeFamilyChildren(accessUser?.parentOf || []);
   const rows = await Promise.all(children.map(async (child: any) => {
     const [team, certificates] = await Promise.all([
       Promise.resolve(getTeam(child.teamId)).catch(() => null),
@@ -749,7 +768,9 @@ export async function loadParentRegistrationDetail(
   if (!user?.uid || !teamId || !formId) {
     throw new Error('Team and form are required.');
   }
-  if (!getLinkedTeamIds(user).includes(teamId)) {
+  // Hydrate from the Firestore profile (#5246).
+  const accessUser = (await hydrateParentAccessUser(user)) || user;
+  if (!getLinkedTeamIds(accessUser).includes(teamId)) {
     throw new Error('Registration is not linked to your family.');
   }
   return loadRegistrationDetailModel(teamId, formId);
@@ -815,7 +836,10 @@ export async function loadTeamMediaForApp(
   if (!teamId) throw new Error('Team is required.');
   const team = await Promise.resolve(getTeam(teamId));
   if (!team) throw new Error('Team not found.');
-  const appUser = user ? { ...user, parentOf: user.parentOf || [] } : null;
+  // Hydrate from the Firestore profile (#5246) so parent media/chat access
+  // reflects links created after sign-in.
+  const hydratedUser = (await hydrateParentAccessUser(user)) || user;
+  const appUser = hydratedUser ? { ...hydratedUser, parentOf: hydratedUser.parentOf || [] } : null;
   const teamWithId = { ...team, id: teamId };
   const canManage = canManageTeamMedia(appUser, teamWithId);
   const canContribute = canContributeTeamMedia(appUser, teamWithId);

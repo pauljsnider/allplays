@@ -64,7 +64,7 @@ vi.mock('../../../../js/team-visibility.js', () => ({
 
 import { normalizeProfilePhoto } from './profilePhotoService';
 import { getNativeAuthIdToken } from './authService';
-import { createProfileAccessCode, loadManagedTeamsFromNativeCallable, loadNotificationTeams, loadParentTeams, loadProfileAccessCodesPage, loadProfileDocument, requestAccountMerge } from './profileService';
+import { createProfileAccessCode, hydrateParentAccessUser, loadManagedTeamsFromNativeCallable, loadNotificationTeams, loadParentTeams, loadProfileAccessCodesPage, loadProfileDocument, requestAccountMerge } from './profileService';
 
 describe('createProfileAccessCode', () => {
     beforeEach(() => {
@@ -575,5 +575,54 @@ describe('loadProfileAccessCodesPage', () => {
             codes: [],
             nextCursor: null
         });
+    });
+});
+
+describe('hydrateParentAccessUser', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.unstubAllGlobals();
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.useRealTimers();
+    });
+
+    it('merges a profile parent link created after sign-in into the auth user (#5246)', async () => {
+        dbMocks.getUserProfile.mockResolvedValue({
+            parentOf: [{ teamId: 'team-2', teamName: 'Hawks', playerId: 'player-2', playerName: 'Will Player' }],
+            parentTeamIds: ['team-2'],
+            parentPlayerKeys: ['team-2::player-2']
+        });
+
+        const hydrated = await hydrateParentAccessUser({
+            uid: 'parent-1',
+            parentOf: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Madison Player' }],
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::player-1']
+        } as any);
+
+        expect(dbMocks.getUserProfile).toHaveBeenCalledWith('parent-1');
+        expect(hydrated?.parentOf).toEqual([
+            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Madison Player' },
+            { teamId: 'team-2', teamName: 'Hawks', playerId: 'player-2', playerName: 'Will Player' }
+        ]);
+        expect(hydrated?.parentTeamIds).toEqual(['team-1', 'team-2']);
+        expect(hydrated?.parentPlayerKeys).toEqual(['team-1::player-1', 'team-2::player-2']);
+    });
+
+    it('returns the input user unchanged when the profile cannot be read', async () => {
+        dbMocks.getUserProfile.mockRejectedValue(new Error('profile read failed'));
+        vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+        vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+
+        const user = { uid: 'parent-1', parentOf: [] } as any;
+        await expect(hydrateParentAccessUser(user)).resolves.toBe(user);
+    });
+
+    it('returns null users unchanged without reading a profile', async () => {
+        await expect(hydrateParentAccessUser(null)).resolves.toBeNull();
+        expect(dbMocks.getUserProfile).not.toHaveBeenCalled();
     });
 });

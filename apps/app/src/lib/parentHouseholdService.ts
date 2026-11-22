@@ -1,6 +1,7 @@
 import { getPlayerPrivateProfile } from './adapters/legacyPlayerDb';
 import { addPendingFamilyMember, db, doc, getDoc, readFamilyMembers, removeFamilyMember } from './adapters/legacyParentTools';
 import { canonicalizeAppAcceptInviteUrl } from './inviteUrls';
+import { hydrateParentAccessUser } from './profileService';
 import type { AuthUser } from './types';
 
 export type ParentHouseholdLinkedPlayer = {
@@ -56,7 +57,10 @@ export type ParentHouseholdInviteResult = {
 
 export async function loadParentHouseholdInviteModel(user: AuthUser | null): Promise<{ linkedPlayers: ParentHouseholdLinkedPlayer[]; members: ParentHouseholdFamilyMember[]; linkedContacts: ParentHouseholdFamilyContact[] }> {
     if (!user?.uid) return { linkedPlayers: [], members: [], linkedContacts: [] };
-    const linkedPlayerList = normalizeFamilyChildren(user.parentOf || []) as ParentHouseholdLinkedPlayer[];
+    // Hydrate from the Firestore profile (#5246): the in-memory auth user is
+    // a sign-in snapshot and misses parent links created after sign-in.
+    const accessUser = (await hydrateParentAccessUser(user)) || user;
+    const linkedPlayerList = normalizeFamilyChildren(accessUser.parentOf || []) as ParentHouseholdLinkedPlayer[];
     const [linkedPlayers, members] = await Promise.all([
         Promise.resolve(linkedPlayerList),
         Promise.resolve(readFamilyMembers(user.uid))
@@ -78,7 +82,10 @@ export async function loadParentHouseholdInviteModel(user: AuthUser | null): Pro
 
 export async function createParentHouseholdMemberInvite(user: AuthUser | null, request: ParentHouseholdInviteRequest): Promise<ParentHouseholdInviteResult> {
     if (!user?.uid) throw new Error('Sign in before creating a household invite.');
-    const linkedPlayers = normalizeFamilyChildren(user.parentOf || []) as ParentHouseholdLinkedPlayer[];
+    // Hydrate from the Firestore profile (#5246) so a player linked after
+    // sign-in can be selected for a household invite.
+    const accessUser = (await hydrateParentAccessUser(user)) || user;
+    const linkedPlayers = normalizeFamilyChildren(accessUser.parentOf || []) as ParentHouseholdLinkedPlayer[];
     if (!linkedPlayers.length) throw new Error('No linked players are available for household invites.');
     const selected = linkedPlayers.find((player) => `${player.teamId}::${player.playerId}` === request.playerKey);
     if (!selected) throw new Error('Choose a linked player to share.');

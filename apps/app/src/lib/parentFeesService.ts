@@ -9,6 +9,7 @@ import {
 import { listParentTeamFeeRecipientsForApp } from './parentFeeRecipientsService';
 import { callNativeFirebaseFunction } from './nativeCallable';
 import { isNativeRuntime } from './nativeRuntime';
+import { hydrateParentAccessUser } from './profileService';
 import type { AuthUser } from './types';
 
 export type ParentFeeAppRecord = Record<string, any> & {
@@ -32,7 +33,10 @@ export type ParentFeeAppRecord = Record<string, any> & {
 
 export async function loadParentFeesForApp(user: AuthUser | null): Promise<ParentFeeAppRecord[]> {
     if (!user?.uid) return [];
-    const rawFees = await listParentTeamFeeRecipientsForApp(user.uid, user.parentOf || []);
+    // Hydrate from the Firestore profile (#5246): the in-memory auth user is
+    // a sign-in snapshot and misses parent links created after sign-in.
+    const accessUser = (await hydrateParentAccessUser(user)) || user;
+    const rawFees = await listParentTeamFeeRecipientsForApp(user.uid, accessUser.parentOf || []);
     return sortParentFeeRecords(rawFees || []).map((fee: any) => toParentFeeAppRecord(fee));
 }
 

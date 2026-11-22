@@ -23,6 +23,26 @@ vi.mock('./parentFeeRecipientsService', () => parentFeeRecipientMocks);
 vi.mock('./nativeCallable', () => nativeCallableMocks);
 vi.mock('./nativeRuntime', () => nativeRuntimeMocks);
 
+const profileServiceMocks = vi.hoisted(() => ({
+    loadProfileDocument: vi.fn()
+}));
+
+// Exercise the real parent-scope merge while stubbing only the profile read:
+// the service must hydrate from the Firestore profile before trusting the
+// in-memory auth user (#5246).
+vi.mock('./profileService', async () => {
+    const { mergeParentAccessUser } = await import('./parentAccessScope');
+    return {
+        loadProfileDocument: profileServiceMocks.loadProfileDocument,
+        hydrateParentAccessUser: async (user: any) => {
+            if (!user?.uid) return user;
+            const profile = await profileServiceMocks.loadProfileDocument(user.uid).catch(() => null);
+            if (!profile) return user;
+            return mergeParentAccessUser(user, profile);
+        }
+    };
+});
+
 import { initiateParentTeamFeeCheckout, loadParentFeesForApp } from './parentFeesService';
 
 const user = { uid: 'parent-1', parentOf: [] } as any;
@@ -46,6 +66,7 @@ describe('parentFeesService checkout destinations', () => {
         vi.clearAllMocks();
         nativeRuntimeMocks.isNativeRuntime.mockReturnValue(false);
         parentFeeRecipientMocks.listParentTeamFeeRecipientsForApp.mockResolvedValue([]);
+        profileServiceMocks.loadProfileDocument.mockResolvedValue({});
     });
 
     it('regenerates even a trusted stored Stripe destination through the same-payer callable', async () => {
@@ -182,5 +203,21 @@ describe('parentFeesService checkout destinations', () => {
 
         await expect(initiateParentTeamFeeCheckout('team-1', 'batch-1', 'recipient-1'))
             .rejects.toThrow('checkout unavailable');
+    });
+
+    it('passes a child linked in the profile after sign-in to the fee lookup (#5246)', async () => {
+        profileServiceMocks.loadProfileDocument.mockResolvedValue({
+            parentOf: [{ teamId: 'team-2', teamName: 'Hawks', playerId: 'player-2', playerName: 'Will Player' }],
+            parentTeamIds: ['team-2'],
+            parentPlayerKeys: ['team-2::player-2']
+        });
+
+        await loadParentFeesForApp(user);
+
+        expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledWith('parent-1');
+        expect(parentFeeRecipientMocks.listParentTeamFeeRecipientsForApp).toHaveBeenCalledWith(
+            'parent-1',
+            [expect.objectContaining({ teamId: 'team-2', playerId: 'player-2', playerName: 'Will Player' })]
+        );
     });
 });

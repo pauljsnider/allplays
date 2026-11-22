@@ -13,6 +13,26 @@ vi.mock('./adapters/legacyParentTools', () => ({
     listCertificatesForPlayer: legacyParentToolsMocks.listCertificatesForPlayer
 }));
 
+const profileServiceMocks = vi.hoisted(() => ({
+    loadProfileDocument: vi.fn()
+}));
+
+// Exercise the real parent-scope merge while stubbing only the profile read:
+// the service must hydrate from the Firestore profile before trusting the
+// in-memory auth user (#5246).
+vi.mock('./profileService', async () => {
+    const { mergeParentAccessUser } = await import('./parentAccessScope');
+    return {
+        loadProfileDocument: profileServiceMocks.loadProfileDocument,
+        hydrateParentAccessUser: async (user: any) => {
+            if (!user?.uid) return user;
+            const profile = await profileServiceMocks.loadProfileDocument(user.uid).catch(() => null);
+            if (!profile) return user;
+            return mergeParentAccessUser(user, profile);
+        }
+    };
+});
+
 const parent = {
     uid: 'parent-1',
     parentOf: [
@@ -27,6 +47,7 @@ describe('parent certificate loading', () => {
         legacyParentToolsMocks.getCertificate.mockResolvedValue(null);
         legacyParentToolsMocks.getTeam.mockImplementation(async (teamId) => ({ name: teamId === 'team-1' ? 'Bears' : 'Falcons' }));
         legacyParentToolsMocks.listCertificatesForPlayer.mockResolvedValue([]);
+        profileServiceMocks.loadProfileDocument.mockResolvedValue({});
     });
 
     it('loads a published linked certificate directly without starting list or team reads', async () => {
@@ -218,5 +239,51 @@ describe('parent certificate loading', () => {
         } as any);
 
         expect(cards[0].teamName).toBe('Family Bears');
+    });
+
+    it('lists certificates for a child linked in the profile after sign-in (#5246)', async () => {
+        profileServiceMocks.loadProfileDocument.mockResolvedValue({
+            parentOf: [{ teamId: 'team-2', teamName: 'Hawks', playerId: 'player-2', playerName: 'Will Player' }],
+            parentTeamIds: ['team-2'],
+            parentPlayerKeys: ['team-2::player-2']
+        });
+        legacyParentToolsMocks.listCertificatesForPlayer.mockResolvedValue([
+            { id: 'cert-9', title: 'Hustle Award', status: 'published' }
+        ]);
+
+        const cards = await loadParentCertificates({ uid: 'parent-1', parentOf: [] } as any);
+
+        expect(legacyParentToolsMocks.listCertificatesForPlayer).toHaveBeenCalledWith('team-2', 'player-2', {
+            status: 'published',
+            limit: 25
+        });
+        expect(cards).toEqual([
+            expect.objectContaining({ id: 'cert-9', teamId: 'team-2', playerId: 'player-2', playerName: 'Will Player' })
+        ]);
+    });
+
+    it('opens a direct certificate for a child linked in the profile after sign-in (#5246)', async () => {
+        profileServiceMocks.loadProfileDocument.mockResolvedValue({
+            parentOf: [{ teamId: 'team-2', teamName: 'Hawks', playerId: 'player-2', playerName: 'Will Player' }],
+            parentTeamIds: ['team-2'],
+            parentPlayerKeys: ['team-2::player-2']
+        });
+        legacyParentToolsMocks.getCertificate.mockResolvedValue({
+            id: 'cert-9',
+            playerId: 'player-2',
+            recipientName: 'Will Player',
+            status: 'published',
+            title: 'Hustle Award'
+        });
+
+        const card = await loadParentCertificate({ uid: 'parent-1', parentOf: [] } as any, 'team-2', 'cert-9');
+
+        expect(card).toMatchObject({
+            id: 'cert-9',
+            teamId: 'team-2',
+            teamName: 'Hawks',
+            playerId: 'player-2',
+            playerName: 'Will Player'
+        });
     });
 });
