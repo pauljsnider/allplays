@@ -478,7 +478,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         expect(game.myRsvp.response).toBe('going');
         // RSVP player ids are filtered to the caller's linked players.
         expect(game.myRsvp.playerIds).toEqual(['player-1']);
-        expect(game.deepLink).toContain('live-game.html?teamId=team-a&gameId=game-1');
+        expect(game.deepLink).toContain('live-game-overlay.html?teamId=team-a&gameId=game-1');
         const serialized = JSON.stringify(result);
         expect(serialized).not.toContain('secret');
         expect(serialized).not.toContain('private rsvp note');
@@ -1071,7 +1071,7 @@ describe('chatgpt-mcp core: getGameSummary', () => {
         expect(result.playerStats).toEqual([
             { playerId: 'player-1', playerName: 'Sam', playerNumber: 12, stats: { hits: 2, runs: 1 } }
         ]);
-        expect(result.deepLink).toContain('replay=true');
+        expect(result.deepLink).toContain('live-game-overlay.html?teamId=team-a&gameId=game-1&replay=true');
     });
 
     it('denies access to a team the user is not a member of (foreign team id from the model)', async () => {

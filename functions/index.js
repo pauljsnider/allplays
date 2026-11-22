@@ -166,7 +166,8 @@ const {
   buildGameReportShareMetadata,
   buildLiveGameShareHtml,
   buildLiveGameShareMetadata,
-  buildLiveGameShareParams
+  buildLiveGameShareParams,
+  resolveLiveGameShareViewer
 } = require('./live-game-share-preview-core.cjs');
 const {
   buildPlayerShareHtml,
@@ -11847,7 +11848,7 @@ function buildNotificationLink({ category, teamId, gameId, eventId = null, batch
     return buildAppUrl(route, conversationId ? { conversationId } : {});
   }
   if (category === 'liveScore' && gameId) {
-    return `https://allplays.ai/live-game.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}`;
+    return `https://allplays.ai/live-game-overlay.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}`;
   }
   if (category === 'rsvp') {
     if (teamId && gameId) {
@@ -21970,8 +21971,10 @@ exports.liveGameSharePreview = functions
         overlay: req.query?.overlay
       });
       const query = shareParams.toString();
-      const useDiamondViewer = game.trackingEngine === 'diamond-v2';
-      const viewerPath = useDiamondViewer ? 'live-game-diamond-v2.html' : 'live-game.html';
+      const viewerPath = resolveLiveGameShareViewer({
+        trackingEngine: game.trackingEngine,
+        overlay: shareParams.get('overlay')
+      });
       const redirectUrl = `https://allplays.ai/${viewerPath}?${query}`;
       const shareUrl = `${PUBLIC_SHARE_PREVIEW_ORIGIN}/watch?${query}`;
       const hasHighlightRange = shareParams.has('clipStart') && shareParams.has('clipEnd');

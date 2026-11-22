@@ -690,6 +690,7 @@ test('notifyGameUpdated sends liveScore notifications and records once-only audi
         assert.equal(result?.successCount, 1);
         assert.equal(env.messagingCalls.length, 1);
         assert.equal(env.messagingCalls[0].data.category, 'liveScore');
+        assert.match(env.messagingCalls[0].data.link, /^https:\/\/allplays\.ai\/live-game-overlay\.html\?teamId=/);
         assert.equal(env.auditWrites.length, 1);
         assert.equal(env.auditWrites[0].value.category, 'liveScore');
         assert.equal(env.auditWrites[0].value.dedupGuardApplied, false);

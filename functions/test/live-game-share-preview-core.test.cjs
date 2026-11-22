@@ -9,7 +9,8 @@ const {
   buildLiveGameShareMetadata,
   buildLiveGameShareParams,
   formatLiveGameStart,
-  resolveTimeZone
+  resolveTimeZone,
+  resolveLiveGameShareViewer
 } = require('../live-game-share-preview-core.cjs');
 
 test('formats the game start in the team time zone', () => {
@@ -138,4 +139,21 @@ test('builds a generic report preview without private matchup metadata', () => {
   assert.match(html, /Open the game report on ALL PLAYS/);
   assert.doesNotMatch(html, /Vipers|Premier White/);
   assert.match(html, /https:\/\/allplays\.ai\/game\.html#teamId=private-team&amp;gameId=private-game/);
+});
+
+
+test('new shares select the overlay while previously sent URLs retain their viewer', () => {
+  for (const overlay of [undefined, null, '', false, 'false', 'yes']) {
+    assert.equal(resolveLiveGameShareViewer({ overlay }), 'live-game.html');
+  }
+  for (const overlay of [true, 'true', '1']) {
+    const params = buildLiveGameShareParams({ teamId: 't', gameId: 'g', replay: true, clipStart: 2000, clipEnd: 4000, overlay });
+    assert.equal(resolveLiveGameShareViewer({ overlay: params.get('overlay') }), 'live-game-overlay.html');
+    assert.equal(params.get('clipStart'), '2000');
+    assert.equal(params.get('clipEnd'), '4000');
+    assert.equal(params.get('replay'), 'true');
+  }
+  for (const overlay of [undefined, 'true']) {
+    assert.equal(resolveLiveGameShareViewer({ trackingEngine: 'diamond-v2', overlay }), 'live-game-diamond-v2.html');
+  }
 });
