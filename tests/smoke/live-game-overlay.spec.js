@@ -1333,7 +1333,7 @@ test('short replay menus keep every action reachable by keyboard and touch', asy
 
     await menuToggle.click();
     const menu = page.locator('#game-actions-menu');
-    await expect.poll(() => menu.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+    await expect(menu).toBeInViewport({ ratio: 1 });
     await page.locator('#provider-menu-link').scrollIntoViewIfNeeded();
     await expect(page.locator('#provider-menu-link')).toBeInViewport();
     expect(pageErrors).toEqual([]);
