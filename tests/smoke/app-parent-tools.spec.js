@@ -47,7 +47,7 @@ const parentHouseholdServiceMock = `
         window.__parentToolLoadCounts.household += 1;
         return {
             linkedPlayers: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9' }],
-            members: [{
+            members: window.__householdRevoked ? [] : [{
                 id: 'member-1',
                 displayName: 'Casey Caregiver',
                 email: 'caregiver@example.com',
@@ -64,6 +64,8 @@ const parentHouseholdServiceMock = `
         return { code: 'HOUSE123', inviteUrl: 'https://allplays.ai/accept-invite.html?code=HOUSE123' };
     }
     export async function revokeParentHouseholdMemberAccess() {
+        window.__householdRevocations.push('member-1');
+        window.__householdRevoked = true;
         return { success: true };
     }
 `;
@@ -268,6 +270,8 @@ async function mockParentToolsModules(page, { paymentsEnabled = false } = {}) {
         window.__playerLoads = [];
         window.__downloads = [];
         window.__familyCreates = [];
+        window.__householdRevoked = false;
+        window.__householdRevocations = [];
         window.__clipboardShouldFail = false;
         window.__parentToolLoadCounts = {
             fees: 0,
@@ -698,7 +702,7 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 });
 
-test('mobile household panel identifies the caregiver and player before revocation', async ({ page, baseURL }) => {
+test('mobile household panel confirms revocation and removes the caregiver membership', async ({ page, baseURL }) => {
     await mockParentToolsModules(page);
     await page.goto(appUrl(baseURL, '/parent-tools/household'), { waitUntil: 'domcontentloaded' });
 
@@ -707,7 +711,14 @@ test('mobile household panel identifies the caregiver and player before revocati
 
     const confirmation = page.getByRole('dialog', { name: 'Revoke household access?' });
     await expect(confirmation).toContainText('Casey Caregiver will lose access to Pat Star.');
-    await expect(confirmation.getByRole('button', { name: 'Revoke access' })).toBeVisible();
+    const householdLoadsBeforeRevocation = await page.evaluate(() => window.__parentToolLoadCounts.household);
+    await confirmation.getByRole('button', { name: 'Revoke access' }).click();
+
+    await expect.poll(() => page.evaluate(() => window.__householdRevocations)).toEqual(['member-1']);
+    await expect.poll(() => page.evaluate(() => window.__parentToolLoadCounts.household)).toBe(householdLoadsBeforeRevocation + 1);
+    await expect(page.getByText('No active household access')).toBeVisible();
+    await expect(page.getByText('Casey Caregiver')).toHaveCount(0);
+    await expect(page.getByText('Pat Star')).toHaveCount(1);
 });
 
 for (const viewport of [{ width: 320, height: 720 }, { width: 390, height: 844 }]) {
