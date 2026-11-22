@@ -46,8 +46,8 @@ describe('verified-email sensitive action coverage', () => {
     const redeemAdminStart = functionsSource.indexOf('exports.redeemAdminInvite');
     expect(functionsSource.slice(queueVerificationStart, queueInviteStart)).not.toContain('assertSensitiveEmailVerified');
     expect(functionsSource.slice(redeemInviteStart, redeemHouseholdStart)).toContain('redeemParentInviteHandler');
-    expect(parentInviteRedemptionSource).toContain('resolveAuthenticatedFamilyInviteEmail({');
-    expect(functionsSource.slice(redeemHouseholdStart, redeemCoParentStart)).toContain('resolveAuthenticatedFamilyInviteEmail({');
-    expect(functionsSource.slice(redeemCoParentStart, redeemAdminStart)).toContain('resolveAuthenticatedFamilyInviteEmail({');
+    expect(parentInviteRedemptionSource).toContain('resolveAuthenticatedFamilyInviteIdentity({');
+    expect(functionsSource.slice(redeemHouseholdStart, redeemCoParentStart)).toContain('resolveAuthenticatedFamilyInviteIdentity({');
+    expect(functionsSource.slice(redeemCoParentStart, redeemAdminStart)).toContain('resolveAuthenticatedFamilyInviteIdentity({');
   });
 });

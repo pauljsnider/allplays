@@ -2,7 +2,10 @@ import { createRequire } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { resolveAuthenticatedFamilyInviteEmail } = require('../../functions/family-invite-identity-core.cjs');
+const {
+    resolveAuthenticatedFamilyInviteEmail,
+    resolveAuthenticatedFamilyInviteIdentity
+} = require('../../functions/family-invite-identity-core.cjs');
 
 describe('family invite authenticated identity', () => {
     it('normalizes a verified signed token email without loading the Auth user', async () => {
@@ -13,6 +16,30 @@ describe('family invite authenticated identity', () => {
             getUser
         })).resolves.toBe('parent@example.com');
         expect(getUser).not.toHaveBeenCalled();
+    });
+
+    it('retains an unverified signed token email for recipient comparison', async () => {
+        const getUser = vi.fn();
+
+        await expect(resolveAuthenticatedFamilyInviteIdentity({
+            auth: { uid: 'parent-1', token: { email: ' Parent@Example.com ', email_verified: false } },
+            getUser
+        })).resolves.toEqual({ email: 'parent@example.com', emailVerified: false });
+        expect(getUser).not.toHaveBeenCalled();
+    });
+
+    it('retains an unverified Admin Auth email for recipient comparison', async () => {
+        const getUser = vi.fn().mockResolvedValue({
+            uid: 'parent-1',
+            email: ' Parent@Example.com ',
+            emailVerified: false
+        });
+
+        await expect(resolveAuthenticatedFamilyInviteIdentity({
+            auth: { uid: 'parent-1', token: {} },
+            getUser
+        })).resolves.toEqual({ email: 'parent@example.com', emailVerified: false });
+        expect(getUser).toHaveBeenCalledWith('parent-1');
     });
 
     it('rejects an explicitly unverified signed token email without falling back', async () => {
