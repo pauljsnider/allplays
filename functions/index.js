@@ -4274,9 +4274,10 @@ const autoAcceptParentInviteHandler = createAutoAcceptParentInviteHandler({
 
 const inviteEmailOnCreateHandler = createInviteEmailOnCreateHandler({
   shouldQueueInviteEmail: shouldQueueInviteEmailOnCreate,
-  autoLinkParentInvite: (codeId, generatedBy) => autoAcceptParentInviteHandler(
+  getIssuerAuthUser: (uid) => admin.auth().getUser(uid),
+  autoLinkParentInvite: (codeId, context) => autoAcceptParentInviteHandler(
     { codeId },
-    { auth: { uid: generatedBy, token: {} } }
+    context
   ),
   loadLatestInvite: async (snapshot) => {
     const latestSnapshot = await snapshot.ref.get();

@@ -23,8 +23,9 @@ test('server trigger auto-links a parent before queueing the latest durable invi
   };
   const handler = createInviteEmailOnCreateHandler({
     shouldQueueInviteEmail: () => true,
-    autoLinkParentInvite: async (codeId, generatedBy) => {
-      calls.push(['auto-link', codeId, generatedBy]);
+    getIssuerAuthUser: async (uid) => ({ uid, email: 'coach@example.com' }),
+    autoLinkParentInvite: async (codeId, context) => {
+      calls.push(['auto-link', codeId, context]);
     },
     loadLatestInvite: async () => {
       calls.push(['reload']);
@@ -42,7 +43,9 @@ test('server trigger auto-links a parent before queueing the latest durable invi
   }), { params: { codeId: 'invite-1' } });
 
   assert.deepEqual(calls, [
-    ['auto-link', 'invite-1', 'coach-1'],
+    ['auto-link', 'invite-1', {
+      auth: { uid: 'coach-1', token: { email: 'coach@example.com' } }
+    }],
     ['reload'],
     ['queue', 'invite-1', latestInvite]
   ]);
@@ -58,9 +61,10 @@ test('server trigger still queues a parent invite when auto-linking fails', asyn
   };
   const handler = createInviteEmailOnCreateHandler({
     shouldQueueInviteEmail: () => true,
-    autoLinkParentInvite: async () => {
+    getIssuerAuthUser: async () => {
       throw new Error('Account lookup unavailable');
     },
+    autoLinkParentInvite: async () => {},
     loadLatestInvite: async () => originalInvite,
     queueInviteEmail: async (...args) => queueCalls.push(args),
     logger: { warn: (...args) => warnings.push(args) }
@@ -75,6 +79,7 @@ test('server trigger still queues a parent invite when auto-linking fails', asyn
 test('server trigger propagates queue failures so the platform retries delivery', async () => {
   const handler = createInviteEmailOnCreateHandler({
     shouldQueueInviteEmail: () => true,
+    getIssuerAuthUser: async (uid) => ({ uid }),
     autoLinkParentInvite: async () => {},
     loadLatestInvite: async (snapshot) => snapshot.data(),
     queueInviteEmail: async () => {

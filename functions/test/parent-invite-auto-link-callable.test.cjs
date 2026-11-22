@@ -2,6 +2,8 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const { buildParentInviteEmailMessage, shouldQueueInviteEmailOnCreate } = require('../invite-email-core.cjs');
+const { createInviteEmailOnCreateHandler } = require('../invite-email-trigger-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('../parent-invite-auto-link-callable.cjs');
 
 class TestHttpsError extends Error {
@@ -106,7 +108,8 @@ function createHarness({
   authEmail = actorEmail,
   team = {},
   includeParent = true,
-  privateProfile
+  privateProfile,
+  invite = {}
 } = {}) {
   const initialDocs = {
     'accessCodes/code-1': {
@@ -116,7 +119,8 @@ function createHarness({
       playerNum: '7',
       email: 'parent@example.com',
       relation: 'Guardian',
-      used: false
+      used: false,
+      ...invite
     },
     'teams/team-1': {
       name: 'First Team',
@@ -199,6 +203,39 @@ test('non-global adminEmails admin can execute the callable path', async () => {
 
   assert.deepEqual(result, { autoLinked: true, existingUser: true, userId: 'parent-1' });
   assert.equal(harness.calls.transactionCount, 1);
+});
+
+test('server trigger resolves a co-admin issuer Auth email before building the linked message', async () => {
+  const harness = createHarness({
+    actorUid: 'coach-1',
+    actorEmail: 'Coach@Example.com',
+    authEmail: null,
+    team: { adminEmails: ['coach@example.com'] },
+    invite: { code: 'PARENT12', generatedBy: 'coach-1' }
+  });
+  const warnings = [];
+  const queuedMessages = [];
+  const handler = createInviteEmailOnCreateHandler({
+    shouldQueueInviteEmail: shouldQueueInviteEmailOnCreate,
+    getIssuerAuthUser: async (uid) => ({ uid, email: 'Coach@Example.com' }),
+    autoLinkParentInvite: (codeId, context) => harness.handler({ codeId }, context),
+    loadLatestInvite: async (snapshot) => {
+      const latestSnapshot = await snapshot.ref.get();
+      return latestSnapshot.data();
+    },
+    queueInviteEmail: async (codeId, invite) => {
+      queuedMessages.push([codeId, buildParentInviteEmailMessage(invite)]);
+    },
+    logger: { warn: (...args) => warnings.push(args) }
+  });
+  const snapshot = await harness.firestore.doc('accessCodes/code-1').get();
+
+  await handler(snapshot, { params: { codeId: 'code-1' } });
+
+  assert.deepEqual(warnings, []);
+  assert.equal(harness.read('accessCodes/code-1').autoAccepted, true);
+  assert.equal(queuedMessages.length, 1);
+  assert.equal(queuedMessages[0][1].messageKind, 'linked');
 });
 
 test('stale profile email cannot restore legacy owner authorization', async () => {
