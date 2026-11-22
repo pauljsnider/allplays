@@ -1482,6 +1482,165 @@ describe('parent schedule child scope', () => {
   });
 });
 
+describe('linked parent team schedule access (#5247)', () => {
+  // Exact Nov 22, 2026 repro: the web-app invite auto-linked paul@paulsnider.net
+  // to Will Snider (#0, Sun Devils) at 9:48am CT; the parent signed in afterwards
+  // with a sign-in snapshot whose parentOf was empty. The team Schedule tab threw
+  // "You do not have permission to load this team schedule." and the Family
+  // schedule showed 0 events with no Sun Devils/Will filters, even though the
+  // child's profile listed 17 events including that day's game vs Karim.
+  const linkedParentUser = {
+    uid: 'parent-1',
+    email: 'paul@paulsnider.net',
+    roles: ['parent', 'admin', 'coach'],
+    parentOf: [],
+    coachOf: ['wildcats']
+  } as any;
+
+  const linkedProfile = {
+    parentOf: [{
+      teamId: 'sun-devils',
+      playerId: 'will-1',
+      teamName: 'Sun Devils',
+      playerName: 'Will Snider',
+      playerNumber: '0',
+      relation: 'Parent'
+    }],
+    parentTeamIds: ['sun-devils'],
+    parentPlayerKeys: ['sun-devils::will-1']
+  };
+
+  // Discriminating fixture for the #5246 one-source-pick defect: the Firestore
+  // profile holds a link for a different child (Madison, Wildcats) while the
+  // in-memory sign-in snapshot holds the Will/Sun Devils link. Pre-#5252 the
+  // resolver let the profile win per field and silently dropped Will, which
+  // reproduces both #5247 symptoms (team-tab permission throw, empty Family
+  // schedule); post-#5252 the union keeps both children.
+  const mixedSourceUser = {
+    ...linkedParentUser,
+    parentOf: [{
+      teamId: 'sun-devils',
+      playerId: 'will-1',
+      teamName: 'Sun Devils',
+      playerName: 'Will Snider',
+      playerNumber: '0',
+      relation: 'Parent'
+    }]
+  } as any;
+
+  const mixedSourceProfile = {
+    parentOf: [{
+      teamId: 'wildcats',
+      playerId: 'madison-1',
+      teamName: 'Wildcats',
+      playerName: 'Madison Snider',
+      relation: 'Parent'
+    }],
+    parentTeamIds: ['wildcats'],
+    parentPlayerKeys: ['wildcats::madison-1']
+  };
+
+  const willChild = { teamId: 'sun-devils', teamName: 'Sun Devils', playerId: 'will-1', playerName: 'Will Snider', isLinkedParentChild: true };
+  const madisonChild = { teamId: 'wildcats', teamName: 'Wildcats', playerId: 'madison-1', playerName: 'Madison Snider', isLinkedParentChild: true };
+
+  const karimGame = {
+    id: 'game-karim',
+    type: 'game',
+    date: new Date('2026-11-22T21:15:00.000Z'),
+    opponent: 'Karim',
+    location: 'Hilltop Learning Center-Blue Valley Schools, Overland Park, KS',
+    status: 'scheduled'
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockReset().mockResolvedValue({ teams: [], isPartial: false });
+    vi.mocked(getNativeAuthIdToken).mockRejectedValue(new Error('REST auth unavailable in isolated staff-scope tests'));
+    vi.mocked(isTeamActive).mockImplementation((team: any) => (
+      team?.active !== false &&
+      team?.archived !== true &&
+      !['archived', 'inactive', 'disabled'].includes(String(team?.status || '').trim().toLowerCase())
+    ));
+    vi.mocked(loadProfileDocument).mockResolvedValue(linkedProfile as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'wildcats', name: 'Wildcats', active: true }],
+      isPartial: false
+    } as any);
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
+      'sun-devils': { id: 'sun-devils', name: 'Sun Devils', sport: 'Basketball', active: true },
+      wildcats: { id: 'wildcats', name: 'Wildcats', active: true }
+    }[teamId] || null) as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      if (ref?.path === 'teams/sun-devils/players/will-1') {
+        return playerSnapshot('will-1', { name: 'Will Snider', active: true }) as any;
+      }
+      if (ref?.path === 'teams/wildcats/players/madison-1') {
+        return playerSnapshot('madison-1', { name: 'Madison Snider', active: true }) as any;
+      }
+      return playerSnapshot(String(ref?.path || '').split('/').pop() || 'missing', null) as any;
+    });
+    vi.mocked(getGames).mockImplementation(async (teamId: string) => (
+      teamId === 'sun-devils' ? [karimGame] : []
+    ) as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+  });
+
+  it('loads the linked team schedule tab when the profile and the sign-in snapshot disagree (#5247)', async () => {
+    // Fails on the pre-#5252 resolver: the profile-held Madison link wins per
+    // field and the in-memory Will link is dropped, so the team tab throws.
+    vi.mocked(loadProfileDocument).mockResolvedValue(mixedSourceProfile as any);
+
+    const result = await loadParentSchedule(mixedSourceUser, {
+      targetTeamId: 'sun-devils',
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      includePastGames: true
+    });
+
+    expect(result.children).toEqual([willChild]);
+    expect(result.events).toEqual([
+      expect.objectContaining({ id: 'game-karim', teamId: 'sun-devils', opponent: 'Karim' })
+    ]);
+    expect(result.isPartial).toBe(false);
+  });
+
+  it('loads the linked team schedule tab instead of throwing a permission error (#5247)', async () => {
+    const result = await loadParentSchedule(linkedParentUser, {
+      targetTeamId: 'sun-devils',
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      includePastGames: true
+    });
+
+    expect(result.children).toEqual([willChild]);
+    expect(result.events).toEqual([
+      expect.objectContaining({ id: 'game-karim', teamId: 'sun-devils', opponent: 'Karim' })
+    ]);
+    expect(result.isPartial).toBe(false);
+  });
+
+  it('includes the linked child and team in the Family schedule scope and events (#5247)', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue(mixedSourceProfile as any);
+    const scope = await loadParentScheduleScope(mixedSourceUser);
+
+    expect(scope.children).toHaveLength(2);
+    expect(scope.children).toEqual(expect.arrayContaining([willChild, madisonChild]));
+    expect(scope.staffTeams).toEqual([{ teamId: 'wildcats', teamName: 'Wildcats' }]);
+    expect(scope.isPartial).toBe(false);
+
+    const result = await loadParentSchedule(mixedSourceUser, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      parentScope: scope
+    });
+
+    expect(result.children).toEqual(scope.children);
+    expect(result.events).toEqual([
+      expect.objectContaining({ id: 'game-karim', teamId: 'sun-devils', opponent: 'Karim' })
+    ]);
+  });
+});
+
 describe('scheduled tournament writes', () => {
   const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] } as any;
 
