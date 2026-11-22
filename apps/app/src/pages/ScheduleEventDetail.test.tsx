@@ -224,6 +224,10 @@ const scheduleHubMocks = vi.hoisted(() => ({
   getPublicPlayerHref: vi.fn(() => '#')
 }));
 vi.mock('../lib/scheduleHub', () => scheduleHubMocks);
+const teamDetailServiceMocks = vi.hoisted(() => ({
+  loadTeamStreamUrl: vi.fn<(...args: any[]) => Promise<any>>(() => Promise.resolve(null))
+}));
+vi.mock('../lib/teamDetailService', () => teamDetailServiceMocks);
 const practiceTimelineServiceMocks = vi.hoisted(() => ({
   loadPracticeTimelineModel: vi.fn(),
   savePracticeTimelineForApp: vi.fn(),
@@ -6759,5 +6763,87 @@ describe('ScheduleEventDetail statsheet import', () => {
     await waitFor(() => {
       expect(screen.getByDisplayValue('Jordan Lee')).toBeTruthy();
     });
+  });
+});
+
+describe('ScheduleEventDetail team stream link', () => {
+  beforeEach(() => {
+    teamDetailServiceMocks.loadTeamStreamUrl.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+    setScheduleGameHubSectionImporterForTest();
+    setScheduleGameDayServiceImporterForTest();
+  });
+
+  it('shows a Watch live link to the configured team stream on the game page', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent()],
+      children: []
+    });
+    teamDetailServiceMocks.loadTeamStreamUrl.mockResolvedValue('https://www.youtube.com/channel/UC1234567890123456789012');
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Add to Calendar' })).toBeTruthy();
+    });
+    const streamLink = await screen.findByRole('link', { name: 'Watch live' });
+    expect(streamLink).toHaveAttribute('href', 'https://www.youtube.com/channel/UC1234567890123456789012');
+    expect(streamLink).toHaveAttribute('target', '_blank');
+    expect(teamDetailServiceMocks.loadTeamStreamUrl).toHaveBeenCalledWith('team-1');
+  });
+
+  it('shows the Watch live link in the parent view, not only for staff', async () => {
+    const parentAuth: AuthState = {
+      ...auth,
+      user: { uid: 'parent-1', email: 'parent@example.com', displayName: 'Pat Parent' } as any,
+      roles: [],
+      isParent: true,
+      isCoach: false
+    };
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isTeamStaff: false, canUpdateScore: false })],
+      children: []
+    });
+    teamDetailServiceMocks.loadTeamStreamUrl.mockResolvedValue('https://www.youtube.com/channel/UC1234567890123456789012');
+
+    renderScheduleEventDetail(parentAuth);
+
+    const streamLink = await screen.findByRole('link', { name: 'Watch live' });
+    expect(streamLink).toHaveAttribute('href', 'https://www.youtube.com/channel/UC1234567890123456789012');
+  });
+
+  it('shows no Watch live link when the team has no stream configured', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent()],
+      children: []
+    });
+    teamDetailServiceMocks.loadTeamStreamUrl.mockResolvedValue(null);
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Add to Calendar' })).toBeTruthy();
+    });
+    expect(screen.queryByRole('link', { name: 'Watch live' })).toBeNull();
+  });
+
+  it('shows no Watch live link for a cancelled game even when a stream is configured', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isCancelled: true, status: 'cancelled' })],
+      children: []
+    });
+    teamDetailServiceMocks.loadTeamStreamUrl.mockResolvedValue('https://www.youtube.com/channel/UC1234567890123456789012');
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Add to Calendar' })).toBeTruthy();
+    });
+    expect(screen.queryByRole('link', { name: 'Watch live' })).toBeNull();
   });
 });
