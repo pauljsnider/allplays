@@ -2785,6 +2785,8 @@ for (const aggregateFirst of [true, false]) {
 
 // Unlike the older overlap checks, these require all three regions to exist.
 async function expectLandscapeCoexistence(page, replay, panel) {
+    // Viewport changes resolve before the application resize handler necessarily runs.
+    await expect(page.locator('body')).toHaveAttribute('data-landscape', 'true');
     await expect(page.locator('#score-bug')).toBeVisible();
     await expect(page.locator(panel)).toBeVisible();
     if (replay) {
