@@ -15,6 +15,7 @@ import {
   normalizeRsvpResponse,
   type ScheduleAssignment
 } from '../../lib/scheduleLogic';
+import { rsvpLabels } from './AvailabilityNotesList';
 import { useScheduleEventDetailContext } from '../../pages/schedule/ScheduleEventDetailContext';
 import { AssignmentCard, type AssignmentClaimReadiness } from './AssignmentCard';
 
@@ -245,6 +246,7 @@ export function AssignmentsSection() {
   const openCount = assignments.filter(isScheduleAssignmentOpen).length;
   const userId = auth.user?.uid || '';
   const claimReadiness = getAssignmentClaimReadiness(event.myRsvp);
+  const availabilityLabel = rsvpLabels[normalizeRsvpResponse(event.myRsvp)];
   const canManageAssignments = Boolean(auth.user && event.isTeamAdmin && event.isDbGame && !event.isCancelled);
   const formBusy = busyRole === assignmentFormBusyKey;
   const actionableAssignments = assignments.filter((assignment) => (
@@ -320,8 +322,10 @@ export function AssignmentsSection() {
                   busy={busyRole === String(assignment.role || '').trim()}
                   disabled={Boolean(busyRole) || !event.isDbGame || event.isCancelled}
                   claimReadiness={claimReadiness}
+                  availabilityLabel={availabilityLabel}
                   canManage={canManageAssignments}
                   onClaim={() => claimSlot(assignment)}
+                  onClaimBlocked={() => setAssignmentStatus('Update event availability to Going before signing up.')}
                   onRelease={() => releaseSlot(assignment)}
                   onEdit={() => startEditAssignment(assignment)}
                   onRemove={() => removeAssignment(assignment)}
@@ -348,8 +352,10 @@ export function AssignmentsSection() {
                           busy={busyRole === String(assignment.role || '').trim()}
                           disabled={Boolean(busyRole) || !event.isDbGame || event.isCancelled}
                           claimReadiness={claimReadiness}
+                          availabilityLabel={availabilityLabel}
                           canManage={canManageAssignments}
                           onClaim={() => claimSlot(assignment)}
+                          onClaimBlocked={() => setAssignmentStatus('Update event availability to Going before signing up.')}
                           onRelease={() => releaseSlot(assignment)}
                           onEdit={() => startEditAssignment(assignment)}
                           onRemove={() => removeAssignment(assignment)}
