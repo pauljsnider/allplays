@@ -1814,6 +1814,8 @@ test('signed-in mobile chat keeps mentions and every reaction reachable without 
 
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('#home-team-name')).toHaveText('Current Academy');
+    // Initial sign-in replaces the chat subscription; deliver the fixture afterward.
+    await expect(page.locator('#chat-input')).toBeEnabled();
     await page.evaluate(() => window.__OVERLAY_CHAT_CALLBACK__([{
         id: 'mobile-unread', senderName: 'Taylor', text: 'New mobile message', createdAt: Date.now() + 1000
     }]));
@@ -2785,6 +2787,8 @@ for (const aggregateFirst of [true, false]) {
 
 // Unlike the older overlap checks, these require all three regions to exist.
 async function expectLandscapeCoexistence(page, replay, panel) {
+    // Viewport changes resolve before the application resize handler necessarily runs.
+    await expect(page.locator('body')).toHaveAttribute('data-landscape', 'true');
     await expect(page.locator('#score-bug')).toBeVisible();
     await expect(page.locator(panel)).toBeVisible();
     if (replay) {
