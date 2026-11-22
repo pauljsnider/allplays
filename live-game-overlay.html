@@ -1164,7 +1164,8 @@
       font-size: 12px;
       color: var(--paper);
     }
-    .replay-clip[hidden] { display: none; }
+    .replay-clip[hidden],
+    body[data-highlight="true"] .hero-event { display: none; }
     .replay-clip .replay-button { flex-shrink: 0; }
     body[data-highlight="true"] .connection-message { top: 300px; }
     body[data-landscape="true"][data-highlight="true"] #replay-controls { height: 92px; }

@@ -3061,6 +3061,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
         await expect(page.locator('#replay-clip-label')).toHaveText('Highlight · 0:02–0:04');
         await expect(page.locator('#replay-full-game')).toBeInViewport({ ratio: 1 });
         await expect(page.locator('#replay-progress')).toBeInViewport({ ratio: 1 });
+        await expect(page.locator('#hero-event')).toBeHidden();
         const layout = await getResponsiveLayout(page);
         expectLayoutInsideViewport(layout);
         expect(rectanglesOverlap(layout.score, layout.replay)).toBe(false);
