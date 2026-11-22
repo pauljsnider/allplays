@@ -300,6 +300,25 @@ for (const [label, codeOverrides, errorCode] of [
   });
 }
 
+test('reports an unverified recipient mismatch before requiring verification', async () => {
+  const harness = createHarness({
+    team: { ownerId: 'issuer-1', adminEmails: [] },
+    issuerAuthUser: { uid: 'issuer-1', email: 'owner@example.com', disabled: false }
+  });
+  harness.context.auth.token.email = 'other@example.com';
+  harness.context.auth.token.email_verified = false;
+
+  await assert.rejects(
+    redeem(harness),
+    (error) => (
+      error.code === 'permission-denied' &&
+      /sent to parent@example.com/.test(error.message) &&
+      error.details?.reason !== 'email-verification-required'
+    )
+  );
+  assert.deepEqual(harness.firestore.committedWrites, []);
+});
+
 test('preserves recipient-email matching before issuer authorization', async () => {
   const harness = createHarness({
     team: { ownerId: 'issuer-1', adminEmails: [] },
