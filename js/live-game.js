@@ -37,9 +37,9 @@ import {
   getReplayTimestampMs,
   rebaseReplayStartTimeMs
 } from './live-game-replay.js?v=3';
-import { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightReelPlaylist, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, hasActiveLiveLifecycle, hasCompletedReplayLifecycle, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=443320';
+import { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightReelPlaylist, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, hasActiveLiveLifecycle, hasCompletedReplayLifecycle, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=443321';
 import { resolvePublicProjectionVideoOptions, getOverlayLiveClockMs } from './live-game-overlay-model.js?v=34';
-import { buildGameReportShareUrl, buildGameWatchShareUrl } from './game-share-links.js?v=1';
+import { buildGameReportShareUrl, buildGameWatchShareUrl } from './game-share-links.js?v=2';
 import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=11';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './firebase-ai.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
@@ -1189,7 +1189,7 @@ function renderGameMediaHub() {
     `);
   }
   if (mediaHub.replay) {
-    const replayUrl = `live-game.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(state.gameId)}&replay=true`;
+    const replayUrl = `live-game-overlay.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(state.gameId)}&replay=true`;
     sections.push(`
       <div class="rounded-lg border border-teal/15 bg-ink/45 px-3 py-2">
         <div class="text-[11px] uppercase tracking-[0.2em] text-teal/70">Replay</div>
@@ -3441,7 +3441,7 @@ async function init() {
 
   if (els.watchReplayBtn) {
     els.watchReplayBtn.addEventListener('click', () => {
-      window.location.href = `live-game.html?teamId=${state.teamId}&gameId=${state.gameId}&replay=true`;
+      window.location.href = `live-game-overlay.html?teamId=${state.teamId}&gameId=${state.gameId}&replay=true`;
     });
   }
 

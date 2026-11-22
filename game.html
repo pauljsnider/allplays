@@ -462,9 +462,9 @@
         import { getActivationPinnedDiamondStatCatalog, getCoverageAwareStatValue, getDiamondProjectionIdentity, getDiamondPublicPlayerStatsCollectionPath, isDiamondV2Game, readCoverageAwareOpponentStats, readCoverageAwareStatDocument, resolveDiamondManagerStatDocuments, resolveDiamondManagerTeamStatDocument, resolveDiamondProjectionState, resolveDiamondPublicStatDocuments, resolveDiamondPublicTeamStatDocument, resolveDiamondStatConfigsForGames } from './js/diamond-stat-presentation.js?v=7';
         import { buildDiamondReportPlayers, loadCompleteDiamondManagerStats } from './js/diamond-manager-stats.js?v=5';
         import { buildDiamondStatsCsv, downloadDiamondStatsCsv, getDiamondStatsExportFilename } from './js/diamond-stat-export.js?v=7';
-        import { buildHighlightShareUrl, normalizeGameRecapHighlightClips, resolveReplayVideoOptions } from './js/live-game-video.js?v=443320';
+        import { buildHighlightShareUrl, normalizeGameRecapHighlightClips, resolveReplayVideoOptions } from './js/live-game-video.js?v=443321';
         import { resolveGameReportReplayPreview } from './js/game-report-replay-preview.js?v=1';
-        import { buildGameReportShareUrl } from './js/game-share-links.js?v=1';
+        import { buildGameReportShareUrl } from './js/game-share-links.js?v=2';
         import { normalizePublishedDiamondAiArtifact } from './js/diamond-ai-presentation.js?v=1';
         import { GAME_REPLAY_ARCHIVE_FIELDS, GAME_REPLAY_CLEAR_FIELDS, buildYouTubeReplayVideo, fingerprintGameReplayArchiveState, getGameReplayArchiveState, getGameReplayLifecycle, hasGameReplayArchiveEvidence, normalizeYouTubeReplayUrl } from './js/game-replay-video.js?v=3';
         import { loadCompleteDiamondReportEvents } from './js/diamond-report-events.js?v=1';
@@ -673,7 +673,7 @@
 
             const hasCompletedTimelineReplay = ['completed', 'final'].includes(game?.liveStatus)
                 && gameCompleted;
-            const replayHref = `live-game.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}&replay=true`;
+            const replayHref = `live-game-overlay.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}&replay=true`;
             const hasRecordedVideo = replayOptions.hasVideo && replayOptions.isRecordedReplay === true;
 
             if (hasRecordedVideo) {
@@ -2501,14 +2501,14 @@ Write the match report now:`;
                     <div class="flex flex-wrap justify-center gap-3 mb-4">
                     <span id="replay-report-action">${replayReportAction}</span>
                     ${reportLifecycle.isActiveLive ? `
-                        <a href="live-game.html?teamId=${teamId}&gameId=${gameId}"
+                        <a href="live-game-overlay.html?teamId=${teamId}&gameId=${gameId}"
                            class="inline-flex items-center gap-2 bg-red-500 text-white px-5 py-2 rounded-full font-semibold shadow hover:bg-red-600 transition">
                             <span class="w-2 h-2 bg-white rounded-full animate-pulse"></span>
                             Live Now
                         </a>
                     ` : ''}
                     ${game.status !== 'completed' && reportLifecycle.isActiveLive ? `
-                        <a href="live-game.html?teamId=${teamId}&gameId=${gameId}"
+                        <a href="live-game-overlay.html?teamId=${teamId}&gameId=${gameId}"
                            class="inline-flex items-center gap-2 bg-slate-800 text-white px-5 py-2 rounded-full font-semibold shadow hover:bg-slate-900 transition">
                             <span class="text-xs">👁️</span>
                             View Live

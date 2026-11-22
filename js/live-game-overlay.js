@@ -36,7 +36,7 @@ import {
     resolveSafeProfilePhotoUrl,
     resolveSafeProfilePhotoWriteUrl
 } from './safe-image-url.js?v=1';
-import { buildGameWatchShareUrl } from './game-share-links.js?v=1';
+import { buildGameWatchShareUrl } from './game-share-links.js?v=2';
 import { shareOrCopy } from './utils.js?v=443391';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=2';
 import { DIAMOND_ENGINE, buildDiamondViewerUrl } from './diamond-scorebook-routing.js?v=2';
@@ -63,8 +63,6 @@ const elements = {
     gameActionsMenu: document.querySelector('#game-actions-menu'),
     matchReportLink: document.querySelector('#match-report-link'),
     gameDetailsLink: document.querySelector('#game-details-link'),
-    classicViewLink: document.querySelector('#classic-view-link'),
-    classicViewLinkLabel: document.querySelector('#classic-view-link-label'),
     providerMenuLink: document.querySelector('#provider-menu-link'),
     providerMenuLabel: document.querySelector('#provider-menu-label'),
     replayAccessGate: document.querySelector('#replay-access-gate'),
@@ -396,10 +394,6 @@ function getOverlayReplayHref() {
 function configureGameActions() {
     if (!uiState.teamId || !uiState.gameId) return;
     const gameHref = `game.html#teamId=${encodeURIComponent(uiState.teamId)}&gameId=${encodeURIComponent(uiState.gameId)}`;
-    const replayParam = uiState.isReplay ? '&replay=true' : '';
-    elements.classicViewLink.href = `live-game.html?teamId=${encodeURIComponent(uiState.teamId)}&gameId=${encodeURIComponent(uiState.gameId)}${replayParam}`;
-    elements.classicViewLink.hidden = false;
-    elements.classicViewLinkLabel.textContent = uiState.isReplay ? 'Game Recap' : 'Game Center';
     elements.matchReportLink.href = gameHref;
     elements.matchReportLink.hidden = !(uiState.isReplay || isCompletedGame());
     elements.gameDetailsLink.href = gameHref;
@@ -414,13 +408,15 @@ function configureGameActions() {
 async function shareGame() {
     if (!uiState.teamId || !uiState.gameId || !uiState.game) return;
     const shareReplay = hasReplayExperienceAvailable();
-    // Keep the requested range while metadata loads or playback is unavailable.
-    // Only the explicit full-game action clears this selection.
+    // Keep requested ranges intact before metadata loads and in error states.
     const isHighlight = uiState.clipParams.clipStart !== undefined || uiState.clipParams.clipEnd !== undefined;
-    const url = isHighlight ? buildOverlayReplayUrl(window.location.href) : buildGameWatchShareUrl({
+    const isActiveHighlight = uiState.replayClip.status === 'active';
+    const url = isHighlight && !isActiveHighlight ? buildOverlayReplayUrl(window.location.href) : buildGameWatchShareUrl({
         teamId: uiState.teamId,
         gameId: uiState.gameId,
-        replay: shareReplay
+        replay: shareReplay,
+        clipStartMs: isActiveHighlight ? uiState.replayClip.startMs : null,
+        clipEndMs: isActiveHighlight ? uiState.replayClip.endMs : null
     });
     const homeName = uiState.game.homeName || 'Team';
     const awayName = uiState.game.awayName || 'Opponent';
@@ -2279,7 +2275,7 @@ async function startRealMode(params) {
     try {
         const [database, videoTools, stateTools, historyTools] = await Promise.all([
             loadOverlayDatabase(),
-            import('./live-game-video.js?v=443320'),
+            import('./live-game-video.js?v=443321'),
             import('./live-game-state.js?v=63'),
             import('./live-game-overlay-history.js?v=4')
         ]);

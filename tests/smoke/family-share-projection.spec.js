@@ -274,7 +274,7 @@ test('legacy family page shows replay CTAs only for publicly accessible complete
   const canonicalCard = cardFor('Canonical Replay');
   await expect(canonicalCard.getByRole('link', { name: 'Watch Replay' })).toHaveAttribute(
     'href',
-    'live-game.html?teamId=team-1&gameId=canonical-replay&replay=true'
+    'live-game-overlay.html?teamId=team-1&gameId=canonical-replay&replay=true'
   );
   for (const opponent of [
     'Completed Live',
@@ -291,7 +291,7 @@ test('legacy family page shows replay CTAs only for publicly accessible complete
   const longSharedId = `shared_${encodeURIComponent(longSharedPath)}`;
   await expect(cardFor('Long Shared Replay').getByRole('link', { name: 'Watch Replay' })).toHaveAttribute(
     'href',
-    `live-game.html?teamId=team-1&gameId=${encodeURIComponent(longSharedId)}&replay=true`
+    `live-game-overlay.html?teamId=team-1&gameId=${encodeURIComponent(longSharedId)}&replay=true`
   );
   await expect(page.getByRole('link', { name: 'Watch Replay' })).toHaveCount(3);
 });

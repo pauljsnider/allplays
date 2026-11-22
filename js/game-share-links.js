@@ -38,6 +38,7 @@ export function buildGameWatchShareUrl({
         url.searchParams.set('clipStart', String(startMs));
         url.searchParams.set('clipEnd', String(endMs));
     }
+    url.searchParams.set('overlay', 'true');
     return url.toString();
 }
 

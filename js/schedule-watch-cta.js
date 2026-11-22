@@ -47,7 +47,7 @@ export function resolveScheduleWatchCta(game) {
         return {
             kind: 'replay',
             label: 'Watch Replay',
-            href: `live-game.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}&replay=true`
+            href: `live-game-overlay.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}&replay=true`
         };
     }
 
@@ -55,7 +55,7 @@ export function resolveScheduleWatchCta(game) {
         return {
             kind: 'live',
             label: 'Watch Live',
-            href: `live-game.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}`
+            href: `live-game-overlay.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}`
         };
     }
 

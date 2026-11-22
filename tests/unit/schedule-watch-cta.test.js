@@ -25,7 +25,7 @@ describe('schedule watch CTA resolver', () => {
         expect(resolveScheduleWatchCta(game({ liveStatus: 'live' }))).toEqual({
             kind: 'live',
             label: 'Watch Live',
-            href: 'live-game.html?teamId=team-1&gameId=game-1'
+            href: 'live-game-overlay.html?teamId=team-1&gameId=game-1'
         });
     });
 
@@ -37,7 +37,7 @@ describe('schedule watch CTA resolver', () => {
         }))).toEqual({
             kind: 'replay',
             label: 'Watch Replay',
-            href: 'live-game.html?teamId=team-1&gameId=game-1&replay=true'
+            href: 'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true'
         });
         expect(resolveScheduleWatchCta(game({
             status: 'completed',
@@ -46,7 +46,7 @@ describe('schedule watch CTA resolver', () => {
         }))).toEqual({
             kind: 'replay',
             label: 'Watch Replay',
-            href: 'live-game.html?teamId=team-1&gameId=game-1&replay=true'
+            href: 'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true'
         });
         expect(resolveScheduleWatchCta(game({
             status: 'final',
@@ -55,7 +55,7 @@ describe('schedule watch CTA resolver', () => {
         }))).toEqual({
             kind: 'replay',
             label: 'Watch Replay',
-            href: 'live-game.html?teamId=team-1&gameId=game-1&replay=true'
+            href: 'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true'
         });
         expect(resolveScheduleWatchCta(game({
             status: 'completed',
@@ -64,7 +64,7 @@ describe('schedule watch CTA resolver', () => {
         }))).toEqual({
             kind: 'replay',
             label: 'Watch Replay',
-            href: 'live-game.html?teamId=team-1&gameId=game-1&replay=true'
+            href: 'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true'
         });
         expect(resolveScheduleWatchCta(game({
             status: '',
@@ -73,7 +73,7 @@ describe('schedule watch CTA resolver', () => {
         }))).toEqual({
             kind: 'replay',
             label: 'Watch Replay',
-            href: 'live-game.html?teamId=team-1&gameId=game-1&replay=true'
+            href: 'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true'
         });
         expect(resolveScheduleWatchCta(game({
             status: 'completed',
@@ -82,7 +82,7 @@ describe('schedule watch CTA resolver', () => {
         }))).toEqual({
             kind: 'replay',
             label: 'Watch Replay',
-            href: 'live-game.html?teamId=team-1&gameId=game-1&replay=true'
+            href: 'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true'
         });
     });
 
@@ -195,13 +195,13 @@ describe('schedule watch CTA resolver', () => {
 
         expect(ctaSource).toContain("from './game-replay-video.js?v=3';");
 
-        expect(parentDashboard).toContain("import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=3';");
+        expect(parentDashboard).toContain("import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=4';");
         expect(parentDashboard).toContain('const watchCta = resolveScheduleWatchCta(game);');
         expect(parentDashboard).toContain('liveStatus: game.liveStatus || null,');
         expect(parentDashboard).toContain('hasReplayVideo: hasReplayVideoEvidence(game),');
         expect(parentDashboard).toContain('View Details');
 
-        expect(familyPage).toContain("import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=3';");
+        expect(familyPage).toContain("import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=4';");
         expect(familyPage).toContain('const watchCta = ev.canOpenPublicViewer === true ? resolveScheduleWatchCta(ev) : null;');
         expect(familyPage).toContain('const watchCta = game.canOpenPublicViewer === true ? resolveScheduleWatchCta(game) : null;');
         expect(familyPage).toContain('liveStatus: game.liveStatus || null,');
@@ -215,7 +215,7 @@ describe('schedule watch CTA resolver', () => {
 
         expect(teamPage).toContain('const hasReplayLifecycle = !isPractice');
         expect(teamPage).toContain("import { getGameReplayLifecycle } from './js/game-replay-video.js?v=3';");
-        expect(teamPage).toContain("import { hasReplayVideoEvidence } from './js/schedule-watch-cta.js?v=3';");
+        expect(teamPage).toContain("import { hasReplayVideoEvidence } from './js/schedule-watch-cta.js?v=4';");
         expect(teamPage).toContain('const lifecycle = getGameReplayLifecycle({');
         expect(teamPage).toContain("type: isPractice ? 'practice' : 'game'");
         expect(teamPage).toContain('finalStatuses.has(normalizedLiveStatus) || hasReplayVideoEvidence(game)');
@@ -224,11 +224,11 @@ describe('schedule watch CTA resolver', () => {
 
         expect(editSchedulePage).toContain('const lifecycle = getGameReplayLifecycle(game);');
         expect(editSchedulePage).toContain("import { getGameReplayLifecycle } from './js/game-replay-video.js?v=3';");
-        expect(editSchedulePage).toContain("import { hasReplayVideoEvidence } from './js/schedule-watch-cta.js?v=3';");
+        expect(editSchedulePage).toContain("import { hasReplayVideoEvidence } from './js/schedule-watch-cta.js?v=4';");
         expect(editSchedulePage).toContain('finalStatuses.has(liveStatus) || hasReplayVideoEvidence(game)');
         expect(editSchedulePage).toContain('const hasReplayPlayback = hasReplayLifecycle');
-        expect(editSchedulePage).toContain('${hasReplayPlayback ? `<a href="live-game.html');
+        expect(editSchedulePage).toContain('${hasReplayPlayback ? `<a href="live-game-overlay.html');
         expect(gamePage).toContain("from './js/game-replay-video.js?v=3';");
-        expect(gamePage).toContain("from './js/live-game-video.js?v=443320';");
+        expect(gamePage).toContain("from './js/live-game-video.js?v=443321';");
     });
 });

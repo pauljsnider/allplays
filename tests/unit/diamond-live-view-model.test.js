@@ -385,14 +385,15 @@ describe("diamond live view model", () => {
       "utf8",
     );
     expect(html).toContain("data-diamond-content");
-    expect(html).toContain("data-diamond-classic-link");
+    expect(html).toContain("data-diamond-game-report-link");
+    expect(html).not.toContain("data-diamond-classic-link");
     expect(html).toContain("data-diamond-chat-form");
     expect(html).toContain("data-diamond-reactions");
     expect(html).toContain("data-diamond-media-frame");
     expect(html).toContain("data-diamond-mode-label");
     expect(html).toContain("data-diamond-error-sign-in");
     expect(html).toContain('aria-label="Live game score"');
-    expect(html).toContain("js/diamond-live-game.js?v=12");
+    expect(html).toContain("js/diamond-live-game.js?v=443384");
 
     const script = readFileSync(
       new URL("../../js/diamond-live-game.js", import.meta.url),

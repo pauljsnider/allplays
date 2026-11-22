@@ -118,7 +118,7 @@ describe('edit schedule game row rendering', () => {
         expect(html).toContain('Report</a>');
         expect(html).toContain('game.html?editReplay=1#teamId=team-1&gameId=game-replay');
         expect(html).toContain('Recording</a>');
-        expect(html).toContain('live-game.html?teamId=team-1&gameId=game-replay&replay=true');
+        expect(html).toContain('live-game-overlay.html?teamId=team-1&gameId=game-replay&replay=true');
         expect(html).toContain('Watch Replay');
     });
 

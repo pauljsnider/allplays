@@ -8,9 +8,9 @@ import {
 describe('game share links', () => {
     it('builds branded live, replay, and report links with encoded identifiers', () => {
         expect(buildGameWatchShareUrl({ teamId: 'team one', gameId: 'game/two' }))
-            .toBe('https://share.allplays.ai/watch?teamId=team+one&gameId=game%2Ftwo');
+            .toBe('https://share.allplays.ai/watch?teamId=team+one&gameId=game%2Ftwo&overlay=true');
         expect(buildGameWatchShareUrl({ teamId: 'team-1', gameId: 'game-1', replay: true }))
-            .toBe('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true');
+            .toBe('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true&overlay=true');
         expect(buildGameReportShareUrl({ teamId: 'team-1', gameId: 'game-1' }))
             .toBe('https://share.allplays.ai/report?teamId=team-1&gameId=game-1');
     });
@@ -21,20 +21,20 @@ describe('game share links', () => {
             gameId: 'game-1',
             clipStartMs: 1200.9,
             clipEndMs: 5600.8
-        })).toBe('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true&clipStart=1200&clipEnd=5600');
+        })).toBe('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true&clipStart=1200&clipEnd=5600&overlay=true');
 
         expect(buildGameWatchShareUrl({
             teamId: 'team-1',
             gameId: 'game-1',
             clipStartMs: 5600,
             clipEndMs: 1200
-        })).toBe('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1');
+        })).toBe('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&overlay=true');
 
         expect(buildGameWatchShareUrl({
             teamId: 'team-1',
             gameId: 'game-1',
             clipEndMs: 5600
-        })).toBe('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1');
+        })).toBe('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&overlay=true');
     });
 
     it('rejects missing game identifiers', () => {
@@ -50,11 +50,11 @@ describe('game share links', () => {
         const liveTracker = repoFile('track-live.html');
         const liveGame = repoFile('js/live-game.js');
 
-        expect(scheduleEditor).toContain('const url = `https://share.allplays.ai/watch?teamId=${encodeURIComponent(currentTeamId)}&gameId=${encodeURIComponent(gameId)}`;');
+        expect(scheduleEditor).toContain('const url = `https://share.allplays.ai/watch?teamId=${encodeURIComponent(currentTeamId)}&gameId=${encodeURIComponent(gameId)}&overlay=true`;');
         expect(reportPage).toContain('const url = buildGameReportShareUrl({ teamId, gameId });');
         expect(teamPage).toContain('? buildGameReportShareUrl({ teamId: currentTeamId, gameId })');
         expect(teamPage).toContain(': buildGameWatchShareUrl({ teamId: currentTeamId, gameId });');
-        expect(liveTracker).toContain('return `https://share.allplays.ai/watch?teamId=${encodeURIComponent(currentTeamId)}&gameId=${encodeURIComponent(currentGameId)}`;');
+        expect(liveTracker).toContain('return `https://share.allplays.ai/watch?teamId=${encodeURIComponent(currentTeamId)}&gameId=${encodeURIComponent(currentGameId)}&overlay=true`;');
         expect(liveTracker).toContain('await navigator.share({ title, text, url });');
         expect(liveGame).toContain('? buildGameReportShareUrl({ teamId: state.teamId, gameId: state.gameId })');
         expect(liveGame).toContain(': buildGameWatchShareUrl({ teamId: state.teamId, gameId: state.gameId });');

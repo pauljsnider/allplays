@@ -1,3 +1,4 @@
+import { upgradeGameViewerUrl } from './game-viewer-links.js?v=1';
 export function hasPlayerProfileParticipation(statData = {}) {
     if (statData.didNotPlay === true) {
         return false;
@@ -109,7 +110,7 @@ function isSafeHttpUrl(value) {
 
 function isSafeClipUrl(value) {
     const url = toCleanString(value);
-    return isSafeHttpUrl(url) || /^live-game\.html\?/.test(url);
+    return isSafeHttpUrl(url) || /^live-game(?:-overlay)?\.html[?#]/.test(url);
 }
 
 function buildReplayClipUrl({ teamId, gameId, startMs, endMs }) {
@@ -122,7 +123,7 @@ function buildReplayClipUrl({ teamId, gameId, startMs, endMs }) {
         clipStart: `${Math.max(0, startMs)}`,
         clipEnd: `${Math.max(0, endMs)}`
     });
-    return `live-game.html?${params.toString()}`;
+    return `live-game-overlay.html?${params.toString()}`;
 }
 
 export function collectPlayerVideoClips(games = [], { teamId = '', playerId = '' } = {}) {
@@ -145,7 +146,7 @@ export function collectPlayerVideoClips(games = [], { teamId = '', playerId = ''
             .map((clip, index) => {
                 const startMs = toFiniteNumber(clip.startMs ?? clip.clipStartMs);
                 const endMs = toFiniteNumber(clip.endMs ?? clip.clipEndMs);
-                const explicitUrl = firstCleanString([clip.url, clip.publicUrl, clip.videoUrl, clip.href]);
+                const explicitUrl = upgradeGameViewerUrl(firstCleanString([clip.url, clip.publicUrl, clip.videoUrl, clip.href]));
                 const url = isSafeClipUrl(explicitUrl)
                     ? explicitUrl
                     : (replayUrl && isSafeClipUrl(replayUrl)
