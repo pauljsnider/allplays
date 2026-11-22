@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { completeAuthNavigation } from '../../apps/app/src/lib/authNextRoute.ts';
 
 const html = readFileSync(new URL('../../live-game-overlay.html', import.meta.url), 'utf8');
 const redirect = readFileSync(new URL('../../live-game-overlay-poc.html', import.meta.url), 'utf8');
@@ -148,7 +149,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
         expect(html).toMatch(/\.panel-tab\s*\{[^}]*min-width:\s*44px;/);
-        expect(html).toContain('js/live-game-overlay.js?v=74');
+        expect(html).toContain('js/live-game-overlay.js?v=75');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
@@ -290,4 +291,69 @@ describe('live game overlay page', () => {
         expect(redirect).toContain('destination.search = window.location.search');
         expect(redirect).toContain('destination.hash = window.location.hash');
     });
+});
+
+
+describe('overlay responsive state', () => {
+    it.each([
+        [568, 320, false, true], [844, 390, false, true], [932, 430, false, true],
+        [390, 844, false, true], [1280, 720, false, false], [1440, 900, false, false],
+        [1024, 768, true, true], [1440, 900, true, false]
+    ])('chooses the correct panel layout at %ix%i replay=%s', (width, height, isReplay, compact) => {
+        const window = { matchMedia(query) {
+            const maxWidth = query.match(/max-width: (\d+)px/);
+            const maxHeight = query.match(/max-height: (\d+)px/);
+            return { matches: (!maxWidth || width <= Number(maxWidth[1])) &&
+                (!maxHeight || height <= Number(maxHeight[1])) &&
+                (!query.includes('orientation: landscape') || width > height) };
+        } };
+        const layout = new Function('window', 'uiState', `
+            ${extractFunction(source, 'usesLandscapeLayout')}
+            ${extractFunction(source, 'usesCompactPanelLayout')}
+            return usesCompactPanelLayout();
+        `)(window, { isReplay });
+        expect(layout).toBe(compact);
+    });
+
+    it('tracks keyboard viewport changes and restores the full stage without touching playback state', () => {
+        const input = {};
+        const properties = {};
+        const elements = { chatInput: input, body: { dataset: {}, style: {
+            setProperty: (name, value) => { properties[name] = value; }
+        } } };
+        const window = { innerHeight: 390, visualViewport: { height: 210, offsetTop: 12 } };
+        const document = { activeElement: input };
+        const update = new Function('window', 'document', 'elements', 'usesLandscapeLayout', `
+            ${extractFunction(source, 'updateVisibleViewport')}
+            return updateVisibleViewport;
+        `)(window, document, elements, () => true);
+        update();
+        expect(elements.body.dataset.keyboard).toBe('true');
+        expect(properties).toEqual({ '--visible-height': '210px', '--visible-top': '12px' });
+        window.visualViewport = { height: 390, offsetTop: 0 };
+        update();
+        expect(elements.body.dataset.keyboard).toBe('false');
+        expect(properties['--visible-height']).toBe('390px');
+        window.visualViewport = null;
+        update();
+        expect(properties['--visible-top']).toBe('0px');
+    });
+});
+
+
+it('returns from landscape sign-in to the exact overlay document, query and fragment', async () => {
+    const viewerPath = '/live-game-overlay.html?teamId=team-1&gameId=game-1&view=live%20game#chat';
+    const location = new URL(viewerPath, 'https://allplays.ai');
+    const signInUrl = new Function('window', `
+        ${extractFunction(source, 'getChatSignInUrl')}
+        return getChatSignInUrl();
+    `)({ location });
+    const next = new URLSearchParams(signInUrl.split('?')[1]).get('next');
+    expect(next).toBe(viewerPath);
+    const navigate = vi.fn();
+    const locationObject = { hash: '#/auth', replace: vi.fn(), reload: vi.fn() };
+    await expect(completeAuthNavigation(next, navigate, { locationObject })).resolves.toBe('document');
+    expect(locationObject.replace).toHaveBeenCalledWith(viewerPath);
+    expect(navigate).not.toHaveBeenCalled();
+    expect(locationObject.reload).not.toHaveBeenCalled();
 });
