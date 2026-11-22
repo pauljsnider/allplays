@@ -2,6 +2,7 @@
 
 function createInviteEmailOnCreateHandler({
   shouldQueueInviteEmail,
+  getIssuerAuthUser = async (uid) => ({ uid }),
   autoLinkParentInvite,
   loadLatestInvite,
   queueInviteEmail,
@@ -17,7 +18,13 @@ function createInviteEmailOnCreateHandler({
       const generatedBy = String(codeData.generatedBy || '').trim();
       if (generatedBy) {
         try {
-          await autoLinkParentInvite(codeId, generatedBy);
+          const issuerAuthUser = await getIssuerAuthUser(generatedBy);
+          const issuerEmail = issuerAuthUser?.uid === generatedBy && issuerAuthUser.disabled !== true
+            ? String(issuerAuthUser.email || '').trim()
+            : '';
+          await autoLinkParentInvite(codeId, {
+            auth: { uid: generatedBy, token: { email: issuerEmail } }
+          });
         } catch (error) {
           logger.warn('Unable to auto-link a parent invite before email delivery.', {
             error,
