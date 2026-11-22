@@ -711,10 +711,11 @@ test('mobile household panel confirms revocation and removes the caregiver membe
 
     const confirmation = page.getByRole('dialog', { name: 'Revoke household access?' });
     await expect(confirmation).toContainText('Casey Caregiver will lose access to Pat Star.');
+    const householdLoadsBeforeRevocation = await page.evaluate(() => window.__parentToolLoadCounts.household);
     await confirmation.getByRole('button', { name: 'Revoke access' }).click();
 
     await expect.poll(() => page.evaluate(() => window.__householdRevocations)).toEqual(['member-1']);
-    await expect.poll(() => page.evaluate(() => window.__parentToolLoadCounts.household)).toBe(2);
+    await expect.poll(() => page.evaluate(() => window.__parentToolLoadCounts.household)).toBe(householdLoadsBeforeRevocation + 1);
     await expect(page.getByText('No active household access')).toBeVisible();
     await expect(page.getByText('Casey Caregiver')).toHaveCount(0);
     await expect(page.getByText('Pat Star')).toHaveCount(1);
