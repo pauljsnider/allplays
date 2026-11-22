@@ -2283,7 +2283,8 @@ test('mobile schedule routes blocked sign-up through availability before claimin
     const availabilitySection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Availability' }) });
     await availabilitySection.getByRole('button', { name: 'Going', exact: true }).click();
     await expect.poll(() => page.evaluate(() => window.__scheduleCalls.rsvps)).toEqual([
-        { eventKey: 'game-1', childId: 'player-1', userId: 'user-1', response: 'going', note: '' }
+        { eventKey: 'game-1-player-1', childId: 'player-1', userId: 'user-1', response: 'going', note: '' },
+        { eventKey: 'game-1-player-2', childId: 'player-2', userId: 'user-1', response: 'going', note: '' }
     ]);
     await expect(page.getByRole('heading', { name: 'Assignments' })).toBeVisible();
 
