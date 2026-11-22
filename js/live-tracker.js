@@ -11,7 +11,7 @@ import { writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp, runTransa
 import { getAI, getGenerativeModel, GoogleAIBackend } from './firebase-ai.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
-import { canApplySubstitution, applySubstitution, canApplySubstitutionQueue, canApplyQueuedSubstitution, availableSubstitutionPlayers, removeQueuedSwap, buildSubstitutionHint, buildSubstitutionConfirm } from './live-tracker-integrity.js?v=4';
+import { canApplySubstitution, applySubstitution, canApplySubstitutionQueue, canApplyQueuedSubstitution, availableSubstitutionPlayers, removeQueuedSwap, buildSubstitutionHint, buildSubstitutionConfirm, buildQueuedSwapLabel } from './live-tracker-integrity.js?v=5';
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
 import { restoreBadgeScoreboard, buildPersistedResumeClockState, buildResumeLineupElapsedMs, buildResumeLogFromLiveEvents, deriveResumeClockState } from './live-tracker-resume.js?v=9';
 import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
@@ -31,7 +31,7 @@ import {
   readPersistedLiveTrackerState,
   writePersistedLiveTrackerState
 } from './live-tracker-queue.js?v=1';
-import { commitFinishPlan, isTransientFinalizationFailure, runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js?v=7';
+import { commitFinishPlan, isTransientFinalizationFailure, runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js?v=8';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -2999,7 +2999,10 @@ function renderQueue() {
     els.queueList.innerHTML = '<span class="text-slate-500">Build your queue...</span>';
   } else {
     els.queueList.innerHTML = state.subQueue.map((p, index) => {
-      return `<span class="pill px-2 py-1 bg-teal text-ink font-semibold inline-flex items-center gap-1">#${getNum(p.out)} → #${getNum(p.in)}<button type="button" class="font-bold leading-none px-0.5" data-queue-remove="${index}" aria-label="Remove swap #${getNum(p.out)} for #${getNum(p.in)}">×</button></span>`;
+      // Queue rows name both players (#5258): numbers alone are ambiguous
+      // when two players share one, and useless when one is missing.
+      const label = buildQueuedSwapLabel(p, (id) => roster.find(r => r.id === id) || null);
+      return `<span class="pill px-2 py-1 bg-teal text-ink font-semibold inline-flex items-center gap-1">${escapeHtml(label)}<button type="button" class="font-bold leading-none px-0.5" data-queue-remove="${index}" aria-label="Remove swap ${escapeHtml(label)}">×</button></span>`;
     }).join(' ');
   }
 

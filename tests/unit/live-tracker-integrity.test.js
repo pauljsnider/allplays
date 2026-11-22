@@ -9,6 +9,8 @@ import {
   removeQueuedSwap,
   buildSubstitutionHint,
   buildSubstitutionConfirm,
+  formatSubstitutionPlayerLabel,
+  buildQueuedSwapLabel,
   canTrustScoreLogForFinalization,
   reconcileFinalScoreFromLog,
   resolveFinalScoreForCompletion,
@@ -351,6 +353,44 @@ describe('queue multiple substitution UX (#5258)', () => {
   });
 });
 
+describe('queued swap row labels (#5258)', () => {
+  const roster = [
+    { id: 'p1', num: 8, name: 'Hayes Coppaken' },
+    { id: 'p6', num: 6, name: 'Hugo Patterson' },
+    { id: 'p7', num: 6, name: 'Micah Heisler' },
+    { id: 'p9', num: '', name: 'No Number' },
+    { id: 'p10', num: 30, name: '' }
+  ];
+  const resolve = (id) => roster.find((p) => p.id === id) || null;
+
+  it('renders OUT #number name -> IN #number name', () => {
+    expect(buildQueuedSwapLabel({ out: 'p1', in: 'p6' }, resolve))
+      .toBe('OUT #8 Hayes Coppaken → IN #6 Hugo Patterson');
+  });
+
+  it('distinguishes duplicate jersey numbers by name', () => {
+    expect(buildQueuedSwapLabel({ out: 'p6', in: 'p7' }, resolve))
+      .toBe('OUT #6 Hugo Patterson → IN #6 Micah Heisler');
+  });
+
+  it('omits the number when a player has none', () => {
+    expect(buildQueuedSwapLabel({ out: 'p9', in: 'p6' }, resolve))
+      .toBe('OUT No Number → IN #6 Hugo Patterson');
+  });
+
+  it('falls back to Unknown player for an unresolvable id', () => {
+    expect(buildQueuedSwapLabel({ out: 'missing', in: 'p6' }, resolve))
+      .toBe('OUT Unknown player → IN #6 Hugo Patterson');
+  });
+
+  it('formats a player label with number and name', () => {
+    expect(formatSubstitutionPlayerLabel({ num: 8, name: 'Hayes Coppaken' })).toBe('#8 Hayes Coppaken');
+    expect(formatSubstitutionPlayerLabel({ num: '', name: 'No Number' })).toBe('No Number');
+    expect(formatSubstitutionPlayerLabel({ num: 30, name: '' })).toBe('#30');
+    expect(formatSubstitutionPlayerLabel(null)).toBe('Unknown player');
+  });
+});
+
 describe('queue multiple substitution UX wiring (#5258)', () => {
   const liveTrackerSource = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
 
@@ -365,6 +405,14 @@ describe('queue multiple substitution UX wiring (#5258)', () => {
     const renderBody = liveTrackerSource.match(/function renderQueue\([\s\S]*?function autoFillStarters/)?.[0] || '';
     expect(renderBody).toContain('data-queue-remove');
     expect(liveTrackerSource).toContain('removeQueuedSwap(state.subQueue, Number(btn.dataset.queueRemove))');
+  });
+
+  it('renders queued swaps as OUT #number name -> IN #number name rows', () => {
+    const renderBody = liveTrackerSource.match(/function renderQueue\([\s\S]*?function autoFillStarters/)?.[0] || '';
+    expect(renderBody).toContain('buildQueuedSwapLabel(p,');
+    expect(renderBody).toContain('escapeHtml(label)');
+    expect(renderBody).toContain('aria-label="Remove swap ${escapeHtml(label)}"');
+    expect(renderBody).not.toContain('#${getNum(p.out)} → #${getNum(p.in)}');
   });
 
   it('completes a bench-first pair from the on-court list and toggles selection', () => {

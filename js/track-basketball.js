@@ -7,7 +7,7 @@ import { checkAuth } from './auth.js?v=4433220';
 import { writeBatch, runTransaction, doc, setDoc, addDoc } from './firebase.js?v=4433197';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './firebase-ai.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
-import { canApplySubstitution, applySubstitution, canApplySubstitutionQueue, canApplyQueuedSubstitution, resolveFinalScoreForCompletion } from './live-tracker-integrity.js?v=4';
+import { canApplySubstitution, applySubstitution, canApplySubstitutionQueue, canApplyQueuedSubstitution, resolveFinalScoreForCompletion } from './live-tracker-integrity.js?v=5';
 import { resolveFinalScore, resolveSummaryRecipient } from './live-tracker-email.js?v=2';
 import { commitStandardTrackerFinishData, resetStandardTrackerData } from './track-finish.js?v=7';
 import { getLiveStatsEpoch, readLiveStatsForWrite, liveStatsMatchEpoch } from './live-aggregate-stats.js?v=2';

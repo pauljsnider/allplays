@@ -111,6 +111,27 @@ export function buildSubstitutionConfirm({ queueMode = false, queueLength = 0, p
   return { label: 'Make Swap', disabled: !pendingValid };
 }
 
+// Queue Multiple UX (#5258): a queued swap row names both players so the
+// queue stays readable when jersey numbers are duplicated or missing. The
+// number is omitted when a player has none; the name is what disambiguates.
+export function formatSubstitutionPlayerLabel(player = {}) {
+  const num = player?.num === undefined || player?.num === null ? '' : String(player.num).trim();
+  const name = (player?.name || '').toString().trim();
+  if (num && name) return `#${num} ${name}`;
+  if (num) return `#${num}`;
+  if (name) return name;
+  return 'Unknown player';
+}
+
+// Queue Multiple UX (#5258): the full row label for one queued swap, e.g.
+// "OUT #8 Hayes Coppaken → IN #6 Hugo Patterson". resolvePlayer maps a
+// player id to its roster entry ({ num, name }) or null when unknown.
+export function buildQueuedSwapLabel(pair = {}, resolvePlayer = () => null) {
+  const out = formatSubstitutionPlayerLabel(resolvePlayer(pair?.out));
+  const inn = formatSubstitutionPlayerLabel(resolvePlayer(pair?.in));
+  return `OUT ${out} → IN ${inn}`;
+}
+
 export function acquireSingleFlightLock(lock) {
   if (!lock || lock.active) return false;
   lock.active = true;
