@@ -69,6 +69,23 @@ describe('production Firebase deployment retry behavior', () => {
         expect(result.delays[0]).toBeLessThanOrEqual(30);
     });
 
+    it.each([
+        ...[429, 500, 502, 503, 504].map((status) => `Error: HTTP Error: ${status}, request failed`),
+        'Error: HTTP Error: 409, Requested entity already exists',
+        'Error: Service unavailable',
+        'Error: ECONNRESET',
+        'Error: Connection reset',
+        'Error: Network reset',
+        'Error: ETIMEDOUT',
+        'Error: Request timed out',
+        'Error: Request timeout'
+    ])('preserves recovery for existing transient failures: %s', (error) => {
+        const result = runDeploy(error, 1);
+        expect(result.status, result.stdout + result.stderr).toBe(0);
+        expect(result.attempts).toBe(2);
+        expect(result.delays).toHaveLength(1);
+    });
+
     it('preserves the failure after three attempts when the region remains unreachable', () => {
         const result = runDeploy(regionOutage, 10);
         expect(result.status).toBe(17);
@@ -79,6 +96,7 @@ describe('production Firebase deployment retry behavior', () => {
 
     it.each([
         'Error: HTTP Error: 403, Permission denied on Cloud Functions.',
+        'Error: HTTP Error: 409, Conflicting deployment configuration',
         'Error: Required configuration is unreachable because its path is invalid.'
     ])('does not retry unrelated permanent failures: %s', (error) => {
         const result = runDeploy(error, 10);
