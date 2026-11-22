@@ -2266,6 +2266,39 @@ for (const [response, label] of [
     });
 }
 
+test('mobile schedule routes blocked sign-up through availability before claiming', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page, { gameMyRsvp: 'not_responded' });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=assignments'), { waitUntil: 'domcontentloaded' });
+
+    const assignmentsSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Assignments' }) });
+    await waitForScheduleRoute(page, assignmentsSection.getByText('4 posted · 1 open'));
+    const snacksCard = assignmentsSection.locator('article').filter({ hasText: 'Snacks' });
+
+    await snacksCard.getByRole('button', { name: 'Sign up' }).click();
+    await expect(page).toHaveURL(/section=availability/);
+    await expect(page.getByRole('heading', { name: 'Availability' })).toBeVisible();
+    expect(await page.evaluate(() => window.__scheduleCalls.assignments.filter((call) => call.action === 'claim'))).toEqual([]);
+
+    const availabilitySection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Availability' }) });
+    await availabilitySection.getByRole('button', { name: 'Going', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => window.__scheduleCalls.rsvps)).toEqual([
+        { eventKey: 'game-1-player-1', childId: 'player-1', userId: 'user-1', response: 'going', note: '' },
+        { eventKey: 'game-1-player-2', childId: 'player-2', userId: 'user-1', response: 'going', note: '' }
+    ]);
+    await expect(page.getByRole('heading', { name: 'Assignments' })).toBeVisible();
+
+    const resumedAssignmentsSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Assignments' }) });
+    const resumedSnacksCard = resumedAssignmentsSection.locator('article').filter({ hasText: 'Snacks' });
+    await expect(resumedSnacksCard.getByRole('button', { name: 'Sign up' })).toBeVisible();
+    await resumedSnacksCard.getByRole('button', { name: 'Sign up' }).click();
+    await expect(resumedAssignmentsSection.getByText('Snacks claimed.')).toBeVisible();
+    await expect(resumedSnacksCard.getByText('You')).toBeVisible();
+    expect(await page.evaluate(() => window.__scheduleCalls.assignments.filter((call) => call.action === 'claim'))).toEqual([
+        { action: 'claim', role: 'Snacks', userId: 'user-1' }
+    ]);
+});
+
 test('app schedule lets team staff create, edit, and remove assignments', async ({ page, baseURL }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await mockScheduleModules(page, { isCoach: true, staffManageable: true });
