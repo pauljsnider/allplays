@@ -536,6 +536,31 @@ for (const [label, type, callableName, code] of familyInviteCases) {
     });
   });
 
+  test(`${label} redemption reports an unverified recipient mismatch before requiring verification`, async () => {
+    const uid = 'invited-parent';
+    const seed = redemptionSeed(type, { uid });
+    const before = clone(seed);
+    const { firestore, mod } = loadFunctions(seed);
+
+    await assert.rejects(
+      mod[callableName](
+        { userId: uid, code, authEmail: 'invited@example.com' },
+        { auth: { uid, token: { email: 'other@example.com', email_verified: false } } }
+      ),
+      (error) => (
+        error?.code === 'permission-denied' &&
+        /sent to invited@example.com/.test(error.message) &&
+        error.details?.reason !== 'email-verification-required'
+      )
+    );
+
+    assert.equal(firestore._transactionCalls, 0);
+    assert.deepEqual(firestore._transactionWrites, []);
+    Object.entries(before).forEach(([path, value]) => {
+      assert.deepEqual(firestore.snapshot(path), value);
+    });
+  });
+
   test(`${label} redemption rejects spoofed request email when Auth has no email with zero writes`, async () => {
     const uid = 'invited-parent';
     const seed = redemptionSeed(type, { uid });

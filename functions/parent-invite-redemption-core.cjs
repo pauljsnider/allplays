@@ -7,7 +7,7 @@ const {
   buildAutoAcceptedParentLink,
   normalizeParentInviteEmail
 } = require('./parent-invite-auto-link-core.cjs');
-const { resolveAuthenticatedFamilyInviteEmail } = require('./family-invite-identity-core.cjs');
+const { resolveAuthenticatedFamilyInviteIdentity } = require('./family-invite-identity-core.cjs');
 
 const ISSUER_ACCESS_ERROR = 'The parent invite issuer no longer has access to this team.';
 
@@ -25,19 +25,19 @@ function isInviteExpired(expiresAt, nowMillis) {
   return Number.isFinite(millis) && millis < nowMillis;
 }
 
-function assertRecipientEmail(codeData, signedInEmail, HttpsError) {
+function assertRecipientEmail(codeData, signedInEmail, emailVerified, HttpsError) {
   const invitedEmail = normalizeParentInviteEmail(codeData?.email);
-  if (invitedEmail && !signedInEmail) {
+  if (invitedEmail && signedInEmail && invitedEmail !== signedInEmail) {
+    throw new HttpsError(
+      'permission-denied',
+      `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`
+    );
+  }
+  if (invitedEmail && (!signedInEmail || emailVerified !== true)) {
     throw new HttpsError(
       'permission-denied',
       'Verify your email before accepting this family invite.',
       { reason: 'email-verification-required' }
-    );
-  }
-  if (invitedEmail && invitedEmail !== signedInEmail) {
-    throw new HttpsError(
-      'permission-denied',
-      `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`
     );
   }
 }
@@ -67,7 +67,7 @@ function createRedeemParentInviteHandler({
       throw new HttpsError('invalid-argument', 'Access code is required.');
     }
 
-    const signedInEmail = await resolveAuthenticatedFamilyInviteEmail({
+    const { email: signedInEmail, emailVerified } = await resolveAuthenticatedFamilyInviteIdentity({
       auth: context.auth,
       getUser: getAuthUser
     });
@@ -77,7 +77,7 @@ function createRedeemParentInviteHandler({
     }
 
     const codeRef = codeQuerySnap.docs[0].ref;
-    assertRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail, HttpsError);
+    assertRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail, emailVerified, HttpsError);
     let responsePayload = null;
 
     await firestore.runTransaction(async (transaction) => {
@@ -97,7 +97,7 @@ function createRedeemParentInviteHandler({
         throw new HttpsError('failed-precondition', 'Parent invite has expired.');
       }
 
-      assertRecipientEmail(codeData, signedInEmail, HttpsError);
+      assertRecipientEmail(codeData, signedInEmail, emailVerified, HttpsError);
       const issuerUid = normalizeStoredUid(codeData.generatedBy);
       if (!issuerUid) {
         throw new HttpsError('permission-denied', ISSUER_ACCESS_ERROR);

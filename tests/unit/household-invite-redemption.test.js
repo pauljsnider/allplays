@@ -56,9 +56,11 @@ describe('household invite redemption guards', () => {
         const redeemSource = source.slice(handlerIndex, handlerIndex + 8200);
         expect(redeemSource).toContain('firestore.runTransaction(async (transaction) =>');
         expect(redeemSource).toContain("codeData.type !== 'household_invite'");
-        expect(redeemSource).toContain('resolveAuthenticatedFamilyInviteEmail({');
+        expect(redeemSource).toContain('resolveAuthenticatedFamilyInviteIdentity({');
         expect(redeemSource).not.toContain('data?.authEmail');
-        expect(redeemSource.indexOf('invitedEmail && (!signedInEmail || invitedEmail !== signedInEmail)'))
+        expect(redeemSource.indexOf('assertFamilyInviteRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail, emailVerified)'))
+            .toBeLessThan(redeemSource.indexOf('firestore.runTransaction(async (transaction) =>'));
+        expect(redeemSource.indexOf('assertFamilyInviteRecipientEmail(codeData, signedInEmail, emailVerified)'))
             .toBeLessThan(redeemSource.indexOf('transaction.set(userRef'));
         expect(redeemSource).toContain('doesHouseholdInviteFamilyMembershipMatch(codeData, membershipSnap.data() || {})');
         expect(redeemSource).toContain('This household invite is no longer valid for that player and email. Ask the organizer to send a new invite.');
