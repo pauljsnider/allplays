@@ -133,7 +133,7 @@ export function getPublicGameReportShareHref(event: ParentScheduleEvent) {
 }
 
 export function getPublicLiveHref(event: ParentScheduleEvent) {
-  return getPublicHref('/live-game.html', {
+  return getPublicHref('/live-game-overlay.html', {
     teamId: event.teamId,
     gameId: event.id
   });
@@ -142,12 +142,13 @@ export function getPublicLiveHref(event: ParentScheduleEvent) {
 export function getPublicLiveShareHref(event: ParentScheduleEvent) {
   return getSharePreviewHref('/watch', {
     teamId: event.teamId,
-    gameId: event.id
+    gameId: event.id,
+    overlay: 'true'
   });
 }
 
 export function getPublicReplayHref(event: ParentScheduleEvent) {
-  return getPublicHref('/live-game.html', {
+  return getPublicHref('/live-game-overlay.html', {
     teamId: event.teamId,
     gameId: event.id,
     replay: 'true'
@@ -158,7 +159,8 @@ export function getPublicReplayShareHref(event: ParentScheduleEvent) {
   return getSharePreviewHref('/watch', {
     teamId: event.teamId,
     gameId: event.id,
-    replay: 'true'
+    replay: 'true',
+    overlay: 'true'
   });
 }
 

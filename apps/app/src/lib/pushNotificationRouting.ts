@@ -100,7 +100,7 @@ function buildLegacyLinkFallback(link: string) {
         if (path.endsWith('/officials.html')) {
             return teamId ? `/officials?teamId=${encodeRouteParam(teamId)}` : '/officials';
         }
-        if (path.endsWith('/live-game.html') && gameId) {
+        if (['/live-game.html', '/live-game-overlay.html'].some((viewer) => path.endsWith(viewer)) && gameId) {
             if (teamId) {
                 return buildScheduleEventRoute(teamId, gameId, 'game');
             }

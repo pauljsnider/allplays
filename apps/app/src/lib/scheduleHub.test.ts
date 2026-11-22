@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { ParentScheduleEvent } from './scheduleLogic';
-import { buildGameHubDestinations } from './scheduleHub';
+import {
+  buildGameHubDestinations,
+  getPublicLiveHref,
+  getPublicReplayHref,
+  getPublicLiveShareHref,
+  getPublicReplayShareHref
+} from './scheduleHub';
 
 function buildGame(overrides: Partial<ParentScheduleEvent> = {}): ParentScheduleEvent {
   const event: ParentScheduleEvent = {
@@ -111,5 +117,22 @@ describe('buildGameHubDestinations replay lifecycle', () => {
     }));
 
     expect(destinations.map((destination) => destination.id)).toEqual(['match-report']);
+  });
+});
+
+
+describe('overlay watch destinations', () => {
+  it.each([
+    [getPublicLiveHref, false, false],
+    [getPublicReplayHref, true, false],
+    [getPublicLiveShareHref, false, true],
+    [getPublicReplayShareHref, true, true]
+  ] as const)('preserves game identity and replay mode in %s', (buildHref, replay, share) => {
+    const url = new URL(buildHref(buildGame({ teamId: 'team one', id: 'calendar_game+one' })));
+    expect(url.pathname).toBe(share ? '/watch' : '/live-game-overlay.html');
+    expect(url.searchParams.get('teamId')).toBe('team one');
+    expect(url.searchParams.get('gameId')).toBe('calendar_game+one');
+    expect(url.searchParams.get('replay')).toBe(replay ? 'true' : null);
+    expect(url.searchParams.get('overlay')).toBe(share ? 'true' : null);
   });
 });

@@ -161,7 +161,7 @@ describe('help center deep workflow coverage', () => {
 
         expect(document.querySelector('[data-quick-link-label="Team Page"]')?.getAttribute('href')).toBe(`team.html#teamId=${encodedTeamId}`);
         expect(document.querySelector('[data-quick-link-label="Game Viewer"]')).not.toHaveProperty('hidden', true);
-        expect(document.querySelector('[data-quick-link-label="Game Viewer"]')?.getAttribute('href')).toBe(`live-game.html#teamId=${encodedTeamId}&gameId=${encodedGameId}`);
+        expect(document.querySelector('[data-quick-link-label="Game Viewer"]')?.getAttribute('href')).toBe(`live-game-overlay.html?teamId=${encodedTeamId}&gameId=${encodedGameId}`);
         expect(document.querySelector('[data-quick-link-label="Open Team Chat"]')?.getAttribute('href')).toBe(`team-chat.html#teamId=${encodedTeamId}`);
     });
 });

@@ -152,3 +152,13 @@ describe.each(['live-game-diamond-v2.html', 'live-game-overlay.html'])('document
     expect(navigate).not.toHaveBeenCalled();
   });
 });
+
+
+it('preserves a highlight range through web and native document auth handoff', async () => {
+  const next = '/live-game-overlay.html?teamId=t&gameId=g&replay=true&clipStart=2000&clipEnd=4000';
+  const locationObject = createLocation();
+  await completeAuthNavigation(next, vi.fn(), { locationObject });
+  expect(locationObject.replace).toHaveBeenCalledWith(next);
+  const hosted = new URL(getHostedDocumentAuthNextUrl(next));
+  expect(new URLSearchParams(hosted.hash.split('?')[1]).get('next')).toBe(next);
+});

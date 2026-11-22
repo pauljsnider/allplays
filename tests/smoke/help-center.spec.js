@@ -126,7 +126,7 @@ test('help center supports workflow discovery and page-reference navigation', as
     await expect(page).toHaveURL(/help-page-reference\.html/);
     await expect(page.getByRole('heading', { name: 'File-by-File Page Reference' })).toBeVisible();
     await expect(page.locator('tbody')).toContainText('edit-schedule.html');
-    await expect(page.locator('tbody')).toContainText('live-game.html');
+    await expect(page.locator('tbody')).toContainText('live-game-overlay.html');
     await expect(page.locator('tbody')).toContainText('help-page-reference.html');
     await expectReferenceRow(page, 'certificates.html', 'Parent, Coach, Admin');
     await expectReferenceRow(page, 'check-admin-status.html', 'Admin');
@@ -160,7 +160,7 @@ test('help manifest and page-reference files resolve successfully', async ({ pag
     const referenceFiles = await readPageReferenceFiles(page);
 
     expect(referenceFiles).toContain('edit-schedule.html');
-    expect(referenceFiles).toContain('live-game.html');
+    expect(referenceFiles).toContain('live-game-overlay.html');
     expect(referenceFiles).toContain('help-page-reference.html');
     expect(referenceFiles).toEqual(expect.arrayContaining([
         'certificates.html',

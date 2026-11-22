@@ -143,7 +143,7 @@ test.describe('public scoreboard widget embed', () => {
 
         const detailLinks = page.locator('#widget-games article a');
         await expect(detailLinks.nth(0)).toBeVisible();
-        await expect(detailLinks.nth(0)).toHaveAttribute('href', 'live-game.html?teamId=team-1&gameId=live-game');
+        await expect(detailLinks.nth(0)).toHaveAttribute('href', 'live-game-overlay.html?teamId=team-1&gameId=live-game');
         await expect(detailLinks.nth(3)).toBeVisible();
         await expect(detailLinks.nth(3)).toHaveAttribute('href', 'game.html?teamId=team-1&gameId=final-game');
 

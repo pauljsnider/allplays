@@ -3581,7 +3581,7 @@ describe('ScheduleEventDetail assignments', () => {
         title: 'Watch live',
         detail: 'Open the live stream.',
         actionLabel: 'Watch live',
-        url: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1',
+        url: 'https://allplays.ai/live-game-overlay.html?teamId=team-1&gameId=game-1',
         shareTitle: 'Watch live',
         shareText: 'Watch live',
         shareLabel: 'Watch live',
@@ -3632,7 +3632,7 @@ describe('ScheduleEventDetail assignments', () => {
     expect((screen.getByLabelText('Live chat message') as HTMLTextAreaElement).value).toBe('');
 
     fireEvent.click(screen.getByRole('button', { name: 'Watch live' }));
-    expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1');
+    expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/live-game-overlay.html?teamId=team-1&gameId=game-1');
 
     const unsubscribe = liveGameChatServiceMocks.subscribeToLiveGameChat.mock.results[0]?.value as ReturnType<typeof vi.fn>;
     unmount();
