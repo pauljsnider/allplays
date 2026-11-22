@@ -47,10 +47,11 @@ function waitForVisibleState() {
   });
 }
 
-export function useScheduleEventRsvp({ availabilityNote, applyToAllChildren = false, sharedNoteExplicitlyChosen = false }: {
+export function useScheduleEventRsvp({ availabilityNote, applyToAllChildren = false, sharedNoteExplicitlyChosen = false, onSaved }: {
   availabilityNote: string;
   applyToAllChildren?: boolean;
   sharedNoteExplicitlyChosen?: boolean;
+  onSaved?: (response: Exclude<RsvpResponse, 'not_responded'>, eventKey: string) => void;
 }) {
   const { auth, event, childEvents, updateEvents } = useScheduleEventDetailContext();
   const [submitting, setSubmitting] = useState<RsvpResponse | null>(null);
@@ -146,6 +147,7 @@ export function useScheduleEventRsvp({ availabilityNote, applyToAllChildren = fa
 
     await waitForVisibleState();
     if (result?.ok) {
+      onSaved?.(response, event.eventKey);
       interaction.end();
       return;
     }

@@ -508,7 +508,7 @@ const {
   appendUniqueValue,
   buildAutoAcceptedParentLink
 } = require('./parent-invite-auto-link-core.cjs');
-const { resolveAuthenticatedFamilyInviteEmail } = require('./family-invite-identity-core.cjs');
+const { resolveAuthenticatedFamilyInviteIdentity } = require('./family-invite-identity-core.cjs');
 const { createParentInviteHandler } = require('./parent-invite-creation-core.cjs');
 const { createCoParentInviteHandler } = require('./co-parent-invite-core.cjs');
 const { createNativeWebAuthTokenHandler } = require('./native-web-auth-token-core.cjs');
@@ -5276,17 +5276,17 @@ const createCoParentInviteCallableHandler = createCoParentInviteHandler({
 
 exports.createCoParentInvite = functions.https.onCall(createCoParentInviteCallableHandler);
 
-function assertFamilyInviteRecipientEmail(codeData, signedInEmail) {
+function assertFamilyInviteRecipientEmail(codeData, signedInEmail, emailVerified) {
   const invitedEmail = normalizeParentInviteEmail(codeData?.email);
-  if (invitedEmail && !signedInEmail) {
+  if (invitedEmail && signedInEmail && invitedEmail !== signedInEmail) {
+    throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
+  }
+  if (invitedEmail && (!signedInEmail || emailVerified !== true)) {
     throw new functions.https.HttpsError(
       'permission-denied',
       'Verify your email before accepting this family invite.',
       { reason: 'email-verification-required' }
     );
-  }
-  if (invitedEmail && invitedEmail !== signedInEmail) {
-    throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
   }
 }
 
@@ -5317,7 +5317,7 @@ exports.redeemHouseholdInvite = functions.https.onCall(async (data, context) => 
     throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
   }
 
-  const signedInEmail = await resolveAuthenticatedFamilyInviteEmail({
+  const { email: signedInEmail, emailVerified } = await resolveAuthenticatedFamilyInviteIdentity({
     auth: context.auth,
     getUser: (uid) => admin.auth().getUser(uid)
   });
@@ -5328,7 +5328,7 @@ exports.redeemHouseholdInvite = functions.https.onCall(async (data, context) => 
   }
 
   const codeRef = codeQuerySnap.docs[0].ref;
-  assertFamilyInviteRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail);
+  assertFamilyInviteRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail, emailVerified);
   let responsePayload = null;
 
   await firestore.runTransaction(async (transaction) => {
@@ -5348,7 +5348,7 @@ exports.redeemHouseholdInvite = functions.https.onCall(async (data, context) => 
       throw new functions.https.HttpsError('failed-precondition', 'Household invite has expired.');
     }
 
-    assertFamilyInviteRecipientEmail(codeData, signedInEmail);
+    assertFamilyInviteRecipientEmail(codeData, signedInEmail, emailVerified);
 
     const teamId = normalizeFirestoreId(codeData.teamId, 'teamId');
     const playerId = normalizeFirestoreId(codeData.playerId, 'playerId');
@@ -5613,7 +5613,7 @@ exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
   }
 
-  const signedInEmail = await resolveAuthenticatedFamilyInviteEmail({
+  const { email: signedInEmail, emailVerified } = await resolveAuthenticatedFamilyInviteIdentity({
     auth: context.auth,
     getUser: (uid) => admin.auth().getUser(uid)
   });
@@ -5624,7 +5624,7 @@ exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
   }
 
   const codeRef = codeQuerySnap.docs[0].ref;
-  assertFamilyInviteRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail);
+  assertFamilyInviteRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail, emailVerified);
   let responsePayload = null;
 
   await firestore.runTransaction(async (transaction) => {
@@ -5644,7 +5644,7 @@ exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
       throw new functions.https.HttpsError('failed-precondition', 'Co-parent invite has expired.');
     }
 
-    assertFamilyInviteRecipientEmail(codeData, signedInEmail);
+    assertFamilyInviteRecipientEmail(codeData, signedInEmail, emailVerified);
 
     const teamId = normalizeFirestoreId(codeData.teamId, 'teamId');
     const playerId = normalizeFirestoreId(codeData.playerId, 'playerId');
