@@ -1953,6 +1953,19 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
     await expect(rideshareSection.getByText('Leaving after the team talk')).toBeVisible();
     expect(await page.evaluate(() => window.__scheduleCalls.rideshare.some((call) => call.action === 'create' && call.input.seatCapacity === 4 && call.input.direction === 'round-trip'))).toBe(true);
 
+    await page.getByRole('button', { name: 'Availability', exact: true }).click();
+    const availabilitySection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Availability' }) });
+    await expect(availabilitySection.getByRole('heading', { name: 'Availability' })).toBeVisible();
+    await expect(availabilitySection.getByText('Dana Parent')).toBeVisible();
+    await availabilitySection.getByRole('button', { name: 'Add note' }).click();
+    await availabilitySection.getByLabel('Availability note').fill('Arriving after school pickup.');
+    await availabilitySection.getByRole('button', { name: 'Going' }).click();
+    expect(await page.evaluate(() => window.__scheduleCalls.rsvps)).toEqual([
+        { eventKey: 'game-1-player-1', childId: 'player-1', userId: 'user-1', response: 'going', note: 'Arriving after school pickup.' },
+        { eventKey: 'game-1-player-2', childId: 'player-2', userId: 'user-1', response: 'going', note: 'Arriving after school pickup.' }
+    ]);
+    await expect(page.getByText('2 children marked going.')).toBeVisible();
+
     await page.getByRole('button', { name: 'Assignments', exact: true }).click();
     const assignmentsSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Assignments' }) });
     await expect(assignmentsSection.getByText('4 posted · 1 open')).toBeVisible();
@@ -2011,18 +2024,7 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
     await expect(page.getByText('Turnovers')).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
 
-    await page.getByRole('button', { name: 'Availability', exact: true }).click();
-    const availabilitySection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Availability' }) });
-    await expect(availabilitySection.getByRole('heading', { name: 'Availability' })).toBeVisible();
-    await expect(availabilitySection.getByText('Dana Parent')).toBeVisible();
-    await availabilitySection.getByRole('button', { name: 'Add note' }).click();
-    await availabilitySection.getByLabel('Availability note').fill('Arriving after school pickup.');
-    await availabilitySection.getByRole('button', { name: 'Going' }).click();
-    expect(await page.evaluate(() => window.__scheduleCalls.rsvps)).toEqual([
-        { eventKey: 'game-1-player-1', childId: 'player-1', userId: 'user-1', response: 'going', note: 'Arriving after school pickup.' },
-        { eventKey: 'game-1-player-2', childId: 'player-2', userId: 'user-1', response: 'going', note: 'Arriving after school pickup.' }
-    ]);
-    await expect(page.getByText('2 children marked going.')).toBeVisible();
+
 });
 
 test('app Diamond schedule editor locks pinned fields across authenticated reloads and saves other edits', async ({ page, baseURL }) => {
@@ -2210,7 +2212,7 @@ test('app practice more tab uses hub cards and shares event details without a li
 
 test('app schedule assignments supports parent sign up and release', async ({ page, baseURL }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await mockScheduleModules(page);
+    await mockScheduleModules(page, { gameMyRsvp: 'going' });
     await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
     const assignmentsSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Assignments' }) });
@@ -2243,6 +2245,26 @@ test('app schedule assignments supports parent sign up and release', async ({ pa
     await expect(snacksCard.getByRole('button', { name: 'Sign up' })).toBeVisible();
     expect(await page.evaluate(() => window.__scheduleCalls.assignments.some((call) => call.action === 'release' && call.role === 'Snacks'))).toBe(true);
 });
+
+for (const [response, label] of [
+    ['not_responded', 'RSVP needed'],
+    ['maybe', 'Maybe'],
+    ['not_going', "Can't go"]
+]) {
+    test(`app schedule blocks assignment claims when availability is ${response}`, async ({ page, baseURL }) => {
+        const pageErrors = captureUnexpectedPageErrors(page);
+        await mockScheduleModules(page, { gameMyRsvp: response });
+        await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=assignments'), { waitUntil: 'domcontentloaded' });
+        const assignmentsSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Assignments' }) });
+        await waitForScheduleRoute(page, assignmentsSection.getByText('4 posted · 1 open'));
+        expect(pageErrors).toEqual([]);
+        const snacksCard = assignmentsSection.locator('article').filter({ hasText: 'Snacks' });
+        await expect(snacksCard.getByText(`Current availability: ${label}`)).toBeVisible();
+        await snacksCard.getByRole('button', { name: 'Sign up' }).click();
+        expect(await page.evaluate(() => window.__scheduleCalls.assignments.filter((call) => call.action === 'claim'))).toEqual([]);
+        await expect(snacksCard.getByText('You', { exact: true })).toHaveCount(0);
+    });
+}
 
 test('app schedule lets team staff create, edit, and remove assignments', async ({ page, baseURL }) => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -2394,7 +2416,8 @@ test('schedule failure states show errors without trapping users in spinners', a
     await errorPage.setViewportSize({ width: 390, height: 844 });
     await mockScheduleModules(errorPage, {
         rideshareLoadError: 'Rideshare unavailable.',
-        assignmentClaimError: 'Slot already taken.'
+        assignmentClaimError: 'Slot already taken.',
+        gameMyRsvp: 'going'
     });
     await errorPage.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
