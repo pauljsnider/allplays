@@ -47,7 +47,17 @@ const parentHouseholdServiceMock = `
         window.__parentToolLoadCounts.household += 1;
         return {
             linkedPlayers: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9' }],
-            members: []
+            members: [{
+                id: 'member-1',
+                displayName: 'Casey Caregiver',
+                email: 'caregiver@example.com',
+                status: 'active',
+                organizerUserId: 'user-1',
+                relation: 'Caregiver',
+                teamName: 'Bears',
+                playerName: 'Pat Star',
+                playerNumber: '9'
+            }]
         };
     }
     export async function createParentHouseholdMemberInvite() {
@@ -686,6 +696,18 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await page.getByRole('button', { name: 'Share' }).last().click();
     await expect.poll(() => page.evaluate(() => window.__sharedUrls.at(-1)?.url)).toBe('https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1');
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+});
+
+test('mobile household panel identifies the caregiver and player before revocation', async ({ page, baseURL }) => {
+    await mockParentToolsModules(page);
+    await page.goto(appUrl(baseURL, '/parent-tools/household'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByText('Casey Caregiver')).toBeVisible({ timeout: 15000 });
+    await page.getByRole('button', { name: 'Revoke Casey Caregiver access to Pat Star' }).click();
+
+    const confirmation = page.getByRole('dialog', { name: 'Revoke household access?' });
+    await expect(confirmation).toContainText('Casey Caregiver will lose access to Pat Star.');
+    await expect(confirmation.getByRole('button', { name: 'Revoke access' })).toBeVisible();
 });
 
 for (const viewport of [{ width: 320, height: 720 }, { width: 390, height: 844 }]) {
