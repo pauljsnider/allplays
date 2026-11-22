@@ -38,11 +38,20 @@ describe('complete production smoke asset-outage evidence', () => {
         ['response:503:https://allplays.ai/app/assets/main.js?token=secret'],
         ['response:503:https://allplays.ai/app/assets/main.js#fragment'],
         ['console:Failed to load resource: the server responded with a status of 503 ()'],
+        [`response:503:${asset}`],
+        [`response:503:${asset}`, `asset:net::ERR_ABORTED:${asset}`],
+        [`response:503:${asset}`, issues[1]],
+        [...issues, 'response:503:https://allplays.ai/app/assets/other.js'],
         [...issues, 'pageerror:TypeError: broken application'],
         [...issues, 'response:403:https://allplays.ai/private'],
         [...issues, 'asset:net::ERR_ABORTED:https://allplays.ai/app/assets/other.js']
     ])('rejects unrelated or mixed failure evidence %j', (...values) => {
         expect(isAsset503Assertion(assertion(values))).toBe(false);
+    });
+
+    it('requires an aborted request for every accepted asset response', () => {
+        const other = 'https://allplays.ai/app/assets/other.js';
+        expect(isAsset503Assertion(assertion([...issues, `response:503:${other}`, `asset:net::ERR_ABORTED:${other}`]))).toBe(true);
     });
 
     it.each([

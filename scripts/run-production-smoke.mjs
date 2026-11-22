@@ -21,6 +21,8 @@ export function isAsset503Assertion(error) {
     if (!responses.length) return false;
     const urls = responses.map(issue => issue.slice('response:503:'.length));
     if (!urls.every(url => /^https:\/\/allplays\.ai\/app\/assets\/[A-Za-z0-9_-]+\.(?:js|css)$/.test(url))) return false;
+    if (!issues.includes('console:Failed to load resource: the server responded with a status of 503 ()')
+        || !urls.every(url => issues.includes(`asset:net::ERR_ABORTED:${url}`))) return false;
     return issues.every(issue => responses.includes(issue)
         || issue === 'console:Failed to load resource: the server responded with a status of 503 ()'
         || urls.some(url => issue === `asset:net::ERR_ABORTED:${url}`));
