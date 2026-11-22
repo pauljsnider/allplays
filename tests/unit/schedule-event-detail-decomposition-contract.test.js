@@ -98,7 +98,8 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(page).toContain("import { useStaffRsvpBreakdown } from '../hooks/schedule/useStaffRsvpBreakdown';");
         expect(page).toContain("import { RideshareSection } from '../components/schedule/RideshareSection';");
         expect(page).toContain('<ScheduleEventDetailProvider value={{');
-        expect(page).toContain('const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp, sharedNoteExplicitlyChosen });');
+        expect(page).toContain('const rsvpWorkflow = useScheduleEventRsvp({');
+        expect(page).toContain('onSaved: onRsvpSaved');
         expect(page).toContain("const staffRsvpEventScopeKey = `${event.teamId}:${event.id}`;");
         expect(page).toContain('const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(staffRsvpEventScopeKey), [staffRsvpEventScopeKey]);');
         expect(page).toContain('const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);');
@@ -202,7 +203,8 @@ describe('ScheduleEventDetail decomposition contract', () => {
         const section = readRepoFile('apps/app/src/components/schedule/AssignmentsSection.tsx');
 
         expect(page).toContain("import { AssignmentsSection } from '../components/schedule/AssignmentsSection';");
-        expect(page).toContain("<AssignmentsSection onClaimBlocked={() => selectSection('availability')} />");
+        expect(page).toContain('<AssignmentsSection onClaimBlocked={() => {');
+        expect(page).toContain("selectSection('availability');");
         expect(page).not.toMatch(/^function AssignmentsSection\b/m);
         expect(page).not.toMatch(/loadParentScheduleAssignments\(/);
         expect(page).not.toMatch(/claimParentScheduleAssignmentSlot\(/);

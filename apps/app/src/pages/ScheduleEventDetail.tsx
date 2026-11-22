@@ -229,6 +229,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   ));
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [availabilityNote, setAvailabilityNote] = useState('');
+  const [resumeAssignmentsAfterRsvpEventKey, setResumeAssignmentsAfterRsvpEventKey] = useState<string | null>(null);
   const [initialLoadPending, setInitialLoadPending] = useState(() => !initialHandoffRef.current);
   const hasLoadedEventRef = useRef(Boolean(initialHandoffRef.current?.events.length));
   const loadGenerationRef = useRef(0);
@@ -259,6 +260,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   };
 
   const selectSection = (sectionId: EventDetailSectionId) => {
+    if (sectionId !== 'availability') setResumeAssignmentsAfterRsvpEventKey(null);
     setActiveSection(sectionId);
     replaceEventRouteParams({ section: sectionId });
     window.requestAnimationFrame(() => {
@@ -720,6 +722,11 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             onAvailabilityNoteChange={setAvailabilityNote}
             attentionItems={attentionItems}
             onSelectSection={selectSection}
+            onRsvpSaved={(response) => {
+              if (response !== 'going' || resumeAssignmentsAfterRsvpEventKey !== selectedEvent.eventKey) return;
+              setResumeAssignmentsAfterRsvpEventKey(null);
+              selectSection('assignments');
+            }}
             onEventMaterialized={(trackedEventId) => {
               const childId = String(selectedEvent.childId || '').trim();
               const query = new URLSearchParams();
@@ -730,7 +737,12 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
           />
         ) : null}
         {resolvedActiveSection === 'rideshare' ? <RideshareSection /> : null}
-        {resolvedActiveSection === 'assignments' ? <AssignmentsSection onClaimBlocked={() => selectSection('availability')} /> : null}
+        {resolvedActiveSection === 'assignments' ? (
+          <AssignmentsSection onClaimBlocked={() => {
+            setResumeAssignmentsAfterRsvpEventKey(selectedEvent.eventKey);
+            selectSection('availability');
+          }} />
+        ) : null}
         {resolvedActiveSection === 'game' ? (
           <ErrorBoundary name="schedule-game-hub" onRetry={retryScheduleGameHubSection}>
             <Suspense fallback={(
@@ -799,13 +811,14 @@ function PracticePacketPrompt({ event, onOpen }: { event: ParentScheduleEvent; o
   );
 }
 
-function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNoteChange, attentionItems, onSelectSection, onEventMaterialized }: {
+function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNoteChange, attentionItems, onSelectSection, onRsvpSaved, onEventMaterialized }: {
   event: ParentScheduleEvent;
   rsvp: RsvpResponse;
   availabilityNote: string;
   onAvailabilityNoteChange: (note: string) => void;
   attentionItems: AttentionItem[];
   onSelectSection: (sectionId: EventDetailSectionId) => void;
+  onRsvpSaved: (response: Exclude<RsvpResponse, 'not_responded'>) => void;
   onEventMaterialized: (trackedEventId: string) => void;
 }) {
   const { auth, childEvents } = useScheduleEventDetailContext();
@@ -835,7 +848,12 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
   const familyQuestion = familyNames.length === 2
     ? `Are ${familyNames[0]} and ${familyNames[1]} going?`
     : `Are all ${familyNames.length} children going?`;
-  const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp, sharedNoteExplicitlyChosen });
+  const rsvpWorkflow = useScheduleEventRsvp({
+    availabilityNote,
+    applyToAllChildren: useFamilyRsvp,
+    sharedNoteExplicitlyChosen,
+    onSaved: onRsvpSaved
+  });
   const staffRsvpEventScopeKey = `${event.teamId}:${event.id}`;
   const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(staffRsvpEventScopeKey), [staffRsvpEventScopeKey]);
   const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);

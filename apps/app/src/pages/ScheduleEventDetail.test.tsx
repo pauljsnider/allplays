@@ -4795,6 +4795,61 @@ describe('ScheduleEventDetail assignments', () => {
     expect(await screen.findByRole('heading', { name: 'Availability' })).toBeTruthy();
     expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-1&section=availability');
   });
+
+  it.each([
+    'not_responded',
+    'maybe',
+    'not_going'
+  ] as const)('resumes a blocked assignment claim after %s changes to going', async (myRsvp) => {
+    const assignments = [{ role: 'Snacks', value: '', claimable: true, claim: null }];
+    let resolveRsvp!: (summary: unknown) => void;
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ myRsvp, assignments })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentScheduleAssignments.mockResolvedValue(assignments);
+    scheduleServiceMocks.submitParentScheduleRsvp.mockImplementation(() => new Promise((resolve) => {
+      resolveRsvp = resolve;
+    }));
+    scheduleServiceMocks.claimParentScheduleAssignmentSlot.mockResolvedValue(undefined);
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=assignments');
+
+    const assignmentCard = (await screen.findByText('Snacks')).closest('article') as HTMLElement;
+    fireEvent.click(within(assignmentCard).getByRole('button', { name: 'Sign up' }));
+
+    expect(scheduleServiceMocks.claimParentScheduleAssignmentSlot).not.toHaveBeenCalled();
+    expect(await screen.findByRole('heading', { name: 'Availability' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Going' }));
+
+    expect(scheduleServiceMocks.submitParentScheduleRsvp).toHaveBeenCalledTimes(1);
+    expect(scheduleServiceMocks.claimParentScheduleAssignmentSlot).not.toHaveBeenCalled();
+    expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-1&section=availability');
+
+    await act(async () => {
+      resolveRsvp({ going: 1, maybe: 0, notGoing: 0, notResponded: 0, total: 1 });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-1&section=assignments');
+    });
+    const refreshedCard = (await screen.findByText('Snacks')).closest('article') as HTMLElement;
+    expect(within(refreshedCard).queryByText(/Current availability:/)).toBeNull();
+    const signUpButton = within(refreshedCard).getByRole('button', { name: 'Sign up' });
+    expect(signUpButton.getAttribute('data-claim-readiness')).toBe('ready');
+
+    fireEvent.click(signUpButton);
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.claimParentScheduleAssignmentSlot).toHaveBeenCalledTimes(1);
+    });
+    expect(scheduleServiceMocks.claimParentScheduleAssignmentSlot).toHaveBeenCalledWith(
+      expect.objectContaining({ myRsvp: 'going' }),
+      auth.user,
+      'Snacks'
+    );
+  });
 });
 
 describe('ScheduleEventDetail staff RSVP overrides', () => {
