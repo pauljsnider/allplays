@@ -4,7 +4,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   buildInviteSignupUrl,
-  buildLinkedTeamUrl,
+  buildLinkedParentHomeUrl,
+  buildLinkedParentUrl,
+  buildLinkedPlayerUrl,
   buildParentInviteEmailMessage,
   isValidInviteRecipientEmail,
   normalizeInviteEmailType,
@@ -76,11 +78,30 @@ test('builds co-parent invite copy through the canonical accept flow', () => {
   assert.match(message.signupUrl, /app\/#\/accept-invite\?code=COPA1234&type=coparent/);
 });
 
+test('builds a linked player profile link and falls back to the parent home dashboard', () => {
+  assert.equal(
+    buildLinkedPlayerUrl('team 1', 'player 2'),
+    'https://allplays.ai/app/#/players/team%201/player%202'
+  );
+  assert.equal(buildLinkedPlayerUrl('team 1', ''), '');
+  assert.equal(buildLinkedPlayerUrl('', 'player 2'), '');
+  assert.equal(buildLinkedParentHomeUrl(), 'https://allplays.ai/app/#/home');
+  assert.equal(
+    buildLinkedParentUrl({ teamId: 'team 1', playerId: 'player 2' }),
+    'https://allplays.ai/app/#/players/team%201/player%202'
+  );
+  assert.equal(
+    buildLinkedParentUrl({ teamId: 'team 1' }),
+    'https://allplays.ai/app/#/home'
+  );
+});
+
 test('builds an auto-linked parent notification without a consumed acceptance link', () => {
   const invite = {
     code: 'LINK1234',
     type: 'parent_invite',
     teamId: 'team 1',
+    playerId: 'player 2',
     teamName: 'Bears',
     playerName: 'Pat Star',
     relation: 'Guardian',
@@ -93,14 +114,57 @@ test('builds an auto-linked parent notification without a consumed acceptance li
   const initialMessage = buildParentInviteEmailMessage(invite);
   const retryMessage = buildParentInviteEmailMessage({ ...invite });
 
-  assert.equal(buildLinkedTeamUrl('team 1'), 'https://allplays.ai/app/#/teams/team%201');
   assert.equal(initialMessage.messageKind, 'linked');
   assert.equal(retryMessage.messageKind, 'linked');
+  assert.equal(initialMessage.signupUrl, 'https://allplays.ai/app/#/players/team%201/player%202');
   assert.match(initialMessage.subject, /connected to Pat Star/);
+  assert.match(initialMessage.text, /Open Pat Star's profile: https:\/\/allplays\.ai\/app\/#\/players\/team%201\/player%202/);
+  assert.match(initialMessage.text, /see upcoming games and RSVP for the next one/);
   assert.match(initialMessage.text, /No acceptance step or invite code is needed/);
-  assert.match(initialMessage.html, /Open ALL PLAYS/);
-  assert.doesNotMatch(initialMessage.text, /LINK1234|accept-invite/);
-  assert.doesNotMatch(retryMessage.html, /LINK1234|accept-invite/);
+  assert.match(initialMessage.html, /View Pat Star's profile/);
+  assert.match(initialMessage.html, /see upcoming games and RSVP for the next one/);
+  assert.doesNotMatch(initialMessage.text, /LINK1234|accept-invite|#\/teams\//);
+  assert.doesNotMatch(initialMessage.html, /LINK1234|accept-invite|#\/teams\//);
+  assert.doesNotMatch(retryMessage.html, /LINK1234|accept-invite|#\/teams\//);
+});
+
+test('links an auto-linked parent without a playerId to the parent home dashboard, never the team page', () => {
+  const message = buildParentInviteEmailMessage({
+    code: 'LINK1234',
+    type: 'parent_invite',
+    teamId: 'team 1',
+    teamName: 'Bears',
+    playerName: 'Pat Star',
+    relation: 'Guardian',
+    used: true,
+    usedBy: 'parent-1',
+    status: 'accepted',
+    autoAccepted: true
+  });
+
+  assert.equal(message.messageKind, 'linked');
+  assert.equal(message.signupUrl, 'https://allplays.ai/app/#/home');
+  assert.match(message.text, /app\/#\/home/);
+  assert.doesNotMatch(message.text, /#\/teams\//);
+  assert.doesNotMatch(message.html, /#\/teams\//);
+});
+
+test('keeps the brand-new parent invite on the accept-invite signup flow', () => {
+  const message = buildParentInviteEmailMessage({
+    code: 'NEWPAREN',
+    type: 'parent_invite',
+    teamId: 'team 1',
+    playerId: 'player 2',
+    teamName: 'Bears',
+    playerName: 'Pat Star',
+    relation: 'Guardian'
+  });
+
+  assert.equal(message.messageKind, 'invite');
+  assert.match(message.signupUrl, /app\/#\/accept-invite\?code=NEWPAREN&type=parent/);
+  assert.match(message.text, /Invite code: NEWPAREN/);
+  assert.doesNotMatch(message.text, /#\/players\//);
+  assert.doesNotMatch(message.text, /#\/teams\//);
 });
 
 test('queues every supported invite type from the durable on-create trigger', () => {
