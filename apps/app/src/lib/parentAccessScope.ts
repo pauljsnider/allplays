@@ -7,9 +7,13 @@ import type { AuthUser } from './types';
  * the same parent scope, taken at different times: the auth user is hydrated
  * once at sign-in, while the profile keeps changing as invites are accepted
  * or auto-linked. Neither store alone is authoritative, so consumers must
- * union them instead of letting one win. Every link produced here is still
- * validated against the live team/player records by the schedule resolver,
- * so unioning cannot resurrect a removed or inactive child.
+ * union them instead of letting one win. Links the schedule resolver treats
+ * as linked children are still validated against the live team/player
+ * records, and snapshot-only links additionally need live parent membership
+ * on the player document when the profile carries a parent-scope record
+ * (#5252), so unioning cannot resurrect a removed or inactive child. When
+ * the profile carries no parent-scope fields at all it has not hydrated yet
+ * and the snapshot is the only evidence available.
  */
 
 function compactScopeString(value: unknown) {
