@@ -100,7 +100,7 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
 
     it('keeps assignment workflow loading and mutations in the extracted section', () => {
         expect(detailSource).toContain("import { AssignmentsSection } from '../components/schedule/AssignmentsSection';");
-        expect(detailSource).toContain("<AssignmentsSection />");
+        expect(detailSource).toContain("<AssignmentsSection onClaimBlocked={() => selectSection('availability')} />");
         expect(detailSource).not.toMatch(/^function AssignmentsSection\b/m);
         expect(detailSource).not.toMatch(/claimParentScheduleAssignmentSlot\(/);
         expect(detailSource).not.toMatch(/releaseParentScheduleAssignmentClaim\(/);
