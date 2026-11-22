@@ -6,10 +6,16 @@ const productionOrigins = new Set([
 ]);
 
 function isRecaptchaAnchor(value) {
-    const url = new URL(value);
-    return !url.username && !url.password
-        && url.origin === 'https://www.google.com'
-        && url.pathname === '/recaptcha/enterprise/anchor';
+    try {
+        const url = new URL(value);
+        return !url.username && !url.password
+            && url.origin === 'https://www.google.com'
+            && url.pathname === '/recaptcha/enterprise/anchor';
+    } catch {
+        // An attaching frame may have an empty URL. It supplies no evidence,
+        // but must not prevent checking a separate, fully identified anchor.
+        return false;
+    }
 }
 
 // Chromium reports Google's optional third-party storage request as a console

@@ -55,6 +55,26 @@ describe('Google report-only framing diagnostic in app smoke', () => {
         expect(issues).toHaveLength(1);
     });
 
+    it.each(['', 'not a URL', 'about:blank'])('checks later frame evidence after an unrelated frame URL %j', (url) => {
+        const page = fixture();
+        page.frames = () => [
+            { parentFrame: () => ({}), url: () => url },
+            { parentFrame: () => ({}), url: () => 'https://www.google.com/recaptcha/enterprise/anchor' }
+        ];
+        const issues = collectAppRuntimeIssues(page);
+        emit(page, diagnostic);
+        expect(issues).toEqual([]);
+    });
+
+    it.each(['', 'not a URL', 'about:blank'])('never treats an unrelated frame URL %j as anchor evidence', (url) => {
+        const page = fixture();
+        page.frames = () => [{ parentFrame: () => ({}), url: () => url }];
+        const issues = collectAppRuntimeIssues(page);
+        emit(page, diagnostic);
+        expect(issues).toHaveLength(1);
+        expect(issues[0]).toContain('frames=no-anchor');
+    });
+
     it('retains the warning without readable embedded-frame evidence', () => {
         const page = fixture();
         page.frames = () => { throw new Error('unavailable'); };
