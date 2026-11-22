@@ -33,7 +33,7 @@ import { loadAuthProfileViaRest } from './adapters/legacyAuthProfileRest';
 import { raceFirstSuccessfulRead } from './adapters/legacyHedgedRead';
 import { clearAppDataCache } from './appDataCache';
 import { buildFirebaseSdkActionHref } from './appLinks';
-import { getSafeAuthNextRoute } from './authNextRoute';
+import { buildPendingInviteRoute, getSafeAuthNextRoute, isAcceptInviteRoute } from './authNextRoute';
 import { normalizeAppInviteType } from './inviteUrls';
 import { mergeOwnedTeamIds } from './teamAccess';
 import { callNativeFirebaseFunctionWithAuth } from './nativeCallable';
@@ -1508,14 +1508,19 @@ export async function signUpWithEmail(email: string, password: string, activatio
             if (!idToken) {
               throw new Error('Native Firebase auth did not return an ID token.');
             }
-            if (verificationNextRoute) {
-              await queueCurrentUserVerificationEmail(idToken, verificationNextRoute);
+            // Resolved at send time: the signup flow stores a pending family
+            // invite just before it queues the verification email.
+            const nextRoute = resolveVerificationNextRoute(verificationNextRoute);
+            if (nextRoute) {
+              await queueCurrentUserVerificationEmail(idToken, nextRoute);
             } else {
               await queueCurrentUserVerificationEmail(idToken);
             }
           }
-        : async () =>
-            verificationNextRoute ? queueCurrentUserVerificationEmail('', verificationNextRoute) : queueCurrentUserVerificationEmail(),
+        : async () => {
+            const nextRoute = resolveVerificationNextRoute(verificationNextRoute);
+            return nextRoute ? queueCurrentUserVerificationEmail('', nextRoute) : queueCurrentUserVerificationEmail();
+          },
       signOut: nativeSignup
         ? async () => {
             clearNativeAuthSession();
@@ -1803,9 +1808,27 @@ export async function sendResetEmail(email: string) {
   await queuePasswordResetEmail(requireValidAuthEmail(email));
 }
 
+// The verification email may be opened in a different browser or device than
+// the one holding the pending invite in localStorage, so the invite has to
+// travel in the email's continuation route.
+function resolveVerificationNextRoute(requestedVerificationNextRoute = '') {
+  const requestedRoute = getSafeAuthNextRoute(requestedVerificationNextRoute);
+  if (isAcceptInviteRoute(requestedRoute)) return requestedRoute;
+  let pendingInvite = { code: '', type: '' };
+  try {
+    pendingInvite = readPendingInvite();
+  } catch {
+    // Storage can be unavailable; fall back to the requested route.
+  }
+  if (!pendingInvite.code) return requestedRoute;
+  return (
+    buildPendingInviteRoute(pendingInvite.code, normalizeAppInviteType(pendingInvite.type) || 'parent', requestedRoute) || requestedRoute
+  );
+}
+
 export async function resendVerificationEmail(requestedVerificationNextRoute = '') {
   const { queueCurrentUserVerificationEmail } = await loadLegacyAuthEmail();
-  const verificationNextRoute = getSafeAuthNextRoute(requestedVerificationNextRoute);
+  const verificationNextRoute = resolveVerificationNextRoute(requestedVerificationNextRoute);
   const user = getCurrentFirebaseUser();
   if (!user) {
     const idToken = await getNativeAuthIdToken();
