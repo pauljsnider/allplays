@@ -5,6 +5,10 @@ import {
   canApplySubstitution,
   canApplySubstitutionQueue,
   canApplyQueuedSubstitution,
+  availableSubstitutionPlayers,
+  removeQueuedSwap,
+  buildSubstitutionHint,
+  buildSubstitutionConfirm,
   canTrustScoreLogForFinalization,
   reconcileFinalScoreFromLog,
   resolveFinalScoreForCompletion,
@@ -278,5 +282,113 @@ describe('live tracker integrity helpers', () => {
 
     expect(autoFillBody).toContain('persistLocalTrackerState();');
     expect(autoFillBody).toContain("broadcastLineupUpdate('Lineup auto-filled');");
+  });
+});
+
+describe('queue multiple substitution UX (#5258)', () => {
+  it('removes queued players from the pickable lists', () => {
+    expect(availableSubstitutionPlayers(
+      ['p1', 'p2', 'p3', 'p4', 'p5'],
+      ['p6', 'p7'],
+      [{ out: 'p1', in: 'p6' }]
+    )).toEqual({ onCourt: ['p2', 'p3', 'p4', 'p5'], bench: ['p7'] });
+  });
+
+  it('leaves the lists untouched with an empty queue', () => {
+    expect(availableSubstitutionPlayers(['p1', 'p2'], ['p6'], []))
+      .toEqual({ onCourt: ['p1', 'p2'], bench: ['p6'] });
+  });
+
+  it('tolerates a missing queue', () => {
+    expect(availableSubstitutionPlayers(['p1'], ['p6'], null))
+      .toEqual({ onCourt: ['p1'], bench: ['p6'] });
+  });
+
+  it('removes one queued swap by index without mutating the queue', () => {
+    const queue = [{ out: 'p1', in: 'p6' }, { out: 'p2', in: 'p7' }];
+    expect(removeQueuedSwap(queue, 0)).toEqual([{ out: 'p2', in: 'p7' }]);
+    expect(queue).toEqual([{ out: 'p1', in: 'p6' }, { out: 'p2', in: 'p7' }]);
+    expect(removeQueuedSwap(queue, 5)).toEqual(queue);
+  });
+
+  it('names the selected out-player in the queue-mode hint', () => {
+    expect(buildSubstitutionHint({ queueMode: true, pendingOut: 'p1', pendingOutLabel: '#8 Hayes Coppaken' }))
+      .toBe('Now tap his replacement — #8 Hayes Coppaken');
+  });
+
+  it('asks for the out-player when starting from the bench', () => {
+    expect(buildSubstitutionHint({ queueMode: true, pendingIn: 'p6' })).toBe('Now tap who comes out');
+  });
+
+  it('keeps the default hint with no selection in queue mode', () => {
+    expect(buildSubstitutionHint({ queueMode: true })).toBe('Tap player on court, then tap replacement');
+  });
+
+  it('keeps the quick-mode hints unchanged', () => {
+    expect(buildSubstitutionHint({ queueMode: false })).toBe('Tap player on court, then tap replacement');
+    expect(buildSubstitutionHint({ queueMode: false, pendingOut: 'p1' })).toBe('Now tap bench player to swap in');
+  });
+
+  it('shows the queued count on Make Swap and disables it at zero', () => {
+    expect(buildSubstitutionConfirm({ queueMode: true, queueLength: 0, pendingValid: false }))
+      .toEqual({ label: 'Make Swap', disabled: true });
+    expect(buildSubstitutionConfirm({ queueMode: true, queueLength: 1, pendingValid: false }))
+      .toEqual({ label: 'Make Swap (1)', disabled: false });
+    expect(buildSubstitutionConfirm({ queueMode: true, queueLength: 2, pendingValid: false }))
+      .toEqual({ label: 'Make Swap (2)', disabled: false });
+  });
+
+  it('keeps Make Swap enabled while a pair is being built', () => {
+    expect(buildSubstitutionConfirm({ queueMode: true, queueLength: 0, pendingValid: true }))
+      .toEqual({ label: 'Make Swap', disabled: false });
+  });
+
+  it('keeps the quick-mode confirm unchanged', () => {
+    expect(buildSubstitutionConfirm({ queueMode: false, pendingValid: false }))
+      .toEqual({ label: 'Make Swap', disabled: true });
+    expect(buildSubstitutionConfirm({ queueMode: false, pendingValid: true }))
+      .toEqual({ label: 'Make Swap', disabled: false });
+  });
+});
+
+describe('queue multiple substitution UX wiring (#5258)', () => {
+  const liveTrackerSource = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
+
+  it('filters queued players out of the substitution lists', () => {
+    const renderBody = liveTrackerSource.match(/function renderSubPlayers\([\s\S]*?function closeSubModal/)?.[0] || '';
+    expect(renderBody).toContain('availableSubstitutionPlayers(state.onCourt, state.bench, state.subQueue)');
+    expect(renderBody).not.toContain('state.subQueue.some(pair => pair.out === id)');
+    expect(renderBody).not.toContain('state.subQueue.some(pair => pair.in === id)');
+  });
+
+  it('renders a per-swap remove control and wires it to removeQueuedSwap', () => {
+    const renderBody = liveTrackerSource.match(/function renderQueue\([\s\S]*?function autoFillStarters/)?.[0] || '';
+    expect(renderBody).toContain('data-queue-remove');
+    expect(liveTrackerSource).toContain('removeQueuedSwap(state.subQueue, Number(btn.dataset.queueRemove))');
+  });
+
+  it('completes a bench-first pair from the on-court list and toggles selection', () => {
+    const subOutBody = liveTrackerSource.match(/els\.subOut\.addEventListener[\s\S]*?els\.subIn\.addEventListener/)?.[0] || '';
+    expect(subOutBody).toContain('state.pendingIn && !state.pendingOut');
+    expect(subOutBody).toContain('state.pendingOut = state.pendingOut === id ? null : id');
+  });
+
+  it('selects the incoming player first from the bench list', () => {
+    const subInBody = liveTrackerSource.match(/els\.subIn\.addEventListener[\s\S]*?els\.subConfirm\.addEventListener/)?.[0] || '';
+    expect(subInBody).toContain('state.queueMode && !state.pendingOut');
+    expect(subInBody).toContain('state.pendingIn = state.pendingIn === id ? null : id');
+  });
+
+  it('drives the hint and confirm button from the shared helpers', () => {
+    const integritySource = readFileSync(new URL('../../js/live-tracker-integrity.js', import.meta.url), 'utf8');
+    expect(liveTrackerSource).toContain('buildSubstitutionHint({');
+    expect(liveTrackerSource).toContain('buildSubstitutionConfirm({');
+    expect(integritySource).toContain('Now tap who comes out');
+  });
+
+  it('greys out the confirm button while disabled', () => {
+    const livePage = readFileSync(new URL('../../live-tracker.html', import.meta.url), 'utf8');
+    expect(livePage).toContain('id="confirm-sub-mobile"');
+    expect(livePage).toMatch(/id="confirm-sub-mobile"[^>]*disabled:opacity-50/);
   });
 });

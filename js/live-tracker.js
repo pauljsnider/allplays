@@ -11,7 +11,7 @@ import { writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp, runTransa
 import { getAI, getGenerativeModel, GoogleAIBackend } from './firebase-ai.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
-import { canApplySubstitution, applySubstitution, canApplySubstitutionQueue, canApplyQueuedSubstitution } from './live-tracker-integrity.js?v=3';
+import { canApplySubstitution, applySubstitution, canApplySubstitutionQueue, canApplyQueuedSubstitution, availableSubstitutionPlayers, removeQueuedSwap, buildSubstitutionHint, buildSubstitutionConfirm } from './live-tracker-integrity.js?v=4';
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
 import { restoreBadgeScoreboard, buildPersistedResumeClockState, buildResumeLineupElapsedMs, buildResumeLogFromLiveEvents, deriveResumeClockState } from './live-tracker-resume.js?v=9';
 import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
@@ -2471,7 +2471,37 @@ function attachEvents() {
   els.subOut.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-sub-out]');
     if (!btn) return;
-    state.pendingOut = btn.dataset.subOut;
+    const id = btn.dataset.subOut;
+    if (state.queueMode) {
+      // Bench-first (#5258): a bench player is already selected, so tapping
+      // an on-court player completes the pair.
+      if (state.pendingIn && !state.pendingOut) {
+        state.pendingOut = id;
+        if (!canApplyPendingSubstitution()) {
+          alert('That swap conflicts with the current queue. Choose a different player.');
+          state.pendingOut = null;
+          renderSubPlayers();
+          updateSubHint();
+          updateSubButton();
+          return;
+        }
+        state.subQueue.push({ out: state.pendingOut, in: state.pendingIn });
+        state.pendingOut = null;
+        state.pendingIn = null;
+        renderSubPlayers();
+        renderQueue();
+        updateSubHint();
+        updateSubButton();
+        return;
+      }
+      // Tapping the selected player again deselects him.
+      state.pendingOut = state.pendingOut === id ? null : id;
+      renderSubPlayers();
+      updateSubHint();
+      updateSubButton();
+      return;
+    }
+    state.pendingOut = id;
     renderSubPlayers();
     updateSubHint();
     updateSubButton();
@@ -2480,7 +2510,17 @@ function attachEvents() {
   els.subIn.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-sub-in]');
     if (!btn) return;
-    state.pendingIn = btn.dataset.subIn;
+    const id = btn.dataset.subIn;
+    if (state.queueMode && !state.pendingOut) {
+      // Bench-first (#5258): select (or deselect) the incoming player; the
+      // on-court player is picked next.
+      state.pendingIn = state.pendingIn === id ? null : id;
+      renderSubPlayers();
+      updateSubHint();
+      updateSubButton();
+      return;
+    }
+    state.pendingIn = id;
     if (!canApplyPendingSubstitution()) {
       if (state.queueMode && state.pendingOut && state.pendingIn) {
         alert('That swap conflicts with the current queue. Choose a different player.');
@@ -2537,6 +2577,17 @@ function attachEvents() {
     state.pendingIn = null;
     renderSubPlayers();
     renderQueue();
+    updateSubButton();
+  });
+
+  // Remove one queued swap (#5258); both players return to their lists.
+  els.queueList.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-queue-remove]');
+    if (!btn) return;
+    state.subQueue = removeQueuedSwap(state.subQueue, Number(btn.dataset.queueRemove));
+    renderSubPlayers();
+    renderQueue();
+    updateSubHint();
     updateSubButton();
   });
 
@@ -2754,19 +2805,12 @@ function setSubMode(mode) {
 }
 
 function updateSubHint() {
-  if (state.queueMode) {
-    if (!state.pendingOut) {
-      els.subHint.textContent = 'Tap player on court, then tap replacement';
-    } else {
-      els.subHint.textContent = 'Now tap bench player to complete swap';
-    }
-  } else {
-    if (!state.pendingOut) {
-      els.subHint.textContent = 'Tap player on court, then tap replacement';
-    } else {
-      els.subHint.textContent = 'Now tap bench player to swap in';
-    }
-  }
+  els.subHint.textContent = buildSubstitutionHint({
+    queueMode: state.queueMode,
+    pendingOut: state.pendingOut,
+    pendingIn: state.pendingIn,
+    pendingOutLabel: state.pendingOut ? `#${getNum(state.pendingOut)} ${playerName(state.pendingOut)}` : ''
+  });
 }
 
 function canApplyPendingSubstitution() {
@@ -2778,11 +2822,16 @@ function canApplyPendingSubstitution() {
 
 function updateSubButton() {
   const pendingValid = canApplyPendingSubstitution();
+  const confirm = buildSubstitutionConfirm({
+    queueMode: state.queueMode,
+    queueLength: state.subQueue.length,
+    pendingValid
+  });
+  els.subConfirm.disabled = confirm.disabled;
+  els.subConfirm.textContent = confirm.label;
+
   if (state.queueMode) {
     const hasQueue = state.subQueue.length > 0;
-    els.subConfirm.disabled = !hasQueue && !pendingValid;
-    els.subConfirm.textContent = hasQueue ? `Apply ${state.subQueue.length} Swap${state.subQueue.length > 1 ? 's' : ''}` : 'Make Swap';
-
     // Show "Save for Later" button if there's a queue
     if (hasQueue) {
       els.saveQueueLater.classList.remove('hidden');
@@ -2792,8 +2841,6 @@ function updateSubButton() {
       els.subConfirm.classList.add('w-full');
     }
   } else {
-    els.subConfirm.disabled = !pendingValid;
-    els.subConfirm.textContent = 'Make Swap';
     els.saveQueueLater.classList.add('hidden');
     els.subConfirm.classList.add('w-full');
   }
@@ -2817,27 +2864,27 @@ function openSubModal() {
 }
 
 function renderSubPlayers() {
+  // Queued players leave the pickable lists (#5258): the columns always show
+  // exactly who is still available to swap.
+  const available = state.queueMode
+    ? availableSubstitutionPlayers(state.onCourt, state.bench, state.subQueue)
+    : { onCourt: state.onCourt, bench: state.bench };
+
   // Render on-court players
-  els.subOut.innerHTML = state.onCourt.map(id => {
+  els.subOut.innerHTML = available.onCourt.map(id => {
     const selected = state.pendingOut === id;
-    const disabled = state.queueMode && state.subQueue.some(pair => pair.out === id);
-    const cls = disabled
-      ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
-      : selected ? 'bg-teal text-ink border-teal' : 'bg-white border-slate/10';
+    const cls = selected ? 'bg-teal text-ink border-teal' : 'bg-white border-slate/10';
     const p = roster.find(r => r.id === id);
-    return `<button class="w-full px-3 py-2 text-left border-2 rounded-lg font-medium ${cls} flex items-center gap-2" data-sub-out="${id}" ${disabled ? 'disabled aria-disabled="true"' : ''}>
+    return `<button class="w-full px-3 py-2 text-left border-2 rounded-lg font-medium ${cls} flex items-center gap-2" data-sub-out="${id}">
       ${avatarHtml(p, 'h-5 w-5', 'text-[9px]')}
       <span class="truncate">#${escapeHtml(p?.num || '')} ${escapeHtml(p?.name || '')}</span>
     </button>`;
   }).join('') || '<div class="text-xs text-slate-500 text-center py-2">No players on court</div>';
 
   // Render bench players
-  els.subIn.innerHTML = state.bench.map(id => {
+  els.subIn.innerHTML = available.bench.map(id => {
     const selected = state.pendingIn === id;
-    const queueConflict = state.queueMode && (state.pendingOut
-      ? !canApplyQueuedSubstitution(state.onCourt, state.bench, state.subQueue, state.pendingOut, id)
-      : state.subQueue.some(pair => pair.in === id));
-    const disabled = state.onCourt.includes(id) || queueConflict;
+    const disabled = state.onCourt.includes(id);
     const cls = disabled
       ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
       : selected ? 'bg-teal text-ink border-teal' : 'bg-white border-slate/10';
@@ -2951,8 +2998,8 @@ function renderQueue() {
   if (!state.subQueue.length) {
     els.queueList.innerHTML = '<span class="text-slate-500">Build your queue...</span>';
   } else {
-    els.queueList.innerHTML = state.subQueue.map(p => {
-      return `<span class="pill px-2 py-1 bg-teal text-ink font-semibold">#${getNum(p.out)} → #${getNum(p.in)}</span>`;
+    els.queueList.innerHTML = state.subQueue.map((p, index) => {
+      return `<span class="pill px-2 py-1 bg-teal text-ink font-semibold inline-flex items-center gap-1">#${getNum(p.out)} → #${getNum(p.in)}<button type="button" class="font-bold leading-none px-0.5" data-queue-remove="${index}" aria-label="Remove swap #${getNum(p.out)} for #${getNum(p.in)}">×</button></span>`;
     }).join(' ');
   }
 

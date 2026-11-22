@@ -57,6 +57,60 @@ export function canApplyQueuedSubstitution(onCourt = [], bench = [], queue = [],
   return canApplySubstitutionQueue(onCourt, bench, [...(Array.isArray(queue) ? queue : []), { out: outId, in: inId }]);
 }
 
+// Queue Multiple UX (#5258): players already in the queue leave the pickable
+// lists, so the columns always show exactly who is still available to swap.
+export function availableSubstitutionPlayers(onCourt = [], bench = [], queue = []) {
+  const safeQueue = Array.isArray(queue) ? queue : [];
+  const queuedOut = new Set(safeQueue.map(pair => pair?.out).filter(Boolean));
+  const queuedIn = new Set(safeQueue.map(pair => pair?.in).filter(Boolean));
+  return {
+    onCourt: (Array.isArray(onCourt) ? onCourt : []).filter(id => !queuedOut.has(id)),
+    bench: (Array.isArray(bench) ? bench : []).filter(id => !queuedIn.has(id))
+  };
+}
+
+// Queue Multiple UX (#5258): remove one queued swap by index; returns a new
+// queue and never mutates the input. Out-of-range indexes are a no-op.
+export function removeQueuedSwap(queue = [], index) {
+  const safeQueue = Array.isArray(queue) ? [...queue] : [];
+  if (!Number.isInteger(index) || index < 0 || index >= safeQueue.length) {
+    return safeQueue;
+  }
+  safeQueue.splice(index, 1);
+  return safeQueue;
+}
+
+// Queue Multiple UX (#5258): the hint names the selected player so the
+// two-tap build is visible, and works from either side of the modal.
+export function buildSubstitutionHint({ queueMode = false, pendingOut = null, pendingIn = null, pendingOutLabel = '' } = {}) {
+  if (queueMode) {
+    if (pendingOut && !pendingIn) {
+      return `Now tap his replacement — ${pendingOutLabel}`;
+    }
+    if (pendingIn && !pendingOut) {
+      return 'Now tap who comes out';
+    }
+    return 'Tap player on court, then tap replacement';
+  }
+  if (pendingOut) {
+    return 'Now tap bench player to swap in';
+  }
+  return 'Tap player on court, then tap replacement';
+}
+
+// Queue Multiple UX (#5258): the confirm button shows the queued count and
+// is disabled with an empty queue.
+export function buildSubstitutionConfirm({ queueMode = false, queueLength = 0, pendingValid = false } = {}) {
+  if (queueMode) {
+    const count = Number.isFinite(queueLength) ? queueLength : 0;
+    return {
+      label: count > 0 ? `Make Swap (${count})` : 'Make Swap',
+      disabled: count === 0 && !pendingValid
+    };
+  }
+  return { label: 'Make Swap', disabled: !pendingValid };
+}
+
 export function acquireSingleFlightLock(lock) {
   if (!lock || lock.active) return false;
   lock.active = true;
