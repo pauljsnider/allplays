@@ -4792,7 +4792,8 @@ describe('ScheduleEventDetail assignments', () => {
     fireEvent.click(within(assignmentCard).getByRole('button', { name: 'Sign up' }));
 
     expect(scheduleServiceMocks.claimParentScheduleAssignmentSlot).not.toHaveBeenCalled();
-    expect(await screen.findByText('Update event availability to Going before signing up.')).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Availability' })).toBeTruthy();
+    expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-1&section=availability');
   });
 });
 

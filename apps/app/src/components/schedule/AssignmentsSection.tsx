@@ -52,7 +52,7 @@ export function getAssignmentClaimReadiness(myRsvp: unknown): AssignmentClaimRea
   return normalizeRsvpResponse(myRsvp) === 'going' ? 'ready' : 'attendance-follow-up';
 }
 
-export function AssignmentsSection() {
+export function AssignmentsSection({ onClaimBlocked }: { onClaimBlocked?: () => void }) {
   const { auth, event, updateEvents } = useScheduleEventDetailContext();
   const eventRef = useRef(event);
   const eventGenerationRef = useRef(0);
@@ -325,7 +325,10 @@ export function AssignmentsSection() {
                   availabilityLabel={availabilityLabel}
                   canManage={canManageAssignments}
                   onClaim={() => claimSlot(assignment)}
-                  onClaimBlocked={() => setAssignmentStatus('Update event availability to Going before signing up.')}
+                  onClaimBlocked={() => {
+                    onClaimBlocked?.();
+                    setAssignmentStatus('Update event availability to Going before signing up.');
+                  }}
                   onRelease={() => releaseSlot(assignment)}
                   onEdit={() => startEditAssignment(assignment)}
                   onRemove={() => removeAssignment(assignment)}
@@ -355,7 +358,10 @@ export function AssignmentsSection() {
                           availabilityLabel={availabilityLabel}
                           canManage={canManageAssignments}
                           onClaim={() => claimSlot(assignment)}
-                          onClaimBlocked={() => setAssignmentStatus('Update event availability to Going before signing up.')}
+                          onClaimBlocked={() => {
+                            onClaimBlocked?.();
+                            setAssignmentStatus('Update event availability to Going before signing up.');
+                          }}
                           onRelease={() => releaseSlot(assignment)}
                           onEdit={() => startEditAssignment(assignment)}
                           onRemove={() => removeAssignment(assignment)}

@@ -730,7 +730,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
           />
         ) : null}
         {resolvedActiveSection === 'rideshare' ? <RideshareSection /> : null}
-        {resolvedActiveSection === 'assignments' ? <AssignmentsSection /> : null}
+        {resolvedActiveSection === 'assignments' ? <AssignmentsSection onClaimBlocked={() => selectSection('availability')} /> : null}
         {resolvedActiveSection === 'game' ? (
           <ErrorBoundary name="schedule-game-hub" onRetry={retryScheduleGameHubSection}>
             <Suspense fallback={(
