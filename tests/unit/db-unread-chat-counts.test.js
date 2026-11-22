@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { buildDefaultTeamConversation, isDefaultTeamConversation, isUserInConversation } from '../../js/team-chat-conversations.js';
 
 const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
 
@@ -818,5 +819,56 @@ describe('chat user state persistence helpers', () => {
                 }
             }
         }, { merge: true });
+    });
+});
+
+
+describe('unread discovery with list-visible legacy staff records', () => {
+    function setup() {
+        const conversations = [
+            { id: 'group_old-coach', type: 'group', participantRoles: ['staff'], participantIds: ['other-coach'] },
+            { id: 'group_role%3Astaff', type: 'group', participantRoles: ['staff'], participantIds: [] },
+            { id: 'group_current', type: 'group', participantRoles: [], participantIds: ['user:coach'] }
+        ];
+        const getDocs = vi.fn(async () => ({ docs: conversations.map(({ id, ...data }) => ({ id, data: () => data })) }));
+        const deps = {
+            db: {}, collection: (...parts) => parts, query: (...parts) => parts,
+            where: (...parts) => parts, orderBy: (...parts) => parts, limitQuery: (n) => n,
+            getDocs, getDoc: vi.fn(async () => ({ data: () => ({}) })), doc: (...parts) => parts,
+            DEFAULT_CHAT_CONVERSATION_PAGE_SIZE: 50, isDefaultTeamConversation,
+            buildDefaultTeamConversation, isUserInConversation, console: { warn: vi.fn() }
+        };
+        const start = dbSource.indexOf('function normalizeChatConversationPageSize(');
+        const end = dbSource.indexOf('export async function createAuthorizedChatConversation(', start);
+        const source = dbSource.slice(start, end).replace('export async function getChatConversations', 'async function getChatConversations');
+        const getChatConversations = new Function(...Object.keys(deps), `${source}; return getChatConversations;`)(...Object.values(deps));
+        const getUnreadChatCount = vi.fn(async (_user, _team, { conversationId }) => {
+            if (conversationId === 'group_old-coach') throw Object.assign(new Error('Denied'), { code: 'permission-denied' });
+            return 2;
+        });
+        return {
+            getDocs, getUnreadChatCount,
+            load: buildGetUnreadChatCounts({ ...deps, getChatConversations, getUnreadChatCount })
+        };
+    }
+    const options = { conversationLookupByTeam: { 'team-1': { user: { uid: 'coach' }, canModerate: true } } };
+
+    it('counts the accessible channels without scheduling a denied legacy staff read', async () => {
+        const { load, getUnreadChatCount } = setup();
+        await expect(load('coach', ['team-1'], options)).resolves.toEqual({ 'team-1': 6 });
+        expect(getUnreadChatCount.mock.calls.map((call) => call[2].conversationId)).toEqual(['team', 'group_role%3Astaff', 'group_current']);
+    });
+
+    it('keeps failed required discovery unknown rather than publishing zero', async () => {
+        const { load, getDocs, getUnreadChatCount } = setup();
+        getDocs.mockRejectedValue(new Error('offline'));
+        await expect(load('coach', ['team-1'], options)).resolves.toEqual({});
+        expect(getUnreadChatCount).not.toHaveBeenCalled();
+    });
+
+    it('keeps a failed readable-channel count unknown rather than publishing a partial total', async () => {
+        const { load, getUnreadChatCount } = setup();
+        getUnreadChatCount.mockRejectedValue(new Error('offline'));
+        await expect(load('coach', ['team-1'], options)).resolves.toEqual({});
     });
 });

@@ -37,7 +37,7 @@ import {
     resolveSafeProfilePhotoWriteUrl
 } from './safe-image-url.js?v=1';
 import { buildGameWatchShareUrl } from './game-share-links.js?v=2';
-import { shareOrCopy } from './utils.js?v=443391';
+import { shareOrCopy } from './utils.js?v=443392';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=2';
 import { DIAMOND_ENGINE, buildDiamondViewerUrl } from './diamond-scorebook-routing.js?v=2';
 
@@ -263,7 +263,7 @@ function usesCompactPanelLayout() {
 }
 
 function loadOverlayDatabase() {
-    return import('./db.js?v=4433215');
+    return import('./db.js?v=4433216');
 }
 
 function getTimestampMs(value) {
@@ -1169,7 +1169,7 @@ async function initializeChatComposer(database, teamId, gameId) {
 
     try {
         const [authTools, chatTools] = await Promise.all([
-            import('./auth.js?v=4433220'),
+            import('./auth.js?v=4433221'),
             import('./live-game-chat.js?v=4')
         ]);
         uiState.chatServices = {
@@ -2108,7 +2108,7 @@ async function startDemoReplayMode(params) {
         { controllableReplay: true }
     );
     uiState.videoDurationMs = 15_000;
-    const stateTools = await import('./live-game-state.js?v=63');
+    const stateTools = await import('./live-game-state.js?v=64');
     await loadReplaySnapshot({
         getLiveEvents: async () => replayEvents,
         getLiveChatHistory: async () => replayChat,
@@ -2276,7 +2276,7 @@ async function startRealMode(params) {
         const [database, videoTools, stateTools, historyTools] = await Promise.all([
             loadOverlayDatabase(),
             import('./live-game-video.js?v=443321'),
-            import('./live-game-state.js?v=63'),
+            import('./live-game-state.js?v=64'),
             import('./live-game-overlay-history.js?v=4')
         ]);
         uiState.optionalTeamStatus = 'pending';
