@@ -202,7 +202,7 @@ describe('ScheduleEventDetail decomposition contract', () => {
         const section = readRepoFile('apps/app/src/components/schedule/AssignmentsSection.tsx');
 
         expect(page).toContain("import { AssignmentsSection } from '../components/schedule/AssignmentsSection';");
-        expect(page).toContain('<AssignmentsSection />');
+        expect(page).toContain("<AssignmentsSection onClaimBlocked={() => selectSection('availability')} />");
         expect(page).not.toMatch(/^function AssignmentsSection\b/m);
         expect(page).not.toMatch(/loadParentScheduleAssignments\(/);
         expect(page).not.toMatch(/claimParentScheduleAssignmentSlot\(/);
