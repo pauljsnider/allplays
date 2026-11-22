@@ -65,6 +65,7 @@ const parentHouseholdServiceMock = `
     }
     export async function revokeParentHouseholdMemberAccess() {
         window.__householdRevocations.push('member-1');
+        if (window.__householdRevocationShouldFail) throw new Error('Unable to revoke household access.');
         window.__householdRevoked = true;
         return { success: true };
     }
@@ -272,6 +273,7 @@ async function mockParentToolsModules(page, { paymentsEnabled = false } = {}) {
         window.__familyCreates = [];
         window.__householdRevoked = false;
         window.__householdRevocations = [];
+        window.__householdRevocationShouldFail = false;
         window.__clipboardShouldFail = false;
         window.__parentToolLoadCounts = {
             fees: 0,
@@ -719,6 +721,30 @@ test('mobile household panel confirms revocation and removes the caregiver membe
     await expect(page.getByText('No active household access')).toBeVisible();
     await expect(page.getByText('Casey Caregiver')).toHaveCount(0);
     await expect(page.getByText('Pat Star')).toHaveCount(1);
+});
+
+test('mobile household panel preserves membership when revocation fails', async ({ page, baseURL }) => {
+    await mockParentToolsModules(page);
+    await page.goto(appUrl(baseURL, '/parent-tools/household'), { waitUntil: 'domcontentloaded' });
+    await page.evaluate(() => {
+        window.__householdRevocationShouldFail = true;
+    });
+
+    const householdPanel = page.locator('section.app-card').filter({ hasText: 'Active household access' });
+    await expect(householdPanel.getByText('Casey Caregiver')).toBeVisible({ timeout: 15000 });
+    await expect(householdPanel).toContainText('Caregiver for Pat Star #9 - Bears');
+    await page.getByRole('button', { name: 'Revoke Casey Caregiver access to Pat Star' }).click();
+    await page.getByRole('dialog', { name: 'Revoke household access?' }).getByRole('button', { name: 'Revoke access' }).click();
+
+    await expect(page.getByText('Unable to revoke household access.')).toBeVisible();
+    await expect(householdPanel.getByText('Casey Caregiver')).toBeVisible();
+    await expect(householdPanel).toContainText('Caregiver for Pat Star #9 - Bears');
+
+    const householdLoadsBeforeRefresh = await page.evaluate(() => window.__parentToolLoadCounts.household);
+    await page.getByRole('button', { name: 'Refresh' }).first().click();
+    await expect.poll(() => page.evaluate(() => window.__parentToolLoadCounts.household)).toBe(householdLoadsBeforeRefresh + 1);
+    await expect(householdPanel.getByText('Casey Caregiver')).toBeVisible();
+    await expect(householdPanel).toContainText('Caregiver for Pat Star #9 - Bears');
 });
 
 for (const viewport of [{ width: 320, height: 720 }, { width: 390, height: 844 }]) {
