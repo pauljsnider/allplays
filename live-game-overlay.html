@@ -1155,6 +1155,24 @@
       transform: translateX(-50%);
     }
 
+    .replay-clip {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--paper);
+    }
+    .replay-clip[hidden] { display: none; }
+    .replay-clip .replay-button { flex-shrink: 0; }
+    body[data-highlight="true"] .connection-message { top: 300px; }
+    body[data-landscape="true"][data-highlight="true"] #replay-controls { height: 92px; }
+    body[data-landscape="true"][data-highlight="true"] .video-layer {
+      bottom: calc(var(--land-bottom) + 100px);
+    }
+    body[data-landscape="true"] .replay-clip { padding-inline: 8px; }
+
     .replay-controls[hidden] {
       display: none;
     }
@@ -2399,6 +2417,10 @@
     </div>
 
     <section id="replay-controls" class="replay-controls" aria-label="Replay controls" hidden>
+      <div id="replay-clip" class="replay-clip" hidden>
+        <span id="replay-clip-label" role="status"></span>
+        <button id="replay-full-game" class="replay-button" type="button">Watch full game</button>
+      </div>
       <button id="replay-restart" class="replay-button" data-kind="restart" type="button" aria-label="Restart replay">↺</button>
       <button id="replay-play" class="replay-button" data-kind="playback" data-replay-action="play" type="button" aria-label="Play replay">
         <svg class="replay-control-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -2487,6 +2509,6 @@
   </main>
 
   <span id="screen-reader-update" class="visually-hidden" aria-live="polite"></span>
-  <script type="module" src="js/live-game-overlay.js?v=75"></script>
+  <script type="module" src="js/live-game-overlay.js?v=76"></script>
 </body>
 </html>
