@@ -14,6 +14,71 @@ function emit(page, text) {
     page.emit('console', { type: () => 'error', text: () => text });
 }
 
+function pendingAnchor({ url = 'https://www.google.com/recaptcha/enterprise/anchor', type = 'document', navigation = true, parent = true, top } = {}) {
+    const page = fixture(top);
+    const frame = { parentFrame: () => parent ? {} : null, url: () => 'about:blank', isDetached: () => false };
+    page.frames = () => [frame];
+    const request = { url: () => url, resourceType: () => type, isNavigationRequest: () => navigation, frame: () => frame };
+    const issues = collectAppRuntimeIssues(page, [], { includeApiFailures: true });
+    page.emit('request', request);
+    return { page, frame, request, issues };
+}
+
+describe('Google child navigation evidence before frame commit', () => {
+    it('recognizes the exact diagnostic after an observed child anchor navigation', () => {
+        const { page, issues } = pendingAnchor();
+        emit(page, diagnostic);
+        expect(issues).toEqual([]);
+    });
+
+    it.each([
+        { type: 'fetch' }, { navigation: false }, { parent: false },
+        { url: 'https://www.google.com.evil.test/recaptcha/enterprise/anchor' },
+        { url: 'https://www.google.com/other' },
+        { url: 'https://user:secret@www.google.com/recaptcha/enterprise/anchor' },
+        { url: 'http://www.google.com/recaptcha/enterprise/anchor' },
+        { top: 'https://evil.test/app/' },
+        { top: 'https://user:secret@allplays.ai/app/' }
+    ])('does not trust unrelated or unscoped navigation: %j', options => {
+        const { page, issues } = pendingAnchor(options);
+        emit(page, diagnostic);
+        expect(issues).toHaveLength(1);
+    });
+
+    it.each(['requestfailed', 'framedetached', 'child-navigation', 'top-navigation'])('retires stale navigation evidence after %s', event => {
+        const { page, frame, request, issues } = pendingAnchor();
+        if (event === 'requestfailed') {
+            request.failure = () => ({ errorText: 'net::ERR_FAILED' });
+            page.emit(event, request);
+        } else if (event === 'framedetached') page.emit(event, frame);
+        else if (event === 'top-navigation') page.emit('framenavigated', { parentFrame: () => null });
+        else {
+            frame.url = () => 'https://example.test/';
+            page.emit('framenavigated', frame);
+        }
+        emit(page, diagnostic);
+        expect(issues.some(issue => issue.startsWith('console:'))).toBe(true);
+    });
+
+    it('retains enforced CSP and network failures with valid navigation evidence', () => {
+        const { page, request, issues } = pendingAnchor();
+        emit(page, diagnostic);
+        emit(page, diagnostic.replace('report-only ', ''));
+        page.emit('response', { status: () => 503, request: () => request, url: request.url });
+        expect(issues.map(issue => issue.split(':')[0])).toEqual(['console', 'response']);
+    });
+
+    it.each(['new-navigation', 'detached-state', 'unreadable-frame', 'changed-top'])('rejects unusable navigation evidence: %s', state => {
+        const { page, frame, request, issues } = pendingAnchor();
+        if (state === 'new-navigation') page.emit('request', { ...request, url: () => 'https://example.test/' });
+        else if (state === 'detached-state') frame.isDetached = () => true;
+        else if (state === 'unreadable-frame') frame.isDetached = () => { throw new Error('unavailable'); };
+        else page.url = () => 'https://evil.test/app/';
+        emit(page, diagnostic);
+        expect(issues).toHaveLength(1);
+    });
+});
+
 describe('Google report-only framing diagnostic in app smoke', () => {
     it('classifies only the observed non-enforcing warning with an embedded anchor', () => {
         const page = fixture();
