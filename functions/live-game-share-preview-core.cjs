@@ -108,6 +108,14 @@ function buildLiveGameShareParams({ teamId, gameId, replay, clipStart, clipEnd, 
   return params;
 }
 
+// Unmarked share URLs were already sent to families; retain their original viewer.
+function resolveLiveGameShareViewer({ trackingEngine, overlay } = {}) {
+  if (trackingEngine === 'diamond-v2') return 'live-game-diamond-v2.html';
+  return overlay === true || overlay === 'true' || overlay === '1'
+    ? 'live-game-overlay.html'
+    : 'live-game.html';
+}
+
 function buildSharePreviewHtml({ metadata, redirectUrl, shareUrl, openLabel } = {}) {
   const title = escapeHtml(metadata?.title || 'ALL PLAYS');
   const description = escapeHtml(metadata?.description || 'Open on ALL PLAYS.');
@@ -175,5 +183,6 @@ module.exports = {
   compactText,
   escapeHtml,
   formatLiveGameStart,
-  resolveTimeZone
+  resolveTimeZone,
+  resolveLiveGameShareViewer
 };
