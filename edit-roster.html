@@ -1496,10 +1496,11 @@
             }
         }
 
-        async function loadOptionalRosterData(label, loader, fallback) {
+        async function loadOptionalRosterData(label, loader, fallback, onError = () => {}) {
             try {
                 return await loader();
             } catch (err) {
+                onError(err);
                 console.warn(`Failed to load ${label}:`, err);
                 return fallback;
             }
@@ -1538,17 +1539,29 @@
             }
 
             if (!isCurrentLoad()) return;
-            // Show authoritative player data immediately. Contacts/actions are explicitly
-            // pending, not an empty or complete result, until their reads finish.
-            tbody.innerHTML = players.length ? players.map((player) => `
-                <tr><td class="px-6 py-4">${escapeHtml(player.number || '-')}</td>
-                <td class="px-6 py-4">${escapeHtml(player.name || 'Unnamed player')}</td>
-                <td class="px-6 py-4 text-sm text-gray-500" role="status">Loading contacts and actions…</td></tr>
-            `).join('') : '<tr><td colspan="3" class="px-6 py-4 text-center text-gray-500">No players yet.</td></tr>';
+            // Player controls depend only on the authorized roster, not optional
+            // schedule, registration, or historical account-directory enrichment.
+            latestRosterPlayers = players;
+            latestRosterStaffEntries = buildRosterStaffEntries(currentTeam, [currentUser].filter(Boolean));
+            renderRosterStaffSection(latestRosterStaffEntries);
+            const parentsByPlayerId = new Map();
+            players.forEach((player) => {
+                const contacts = collectRosterParentContacts(player, {
+                    includeImported: false,
+                    includeFamilyContacts: false
+                });
+                if (contacts.length) parentsByPlayerId.set(player.id, contacts);
+            });
+            latestRosterPrintContactsByPlayerId = parentsByPlayerId;
+            renderRosterRows(players, { parentsByPlayerId, detailsPending: true });
+            let detailsUnavailable = false;
+            const loadDetail = (label, loader) => loadOptionalRosterData(label, loader, [], () => {
+                detailsUnavailable = true;
+            });
             const [games, membershipRequests, forms] = await Promise.all([
-                loadOptionalRosterData('games for roster links', () => getGames(currentTeamId), []),
-                loadOptionalRosterData('parent membership requests for roster', () => listTeamParentMembershipRequests(currentTeamId), []),
-                loadOptionalRosterData('registration forms for roster', () => listTeamRegistrationForms(currentTeamId), [])
+                loadDetail('games for roster links', () => getGames(currentTeamId)),
+                loadDetail('parent membership requests for roster', () => listTeamParentMembershipRequests(currentTeamId)),
+                loadDetail('registration forms for roster', () => listTeamRegistrationForms(currentTeamId))
             ]);
             if (!isCurrentLoad()) return;
             latestRosterStaffEntries = buildRosterStaffEntries(currentTeam, [currentUser].filter(Boolean));
@@ -1578,45 +1591,40 @@
                 return bDate - aDate;
             })[0]?.id || null;
 
-            const parentsByPlayerId = new Map();
-            players.forEach((player) => {
-                const contacts = collectRosterParentContacts(player, {
-                    includeImported: false,
-                    includeFamilyContacts: false
+            // User-directory lists are global-admin-only. Team managers already
+            // have their permitted contacts from player/private roster records.
+            if (currentUser?.isAdmin === true) {
+                const legacyTeamParentUsers = await loadDetail(
+                    'legacy parent users for roster team',
+                    () => getUsersByParentTeamId(currentTeamId)
+                );
+                const legacyParentResults = [];
+                for (let i = 0; i < players.length; i += 10) {
+                    if (!isCurrentLoad()) return;
+                    const batch = players.slice(i, i + 10);
+                    legacyParentResults.push(...await Promise.all(batch.map(async (player) => {
+                        const playerId = String(player?.id || '').trim();
+                        if (!playerId) return { playerId, contacts: [] };
+                        const users = await loadDetail(
+                            `legacy parent users for ${playerId}`,
+                            () => getUsersByParentPlayerKey(`${currentTeamId}::${playerId}`)
+                        );
+                        return { playerId, contacts: buildLegacyParentContactsFromUsers([...legacyTeamParentUsers, ...users], playerId) };
+                    })));
+                }
+                legacyParentResults.forEach(({ playerId, contacts }) => {
+                    if (!playerId || contacts.length === 0) return;
+                    const existing = parentsByPlayerId.get(playerId) || [];
+                    const seen = new Set(existing.map((contact) => normalizeEmail(contact.email) || contact.userId).filter(Boolean));
+                    contacts.forEach((contact) => {
+                        const key = normalizeEmail(contact.email) || contact.userId;
+                        if (key && seen.has(key)) return;
+                        existing.push(contact);
+                        if (key) seen.add(key);
+                    });
+                    parentsByPlayerId.set(playerId, existing);
                 });
-                if (contacts.length) parentsByPlayerId.set(player.id, contacts);
-            });
-            const legacyTeamParentUsers = await loadOptionalRosterData(
-                'legacy parent users for roster team',
-                () => getUsersByParentTeamId(currentTeamId),
-                []
-            );
-            const legacyParentResults = [];
-            for (let i = 0; i < players.length; i += 10) {
-                const batch = players.slice(i, i + 10);
-                legacyParentResults.push(...await Promise.all(batch.map(async (player) => {
-                    const playerId = String(player?.id || '').trim();
-                    if (!playerId) return { playerId, contacts: [] };
-                    const users = await loadOptionalRosterData(
-                        `legacy parent users for ${playerId}`,
-                        () => getUsersByParentPlayerKey(`${currentTeamId}::${playerId}`),
-                        []
-                    );
-                    return { playerId, contacts: buildLegacyParentContactsFromUsers([...legacyTeamParentUsers, ...users], playerId) };
-                })));
             }
-            legacyParentResults.forEach(({ playerId, contacts }) => {
-                if (!playerId || contacts.length === 0) return;
-                const existing = parentsByPlayerId.get(playerId) || [];
-                const seen = new Set(existing.map((contact) => normalizeEmail(contact.email) || contact.userId).filter(Boolean));
-                contacts.forEach((contact) => {
-                    const key = normalizeEmail(contact.email) || contact.userId;
-                    if (key && seen.has(key)) return;
-                    existing.push(contact);
-                    if (key) seen.add(key);
-                });
-                parentsByPlayerId.set(playerId, existing);
-            });
             const pendingRequestsByPlayerId = new Map();
             (membershipRequests || [])
                 .filter((request) => request?.status === 'pending')
@@ -1628,6 +1636,17 @@
             if (!isCurrentLoad()) return;
             latestRosterPrintContactsByPlayerId = parentsByPlayerId;
 
+            renderRosterRows(players, { parentsByPlayerId, pendingRequestsByPlayerId, latestGameId, detailsUnavailable });
+        }
+
+        function renderRosterRows(players, {
+            parentsByPlayerId = new Map(),
+            pendingRequestsByPlayerId = new Map(),
+            latestGameId = null,
+            detailsPending = false,
+            detailsUnavailable = false
+        } = {}) {
+            const tbody = document.getElementById('roster-list');
             if (players.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="3" class="px-6 py-4 text-center text-gray-500">No players yet.</td></tr>';
                 return;
@@ -1699,7 +1718,7 @@
                                                 <div class="flex flex-wrap items-center justify-between gap-2 rounded border border-indigo-100 bg-white px-2 py-1.5 text-xs text-gray-700">
                                                     <div>
                                                         <div class="font-semibold text-gray-900">${escapeHtml(contact.name || contact.email)}</div>
-                                                        <div class="text-[11px] text-gray-500">${escapeHtml(contact.email)} · ${escapeHtml(contact.relation || 'Parent')} · ${linked ? 'Linked account' : 'Invite needed'}</div>
+                                                        <div class="text-[11px] text-gray-500">${escapeHtml(contact.email)} · ${escapeHtml(contact.relation || 'Parent')} · ${linked ? 'Linked account' : 'Contact saved'}</div>
                                                     </div>
                                                     ${linked ? '<span class="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-bold text-emerald-800">Accepted</span>' : `
                                                         <button type="button"
@@ -1766,6 +1785,8 @@
                             ${importedContactBlock}
                             ${householdContactBlock}
                             ${pendingRequestBlock}
+                            ${detailsUnavailable ? '<p class="mt-1 text-xs text-amber-700" role="status">Some roster details could not be loaded. <button type="button" class="retry-roster-details-btn underline">Retry</button></p>' : ''}
+                            ${detailsPending ? '<p class="mt-1 text-xs text-gray-500" role="status">Loading additional roster details…</p>' : ''}
                         </td>
                     <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <div class="flex items-center gap-3 justify-end">
@@ -1817,6 +1838,10 @@
 
             document.querySelectorAll('.edit-btn').forEach(btn => {
                 btn.addEventListener('click', (e) => startEditPlayer(players.find(p => p.id === e.target.dataset.id)));
+            });
+
+            document.querySelectorAll('.retry-roster-details-btn').forEach(btn => {
+                btn.addEventListener('click', () => loadRoster());
             });
 
             document.querySelectorAll('.remove-parent-btn').forEach(btn => {
