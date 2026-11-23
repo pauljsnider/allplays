@@ -64,6 +64,26 @@ function processLiveEventSnapshots(snapshots) {
 }
 
 describe('live game overlay page', () => {
+    it.each(['recorded', 'youtube'].flatMap(videoMode => [false, true].flatMap(stale => [1, 50].map(replaySpeed => ({ videoMode, stale, replaySpeed })))))('corrects $videoMode media past the highlight end (stale=$stale, speed=$replaySpeed)', ({ videoMode, stale, replaySpeed }) => {
+        const uiState = {
+            isReplay: true, replaySession: {}, replaySpeed, replayPlaying: replaySpeed > 2,
+            replayClip: { status: 'active' }, replayElapsedMs: 2000, videoMode
+        };
+        const syncReplayMedia = vi.fn();
+        const sync = new Function('uiState', 'elements', 'replayBounds', 'isStaleMediaSeekEcho',
+            'resetReplayToElapsed', 'pauseReplay', 'syncReplayMedia', `
+            ${extractFunction(source, 'syncReplayFromMediaTime')}
+            return syncReplayFromMediaTime;
+        `)(uiState, { recordedVideo: { currentTime: 7, paused: true } },
+            () => ({ startMs: 2000, endMs: 4000 }), () => stale,
+            (time) => { uiState.replayElapsedMs = time; }, () => { uiState.replayPlaying = false; }, syncReplayMedia);
+
+        sync(7000, {});
+        expect(uiState.replayElapsedMs).toBe(4000);
+        expect(syncReplayMedia).toHaveBeenCalledWith({ seek: true, play: false });
+        expect(uiState.replayPlaying).toBe(false);
+    });
+
     it.each(['recorded', 'youtube'])('seeks %s media back inside the highlight when provider controls seek before its start', (videoMode) => {
         const uiState = {
             isReplay: true, replaySession: {}, replaySpeed: 1, replayPlaying: false,
@@ -170,7 +190,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
         expect(html).toMatch(/\.panel-tab\s*\{[^}]*min-width:\s*44px;/);
-        expect(html).toContain('js/live-game-overlay.js?v=77');
+        expect(html).toContain('js/live-game-overlay.js?v=78');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {

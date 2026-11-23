@@ -1438,7 +1438,6 @@ function isStaleMediaSeekEcho(mediaElapsedMs) {
 
 function syncReplayFromMediaTime(mediaElapsedMs, stateTools) {
     if (!uiState.isReplay || !uiState.replaySession || !stateTools || !Number.isFinite(mediaElapsedMs)) return false;
-    if (uiState.replayPlaying && uiState.replaySpeed > 2) return false;
     if (!['none', 'active'].includes(uiState.replayClip.status)) {
         if (uiState.videoMode === 'recorded' && !elements.recordedVideo.paused) pauseReplay();
         return true;
@@ -1455,16 +1454,17 @@ function syncReplayFromMediaTime(mediaElapsedMs, stateTools) {
         // Preserve the provider's playing/paused state while correcting its position.
         return false;
     }
-    if (isStaleMediaSeekEcho(mediaElapsedMs)) return true;
     if (uiState.replayClip.status === 'active' && mediaElapsedMs >= endMs) {
         const needsStop = uiState.replayPlaying || (uiState.videoMode === 'recorded' && !elements.recordedVideo.paused);
         if (uiState.replayElapsedMs !== endMs) resetReplayToElapsed(endMs, stateTools);
-        if (needsStop) {
-            pauseReplay();
+        if (needsStop) pauseReplay({ syncMedia: false });
+        if (needsStop || mediaElapsedMs > endMs) {
             void syncReplayMedia({ seek: true, play: false });
         }
         return true;
     }
+    if (isStaleMediaSeekEcho(mediaElapsedMs)) return true;
+    if (uiState.replayPlaying && uiState.replaySpeed > 2) return false;
     const boundedElapsedMs = Math.min(endMs, Math.max(startMs, mediaElapsedMs));
     if (isStaleMediaSeekEcho(boundedElapsedMs)) return true;
 

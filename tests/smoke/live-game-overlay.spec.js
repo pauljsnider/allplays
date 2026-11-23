@@ -2954,9 +2954,12 @@ for (const viewport of [{ width: 568, height: 320 }, { width: 844, height: 390 }
 
 
 for (const provider of ['recorded', 'youtube']) {
-    for (const playing of [false, true]) {
-        test(`highlight corrects ${provider} provider seeks before the start while ${playing ? 'playing' : 'paused'}`, async ({ page, baseURL }) => {
+    for (const [bound, playing] of ['start', 'end'].flatMap(bound => [false, true].map(playing => [bound, playing]))) {
+        test(`highlight corrects ${provider} provider seeks ${bound === 'start' ? 'before the start' : 'past the end'} while ${playing ? 'playing' : 'paused'}`, async ({ page, baseURL }) => {
             const errors = collectPageErrors(page);
+            const mediaTime = bound === 'start' ? 0 : 7;
+            const correctedTime = bound === 'start' ? 2 : 6;
+            const staysPlaying = bound === 'start' && playing;
             await page.addInitScript((recorded) => {
                 window.__OVERLAY_RECORDED_VIDEO__ = recorded;
                 window.__OVERLAY_COMPLETED_GAME__ = true;
@@ -2988,18 +2991,20 @@ for (const provider of ['recorded', 'youtube']) {
             if (playing) await page.locator('#replay-play').click();
             await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', playing ? 'pause' : 'play');
             if (provider === 'recorded') {
-                await page.locator('#overlay-recorded-video').evaluate(video => { video.currentTime = 0; });
-                await expect.poll(() => page.locator('#overlay-recorded-video').evaluate(video => video.currentTime)).toBeGreaterThanOrEqual(2);
-                expect(await page.locator('#overlay-recorded-video').evaluate(video => video.paused)).toBe(!playing);
+                await page.locator('#overlay-recorded-video').evaluate((video, time) => { video.currentTime = time; }, mediaTime);
+                const position = () => page.locator('#overlay-recorded-video').evaluate(video => video.currentTime);
+                if (bound === 'start') await expect.poll(position).toBeGreaterThanOrEqual(correctedTime);
+                else await expect.poll(position).toBe(correctedTime);
+                expect(await page.locator('#overlay-recorded-video').evaluate(video => video.paused)).toBe(!staysPlaying);
             } else {
                 await page.evaluate(() => { window.__OVERLAY_YOUTUBE_COMMANDS__ = []; });
                 const frame = page.frames().find(frame => frame.url().startsWith('https://www.youtube.com/embed/'));
-                await frame.evaluate((playing) => parent.postMessage(JSON.stringify({
-                    event: 'infoDelivery', info: { currentTime: 0, duration: 8, playerState: playing ? 1 : 2 }
-                }), '*'), playing);
-                await expect.poll(() => page.evaluate(() => window.__OVERLAY_YOUTUBE_COMMANDS__.filter(command => command.func === 'seekTo').at(-1)?.args[0])).toBe(2);
+                await frame.evaluate(({ playing, mediaTime }) => parent.postMessage(JSON.stringify({
+                    event: 'infoDelivery', info: { currentTime: mediaTime, duration: 8, playerState: playing ? 1 : 2 }
+                }), '*'), { playing, mediaTime });
+                await expect.poll(() => page.evaluate(() => window.__OVERLAY_YOUTUBE_COMMANDS__.filter(command => command.func === 'seekTo').at(-1)?.args[0])).toBe(correctedTime);
             }
-            await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', playing ? 'pause' : 'play');
+            await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', staysPlaying ? 'pause' : 'play');
             expect(errors).toEqual([]);
         });
     }
