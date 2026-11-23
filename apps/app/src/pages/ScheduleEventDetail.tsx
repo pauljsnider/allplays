@@ -200,6 +200,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const decodedTeamId = decodeURIComponent(teamId);
   const decodedEventId = decodeURIComponent(eventId);
+  const eventRouteScopeKey = `${decodedTeamId}::${decodedEventId}`;
   const sharedGamePath = String(searchParams.get('sharedGamePath') || '').trim();
   const [GameHubSection, setGameHubSection] = useState(() => LazyScheduleGameHubSection);
   const [GameHubPrivateNotes, setGameHubPrivateNotes] = useState(() => LazyScheduleGameHubPrivateNotes);
@@ -227,8 +228,15 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const [activeSection, setActiveSection] = useState<EventDetailSectionId | null>(() => (
     searchParams.has('section') ? parseEventDetailSection(searchParams.get('section')) : null
   ));
+  const activeSectionIntentRef = useRef<EventDetailSectionId | null>(activeSection);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [availabilityNote, setAvailabilityNote] = useState('');
+  // RSVP persistence retains the originating Availability callback, so the
+  // continuation must read current navigation and event identity from refs.
+  const resumeAssignmentsAfterRsvpRef = useRef<{ eventKey: string; routeScopeKey: string } | null>(null);
+  const selectedEventKeyRef = useRef<string | null>(null);
+  const eventRouteScopeKeyRef = useRef(eventRouteScopeKey);
+  const selectSectionRef = useRef<(sectionId: EventDetailSectionId) => void>(() => undefined);
   const [initialLoadPending, setInitialLoadPending] = useState(() => !initialHandoffRef.current);
   const hasLoadedEventRef = useRef(Boolean(initialHandoffRef.current?.events.length));
   const loadGenerationRef = useRef(0);
@@ -259,6 +267,8 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   };
 
   const selectSection = (sectionId: EventDetailSectionId) => {
+    activeSectionIntentRef.current = sectionId;
+    if (sectionId !== 'availability') resumeAssignmentsAfterRsvpRef.current = null;
     setActiveSection(sectionId);
     replaceEventRouteParams({ section: sectionId });
     window.requestAnimationFrame(() => {
@@ -267,14 +277,19 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   };
 
   const selectChild = (childId: string) => {
+    resumeAssignmentsAfterRsvpRef.current = null;
     setSelectedChildId(childId);
     replaceEventRouteParams({ childId });
   };
 
   const selectGameHubPanel = (panel: GameHubPanelId | null) => {
+    resumeAssignmentsAfterRsvpRef.current = null;
+    activeSectionIntentRef.current = 'game';
     setActiveSection('game');
     replaceEventRouteParams({ section: 'game', panel });
   };
+
+  selectSectionRef.current = selectSection;
 
   const applyLoadedEvent = useCallback((result: ParentScheduleLoadResult, loadGeneration: number) => {
     setEvents(result.events);
@@ -408,7 +423,10 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   }, [auth.user?.uid, decodedTeamId, decodedEventId]);
 
   useEffect(() => {
-    setActiveSection(searchParams.has('section') ? parseEventDetailSection(searchParams.get('section')) : null);
+    const routeSection = searchParams.has('section') ? parseEventDetailSection(searchParams.get('section')) : null;
+    activeSectionIntentRef.current = routeSection;
+    if (routeSection !== 'availability') resumeAssignmentsAfterRsvpRef.current = null;
+    setActiveSection(routeSection);
     const routeChildId = searchParams.get('childId') || '';
     if (routeChildId) {
       setSelectedChildId(routeChildId);
@@ -419,6 +437,17 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     if (!events.length) return null;
     return events.find((event) => event.childId === selectedChildId) || events[0];
   }, [events, selectedChildId]);
+  selectedEventKeyRef.current = selectedEvent?.eventKey || null;
+  eventRouteScopeKeyRef.current = eventRouteScopeKey;
+  if (
+    resumeAssignmentsAfterRsvpRef.current
+    && (
+      resumeAssignmentsAfterRsvpRef.current.eventKey !== selectedEventKeyRef.current
+      || resumeAssignmentsAfterRsvpRef.current.routeScopeKey !== eventRouteScopeKey
+    )
+  ) {
+    resumeAssignmentsAfterRsvpRef.current = null;
+  }
 
   useLayoutEffect(() => {
     setAvailabilityNote(selectedEvent?.myRsvpNote || '');
@@ -720,6 +749,17 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             onAvailabilityNoteChange={setAvailabilityNote}
             attentionItems={attentionItems}
             onSelectSection={selectSection}
+            onRsvpSaved={(response, savedEventKey) => {
+              if (
+                response !== 'going'
+                || activeSectionIntentRef.current !== 'availability'
+                || resumeAssignmentsAfterRsvpRef.current?.eventKey !== savedEventKey
+                || resumeAssignmentsAfterRsvpRef.current.routeScopeKey !== eventRouteScopeKeyRef.current
+                || selectedEventKeyRef.current !== savedEventKey
+              ) return;
+              resumeAssignmentsAfterRsvpRef.current = null;
+              selectSectionRef.current('assignments');
+            }}
             onEventMaterialized={(trackedEventId) => {
               const childId = String(selectedEvent.childId || '').trim();
               const query = new URLSearchParams();
@@ -730,7 +770,15 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
           />
         ) : null}
         {resolvedActiveSection === 'rideshare' ? <RideshareSection /> : null}
-        {resolvedActiveSection === 'assignments' ? <AssignmentsSection onClaimBlocked={() => selectSection('availability')} /> : null}
+        {resolvedActiveSection === 'assignments' ? (
+          <AssignmentsSection onClaimBlocked={() => {
+            resumeAssignmentsAfterRsvpRef.current = {
+              eventKey: selectedEvent.eventKey,
+              routeScopeKey: eventRouteScopeKey
+            };
+            selectSection('availability');
+          }} />
+        ) : null}
         {resolvedActiveSection === 'game' ? (
           <ErrorBoundary name="schedule-game-hub" onRetry={retryScheduleGameHubSection}>
             <Suspense fallback={(
@@ -799,13 +847,14 @@ function PracticePacketPrompt({ event, onOpen }: { event: ParentScheduleEvent; o
   );
 }
 
-function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNoteChange, attentionItems, onSelectSection, onEventMaterialized }: {
+function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNoteChange, attentionItems, onSelectSection, onRsvpSaved, onEventMaterialized }: {
   event: ParentScheduleEvent;
   rsvp: RsvpResponse;
   availabilityNote: string;
   onAvailabilityNoteChange: (note: string) => void;
   attentionItems: AttentionItem[];
   onSelectSection: (sectionId: EventDetailSectionId) => void;
+  onRsvpSaved: (response: Exclude<RsvpResponse, 'not_responded'>, eventKey: string) => void;
   onEventMaterialized: (trackedEventId: string) => void;
 }) {
   const { auth, childEvents } = useScheduleEventDetailContext();
@@ -835,7 +884,12 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
   const familyQuestion = familyNames.length === 2
     ? `Are ${familyNames[0]} and ${familyNames[1]} going?`
     : `Are all ${familyNames.length} children going?`;
-  const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp, sharedNoteExplicitlyChosen });
+  const rsvpWorkflow = useScheduleEventRsvp({
+    availabilityNote,
+    applyToAllChildren: useFamilyRsvp,
+    sharedNoteExplicitlyChosen,
+    onSaved: onRsvpSaved
+  });
   const staffRsvpEventScopeKey = `${event.teamId}:${event.id}`;
   const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(staffRsvpEventScopeKey), [staffRsvpEventScopeKey]);
   const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);

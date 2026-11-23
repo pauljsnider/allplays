@@ -59,7 +59,8 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
 
     it('keeps parent RSVP mutation, optimistic update, and rollback logic in useScheduleEventRsvp', () => {
         expect(detailSource).toContain("import { useScheduleEventRsvp } from '../hooks/schedule/useScheduleEventRsvp';");
-        expect(detailSource).toContain('const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp, sharedNoteExplicitlyChosen });');
+        expect(detailSource).toContain('const rsvpWorkflow = useScheduleEventRsvp({');
+        expect(detailSource).toContain('onSaved: onRsvpSaved');
         expect(detailSource).not.toMatch(/const\s+\[rsvpSubmitting\b/);
         expect(detailSource).not.toMatch(/submitParentScheduleRsvp\(/);
 
@@ -100,7 +101,8 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
 
     it('keeps assignment workflow loading and mutations in the extracted section', () => {
         expect(detailSource).toContain("import { AssignmentsSection } from '../components/schedule/AssignmentsSection';");
-        expect(detailSource).toContain("<AssignmentsSection onClaimBlocked={() => selectSection('availability')} />");
+        expect(detailSource).toContain('<AssignmentsSection onClaimBlocked={() => {');
+        expect(detailSource).toContain("selectSection('availability');");
         expect(detailSource).not.toMatch(/^function AssignmentsSection\b/m);
         expect(detailSource).not.toMatch(/claimParentScheduleAssignmentSlot\(/);
         expect(detailSource).not.toMatch(/releaseParentScheduleAssignmentClaim\(/);

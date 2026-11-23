@@ -1175,6 +1175,34 @@ test('edit roster renders players when optional registration and parent reads ar
     await expect(page.locator('#registration-review-list')).toContainText('No registration forms configured for this team.');
 });
 
+for (const isAdmin of [false, true]) {
+    test(`edit roster actions work before optional reads settle (global admin: ${isAdmin})`, async ({ page, baseURL }) => {
+        const pageErrors = await collectPageErrors(page);
+        await routeCommonPageStubs(page);
+        await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, route => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB.replace('isAdmin: false', `isAdmin: ${isAdmin}`) }));
+        const dbStub = ROSTER_DB_STUB
+            .replace('export async function getGames() {\n    return [];\n}', 'export async function getGames() { return new Promise(resolve => { window.__releaseRosterGames = () => resolve([]); }); }')
+            .replace('export async function getUsersByParentTeamId() {\n    return [];\n}', 'export async function getUsersByParentTeamId() { window.__directoryReads = (window.__directoryReads || 0) + 1; throw permissionDenied(); }')
+            .replace('export async function getUsersByParentPlayerKey() {\n    return [];\n}', 'export async function getUsersByParentPlayerKey() { window.__directoryReads = (window.__directoryReads || 0) + 1; throw permissionDenied(); }');
+        await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, route => route.fulfill({ status: 200, contentType: 'application/javascript', body: dbStub }));
+        await page.route(/\/js\/team-access\.js(?:\?v=\d+)?$/, route => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ACCESS_STUB }));
+        await page.route(/\/js\/roster-profile-fields\.js(?:\?v=\d+)?$/, route => route.fulfill({ status: 200, contentType: 'application/javascript', body: ROSTER_PROFILE_FIELDS_STUB }));
+        await page.route(/\/js\/edit-roster-registration-import\.js(?:\?v=\d+)?$/, route => route.fulfill({ status: 200, contentType: 'application/javascript', body: REGISTRATION_IMPORT_STUB }));
+        await page.goto(`${baseURL}/edit-roster.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+        expect(pageErrors).toEqual([]);
+        await expect(page.locator('#roster-list .edit-btn')).toHaveCount(2);
+        await expect(page.locator('#roster-list')).toContainText('Loading additional roster details');
+        await page.locator('#roster-list .edit-btn').first().click();
+        await expect(page.locator('#playerName')).toHaveValue('Avery Carter');
+        await page.locator('#playerName').fill('Unsaved edit');
+        await page.evaluate(() => window.__releaseRosterGames());
+        await expect(page.locator('#roster-list')).toContainText('Some roster details could not be loaded');
+        await expect(page.locator('#playerName')).toHaveValue('Unsaved edit');
+        expect(await page.evaluate(() => window.__directoryReads || 0)).toBe(isAdmin ? 3 : 0);
+        expect(pageErrors).toEqual([]);
+    });
+}
+
 test('team chat falls back to the team-wide channel when conversation listing is denied', async ({ page, baseURL }) => {
     const pageErrors = await collectPageErrors(page);
     await routeCommonPageStubs(page);

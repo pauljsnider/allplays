@@ -61,13 +61,13 @@ describe('access code atomic redemption guard', () => {
         expect(source).toContain("codeData.type !== 'parent_invite'");
         expect(source).toContain('codeData.used || codeData.revoked === true || codeData.status ===');
         expect(source).toContain('isInviteExpired(codeData.expiresAt, nowMillis())');
-        expect(source).toContain('resolveAuthenticatedFamilyInviteEmail({');
-        expect(source).toContain('assertRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail, HttpsError)');
-        expect(source).toContain('assertRecipientEmail(codeData, signedInEmail, HttpsError)');
+        expect(source).toContain('resolveAuthenticatedFamilyInviteIdentity({');
+        expect(source).toContain('assertRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail, emailVerified, HttpsError)');
+        expect(source).toContain('assertRecipientEmail(codeData, signedInEmail, emailVerified, HttpsError)');
         expect(source).not.toContain('data?.authEmail');
-        expect(source.indexOf('assertRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail, HttpsError)'))
+        expect(source.indexOf('assertRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail, emailVerified, HttpsError)'))
             .toBeLessThan(source.indexOf('firestore.runTransaction(async (transaction) =>'));
-        expect(source.indexOf('assertRecipientEmail(codeData, signedInEmail, HttpsError)'))
+        expect(source.indexOf('assertRecipientEmail(codeData, signedInEmail, emailVerified, HttpsError)'))
             .toBeLessThan(source.indexOf('transaction.set(userRef'));
         expect(source.indexOf('hasAdminInviteIssuerAccess({'))
             .toBeLessThan(source.indexOf('transaction.set(userRef'));
