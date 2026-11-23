@@ -32,9 +32,30 @@ function buildInviteSignupUrl(code, inviteType, origin = ALLPLAYS_ORIGIN) {
   return buildAcceptInviteAppUrl(normalizedCode, normalizedType, origin);
 }
 
-function buildLinkedTeamUrl(teamId, origin = ALLPLAYS_ORIGIN) {
+function buildLinkedPlayerUrl(teamId, playerId, origin = ALLPLAYS_ORIGIN) {
   const normalizedTeamId = String(teamId || '').trim();
-  return buildAppUrl(`/teams/${encodeURIComponent(normalizedTeamId)}`, {}, origin);
+  const normalizedPlayerId = String(playerId || '').trim();
+  if (!normalizedTeamId || !normalizedPlayerId) return '';
+  return buildAppUrl(
+    `/players/${encodeURIComponent(normalizedTeamId)}/${encodeURIComponent(normalizedPlayerId)}`,
+    {},
+    origin
+  );
+}
+
+function buildLinkedParentHomeUrl(origin = ALLPLAYS_ORIGIN) {
+  return buildAppUrl('/home', {}, origin);
+}
+
+// A linked parent lands on the linked player's profile, which the player
+// detail page already serves to linked parents (loadParentPlayerDetail /
+// isLinkedParent) and which surfaces that child's upcoming games and RSVP
+// actions. The team page is not a valid fallback: it permission-walls the
+// schedule for parents, so an invite without a playerId falls back to the
+// parent home dashboard instead — never to the team page.
+function buildLinkedParentUrl(invite = {}, origin = ALLPLAYS_ORIGIN) {
+  return buildLinkedPlayerUrl(invite.teamId, invite.playerId, origin)
+    || buildLinkedParentHomeUrl(origin);
 }
 
 function isLinkedParentInvite(invite = {}) {
@@ -62,14 +83,17 @@ function buildParentInviteEmailMessage(invite = {}, origin = ALLPLAYS_ORIGIN) {
   const teamName = String(invite.teamName || '').trim();
   const relation = String(invite.relation || '').trim();
   if (isLinkedParentInvite(invite)) {
-    const linkedTeamUrl = buildLinkedTeamUrl(invite.teamId, origin);
+    const linkedPlayerUrl = buildLinkedParentUrl(invite, origin);
     const context = teamName ? `${playerName} on ${teamName}` : playerName;
     const subject = `You're connected to ${playerName} on ALL PLAYS`;
     const intro = `Your ALL PLAYS account was linked to ${context}${relation ? ` as ${relation}` : ''}.`;
+    const nextStep = 'From there you can see upcoming games and RSVP for the next one.';
     const text = [
       intro,
       '',
-      `Open ALL PLAYS: ${linkedTeamUrl}`,
+      `Open ${playerName}'s profile: ${linkedPlayerUrl}`,
+      '',
+      nextStep,
       '',
       'No acceptance step or invite code is needed.'
     ].join('\n');
@@ -77,7 +101,8 @@ function buildParentInviteEmailMessage(invite = {}, origin = ALLPLAYS_ORIGIN) {
       <div style="font-family:Arial,sans-serif;line-height:1.5;color:#111827;max-width:560px;margin:0 auto">
         <h1 style="font-size:24px;margin:0 0 16px">You're connected on ALL PLAYS</h1>
         <p>${escapeHtml(intro)}</p>
-        <p><a href="${escapeHtml(linkedTeamUrl)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#4f46e5;color:#ffffff;text-decoration:none;font-weight:700">Open ALL PLAYS</a></p>
+        <p><a href="${escapeHtml(linkedPlayerUrl)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#4f46e5;color:#ffffff;text-decoration:none;font-weight:700">View ${escapeHtml(playerName)}'s profile</a></p>
+        <p>${escapeHtml(nextStep)}</p>
         <p style="font-size:13px;color:#4b5563">No acceptance step or invite code is needed.</p>
       </div>
     `.trim();
@@ -85,7 +110,7 @@ function buildParentInviteEmailMessage(invite = {}, origin = ALLPLAYS_ORIGIN) {
       subject,
       text,
       html,
-      signupUrl: linkedTeamUrl,
+      signupUrl: linkedPlayerUrl,
       inviteType,
       messageKind: 'linked'
     };
@@ -131,7 +156,9 @@ function buildParentInviteEmailMessage(invite = {}, origin = ALLPLAYS_ORIGIN) {
 module.exports = {
   ALLPLAYS_ORIGIN,
   buildInviteSignupUrl,
-  buildLinkedTeamUrl,
+  buildLinkedParentHomeUrl,
+  buildLinkedParentUrl,
+  buildLinkedPlayerUrl,
   buildParentInviteEmailMessage,
   isValidInviteRecipientEmail,
   isLinkedParentInvite,
