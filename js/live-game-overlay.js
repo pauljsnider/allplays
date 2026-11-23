@@ -1442,6 +1442,8 @@ function syncReplayFromMediaTime(mediaElapsedMs, stateTools) {
         if (uiState.videoMode === 'recorded' && !elements.recordedVideo.paused) pauseReplay();
         return true;
     }
+    // Native time is read directly; YouTube may deliver old seek acknowledgements.
+    if (uiState.videoMode === 'youtube' && isStaleMediaSeekEcho(mediaElapsedMs)) return true;
     const { startMs, endMs } = replayBounds();
     if (uiState.replayClip.status === 'active' && mediaElapsedMs < startMs) {
         if (uiState.replayElapsedMs !== startMs) resetReplayToElapsed(startMs, stateTools);
@@ -1463,10 +1465,8 @@ function syncReplayFromMediaTime(mediaElapsedMs, stateTools) {
         }
         return true;
     }
-    if (isStaleMediaSeekEcho(mediaElapsedMs)) return true;
     if (uiState.replayPlaying && uiState.replaySpeed > 2) return false;
     const boundedElapsedMs = Math.min(endMs, Math.max(startMs, mediaElapsedMs));
-    if (isStaleMediaSeekEcho(boundedElapsedMs)) return true;
 
     const allowedDriftMs = uiState.replayPlaying ? 1800 : 250;
     if (Math.abs(boundedElapsedMs - uiState.replayElapsedMs) <= allowedDriftMs) return false;
@@ -1493,10 +1493,11 @@ function handleYouTubeReplayMessage(event, stateTools) {
     if (!telemetry) return;
 
     updateReplayVideoDuration(telemetry.durationMs);
-    const staleSeekEcho = syncReplayFromMediaTime(telemetry.currentTimeMs, stateTools);
-    if (staleSeekEcho) {
+    const staleSeekEcho = isStaleMediaSeekEcho(telemetry.currentTimeMs);
+    const handledMediaTime = syncReplayFromMediaTime(telemetry.currentTimeMs, stateTools);
+    if (handledMediaTime) {
         if (telemetry.playerState === 1 && uiState.replayClip.status !== 'none' &&
-            (uiState.replayClip.status !== 'active' || telemetry.currentTimeMs >= replayBounds().endMs)) {
+            (uiState.replayClip.status !== 'active' || (!staleSeekEcho && telemetry.currentTimeMs >= replayBounds().endMs))) {
             sendYouTubeCommand('pauseVideo');
         }
         return;

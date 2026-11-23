@@ -64,7 +64,7 @@ function processLiveEventSnapshots(snapshots) {
 }
 
 describe('live game overlay page', () => {
-    it.each(['recorded', 'youtube'].flatMap(videoMode => [false, true].flatMap(stale => [1, 50].map(replaySpeed => ({ videoMode, stale, replaySpeed })))))('corrects $videoMode media past the highlight end (stale=$stale, speed=$replaySpeed)', ({ videoMode, stale, replaySpeed }) => {
+    it.each(['recorded', 'youtube'].flatMap(videoMode => [1, 50].map(replaySpeed => ({ videoMode, replaySpeed }))))('corrects $videoMode media past the highlight end (speed=$replaySpeed)', ({ videoMode, replaySpeed }) => {
         const uiState = {
             isReplay: true, replaySession: {}, replaySpeed, replayPlaying: replaySpeed > 2,
             replayClip: { status: 'active' }, replayElapsedMs: 2000, videoMode
@@ -75,7 +75,7 @@ describe('live game overlay page', () => {
             ${extractFunction(source, 'syncReplayFromMediaTime')}
             return syncReplayFromMediaTime;
         `)(uiState, { recordedVideo: { currentTime: 7, paused: true } },
-            () => ({ startMs: 2000, endMs: 4000 }), () => stale,
+            () => ({ startMs: 2000, endMs: 4000 }), () => false,
             (time) => { uiState.replayElapsedMs = time; }, () => { uiState.replayPlaying = false; }, syncReplayMedia);
 
         sync(7000, {});

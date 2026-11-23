@@ -2957,6 +2957,7 @@ for (const provider of ['recorded', 'youtube']) {
     for (const [bound, playing] of ['start', 'end'].flatMap(bound => [false, true].map(playing => [bound, playing]))) {
         test(`highlight corrects ${provider} provider seeks ${bound === 'start' ? 'before the start' : 'past the end'} while ${playing ? 'playing' : 'paused'}`, async ({ page, baseURL }) => {
             const errors = collectPageErrors(page);
+            await page.clock.install();
             const mediaTime = bound === 'start' ? 0 : 7;
             const correctedTime = bound === 'start' ? 2 : 6;
             const staysPlaying = bound === 'start' && playing;
@@ -2988,6 +2989,8 @@ for (const provider of ['recorded', 'youtube']) {
             await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&clipStart=2000&clipEnd=6000`);
             expect(errors).toEqual([]);
             await expect(page.locator('#replay-clip-label')).toHaveText('Highlight · 0:02–0:06');
+            // Let initial seek acknowledgements settle before simulating provider controls.
+            await page.clock.fastForward(2000);
             if (playing) await page.locator('#replay-play').click();
             await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', playing ? 'pause' : 'play');
             if (provider === 'recorded') {
@@ -3070,6 +3073,28 @@ for (const provider of ['recorded', 'youtube']) {
         const full = new URL(await page.evaluate(() => window.__CLIP_SHARES__[1].url));
         expect(full.searchParams.has('clipStart')).toBe(false);
         expect(full.searchParams.has('clipEnd')).toBe(false);
+        expect(errors).toEqual([]);
+    });
+}
+
+for (const playerState of [1, 2]) {
+    test(`restarting a highlight ignores a delayed YouTube acknowledgement at the old end (state=${playerState})`, async ({ page, baseURL }) => {
+        const errors = collectPageErrors(page);
+        await stubRealOverlayModules(page);
+        await stubYouTubeEmbed(page, { duration: 8 });
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&clipStart=2000&clipEnd=4000`);
+        expect(errors).toEqual([]);
+        await expect(page.locator('#replay-clip-label')).toHaveText('Highlight · 0:02–0:04');
+        await page.locator('#replay-progress').fill('100');
+        await page.getByRole('button', { name: 'Replay highlight', exact: true }).click();
+        await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', 'pause');
+        const frame = page.frames().find(frame => frame.url().startsWith('https://www.youtube.com/embed/'));
+        await frame.evaluate((playerState) => parent.postMessage(JSON.stringify({
+            event: 'infoDelivery', info: { currentTime: 4, duration: 8, playerState }
+        }), '*'), playerState);
+        await page.waitForTimeout(50);
+        await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', 'pause');
+        await expect(page.locator('#replay-progress')).not.toHaveValue('100');
         expect(errors).toEqual([]);
     });
 }
