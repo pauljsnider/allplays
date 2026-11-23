@@ -58,7 +58,7 @@ test.describe('help topic and workflow pages', () => {
         });
 
         await expect(page.getByRole('link', { name: 'Team Page' })).toHaveAttribute('href', 'team.html#teamId=team-123');
-        await expect(page.getByRole('link', { name: 'Game Viewer' })).toHaveAttribute('href', 'live-game.html#teamId=team-123&gameId=game-456');
+        await expect(page.getByRole('link', { name: 'Game Viewer' })).toHaveAttribute('href', 'live-game-overlay.html?teamId=team-123&gameId=game-456');
         await expect(page.getByRole('link', { name: 'Team Chat' })).toHaveAttribute('href', 'team-chat.html#teamId=team-123');
     });
 

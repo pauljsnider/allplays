@@ -163,12 +163,12 @@ describe('FamilyShare', () => {
       ? {
           kind: 'live',
           label: 'Watch Live',
-          href: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-live'
+          href: 'https://allplays.ai/live-game-overlay.html?teamId=team-1&gameId=game-live'
         }
       : {
           kind: 'replay',
           label: 'Watch Replay',
-          href: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-replay&replay=true'
+          href: 'https://allplays.ai/live-game-overlay.html?teamId=team-1&gameId=game-replay&replay=true'
         });
     familyShareMocks.loadFamilyShareView.mockResolvedValue({
       tokenId: 'token-1',
@@ -186,8 +186,8 @@ describe('FamilyShare', () => {
 
     const liveLink = await screen.findByRole('link', { name: 'Watch Live: vs Tigers' });
     const replayLink = screen.getByRole('link', { name: 'Watch Replay: vs Owls' });
-    expect(liveLink.getAttribute('href')).toBe('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-live');
-    expect(replayLink.getAttribute('href')).toBe('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-replay&replay=true');
+    expect(liveLink.getAttribute('href')).toBe('https://allplays.ai/live-game-overlay.html?teamId=team-1&gameId=game-live');
+    expect(replayLink.getAttribute('href')).toBe('https://allplays.ai/live-game-overlay.html?teamId=team-1&gameId=game-replay&replay=true');
     expect(liveLink.getAttribute('rel')).toBe('noopener noreferrer');
     expect(replayLink.getAttribute('target')).toBe('_blank');
     expect(screen.queryByText('Final 0-0')).toBeNull();
