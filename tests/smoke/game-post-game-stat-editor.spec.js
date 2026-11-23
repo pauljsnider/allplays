@@ -1821,7 +1821,7 @@ test("a YouTube replay uses a compact preview that clearly marks the video as av
   await expect(preview).toBeVisible();
   await expect(preview).toHaveAttribute(
     "href",
-    "live-game.html?teamId=team-1&gameId=game-1&replay=true",
+    "live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true",
   );
   await expect(preview.locator("img")).toHaveAttribute(
     "src",
