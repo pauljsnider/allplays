@@ -2694,9 +2694,7 @@ test("completed-game manager links, replaces, and removes a YouTube replay", asy
   await expect(page.locator("#replay-video-status")).toContainText(
     "Replay linked",
   );
-  await expect(
-    replayAction.getByRole("link", { name: "Watch Replay" }),
-  ).toBeVisible();
+  await expect(replayAction.locator("[data-replay-video-preview]")).toBeVisible();
 
   let store = await readStore(page);
   expect(store.game.replayVideo).toMatchObject({
