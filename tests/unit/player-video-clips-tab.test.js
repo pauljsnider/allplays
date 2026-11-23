@@ -70,7 +70,7 @@ describe('player video clips tab', () => {
                 title: 'Metadata three',
                 gameDate: '4/25/2026',
                 playLabel: 'Three pointer',
-                url: 'live-game.html?teamId=team-1&gameId=game-1&replay=true&clipStart=10000&clipEnd=35000',
+                url: 'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true&clipStart=10000&clipEnd=35000',
                 thumbnailUrl: 'https://cdn.example.com/poster.jpg',
                 gameLabel: 'Tigers'
             },
@@ -79,7 +79,7 @@ describe('player video clips tab', () => {
                 title: 'Saved replay clip',
                 gameDate: '4/25/2026',
                 playLabel: 'Highlight',
-                url: 'live-game.html?teamId=team-1&gameId=game-1&replay=true&clipStart=40000&clipEnd=52000',
+                url: 'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true&clipStart=40000&clipEnd=52000',
                 thumbnailUrl: 'https://cdn.example.com/poster.jpg',
                 gameLabel: 'Tigers'
             },
@@ -88,7 +88,7 @@ describe('player video clips tab', () => {
                 title: 'Fast break',
                 gameDate: '4/25/2026',
                 playLabel: 'Layup',
-                url: 'live-game.html?teamId=team-1&gameId=game-1&replay=true&clipStart=1000&clipEnd=9000',
+                url: 'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true&clipStart=1000&clipEnd=9000',
                 thumbnailUrl: 'https://cdn.example.com/poster.jpg',
                 gameLabel: 'Tigers'
             }

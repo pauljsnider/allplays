@@ -198,9 +198,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="fullscreen-toggle"');
         expect(html).toContain('id="game-actions-menu"');
         expect(html).toContain('aria-haspopup="menu"');
-        expect(html).toContain('id="classic-view-link"');
-        expect(html).toContain('id="classic-view-link-label"');
-        expect(html).toContain('<span id="classic-view-link-label">Game Center</span>');
+        expect(html).not.toContain('id="classic-view-link"');
         expect(html).toContain('id="match-report-link"');
         expect(html).toContain('id="game-details-link"');
         expect(html).toContain('id="replay-access-gate"');
@@ -210,7 +208,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
         expect(html).toMatch(/\.panel-tab\s*\{[^}]*min-width:\s*44px;/);
-        expect(html).toContain('js/live-game-overlay.js?v=80');
+        expect(html).toContain('js/live-game-overlay.js?v=81');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
@@ -222,7 +220,7 @@ describe('live game overlay page', () => {
         expect(source).toContain('stateTools.applyResetEventState');
         expect(source).toContain('reconcileOverlayLiveEvents');
         expect(source).toContain("from './live-game-overlay-model.js?v=34'");
-        expect(source).toContain("import('./live-game-video.js?v=443320')");
+        expect(source).toContain("import('./live-game-video.js?v=443321')");
         expect(source).not.toContain('loadPublicGameResetIdentity');
         expect(source).toContain('resolvePublicProjectionVideoOptions');
         expect(source).toContain('getSafeOverlayProviderUrl(publicUrl)');
@@ -238,7 +236,7 @@ describe('live game overlay page', () => {
         expect(source).toContain("import('./auth.js?v=4433220')");
         expect(source).toContain("import('./live-game-chat.js?v=4')");
         expect(currentLiveGameSource).toContain("from './live-game-overlay-model.js?v=34'");
-        expect(currentLiveGameSource).toContain("from './live-game-video.js?v=443320'");
+        expect(currentLiveGameSource).toContain("from './live-game-video.js?v=443321'");
         expect(currentLiveGameSource).toContain("from './live-game-chat.js?v=4'");
         expect(modelSource).toContain("from './game-replay-video.js?v=3'");
         expect(videoSource).toContain("from './game-replay-video.js?v=3'");
@@ -273,7 +271,7 @@ describe('live game overlay page', () => {
         expect(source).not.toContain('updateGame(');
         expect(source).not.toContain('trackViewerPresence(');
         expect(source).toContain('sendChatReaction');
-        expect(source).toContain("from './game-share-links.js?v=1'");
+        expect(source).toContain("from './game-share-links.js?v=2'");
         expect(source).toContain("from './utils.js?v=443391'");
         expect(source).toContain("from './live-game-announcer.js?v=2'");
         expect(source).toContain("import('./team-entitlements.js?v=11')");
@@ -285,8 +283,7 @@ describe('live game overlay page', () => {
         expect(source).toContain('requestFullscreen');
         expect(source).toContain('buildGameWatchShareUrl');
         expect(source).toContain('toggleScoreboardVisibility');
-        expect(source).toContain('elements.classicViewLink.href = `live-game.html?teamId=');
-        expect(source).toContain("uiState.isReplay ? 'Game Recap' : 'Game Center'");
+        expect(source).not.toContain('elements.classicViewLink');
         expect(source).toContain("setConnectionIssue('replay'");
         expect(source).toContain('connectionIssues: new Map()');
         expect(source).toContain("state.events.slice(pageStart, pageStart + pageSize)");

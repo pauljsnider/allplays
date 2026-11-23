@@ -1702,9 +1702,9 @@ test("stable replay clip and overlay parameters stay in the Diamond viewer and n
   );
   await expect(page.locator("[data-diamond-chat-input]")).toBeDisabled();
   await expect(page.locator('[data-diamond-reaction="clap"]')).toBeDisabled();
-  await expect(page.locator("[data-diamond-classic-link]")).toHaveAttribute(
+  await expect(page.locator("[data-diamond-game-report-link]")).toHaveAttribute(
     "href",
-    "/live-game.html?teamId=team-1&gameId=game-1&clipStart=1200&clipEnd=5600&classic=1",
+    "/game.html#teamId=team-1&gameId=game-1",
   );
   expect(
     await page.evaluate(() => ({
