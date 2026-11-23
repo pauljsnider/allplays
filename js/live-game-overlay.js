@@ -414,7 +414,9 @@ function configureGameActions() {
 async function shareGame() {
     if (!uiState.teamId || !uiState.gameId || !uiState.game) return;
     const shareReplay = hasReplayExperienceAvailable();
-    const isHighlight = uiState.replayClip.status === 'active';
+    // Keep the requested range while metadata loads or playback is unavailable.
+    // Only the explicit full-game action clears this selection.
+    const isHighlight = uiState.clipParams.clipStart !== undefined || uiState.clipParams.clipEnd !== undefined;
     const url = isHighlight ? buildOverlayReplayUrl(window.location.href) : buildGameWatchShareUrl({
         teamId: uiState.teamId,
         gameId: uiState.gameId,

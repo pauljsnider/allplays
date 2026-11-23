@@ -3099,6 +3099,41 @@ for (const [endMs, playerState] of [3000, 4000].flatMap(endMs => [1, 2].map(play
     });
 }
 
+for (const state of ['pending', 'invalid', 'unavailable']) {
+    test(`sharing a ${state} highlight preserves its range until explicit full-game exit`, async ({ page, baseURL }) => {
+        const errors = collectPageErrors(page);
+        await page.addInitScript((state) => {
+            window.__OVERLAY_COMPLETED_GAME__ = true;
+            window.__OVERLAY_NO_RESOLVED_VIDEO__ = state === 'unavailable';
+            window.__OVERLAY_NO_PUBLIC_VIDEO__ = state === 'unavailable';
+            window.__CLIP_SHARES__ = [];
+            Object.defineProperty(navigator, 'share', { value: async (data) => window.__CLIP_SHARES__.push(data) });
+        }, state);
+        await stubRealOverlayModules(page);
+        await stubYouTubeEmbed(page, { duration: state === 'pending' ? null : 8 });
+        const end = state === 'invalid' ? '9000' : '4000';
+        await page.goto(`${baseURL}/live-game-overlay.html#teamId=team-1&gameId=game-1&replay=true&clipStart=2000&clipEnd=${end}`);
+        expect(errors).toEqual([]);
+        await expect(page.locator('#replay-clip-label')).toContainText(
+            state === 'pending' ? 'Loading highlight' : state === 'invalid' ? 'outside the available recording' : 'unavailable'
+        );
+        await page.locator('#share-game').click();
+        await expect.poll(() => page.evaluate(() => window.__CLIP_SHARES__.length)).toBe(1);
+        const shared = new URL(await page.evaluate(() => window.__CLIP_SHARES__[0].url));
+        expect(shared.searchParams.get('clipStart')).toBe('2000');
+        expect(shared.searchParams.get('clipEnd')).toBe(end);
+        expect(shared.searchParams.get('teamId')).toBe('team-1');
+        expect(shared.searchParams.get('gameId')).toBe('game-1');
+        await page.getByRole('button', { name: 'Watch full game', exact: true }).click();
+        await page.locator('#share-game').click();
+        await expect.poll(() => page.evaluate(() => window.__CLIP_SHARES__.length)).toBe(2);
+        const full = new URL(await page.evaluate(() => window.__CLIP_SHARES__[1].url));
+        expect(full.searchParams.has('clipStart')).toBe(false);
+        expect(full.searchParams.has('clipEnd')).toBe(false);
+        expect(errors).toEqual([]);
+    });
+}
+
 test('invalid highlight requires an intentional full-game exit', async ({ page, baseURL }) => {
     const errors = collectPageErrors(page);
     await stubRealOverlayModules(page);
