@@ -1432,11 +1432,12 @@ function isStaleMediaSeekEcho(mediaElapsedMs) {
     const latestTarget = uiState.recentMediaSeekTargets.at(-1);
     if (!latestTarget) return false;
     const latestDistanceMs = Math.abs(mediaElapsedMs - latestTarget.targetMs);
-    // Seek windows can overlap for short highlights. Prefer the closest target,
-    // with ties belonging to the newest seek rather than an older acknowledgement.
+    // Tighten the old-target window for adjacent seeks so short highlights can
+    // reject delayed acknowledgements without suppressing current playback.
     return uiState.recentMediaSeekTargets.slice(0, -1).some((seek) => {
         const previousDistanceMs = Math.abs(mediaElapsedMs - seek.targetMs);
-        return previousDistanceMs <= 1800 && previousDistanceMs < latestDistanceMs;
+        const toleranceMs = Math.min(1800, Math.abs(seek.targetMs - latestTarget.targetMs) / 10);
+        return previousDistanceMs <= toleranceMs && previousDistanceMs < latestDistanceMs;
     });
 }
 

@@ -70,10 +70,12 @@ describe('live game overlay page', () => {
         [[2001, 2000], 2001, true],
         [[3000, 2000], 2000, false],
         [[3000, 2000], 2500, false],
+        [[3000, 2000], 2800, false],
+        [[2100, 2000], 2080, false],
         [[2000, 2000], 2000, false],
         [[630000, 690000], 630000, true],
         [[630000, 690000], 690000, false]
-    ])('identifies the nearest seek acknowledgement (%j, %s)', (targets, elapsedMs, stale) => {
+    ])('distinguishes old seek acknowledgements from current playback (%j, %s)', (targets, elapsedMs, stale) => {
         const uiState = { recentMediaSeekTargets: targets.map(targetMs => ({ targetMs, atMs: Date.now() })) };
         const check = new Function('uiState', `
             ${extractFunction(source, 'isStaleMediaSeekEcho')}
