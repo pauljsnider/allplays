@@ -3077,21 +3077,21 @@ for (const provider of ['recorded', 'youtube']) {
     });
 }
 
-for (const playerState of [1, 2]) {
-    test(`restarting a highlight ignores a delayed YouTube acknowledgement at the old end (state=${playerState})`, async ({ page, baseURL }) => {
+for (const [endMs, playerState] of [3000, 4000].flatMap(endMs => [1, 2].map(playerState => [endMs, playerState]))) {
+    test(`restarting a highlight ignores a delayed YouTube acknowledgement at the old end (end=${endMs}, state=${playerState})`, async ({ page, baseURL }) => {
         const errors = collectPageErrors(page);
         await stubRealOverlayModules(page);
         await stubYouTubeEmbed(page, { duration: 8 });
-        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&clipStart=2000&clipEnd=4000`);
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&clipStart=2000&clipEnd=${endMs}`);
         expect(errors).toEqual([]);
-        await expect(page.locator('#replay-clip-label')).toHaveText('Highlight · 0:02–0:04');
+        await expect(page.locator('#replay-clip-label')).toHaveText(`Highlight · 0:02–0:0${endMs / 1000}`);
         await page.locator('#replay-progress').fill('100');
         await page.getByRole('button', { name: 'Replay highlight', exact: true }).click();
         await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', 'pause');
         const frame = page.frames().find(frame => frame.url().startsWith('https://www.youtube.com/embed/'));
-        await frame.evaluate((playerState) => parent.postMessage(JSON.stringify({
-            event: 'infoDelivery', info: { currentTime: 4, duration: 8, playerState }
-        }), '*'), playerState);
+        await frame.evaluate(({ endMs, playerState }) => parent.postMessage(JSON.stringify({
+            event: 'infoDelivery', info: { currentTime: endMs / 1000, duration: 8, playerState }
+        }), '*'), { endMs, playerState });
         await page.waitForTimeout(50);
         await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', 'pause');
         await expect(page.locator('#replay-progress')).not.toHaveValue('100');

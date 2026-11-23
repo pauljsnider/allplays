@@ -1430,10 +1430,14 @@ function isStaleMediaSeekEcho(mediaElapsedMs) {
     uiState.recentMediaSeekTargets = uiState.recentMediaSeekTargets
         .filter((seek) => nowMs - seek.atMs <= 1600);
     const latestTarget = uiState.recentMediaSeekTargets.at(-1);
-    if (latestTarget && Math.abs(mediaElapsedMs - latestTarget.targetMs) <= 1800) return false;
-    return uiState.recentMediaSeekTargets.slice(0, -1).some((seek) =>
-        Math.abs(mediaElapsedMs - seek.targetMs) <= 1800
-    );
+    if (!latestTarget) return false;
+    const latestDistanceMs = Math.abs(mediaElapsedMs - latestTarget.targetMs);
+    // Seek windows can overlap for short highlights. Prefer the closest target,
+    // with ties belonging to the newest seek rather than an older acknowledgement.
+    return uiState.recentMediaSeekTargets.slice(0, -1).some((seek) => {
+        const previousDistanceMs = Math.abs(mediaElapsedMs - seek.targetMs);
+        return previousDistanceMs <= 1800 && previousDistanceMs < latestDistanceMs;
+    });
 }
 
 function syncReplayFromMediaTime(mediaElapsedMs, stateTools) {

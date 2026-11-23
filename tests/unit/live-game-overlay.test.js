@@ -64,6 +64,24 @@ function processLiveEventSnapshots(snapshots) {
 }
 
 describe('live game overlay page', () => {
+    it.each([
+        [[3000, 2000], 3000, true],
+        [[2100, 2000], 2100, true],
+        [[2001, 2000], 2001, true],
+        [[3000, 2000], 2000, false],
+        [[3000, 2000], 2500, false],
+        [[2000, 2000], 2000, false],
+        [[630000, 690000], 630000, true],
+        [[630000, 690000], 690000, false]
+    ])('identifies the nearest seek acknowledgement (%j, %s)', (targets, elapsedMs, stale) => {
+        const uiState = { recentMediaSeekTargets: targets.map(targetMs => ({ targetMs, atMs: Date.now() })) };
+        const check = new Function('uiState', `
+            ${extractFunction(source, 'isStaleMediaSeekEcho')}
+            return isStaleMediaSeekEcho;
+        `)(uiState);
+        expect(check(elapsedMs)).toBe(stale);
+    });
+
     it.each(['recorded', 'youtube'].flatMap(videoMode => [1, 50].map(replaySpeed => ({ videoMode, replaySpeed }))))('corrects $videoMode media past the highlight end (speed=$replaySpeed)', ({ videoMode, replaySpeed }) => {
         const uiState = {
             isReplay: true, replaySession: {}, replaySpeed, replayPlaying: replaySpeed > 2,
@@ -190,7 +208,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
         expect(html).toMatch(/\.panel-tab\s*\{[^}]*min-width:\s*44px;/);
-        expect(html).toContain('js/live-game-overlay.js?v=78');
+        expect(html).toContain('js/live-game-overlay.js?v=79');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
