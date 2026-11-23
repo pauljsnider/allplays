@@ -65,6 +65,67 @@ function processLiveEventSnapshots(snapshots) {
 
 describe('live game overlay page', () => {
     it.each([
+        [[3000, 2000], 3000, true],
+        [[2100, 2000], 2100, true],
+        [[2001, 2000], 2001, true],
+        [[3000, 2000], 2000, false],
+        [[3000, 2000], 2500, false],
+        [[3000, 2000], 2800, false],
+        [[2100, 2000], 2080, false],
+        [[2000, 2000], 2000, false],
+        [[630000, 690000], 630000, true],
+        [[630000, 690000], 690000, false]
+    ])('distinguishes old seek acknowledgements from current playback (%j, %s)', (targets, elapsedMs, stale) => {
+        const uiState = { recentMediaSeekTargets: targets.map(targetMs => ({ targetMs, atMs: Date.now() })) };
+        const check = new Function('uiState', `
+            ${extractFunction(source, 'isStaleMediaSeekEcho')}
+            return isStaleMediaSeekEcho;
+        `)(uiState);
+        expect(check(elapsedMs)).toBe(stale);
+    });
+
+    it.each(['recorded', 'youtube'].flatMap(videoMode => [1, 50].map(replaySpeed => ({ videoMode, replaySpeed }))))('corrects $videoMode media past the highlight end (speed=$replaySpeed)', ({ videoMode, replaySpeed }) => {
+        const uiState = {
+            isReplay: true, replaySession: {}, replaySpeed, replayPlaying: replaySpeed > 2,
+            replayClip: { status: 'active' }, replayElapsedMs: 2000, videoMode
+        };
+        const syncReplayMedia = vi.fn();
+        const sync = new Function('uiState', 'elements', 'replayBounds', 'isStaleMediaSeekEcho',
+            'resetReplayToElapsed', 'pauseReplay', 'syncReplayMedia', `
+            ${extractFunction(source, 'syncReplayFromMediaTime')}
+            return syncReplayFromMediaTime;
+        `)(uiState, { recordedVideo: { currentTime: 7, paused: true } },
+            () => ({ startMs: 2000, endMs: 4000 }), () => false,
+            (time) => { uiState.replayElapsedMs = time; }, () => { uiState.replayPlaying = false; }, syncReplayMedia);
+
+        sync(7000, {});
+        expect(uiState.replayElapsedMs).toBe(4000);
+        expect(syncReplayMedia).toHaveBeenCalledWith({ seek: true, play: false });
+        expect(uiState.replayPlaying).toBe(false);
+    });
+
+    it.each(['recorded', 'youtube'])('seeks %s media back inside the highlight when provider controls seek before its start', (videoMode) => {
+        const uiState = {
+            isReplay: true, replaySession: {}, replaySpeed: 1, replayPlaying: false,
+            replayClip: { status: 'active' }, replayElapsedMs: 2000, videoMode
+        };
+        const elements = { recordedVideo: { currentTime: 0, paused: true } };
+        const sendYouTubeCommand = vi.fn();
+        const sync = new Function('uiState', 'elements', 'replayBounds', 'isStaleMediaSeekEcho',
+            'rememberMediaSeek', 'sendYouTubeCommand', 'resetReplayToElapsed', 'pauseReplay', 'syncReplayMedia', `
+            ${extractFunction(source, 'syncReplayFromMediaTime')}
+            return syncReplayFromMediaTime;
+        `)(uiState, elements, () => ({ startMs: 2000, endMs: 4000 }), () => false,
+            vi.fn(), sendYouTubeCommand, (time) => { uiState.replayElapsedMs = time; }, vi.fn(), vi.fn());
+
+        sync(0, {});
+        expect(uiState.replayElapsedMs).toBe(2000);
+        if (videoMode === 'recorded') expect(elements.recordedVideo.currentTime).toBe(2);
+        else expect(sendYouTubeCommand).toHaveBeenCalledWith('seekTo', [2, true]);
+        expect(uiState.replayPlaying).toBe(false);
+    });
+
+    it.each([
         [{ uid: 'viewer-1', displayName: 'Alexandra Long Account Name' }, 'Old nickname', 'Alexandra Long Account Name'],
         [{ uid: 'viewer-2', displayName: 'Taylor Account' }, 'Old nickname', 'Taylor Account'],
         [{ uid: 'viewer-3' }, 'Other account nickname', 'Fan'],
@@ -149,7 +210,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
         expect(html).toMatch(/\.panel-tab\s*\{[^}]*min-width:\s*44px;/);
-        expect(html).toContain('js/live-game-overlay.js?v=75');
+        expect(html).toContain('js/live-game-overlay.js?v=80');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
