@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolveReplayVideoOptions } from '../../js/live-game-video.js';
+import { resolveGameReportReplayPreview } from '../../js/game-report-replay-preview.js';
 
 function readRepoFile(relativePath) {
     return readFileSync(new URL(`../../${relativePath}`, import.meta.url), 'utf8');
@@ -15,8 +16,45 @@ describe('game report replay action', () => {
         expect(html).toMatch(/resolveReplayVideoOptions\(\{\s*team,\s*game,\s*isReplay: true\s*\}\)/);
         expect(html).toContain('renderReplayReportAction({ teamId, gameId, game, team: resolvedTeam })');
         expect(html).toContain('replayOptions.hasVideo && replayOptions.isRecordedReplay === true');
+        expect(html).toContain('data-replay-video-preview');
+        expect(html).toContain('Video available');
+        expect(html).toContain('Watch replay');
+        expect(html).toContain('resolveGameReportReplayPreview');
         expect(html).toContain('const hasCompletedTimelineReplay');
+        expect(html).toContain('aria-label="View game replay"');
         expect(html).not.toContain("${game.liveStatus === 'completed' ? `");
+    });
+
+    it('uses a compact YouTube thumbnail when the replay URL identifies a video', () => {
+        expect(resolveGameReportReplayPreview({
+            sourceUrl: 'https://www.youtube.com/embed/T3f9AjVhn9U?autoplay=1',
+            publicUrl: 'https://www.youtube.com/watch?v=T3f9AjVhn9U'
+        })).toEqual({
+            thumbnailUrl: 'https://i.ytimg.com/vi/T3f9AjVhn9U/mqdefault.jpg',
+            providerLabel: 'YouTube',
+            accessibleLabel: 'Video available. Watch the full game replay on YouTube.'
+        });
+    });
+
+    it('prefers a safe supplied poster and supports youtu.be URLs', () => {
+        expect(resolveGameReportReplayPreview({
+            sourceUrl: 'https://youtu.be/T3f9AjVhn9U',
+            posterUrl: 'https://cdn.example.com/posters/game-1.jpg'
+        })).toMatchObject({
+            thumbnailUrl: 'https://cdn.example.com/posters/game-1.jpg',
+            providerLabel: 'YouTube'
+        });
+    });
+
+    it('does not use unsafe poster URLs or infer thumbnails from unrelated URLs', () => {
+        expect(resolveGameReportReplayPreview({
+            sourceUrl: 'https://youtube.com.attacker.example/embed/T3f9AjVhn9U',
+            posterUrl: 'javascript:alert(1)'
+        })).toEqual({
+            thumbnailUrl: null,
+            providerLabel: 'Video',
+            accessibleLabel: 'Video available. Watch the full game replay.'
+        });
     });
 
     it('uses explicit non-clickable replay states for completed games without watchable replay media', () => {
