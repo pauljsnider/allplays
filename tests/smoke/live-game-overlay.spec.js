@@ -2954,6 +2954,56 @@ for (const viewport of [{ width: 568, height: 320 }, { width: 844, height: 390 }
 
 
 for (const provider of ['recorded', 'youtube']) {
+    for (const playing of [false, true]) {
+        test(`highlight corrects ${provider} provider seeks before the start while ${playing ? 'playing' : 'paused'}`, async ({ page, baseURL }) => {
+            const errors = collectPageErrors(page);
+            await page.addInitScript((recorded) => {
+                window.__OVERLAY_RECORDED_VIDEO__ = recorded;
+                window.__OVERLAY_COMPLETED_GAME__ = true;
+                window.__OVERLAY_YOUTUBE_COMMANDS__ = [];
+                window.addEventListener('message', (event) => {
+                    if (event.data?.source !== 'overlay-youtube-fixture') return;
+                    try { window.__OVERLAY_YOUTUBE_COMMANDS__.push(JSON.parse(event.data.payload)); } catch {}
+                });
+            }, provider === 'recorded');
+            await stubRealOverlayModules(page);
+            if (provider === 'recorded') {
+                const video = readFileSync(new URL('../fixtures/overlay-highlight.mp4', import.meta.url));
+                await page.route('**/overlay-recording-fixture.mp4', (route) => {
+                    const range = route.request().headers().range;
+                    const start = Number(range?.match(/bytes=(\d+)-/)?.[1] || 0);
+                    return route.fulfill({
+                        status: range ? 206 : 200,
+                        contentType: 'video/mp4',
+                        headers: { 'Accept-Ranges': 'bytes', ...(range ? { 'Content-Range': `bytes ${start}-${video.length - 1}/${video.length}` } : {}) },
+                        body: video.subarray(start)
+                    });
+                });
+            } else {
+                await stubYouTubeEmbed(page, { duration: 8 });
+            }
+            await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&clipStart=2000&clipEnd=6000`);
+            expect(errors).toEqual([]);
+            await expect(page.locator('#replay-clip-label')).toHaveText('Highlight · 0:02–0:06');
+            if (playing) await page.locator('#replay-play').click();
+            await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', playing ? 'pause' : 'play');
+            if (provider === 'recorded') {
+                await page.locator('#overlay-recorded-video').evaluate(video => { video.currentTime = 0; });
+                await expect.poll(() => page.locator('#overlay-recorded-video').evaluate(video => video.currentTime)).toBeGreaterThanOrEqual(2);
+                expect(await page.locator('#overlay-recorded-video').evaluate(video => video.paused)).toBe(!playing);
+            } else {
+                await page.evaluate(() => { window.__OVERLAY_YOUTUBE_COMMANDS__ = []; });
+                const frame = page.frames().find(frame => frame.url().startsWith('https://www.youtube.com/embed/'));
+                await frame.evaluate((playing) => parent.postMessage(JSON.stringify({
+                    event: 'infoDelivery', info: { currentTime: 0, duration: 8, playerState: playing ? 1 : 2 }
+                }), '*'), playing);
+                await expect.poll(() => page.evaluate(() => window.__OVERLAY_YOUTUBE_COMMANDS__.filter(command => command.func === 'seekTo').at(-1)?.args[0])).toBe(2);
+            }
+            await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', playing ? 'pause' : 'play');
+            expect(errors).toEqual([]);
+        });
+    }
+
     test(`highlight playback cues, stops, restarts, shares, and exits for ${provider}`, async ({ page, baseURL }) => {
         const errors = collectPageErrors(page);
         await page.addInitScript((recorded) => {

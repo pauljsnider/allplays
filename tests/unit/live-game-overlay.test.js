@@ -64,6 +64,27 @@ function processLiveEventSnapshots(snapshots) {
 }
 
 describe('live game overlay page', () => {
+    it.each(['recorded', 'youtube'])('seeks %s media back inside the highlight when provider controls seek before its start', (videoMode) => {
+        const uiState = {
+            isReplay: true, replaySession: {}, replaySpeed: 1, replayPlaying: false,
+            replayClip: { status: 'active' }, replayElapsedMs: 2000, videoMode
+        };
+        const elements = { recordedVideo: { currentTime: 0, paused: true } };
+        const sendYouTubeCommand = vi.fn();
+        const sync = new Function('uiState', 'elements', 'replayBounds', 'isStaleMediaSeekEcho',
+            'rememberMediaSeek', 'sendYouTubeCommand', 'resetReplayToElapsed', 'pauseReplay', 'syncReplayMedia', `
+            ${extractFunction(source, 'syncReplayFromMediaTime')}
+            return syncReplayFromMediaTime;
+        `)(uiState, elements, () => ({ startMs: 2000, endMs: 4000 }), () => false,
+            vi.fn(), sendYouTubeCommand, (time) => { uiState.replayElapsedMs = time; }, vi.fn(), vi.fn());
+
+        sync(0, {});
+        expect(uiState.replayElapsedMs).toBe(2000);
+        if (videoMode === 'recorded') expect(elements.recordedVideo.currentTime).toBe(2);
+        else expect(sendYouTubeCommand).toHaveBeenCalledWith('seekTo', [2, true]);
+        expect(uiState.replayPlaying).toBe(false);
+    });
+
     it.each([
         [{ uid: 'viewer-1', displayName: 'Alexandra Long Account Name' }, 'Old nickname', 'Alexandra Long Account Name'],
         [{ uid: 'viewer-2', displayName: 'Taylor Account' }, 'Old nickname', 'Taylor Account'],
@@ -149,7 +170,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
         expect(html).toMatch(/\.panel-tab\s*\{[^}]*min-width:\s*44px;/);
-        expect(html).toContain('js/live-game-overlay.js?v=76');
+        expect(html).toContain('js/live-game-overlay.js?v=77');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {

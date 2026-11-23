@@ -1444,6 +1444,17 @@ function syncReplayFromMediaTime(mediaElapsedMs, stateTools) {
         return true;
     }
     const { startMs, endMs } = replayBounds();
+    if (uiState.replayClip.status === 'active' && mediaElapsedMs < startMs) {
+        if (uiState.replayElapsedMs !== startMs) resetReplayToElapsed(startMs, stateTools);
+        if (uiState.replayPlaying) {
+            uiState.replayStartTime = rebaseReplayStartTimeMs(Date.now(), startMs, uiState.replaySpeed);
+        }
+        rememberMediaSeek(startMs);
+        if (uiState.videoMode === 'recorded') elements.recordedVideo.currentTime = startMs / 1000;
+        if (uiState.videoMode === 'youtube') sendYouTubeCommand('seekTo', [startMs / 1000, true]);
+        // Preserve the provider's playing/paused state while correcting its position.
+        return false;
+    }
     if (isStaleMediaSeekEcho(mediaElapsedMs)) return true;
     if (uiState.replayClip.status === 'active' && mediaElapsedMs >= endMs) {
         const needsStop = uiState.replayPlaying || (uiState.videoMode === 'recorded' && !elements.recordedVideo.paused);
