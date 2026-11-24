@@ -2641,7 +2641,7 @@ function TeamCard({ team, rsvpNeeded }: { team: ParentHomeTeam; rsvpNeeded: numb
           <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">
             {team.players.length ? team.players.map((player) => player.playerName).join(', ') : `${team.role}${team.sport ? ` · ${team.sport}` : ''}`}
           </div>
-          <div className="mt-1 truncate text-xs font-bold text-gray-600">{team.nextEvent ? `${formatEventDateLabel(team.nextEvent.date)} · ${getScheduleTitle(team.nextEvent)}` : `${team.role} · ${team.eventCount} events`}</div>
+          <div className="mt-1 truncate text-xs font-bold text-gray-600">{team.nextEvent ? `${formatEventDateLabel(team.nextEvent.date)} · ${getScheduleTitle(team.nextEvent)}` : `${team.eventCount} ${team.eventCount === 1 ? 'event' : 'events'}`}</div>
         </div>
         <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
       </Link>

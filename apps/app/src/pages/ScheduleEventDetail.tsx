@@ -130,7 +130,7 @@ function getEventDetailSections(event?: ParentScheduleEvent | null): Array<{ id:
   }
 
   if (isActiveTrackedScheduleEvent(event) || hasAssignmentsPosted(event) || canManageEventAssignments(event)) {
-    sections.push({ id: 'assignments', label: 'Assignments', shortLabel: 'Tasks' });
+    sections.push({ id: 'assignments', label: 'Assignments' });
   }
 
   sections.push({ id: 'game', label: eventLabel });

@@ -295,7 +295,7 @@ export function CreateTeam({ auth }: { auth: AuthState }) {
               onChange={(event) => setForm((current) => ({ ...current, zip: event.target.value }))}
               inputMode="numeric"
               className="auth-input mt-1"
-              placeholder="66210"
+              placeholder="e.g. 66210"
             />
           </label>
 

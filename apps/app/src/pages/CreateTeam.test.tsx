@@ -107,7 +107,7 @@ describe('CreateTeam', () => {
 
     fireEvent.change(screen.getByPlaceholderText('Team name'), { target: { value: 'KC Current U12' } });
     fireEvent.change(screen.getByLabelText('Sport'), { target: { value: 'Soccer' } });
-    fireEvent.change(screen.getByPlaceholderText('66210'), { target: { value: '66210-1234' } });
+    fireEvent.change(screen.getByPlaceholderText('e.g. 66210'), { target: { value: '66210-1234' } });
     fireEvent.click(screen.getByLabelText('Public team'));
     fireEvent.click(screen.getByRole('button', { name: 'Create team' }));
 
