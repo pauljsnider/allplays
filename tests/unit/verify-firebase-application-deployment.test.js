@@ -5,6 +5,7 @@ import {
     FIREBASE_APPLICATION_DEPLOY_TARGETS,
     FIREBASE_APPLICATION_EVIDENCE_SCHEMA_VERSION,
     FIREBASE_APPLICATION_FUNCTIONS_TARGET_TYPE,
+    FIREBASE_FUNCTION_TARGET_TYPE,
     verifyFirebaseApplicationDeployment
 } from '../../scripts/verify-firebase-application-deployment.mjs';
 
@@ -14,6 +15,12 @@ const expectedDeployment = Object.freeze({
     deployTargets: FIREBASE_APPLICATION_DEPLOY_TARGETS,
     deployLabel: FIREBASE_APPLICATION_DEPLOY_LABEL,
     artifactSha
+});
+const expectedFunctionDeployment = Object.freeze({
+    projectId: 'game-flow-c6311',
+    functionTarget: 'sendNotification',
+    artifactSha,
+    deploymentId: 'projects/game-flow-c6311/locations/us-central1/functions/sendNotification/versions/42'
 });
 
 function validCurrentEvidence() {
@@ -33,6 +40,32 @@ function verify(evidence, expected) {
         evidence,
         expectedDeployment: arguments.length === 1 ? expectedDeployment : expected
     });
+}
+
+function validFunctionArtifactEvidence() {
+    return {
+        schemaVersion: FIREBASE_APPLICATION_EVIDENCE_SCHEMA_VERSION,
+        targetType: FIREBASE_FUNCTION_TARGET_TYPE,
+        status: 'current',
+        projectId: expectedFunctionDeployment.projectId,
+        functionTarget: expectedFunctionDeployment.functionTarget,
+        artifactSha: expectedFunctionDeployment.artifactSha
+    };
+}
+
+function validFunctionDeploymentEvidence() {
+    return {
+        schemaVersion: FIREBASE_APPLICATION_EVIDENCE_SCHEMA_VERSION,
+        targetType: FIREBASE_FUNCTION_TARGET_TYPE,
+        status: 'current',
+        projectId: expectedFunctionDeployment.projectId,
+        functionTarget: expectedFunctionDeployment.functionTarget,
+        deploymentId: expectedFunctionDeployment.deploymentId
+    };
+}
+
+function verifyFunction(evidence, expected = expectedFunctionDeployment) {
+    return verifyFirebaseApplicationDeployment({ evidence, expectedDeployment: expected });
 }
 
 describe('Firebase application deployment evidence', () => {
@@ -87,7 +120,6 @@ describe('Firebase application deployment evidence', () => {
 
     it.each([
         ['schema version', { schemaVersion: 2 }],
-        ['individual function target', { targetType: 'firebase-function' }],
         ['Hosting target', { targetType: 'firebase-hosting' }],
         ['updated state', { status: 'updated' }],
         ['unchanged state', { status: 'unchanged' }],
@@ -132,5 +164,85 @@ describe('Firebase application deployment evidence', () => {
         }]
     ])('rejects %s', (_label, expected) => {
         expect(() => verify(validCurrentEvidence(), expected)).toThrow();
+    });
+});
+
+describe('individual Firebase function current evidence', () => {
+    it('accepts evidence identifying the expected current artifact commit', () => {
+        expect(verifyFunction(validFunctionArtifactEvidence())).toEqual({
+            status: 'current',
+            targetType: FIREBASE_FUNCTION_TARGET_TYPE,
+            projectId: expectedFunctionDeployment.projectId,
+            functionTarget: expectedFunctionDeployment.functionTarget,
+            artifactSha
+        });
+    });
+
+    it('accepts evidence identifying the expected current deployment identity', () => {
+        expect(verifyFunction(validFunctionDeploymentEvidence())).toEqual({
+            status: 'current',
+            targetType: FIREBASE_FUNCTION_TARGET_TYPE,
+            projectId: expectedFunctionDeployment.projectId,
+            functionTarget: expectedFunctionDeployment.functionTarget,
+            deploymentId: expectedFunctionDeployment.deploymentId
+        });
+    });
+
+    it.each([
+        ['undefined', undefined],
+        ['null', null],
+        ['array', []],
+        ['string', 'current']
+    ])('rejects %s individual function evidence', (_label, evidence) => {
+        expect(() => verifyFunction(evidence)).toThrow(/evidence must be a plain object/);
+    });
+
+    it.each([
+        ['artifact shape', validFunctionArtifactEvidence],
+        ['deployment identity shape', validFunctionDeploymentEvidence]
+    ])('rejects every missing field in the %s', (_label, buildEvidence) => {
+        for (const field of Object.keys(buildEvidence())) {
+            const evidence = buildEvidence();
+            delete evidence[field];
+
+            expect(() => verifyFunction(evidence), `missing ${field}`)
+                .toThrow(/fields must exactly match/);
+        }
+    });
+
+    it.each([
+        ['schemaVersion', '1', validFunctionArtifactEvidence],
+        ['targetType', 1, validFunctionArtifactEvidence],
+        ['status', true, validFunctionArtifactEvidence],
+        ['projectId', '', validFunctionArtifactEvidence],
+        ['functionTarget', '', validFunctionArtifactEvidence],
+        ['artifactSha', 'not-a-sha', validFunctionArtifactEvidence],
+        ['deploymentId', '', validFunctionDeploymentEvidence]
+    ])('rejects malformed %s evidence', (field, value, buildEvidence) => {
+        expect(() => verifyFunction({ ...buildEvidence(), [field]: value })).toThrow();
+    });
+
+    it.each([
+        ['schema version', validFunctionArtifactEvidence, { schemaVersion: 2 }],
+        ['Hosting target', validFunctionArtifactEvidence, { targetType: 'firebase-hosting' }],
+        ['updated state', validFunctionArtifactEvidence, { status: 'updated' }],
+        ['unchanged state', validFunctionArtifactEvidence, { status: 'unchanged' }],
+        ['partial state', validFunctionArtifactEvidence, { status: 'partial' }],
+        ['extra metadata', validFunctionArtifactEvidence, { quotaPressure: true }],
+        ['mixed identities', validFunctionArtifactEvidence, {
+            deploymentId: expectedFunctionDeployment.deploymentId
+        }]
+    ])('rejects unsupported %s', (_label, buildEvidence, mutation) => {
+        expect(() => verifyFunction({ ...buildEvidence(), ...mutation })).toThrow();
+    });
+
+    it.each([
+        ['projectId', 'another-project', validFunctionArtifactEvidence],
+        ['functionTarget', 'sendTeamEmail', validFunctionArtifactEvidence],
+        ['artifactSha', 'b'.repeat(40), validFunctionArtifactEvidence],
+        ['deploymentId', 'another-deployment', validFunctionDeploymentEvidence]
+    ])('rejects current evidence with mismatched %s', (field, value, buildEvidence) => {
+        expect(() => verifyFunction({ ...buildEvidence(), [field]: value }))
+            .toThrow(/does not match the expected deployment/);
     });
 });
