@@ -2242,14 +2242,24 @@ function StaffRosterDetailsCard({
         photoFile,
         removePhoto
       });
-      setPhotoFile(null);
-      setRemovePhoto(false);
-      setStatus({ tone: 'success', message: 'Roster details saved.' });
-      await onChanged();
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to save roster details.' });
+      return;
     } finally {
+      // Release the save button as soon as the write lands; the refresh below
+      // must not hold it hostage (#5311).
       setSaving(false);
+    }
+    setPhotoFile(null);
+    setRemovePhoto(false);
+    try {
+      // Announce success only after the refreshed player data has landed, so
+      // the header no longer shows the pre-edit name/number under a
+      // "Roster details saved." toast (#5311).
+      await onChanged();
+      setStatus({ tone: 'success', message: 'Roster details saved.' });
+    } catch {
+      setStatus({ tone: 'error', message: 'Roster details saved, but the player view could not be refreshed. Reload to see the latest details.' });
     }
   };
 

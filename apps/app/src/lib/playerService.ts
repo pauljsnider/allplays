@@ -34,6 +34,7 @@ import {
   type LegacyTeamRecord
 } from './adapters/legacyPlayerDb';
 import { createSecureUploadToken } from './secureUploadToken';
+import { invalidateTeamDetailBaseSnapshotCache } from './teamDetailService';
 import { DIAMOND_MANAGER_STATS_MAX_GAMES, loadDiamondManagerStats, type DiamondManagerStatsReadResult } from './diamondManagerStatsService';
 import {
   aggregateCoverageAwareSeasonStats,
@@ -2380,6 +2381,11 @@ export async function saveStaffPlayerRosterDetails({
     }
   }
   clearAppDataCache();
+  // The TeamDetail roster reads module-level snapshot caches in
+  // teamDetailService that clearAppDataCache() never touches. Invalidate them
+  // here so navigating back to the roster shows the saved name/number without
+  // a full reload (#5311).
+  invalidateTeamDetailBaseSnapshotCache(teamId);
   return {
     updatedFields: Object.keys(payload),
     payload

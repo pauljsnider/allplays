@@ -255,7 +255,7 @@ import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './
 import { mapScheduleEventDocument, mapScheduleEventRecord } from './firestore/mappers';
 import { loadManagedTeamsFromNativeCallable, loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, linkGameYouTubeReplayForApp, loadGameDayLiveEventsForApp, loadHomeScoringPlayers, loadOfficialAssignments, loadOfficialAssignmentsAccess, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, removeGameReplayForApp, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, linkGameYouTubeReplayForApp, loadGameDayLiveEventsForApp, loadHomeScoringPlayers, loadOfficialAssignments, loadOfficialAssignmentsAccess, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, removeGameReplayForApp, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledGameForApp, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -1795,6 +1795,55 @@ describe('scheduled tournament writes', () => {
     }, coachUser)).rejects.toThrow('Game start time is invalid.');
 
     expect(addGame).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateScheduledGameForApp', () => {
+  const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', ownerId: 'coach-1', adminEmails: [], admins: [] } as any);
+    vi.mocked(updateGame).mockResolvedValue(undefined as any);
+  });
+
+  it('invalidates the event-details cache so the game header shows the saved gym without a reload (#5311)', async () => {
+    const result = await updateScheduledGameForApp('team-1', 'game-1', {
+      opponent: 'Tigers',
+      startDate: new Date('2026-06-24T18:30:00.000Z'),
+      endDate: new Date('2026-06-24T20:00:00.000Z'),
+      location: 'New Gym',
+      arrivalTime: new Date('2026-06-24T18:00:00.000Z'),
+      isHome: true,
+      notes: '',
+      statTrackerConfigId: '',
+      countsTowardSeasonRecord: true
+    }, coachUser);
+
+    expect(result).toEqual({ updated: true, eventId: 'game-1' });
+    expect(updateGame).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({ location: 'New Gym' }));
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('app-schedule-summary:coach-1');
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('home-secondary:coach-1');
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('event-details:team-1:game-1');
+  });
+
+  it('keeps cached schedule data when the game update write fails', async () => {
+    const writeError = new Error('Game update failed');
+    vi.mocked(updateGame).mockRejectedValueOnce(writeError);
+
+    await expect(updateScheduledGameForApp('team-1', 'game-1', {
+      opponent: 'Tigers',
+      startDate: new Date('2026-06-24T18:30:00.000Z'),
+      endDate: new Date('2026-06-24T20:00:00.000Z'),
+      location: 'New Gym',
+      arrivalTime: new Date('2026-06-24T18:00:00.000Z'),
+      isHome: true,
+      notes: '',
+      statTrackerConfigId: '',
+      countsTowardSeasonRecord: true
+    }, coachUser)).rejects.toBe(writeError);
+
+    expect(invalidateCachedAppData).not.toHaveBeenCalled();
   });
 });
 

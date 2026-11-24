@@ -2524,7 +2524,7 @@ export async function updateScheduledGameForApp(
     logScheduleWarning('Falling back to REST scheduled game update.', 'scheduled-game-update', error, { fallback: 'rest', teamId: normalizedTeamId, gameId: normalizedGameId });
     await nativePatchDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games/${encodeURIComponent(normalizedGameId)}`, payload);
   }
-  invalidateParentScheduleCaches(user);
+  invalidateParentScheduleCaches(user, { teamId: normalizedTeamId, id: normalizedGameId });
   return { updated: true, eventId: normalizedGameId };
 }
 
