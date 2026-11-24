@@ -2350,7 +2350,9 @@ describe('TeamDetail', () => {
         inactivePlayers: [managedModel.inactivePlayers[0], { ...managedModel.players[0], active: false }]
       })
       .mockResolvedValueOnce(managedModel);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValueOnce(true).mockReturnValueOnce(true);
+    // #5312: the confirm step must be the in-app dialog, never a native
+    // window.confirm() (which can be auto-dismissed and swallow the click).
+    const confirmSpy = vi.spyOn(window, 'confirm');
 
     render(
       <MemoryRouter initialEntries={['/teams/team-1']}>
@@ -2365,9 +2367,15 @@ describe('TeamDetail', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Deactivate' }));
 
-    expect(confirmSpy).toHaveBeenCalledWith(
-      'Deactivate Pat Star?\n\nLinked parents may lose access to this team, including history, until the player is reactivated or parent scope is repaired.'
-    );
+    const deactivateDialog = await screen.findByRole('dialog', { name: 'Deactivate Pat Star?' });
+    expect(
+      within(deactivateDialog).getByText(
+        'Linked parents may lose access to this team, including history, until the player is reactivated or parent scope is repaired.'
+      )
+    ).toBeTruthy();
+    fireEvent.click(within(deactivateDialog).getByRole('button', { name: 'Deactivate' }));
+
+    expect(confirmSpy).not.toHaveBeenCalled();
     await waitFor(() => expect(teamDetailServiceMocks.deactivateRosterPlayerForApp).toHaveBeenCalledWith('team-1', 'player-1'));
     expect(await screen.findByText('Pat Star deactivated.')).toBeTruthy();
     expect(await screen.findByText('Inactive roster')).toBeTruthy();
@@ -2375,9 +2383,41 @@ describe('TeamDetail', () => {
     const reactivateButtons = await screen.findAllByRole('button', { name: 'Reactivate' });
     fireEvent.click(reactivateButtons[0]);
 
-    expect(confirmSpy).toHaveBeenCalledWith('Reactivate Sam Bench?');
+    const reactivateDialog = await screen.findByRole('dialog', { name: 'Reactivate Sam Bench?' });
+    fireEvent.click(within(reactivateDialog).getByRole('button', { name: 'Reactivate' }));
+
+    expect(confirmSpy).not.toHaveBeenCalled();
     await waitFor(() => expect(teamDetailServiceMocks.reactivateRosterPlayerForApp).toHaveBeenCalledWith('team-1', 'player-2'));
     expect(await screen.findByText('Sam Bench reactivated.')).toBeTruthy();
+  });
+
+  it('cancels a roster deactivate from the in-app dialog without writing (#5312)', async () => {
+    const managedModel = {
+      ...model,
+      canManageTeam: true
+    };
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValueOnce(managedModel);
+    const confirmSpy = vi.spyOn(window, 'confirm');
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /roster/i }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Deactivate' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Deactivate Pat Star?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(teamDetailServiceMocks.deactivateRosterPlayerForApp).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
   it('shows the native add-player form only for team managers', async () => {
@@ -2657,7 +2697,6 @@ describe('TeamDetail', () => {
         }
       ])
       .mockResolvedValueOnce([]);
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     render(
       <MemoryRouter initialEntries={['/teams/team-1?tab=roster']}>
@@ -2705,6 +2744,8 @@ describe('TeamDetail', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    const archiveDialog = await screen.findByRole('dialog', { name: 'Archive Waiver?' });
+    fireEvent.click(within(archiveDialog).getByRole('button', { name: 'Archive' }));
     await waitFor(() => expect(teamDetailServiceMocks.archiveTeamTrackingItemForApp).toHaveBeenCalledWith('team-1', auth.user, 'item-1'));
   });
 

@@ -26,6 +26,7 @@ import {
   Zap
 } from 'lucide-react';
 import { AvatarImage } from '../components/AvatarImage';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { TeamDetailPageSkeleton } from '../components/PageSkeletons';
 import { DetailLoadErrorState } from '../components/DetailLoadErrorState';
@@ -1339,6 +1340,7 @@ function TeamEventStatConfigSummary({ event, onOpenStatTrackerConfigs }: { event
 function TeamEventReminderAction({ event, model, auth, reminderPreviewLoader }: { event: TeamDetailEvent; model: TeamDetailModel; auth: AuthState; reminderPreviewLoader: ReturnType<typeof createStaffRsvpReminderPreviewLoader> }) {
   const [preview, setPreview] = useState<StaffRsvpReminderPreview | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [confirmReminder, setConfirmReminder] = useState(false);
   const { loading, error: previewError, clearError: clearPreviewError, run: runPreviewOperation } = useAppAsyncOperation();
   const { loading: sending, error: sendError, clearError: clearSendError, run: runSendOperation } = useAppAsyncOperation();
   const [revealed, setRevealed] = useState(false);
@@ -1348,6 +1350,7 @@ function TeamEventReminderAction({ event, model, auth, reminderPreviewLoader }: 
   useEffect(() => {
     setPreview(null);
     setStatus(null);
+    setConfirmReminder(false);
     clearPreviewError();
     clearSendError();
     setRevealed(false);
@@ -1415,8 +1418,7 @@ function TeamEventReminderAction({ event, model, auth, reminderPreviewLoader }: 
   const sendReminder = async () => {
     const user = auth.user;
     if (!user || sending) return;
-    const confirmed = window.confirm(`Send an RSVP reminder to ${preview.missingPlayerCount} no-response ${preview.missingPlayerCount === 1 ? 'player' : 'players'}? ${preview.eligibleEmailCount} eligible parent/guardian ${preview.eligibleEmailCount === 1 ? 'email' : 'emails'} will be targeted.`);
-    if (!confirmed) return;
+    setConfirmReminder(false);
     clearPreviewError();
     setStatus(null);
     await runSendOperation(
@@ -1432,18 +1434,29 @@ function TeamEventReminderAction({ event, model, auth, reminderPreviewLoader }: 
   };
 
   return (
-    <div className="mt-3 rounded-xl border border-primary-200 bg-primary-50 p-3">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="text-xs font-semibold leading-5 text-gray-600">
-          <span className="font-black text-gray-950">Staff RSVP reminder</span> · {preview.missingPlayerCount} no-response {preview.missingPlayerCount === 1 ? 'player' : 'players'}.
+    <>
+      <div className="mt-3 rounded-xl border border-primary-200 bg-primary-50 p-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-xs font-semibold leading-5 text-gray-600">
+            <span className="font-black text-gray-950">Staff RSVP reminder</span> · {preview.missingPlayerCount} no-response {preview.missingPlayerCount === 1 ? 'player' : 'players'}.
+          </div>
+          <button type="button" className="primary-button min-h-9 flex-none px-3 text-xs" disabled={sending || loading} onClick={() => setConfirmReminder(true)}>
+            {sending ? 'Sending…' : `Send reminder (${preview.missingPlayerCount})`}
+          </button>
         </div>
-        <button type="button" className="primary-button min-h-9 flex-none px-3 text-xs" disabled={sending || loading} onClick={sendReminder}>
-          {sending ? 'Sending…' : `Send reminder (${preview.missingPlayerCount})`}
-        </button>
+        {status ? <div className="mt-2 text-xs font-bold text-emerald-700">{status}</div> : null}
+        {sendError ? <div className="mt-2 text-xs font-bold text-rose-700">{sendError.message}</div> : null}
       </div>
-      {status ? <div className="mt-2 text-xs font-bold text-emerald-700">{status}</div> : null}
-      {sendError ? <div className="mt-2 text-xs font-bold text-rose-700">{sendError.message}</div> : null}
-    </div>
+      {confirmReminder ? (
+        <ConfirmDialog
+          title="Send RSVP reminder?"
+          message={`Send an RSVP reminder to ${preview.missingPlayerCount} no-response ${preview.missingPlayerCount === 1 ? 'player' : 'players'}? ${preview.eligibleEmailCount} eligible parent/guardian ${preview.eligibleEmailCount === 1 ? 'email' : 'emails'} will be targeted.`}
+          confirmLabel="Send reminder"
+          onConfirm={() => void sendReminder()}
+          onClose={() => setConfirmReminder(false)}
+        />
+      ) : null}
+    </>
   );
 }
 

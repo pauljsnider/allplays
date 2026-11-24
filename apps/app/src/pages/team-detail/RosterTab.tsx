@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ChevronRight, LinkIcon, Loader2, MessageCircle, Save, Sparkles, UserPlus } from 'lucide-react';
 import { AvatarImage } from '../../components/AvatarImage';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { buildPrivateAiLaunchPath } from '../../lib/privateAiLaunch';
 import { addRosterPlayerForApp, archiveTeamTrackingItemForApp, createRosterParentInviteForApp, deactivateRosterPlayerForApp, loadRosterFieldDefinitionsForApp, reactivateRosterPlayerForApp, saveTeamTrackingItemForApp, setPlayerTrackingStatusForApp, type CreateRosterParentInviteForAppResult, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamTrackingAdminItem } from '../../lib/teamDetailService';
 import type { AuthState } from '../../lib/types';
@@ -52,6 +53,7 @@ export function RosterTab({
   onTrackingChanged: () => Promise<void>;
 }) {
   const [pendingPlayerId, setPendingPlayerId] = useState('');
+  const [confirmPlayer, setConfirmPlayer] = useState<TeamDetailPlayer | null>(null);
   const [expandedInvite, setExpandedInvite] = useState<{ teamId: string; playerId: string } | null>(null);
   const [status, setStatus] = useState<{ success: boolean; message: string } | null>(null);
   const [activePlayerLimit, setActivePlayerLimit] = useState<number>(rosterRenderLimits.activePlayers);
@@ -63,13 +65,18 @@ export function RosterTab({
   const visibleActivePlayers = activePlayers.slice(0, activePlayerWindow.visibleCount);
   const visibleInactivePlayers = inactivePlayers.slice(0, inactivePlayerWindow.visibleCount);
 
-  async function togglePlayerActiveState(player: TeamDetailPlayer) {
+  // The confirm step is an in-app dialog, not window.confirm(): native
+  // dialogs can be auto-dismissed or never surface in embedded/automated
+  // browsers, which made Deactivate look like a dead button (#5312).
+  function requestTogglePlayerActiveState(player: TeamDetailPlayer) {
+    setConfirmPlayer(player);
+  }
+
+  async function confirmTogglePlayerActiveState() {
+    const player = confirmPlayer;
+    if (!player) return;
+    setConfirmPlayer(null);
     const action = player.active ? 'deactivate' : 'reactivate';
-    const confirmationMessage = player.active
-      ? `Deactivate ${player.name}?\n\nLinked parents may lose access to this team, including history, until the player is reactivated or parent scope is repaired.`
-      : `Reactivate ${player.name}?`;
-    const confirmed = window.confirm(confirmationMessage);
-    if (!confirmed) return;
     setPendingPlayerId(player.id);
     setStatus(null);
     try {
@@ -112,7 +119,7 @@ export function RosterTab({
       {model.canManageTeam ? <AddPlayerCard teamId={model.team.id} authUser={authUser} onCreated={onRefresh} /> : null}
       {model.canManageTeam ? <RosterAiChatLauncher teamId={model.team.id} teamName={model.team.name} /> : null}
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        {activePlayers.length ? visibleActivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam={model.canManageTeam} pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} inviteExpanded={expandedInvite?.teamId === model.team.id && expandedInvite.playerId === player.id} onToggleInvite={() => toggleInviteEditor(player.id)} onInviteCreated={onInviteCreated} />) : (
+        {activePlayers.length ? visibleActivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam={model.canManageTeam} pending={pendingPlayerId === player.id} onToggleActive={requestTogglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} inviteExpanded={expandedInvite?.teamId === model.team.id && expandedInvite.playerId === player.id} onToggleInvite={() => toggleInviteEditor(player.id)} onInviteCreated={onInviteCreated} />) : (
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No players have been added yet.</div>
         )}
       </div>
@@ -132,7 +139,7 @@ export function RosterTab({
             <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{inactivePlayers.length} inactive</span>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {visibleInactivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} inviteExpanded={expandedInvite?.teamId === model.team.id && expandedInvite.playerId === player.id} onToggleInvite={() => toggleInviteEditor(player.id)} onInviteCreated={onInviteCreated} />)}
+            {visibleInactivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam pending={pendingPlayerId === player.id} onToggleActive={requestTogglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} inviteExpanded={expandedInvite?.teamId === model.team.id && expandedInvite.playerId === player.id} onToggleInvite={() => toggleInviteEditor(player.id)} onInviteCreated={onInviteCreated} />)}
           </div>
           {inactivePlayerWindow.hasMore ? (
             <button type="button" className="secondary-button mt-3 !min-h-9 text-xs" onClick={() => setInactivePlayerLimit(inactivePlayerWindow.nextLimit)}>
@@ -140,6 +147,18 @@ export function RosterTab({
             </button>
           ) : null}
         </div>
+      ) : null}
+      {confirmPlayer ? (
+        <ConfirmDialog
+          title={confirmPlayer.active ? `Deactivate ${confirmPlayer.name}?` : `Reactivate ${confirmPlayer.name}?`}
+          message={confirmPlayer.active
+            ? 'Linked parents may lose access to this team, including history, until the player is reactivated or parent scope is repaired.'
+            : 'The player returns to the active roster and linked parents regain access.'}
+          confirmLabel={confirmPlayer.active ? 'Deactivate' : 'Reactivate'}
+          destructive={confirmPlayer.active}
+          onConfirm={() => void confirmTogglePlayerActiveState()}
+          onClose={() => setConfirmPlayer(null)}
+        />
       ) : null}
     </section>
   );
@@ -389,6 +408,7 @@ function TrackingAdminCard({
   const [submitting, setSubmitting] = useState(false);
   const [busyKey, setBusyKey] = useState('');
   const [statusMessage, setStatusMessage] = useState<{ success: boolean; message: string } | null>(null);
+  const [archiveTarget, setArchiveTarget] = useState<TeamTrackingAdminItem | null>(null);
   const [expandedStatusItemIds, setExpandedStatusItemIds] = useState<Set<string>>(() => new Set());
   const [statusLimits, setStatusLimits] = useState<Record<string, number>>({});
 
@@ -429,7 +449,8 @@ function TrackingAdminCard({
   }
 
   async function archiveItem(item: TeamTrackingAdminItem) {
-    if (busyKey || !window.confirm(`Archive ${item.name || 'this item'}?`)) return;
+    if (busyKey) return;
+    setArchiveTarget(null);
     setBusyKey(`archive:${item.id}`);
     setStatusMessage(null);
     try {
@@ -546,7 +567,7 @@ function TrackingAdminCard({
                   {statusRowsExpanded ? 'Hide players' : `Show players (${item.playerStatuses.length})`}
                 </button>
                 <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => beginEdit(item)} disabled={submitting || Boolean(busyKey)}>Edit</button>
-                {item.status === 'active' ? <button type="button" className="secondary-button !min-h-8 text-xs !border-rose-200 !bg-rose-50 !text-rose-700" onClick={() => void archiveItem(item)} disabled={submitting || Boolean(busyKey)}>{busyKey === `archive:${item.id}` ? 'Archiving…' : 'Archive'}</button> : null}
+                {item.status === 'active' ? <button type="button" className="secondary-button !min-h-8 text-xs !border-rose-200 !bg-rose-50 !text-rose-700" onClick={() => setArchiveTarget(item)} disabled={submitting || Boolean(busyKey)}>{busyKey === `archive:${item.id}` ? 'Archiving…' : 'Archive'}</button> : null}
               </div>
             </div>
             {statusRowsExpanded ? (
@@ -576,6 +597,16 @@ function TrackingAdminCard({
         );
         }) : !trackingLoading ? <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No tracking items found.</div> : null}
       </div>
+      {archiveTarget ? (
+        <ConfirmDialog
+          title={`Archive ${archiveTarget.name || 'this item'}?`}
+          message="Archived tracking items stop showing for players and can be restored from the archived list."
+          confirmLabel="Archive"
+          destructive
+          onConfirm={() => void archiveItem(archiveTarget)}
+          onClose={() => setArchiveTarget(null)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -600,7 +631,7 @@ function PlayerRow({
   player: TeamDetailPlayer;
   canManageTeam?: boolean;
   pending?: boolean;
-  onToggleActive?: (player: TeamDetailPlayer) => Promise<void>;
+  onToggleActive?: (player: TeamDetailPlayer) => void | Promise<void>;
   inviteSummary?: TeamRosterParentInviteSummary;
   inviteExpanded?: boolean;
   onToggleInvite?: () => void;
