@@ -112,8 +112,22 @@ export function getEventDetailPath(event: Pick<ParentScheduleEvent, 'teamId' | '
   return `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}${query ? `?${query}` : ''}`;
 }
 
+/**
+ * An event stays "upcoming" while it is still running, plus a short grace
+ * window after it ends (mirrors the bulk-RSVP recently-started window).
+ * Events without an end time fall back to the same grace window after start,
+ * so an event from earlier today stops counting as "upcoming" / DO FIRST
+ * once it is over instead of lingering until midnight.
+ */
+const recentlyEndedEventWindowMs = 3 * 60 * 60 * 1000;
+
 export function isUpcomingHomeEvent(event: ParentScheduleEvent, now = new Date()) {
-  return !event.isCancelled && event.date.getTime() >= startOfDay(now).getTime();
+  if (event.isCancelled) return false;
+  const endMs = event.endDate?.getTime();
+  if (Number.isFinite(endMs)) {
+    return now.getTime() <= (endMs as number) + recentlyEndedEventWindowMs;
+  }
+  return event.date.getTime() >= now.getTime() - recentlyEndedEventWindowMs;
 }
 
 export function getUpcomingHomeEvents(events: ParentScheduleEvent[], limit = 5, now = new Date()) {
@@ -554,12 +568,6 @@ function sortEventsByDate(events: ParentScheduleEvent[]) {
 
 function getPlayerActionCount(player: Pick<ParentHomePlayer, 'rsvpNeeded' | 'packetsReady' | 'openAssignments' | 'unreadCount'>) {
   return player.rsvpNeeded + player.packetsReady + player.openAssignments + (player.unreadCount > 0 ? 1 : 0);
-}
-
-function startOfDay(date: Date) {
-  const result = new Date(date);
-  result.setHours(0, 0, 0, 0);
-  return result;
 }
 
 function toDate(value: unknown) {
