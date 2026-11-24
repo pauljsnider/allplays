@@ -64,6 +64,30 @@ function validFunctionDeploymentEvidence() {
     };
 }
 
+function validFunctionUpdatedEvidence(expected = expectedFunctionDeployment) {
+    return {
+        schemaVersion: FIREBASE_APPLICATION_EVIDENCE_SCHEMA_VERSION,
+        targetType: FIREBASE_FUNCTION_TARGET_TYPE,
+        status: 'updated',
+        projectId: expected.projectId,
+        functionTarget: expected.functionTarget,
+        artifactSha: expected.artifactSha,
+        deploymentId: expected.deploymentId
+    };
+}
+
+function validFunctionUnchangedEvidence(expected = expectedFunctionDeployment) {
+    return {
+        schemaVersion: FIREBASE_APPLICATION_EVIDENCE_SCHEMA_VERSION,
+        targetType: FIREBASE_FUNCTION_TARGET_TYPE,
+        status: 'unchanged',
+        projectId: expected.projectId,
+        functionTarget: expected.functionTarget,
+        artifactSha: expected.artifactSha,
+        deploymentId: expected.deploymentId
+    };
+}
+
 function verifyFunction(evidence, expected = expectedFunctionDeployment) {
     return verifyFirebaseApplicationDeployment({ evidence, expectedDeployment: expected });
 }
@@ -164,6 +188,112 @@ describe('Firebase application deployment evidence', () => {
         }]
     ])('rejects %s', (_label, expected) => {
         expect(() => verify(validCurrentEvidence(), expected)).toThrow();
+    });
+});
+
+describe('individual Firebase function explicitly updated evidence', () => {
+    const supportedTargets = [
+        expectedFunctionDeployment,
+        {
+            ...expectedFunctionDeployment,
+            functionTarget: 'sendTeamEmail',
+            deploymentId: 'projects/game-flow-c6311/locations/us-central1/functions/sendTeamEmail/versions/7'
+        }
+    ];
+
+    it.each(supportedTargets)(
+        'accepts explicit updated evidence for $functionTarget',
+        (expected) => {
+            expect(verifyFunction(validFunctionUpdatedEvidence(expected), expected)).toEqual({
+                status: 'updated',
+                targetType: FIREBASE_FUNCTION_TARGET_TYPE,
+                projectId: expected.projectId,
+                functionTarget: expected.functionTarget,
+                artifactSha: expected.artifactSha,
+                deploymentId: expected.deploymentId
+            });
+        }
+    );
+
+    it('rejects every missing updated-evidence field', () => {
+        for (const field of Object.keys(validFunctionUpdatedEvidence())) {
+            const evidence = validFunctionUpdatedEvidence();
+            delete evidence[field];
+
+            expect(() => verifyFunction(evidence), `missing ${field}`)
+                .toThrow(/fields must exactly match/);
+        }
+    });
+
+    it.each([
+        ['schemaVersion', '1'],
+        ['targetType', 1],
+        ['status', true],
+        ['projectId', ''],
+        ['functionTarget', ''],
+        ['artifactSha', 'not-a-sha'],
+        ['deploymentId', '']
+    ])('rejects malformed updated %s evidence', (field, value) => {
+        expect(() => verifyFunction({
+            ...validFunctionUpdatedEvidence(),
+            [field]: value
+        })).toThrow();
+    });
+
+    it.each([
+        ['schema version', { schemaVersion: 2 }],
+        ['Hosting target', { targetType: 'firebase-hosting' }],
+        ['current state', { status: 'current' }],
+        ['partial state', { status: 'partial' }],
+        ['extra metadata', { retryAttempt: 2 }]
+    ])('rejects unsupported updated-evidence %s', (_label, mutation) => {
+        expect(() => verifyFunction({
+            ...validFunctionUpdatedEvidence(),
+            ...mutation
+        })).toThrow();
+    });
+
+    it.each([
+        ['projectId', 'another-project'],
+        ['functionTarget', 'sendTeamEmail'],
+        ['artifactSha', 'b'.repeat(40)],
+        ['deploymentId', 'another-deployment']
+    ])('rejects updated evidence with mismatched %s', (field, value) => {
+        expect(() => verifyFunction({
+            ...validFunctionUpdatedEvidence(),
+            [field]: value
+        })).toThrow(/does not match the expected deployment/);
+    });
+});
+
+describe('individual Firebase function explicitly unchanged evidence', () => {
+    it('accepts evidence binding the intended artifact to the current deployment', () => {
+        expect(verifyFunction(validFunctionUnchangedEvidence())).toEqual({
+            status: 'unchanged',
+            targetType: FIREBASE_FUNCTION_TARGET_TYPE,
+            projectId: expectedFunctionDeployment.projectId,
+            functionTarget: expectedFunctionDeployment.functionTarget,
+            artifactSha: expectedFunctionDeployment.artifactSha,
+            deploymentId: expectedFunctionDeployment.deploymentId
+        });
+    });
+
+    it.each([
+        ['artifact identity only', validFunctionArtifactEvidence],
+        ['deployment identity only', validFunctionDeploymentEvidence]
+    ])('rejects unsupported unchanged evidence with %s', (_label, buildEvidence) => {
+        expect(() => verifyFunction({ ...buildEvidence(), status: 'unchanged' }))
+            .toThrow(/supported individual function evidence shape/);
+    });
+
+    it.each([
+        ['artifactSha', 'b'.repeat(40)],
+        ['deploymentId', 'another-deployment']
+    ])('rejects unchanged evidence with mismatched %s', (field, value) => {
+        expect(() => verifyFunction({
+            ...validFunctionUnchangedEvidence(),
+            [field]: value
+        })).toThrow(/does not match the expected deployment/);
     });
 });
 
