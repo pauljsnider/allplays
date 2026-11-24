@@ -87,6 +87,12 @@ export type ParentHomeModel = {
   feedGames?: ParentScheduleEvent[];
   actionItems: ParentHomeAction[];
   fees: ParentHomeFee[];
+  /**
+   * True when the model was built from a partial load (e.g. a schedule scope
+   * that was still being discovered). Partial models must never be cached as
+   * authoritative or rendered as a final state.
+   */
+  isPartial?: boolean;
   metrics: {
     players: number;
     teams: number;
@@ -169,12 +175,14 @@ export function buildParentHomeModel({
   events,
   inboxTeams = [],
   fees = [],
+  isPartial = false,
   now = new Date()
 }: {
   children: ParentScheduleChild[];
   events: ParentScheduleEvent[];
   inboxTeams?: ParentHomeInboxTeam[];
   fees?: ParentHomeFee[];
+  isPartial?: boolean;
   now?: Date;
 }): ParentHomeModel {
   const inboxByTeamId = new Map(inboxTeams.map((team) => [team.id, team]));
@@ -192,6 +200,7 @@ export function buildParentHomeModel({
     feedGames: eventIndex.feedGames,
     actionItems,
     fees: openFees,
+    isPartial,
     metrics: {
       players: players.length,
       teams: teams.length,

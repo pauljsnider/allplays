@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearAppDataCache, getCachedAppData, getParentScheduleSummaryCacheKey, invalidateCachedAppData } from './appDataCache';
+import { clearAppDataCache, getCachedAppData, getParentHomeSecondaryCacheKey, getParentScheduleSummaryCacheKey, invalidateCachedAppData } from './appDataCache';
 
 const chatServiceMocks = vi.hoisted(() => ({
     loadChatInbox: vi.fn()
@@ -1062,6 +1062,39 @@ describe('homeService Teams bootstrap reuse', () => {
 
         expect(complete.teams.map((team) => team.teamId)).toEqual(['team-2', 'team-1']);
         expect(chatServiceMocks.loadChatInbox).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps a coach-only staff team in the secondary Home model when chat has no record of it', async () => {
+        const schedule = {
+            children: [],
+            events: [],
+            staffTeams: [{ teamId: 'team-coach', teamName: 'Vipers' }]
+        } as any;
+
+        const model = await loadParentHomeWithSecondaryData(user, { schedule, force: true });
+
+        expect(model.teams.map((team) => team.teamId)).toEqual(['team-coach']);
+        expect(model.teams[0]?.role).toBe('Coach');
+        expect(model.isPartial).toBe(false);
+    });
+
+    it('marks a secondary Home model built from a partial schedule and does not cache it', async () => {
+        const partialSchedule = { children: [], events: [], staffTeams: [], isPartial: true } as any;
+        const partials: any[] = [];
+        const model = await loadParentHomeWithSecondaryData(user, {
+            schedule: partialSchedule,
+            force: true,
+            onPartial: (partial) => partials.push(partial)
+        });
+
+        expect(model.isPartial).toBe(true);
+        expect(partials.length).toBeGreaterThan(0);
+        expect(partials.every((partial) => partial.isPartial === true)).toBe(true);
+        expect(getCachedAppData(getParentHomeSecondaryCacheKey(user.uid))).toBeNull();
+
+        const completeSchedule = { children: [], events: [], staffTeams: [], isPartial: false } as any;
+        const complete = await loadParentHomeWithSecondaryData(user, { schedule: completeSchedule });
+        expect(complete.isPartial).toBe(false);
     });
 
     it('still surfaces a retryable error when every Home secondary slice fails', async () => {

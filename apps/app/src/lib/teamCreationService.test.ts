@@ -2,6 +2,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearAppDataCache,
+  getParentHomeSecondaryCacheKey,
+  getParentScheduleSummaryCacheKey,
   getTeamsSummaryBootstrapCacheKey,
   loadCachedAppData
 } from './appDataCache';
@@ -84,21 +86,33 @@ describe('createTeamForApp', () => {
     expect(legacyMocks.createConfig).toHaveBeenCalledWith('team-new', { name: 'Soccer Standard', baseType: 'Soccer' });
   });
 
-  it('invalidates only the creator team-summary cache after the team write succeeds', async () => {
+  it('invalidates the creator team-summary, schedule-summary, and Home secondary caches after the team write succeeds', async () => {
     const creatorCacheKey = getTeamsSummaryBootstrapCacheKey(user.uid);
+    const creatorScheduleKey = getParentScheduleSummaryCacheKey(user.uid);
+    const creatorSecondaryKey = getParentHomeSecondaryCacheKey(user.uid);
     const otherCacheKey = getTeamsSummaryBootstrapCacheKey('coach-2');
     await loadCachedAppData(creatorCacheKey, async () => 'stale creator teams', { persist: false });
+    await loadCachedAppData(creatorScheduleKey, async () => 'stale creator schedule', { persist: false });
+    await loadCachedAppData(creatorSecondaryKey, async () => 'stale creator home', { persist: false });
     await loadCachedAppData(otherCacheKey, async () => 'other coach teams', { persist: false });
 
     await createTeamForApp(user, { name: 'Team', sport: 'Soccer' });
 
     const reloadCreatorTeams = vi.fn(async () => 'creator teams with new team');
+    const reloadCreatorSchedule = vi.fn(async () => 'creator schedule with new team');
+    const reloadCreatorHome = vi.fn(async () => 'creator home with new team');
     const reloadOtherTeams = vi.fn(async () => 'unexpected reload');
     await expect(loadCachedAppData(creatorCacheKey, reloadCreatorTeams, { persist: false }))
       .resolves.toBe('creator teams with new team');
+    await expect(loadCachedAppData(creatorScheduleKey, reloadCreatorSchedule, { persist: false }))
+      .resolves.toBe('creator schedule with new team');
+    await expect(loadCachedAppData(creatorSecondaryKey, reloadCreatorHome, { persist: false }))
+      .resolves.toBe('creator home with new team');
     await expect(loadCachedAppData(otherCacheKey, reloadOtherTeams, { persist: false }))
       .resolves.toBe('other coach teams');
     expect(reloadCreatorTeams).toHaveBeenCalledTimes(1);
+    expect(reloadCreatorSchedule).toHaveBeenCalledTimes(1);
+    expect(reloadCreatorHome).toHaveBeenCalledTimes(1);
     expect(reloadOtherTeams).not.toHaveBeenCalled();
   });
 

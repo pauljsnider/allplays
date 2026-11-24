@@ -634,13 +634,13 @@ export function Home({ auth }: { auth: AuthState }) {
               Checking actions
             </div>
           ) : null}
-          <PulseChip icon={UserRound} label="Players" value={String(home.metrics.players)} to="/home?section=players" />
-          <PulseChip icon={Users} label="Teams" value={String(home.metrics.teams)} to="/home?section=teams" />
-          <PulseChip icon={ClipboardCheck} label="RSVP" value={String(home.metrics.rsvpNeeded)} to={home.metrics.rsvpNeeded > 1 ? '/schedule?bulkRsvp=1' : '/schedule'} urgent={home.metrics.rsvpNeeded > 0} />
-          <PulseChip icon={ClipboardCheck} label="Packets" value={String(home.metrics.packetsReady + (resourceOpenCount || 0))} to="/schedule?view=packets" urgent={home.metrics.packetsReady + (resourceOpenCount || 0) > 0} />
-          <PulseChip icon={MessageCircle} label="Unread" value={String(home.metrics.unreadMessages)} to="/messages" urgent={home.metrics.unreadMessages > 0} />
-          <PulseChip icon={Newspaper} label="Feed" value={String(social.metrics.feedItems)} to="/home?section=feed" />
-          <PulseChip icon={UserPlus} label="Requests" value={String(social.metrics.incomingRequests)} to="/home?section=friends" urgent={social.metrics.incomingRequests > 0} />
+          <PulseChip icon={UserRound} label="Players" value={homeDetailsPending ? '…' : String(home.metrics.players)} to="/home?section=players" />
+          <PulseChip icon={Users} label="Teams" value={homeDetailsPending ? '…' : String(home.metrics.teams)} to="/home?section=teams" />
+          <PulseChip icon={ClipboardCheck} label="RSVP" value={homeDetailsPending ? '…' : String(home.metrics.rsvpNeeded)} to={home.metrics.rsvpNeeded > 1 ? '/schedule?bulkRsvp=1' : '/schedule'} urgent={home.metrics.rsvpNeeded > 0} />
+          <PulseChip icon={ClipboardCheck} label="Packets" value={homeDetailsPending ? '…' : String(home.metrics.packetsReady + (resourceOpenCount || 0))} to="/schedule?view=packets" urgent={home.metrics.packetsReady + (resourceOpenCount || 0) > 0} />
+          <PulseChip icon={MessageCircle} label="Unread" value={homeDetailsPending ? '…' : String(home.metrics.unreadMessages)} to="/messages" urgent={home.metrics.unreadMessages > 0} />
+          <PulseChip icon={Newspaper} label="Feed" value={socialLoading ? '…' : String(social.metrics.feedItems)} to="/home?section=feed" />
+          <PulseChip icon={UserPlus} label="Requests" value={socialLoading ? '…' : String(social.metrics.incomingRequests)} to="/home?section=friends" urgent={social.metrics.incomingRequests > 0} />
         </div>
       </section>
 
