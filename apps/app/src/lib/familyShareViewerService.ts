@@ -739,7 +739,7 @@ function buildPublicLiveGameHref(teamIdValue: unknown, gameIdValue: unknown) {
   const teamId = compactString(teamIdValue);
   const gameId = compactString(gameIdValue);
   if (!teamId || !gameId) return null;
-  const url = new URL('/live-game.html', 'https://allplays.ai');
+  const url = new URL('/live-game-overlay.html', 'https://allplays.ai');
   url.searchParams.set('teamId', teamId);
   url.searchParams.set('gameId', gameId);
   return url.toString();

@@ -169,7 +169,7 @@ export function resolveScheduleWatchCta(game = {}) {
         return {
             kind: 'replay',
             label: 'Watch Replay',
-            href: 'live-game.html?teamId=' + game.teamId + '&gameId=' + game.id + '&replay=true'
+            href: 'live-game-overlay.html?teamId=' + game.teamId + '&gameId=' + game.id + '&replay=true'
         };
     }
     return null;
@@ -328,7 +328,7 @@ test('parent dashboard preserves linked replay evidence while mapping a statshee
     await expect.poll(() => pageErrors).toEqual([]);
     await expect(page.locator('#schedule-list').getByRole('link', { name: 'Watch Replay' }).first()).toHaveAttribute(
         'href',
-        /live-game\.html\?teamId=team-1&gameId=(game-replay-1|game-timeline-1)&replay=true/
+        /live-game-overlay\.html\?teamId=team-1&gameId=(game-replay-1|game-timeline-1)&replay=true/
     );
     await expect(page.locator('#schedule-list').getByRole('link', { name: 'Watch Replay' })).toHaveCount(2);
 });

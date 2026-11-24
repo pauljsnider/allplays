@@ -97,7 +97,7 @@
             if (isCompleted(game)) {
                 return `game.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(gameId)}`;
             }
-            return `live-game.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(gameId)}`;
+            return `live-game-overlay.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(gameId)}`;
         }
 
         function getStatusLabel(game) {

@@ -101,7 +101,7 @@ describe('team page schedule card rendering', () => {
 
         expect(html).toContain('LIVE NOW');
         expect(html).toContain('Live Now');
-        expect(html).toContain('live-game.html?teamId=team-1&gameId=game-live');
+        expect(html).toContain('live-game-overlay.html?teamId=team-1&gameId=game-live');
         expect(html).toContain('>12</div>');
         expect(html).toContain('>10</div>');
         expect(html).not.toContain('View Report');
@@ -127,7 +127,7 @@ describe('team page schedule card rendering', () => {
         expect(replayHtml).toContain('View Report');
         expect(replayHtml).toContain('Share Report');
         expect(replayHtml).toContain('Replay');
-        expect(replayHtml).toContain('live-game.html?teamId=team-1&gameId=game-completed-replay&replay=true');
+        expect(replayHtml).toContain('live-game-overlay.html?teamId=team-1&gameId=game-completed-replay&replay=true');
         expect(replayHtml).not.toContain('View Live');
         expect(readTeamPage()).toContain("type: isPractice ? 'practice' : 'game'");
 

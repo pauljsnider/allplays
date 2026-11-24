@@ -1155,6 +1155,25 @@
       transform: translateX(-50%);
     }
 
+    .replay-clip {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--paper);
+    }
+    .replay-clip[hidden],
+    body[data-highlight="true"] .hero-event { display: none; }
+    .replay-clip .replay-button { flex-shrink: 0; }
+    body[data-highlight="true"] .connection-message { top: 300px; }
+    body[data-landscape="true"][data-highlight="true"] #replay-controls { height: 92px; }
+    body[data-landscape="true"][data-highlight="true"] .video-layer {
+      bottom: calc(var(--land-bottom) + 100px);
+    }
+    body[data-landscape="true"] .replay-clip { padding-inline: 8px; }
+
     .replay-controls[hidden] {
       display: none;
     }
@@ -2260,7 +2279,6 @@
           <button id="share-game-menu" class="game-menu-action" type="button" role="menuitem">Share game <span aria-hidden="true">↗</span></button>
           <button id="scoreboard-menu-toggle" class="game-menu-action" type="button" role="menuitemcheckbox" aria-checked="false"><span id="scoreboard-menu-label">Hide scoreboard</span> <span aria-hidden="true">—</span></button>
           <a id="watch-replay-menu" class="game-menu-action" href="#" role="menuitem" hidden>Watch Replay <span aria-hidden="true">→</span></a>
-          <a id="classic-view-link" class="game-menu-action" href="#" role="menuitem" hidden><span id="classic-view-link-label">Game Center</span> <span aria-hidden="true">→</span></a>
           <a id="match-report-link" class="game-menu-action" href="#" role="menuitem">Match report <span aria-hidden="true">→</span></a>
           <a id="game-details-link" class="game-menu-action" href="#" role="menuitem">Game details <span aria-hidden="true">→</span></a>
           <a id="provider-menu-link" class="game-menu-action" href="#" target="_blank" rel="noopener noreferrer" role="menuitem" hidden><span id="provider-menu-label">Open video</span> <span aria-hidden="true">↗</span></a>
@@ -2399,6 +2417,10 @@
     </div>
 
     <section id="replay-controls" class="replay-controls" aria-label="Replay controls" hidden>
+      <div id="replay-clip" class="replay-clip" hidden>
+        <span id="replay-clip-label" role="status"></span>
+        <button id="replay-full-game" class="replay-button" type="button">Watch full game</button>
+      </div>
       <button id="replay-restart" class="replay-button" data-kind="restart" type="button" aria-label="Restart replay">↺</button>
       <button id="replay-play" class="replay-button" data-kind="playback" data-replay-action="play" type="button" aria-label="Play replay">
         <svg class="replay-control-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -2487,6 +2509,6 @@
   </main>
 
   <span id="screen-reader-update" class="visually-hidden" aria-live="polite"></span>
-  <script type="module" src="js/live-game-overlay.js?v=75"></script>
+    <script type="module" src="js/live-game-overlay.js?v=81"></script>
 </body>
 </html>

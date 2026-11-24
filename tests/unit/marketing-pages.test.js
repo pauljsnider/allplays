@@ -23,7 +23,7 @@ describe('marketing pages integration', () => {
             expect(html).toContain('id="hero-cta"');
             expect(html).toContain("renderHeader(document.getElementById('header-container'), null)");
             expect(html).toContain("import { bootHomepage } from './js/homepage-boot.js?v=1'");
-            expect(html).toContain('./js/homepage.js?v=5');
+            expect(html).toContain('./js/homepage.js?v=6');
             expect(html).toContain('./js/public-homepage-games.js?v=2');
             // auth.js must be imported dynamically (not statically at the top of the module) so the header
             // still renders when Firebase is unavailable (e.g. localhost); a static import throws and blanks the page.

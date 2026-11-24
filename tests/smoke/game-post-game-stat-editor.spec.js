@@ -824,6 +824,7 @@ async function installMocks(
                     hasVideo: true,
                     sourceUrl: replay.embedUrl,
                     publicUrl: replay.publicUrl,
+                    posterUrl: replay.posterUrl || null,
                     replayState: null
                 };
             }
@@ -1786,6 +1787,53 @@ test("Diamond report retries an unresolved config and offers a working accessibl
   expect(pageErrors).toEqual([]);
 });
 
+test("a YouTube replay uses a compact preview that clearly marks the video as available", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const scenario = createScenario();
+  scenario.game.replayVideo = {
+    provider: "youtube",
+    status: "ready",
+    videoId: "T3f9AjVhn9U",
+    embedUrl: "https://www.youtube.com/embed/T3f9AjVhn9U",
+    publicUrl: "https://www.youtube.com/watch?v=T3f9AjVhn9U",
+  };
+  await installMocks(page, scenario);
+  await page.route("https://i.ytimg.com/**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 9"><rect width="16" height="9" fill="#334155"/></svg>',
+    }),
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect.poll(() => pageErrors).toEqual([]);
+
+  const preview = page.getByRole("link", {
+    name: "Video available. Watch the full game replay on YouTube.",
+  });
+  await expect(preview).toBeVisible();
+  await expect(preview).toHaveAttribute(
+    "href",
+    "live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true",
+  );
+  await expect(preview.locator("img")).toHaveAttribute(
+    "src",
+    "https://i.ytimg.com/vi/T3f9AjVhn9U/mqdefault.jpg",
+  );
+  await expect(preview).toContainText("Video available");
+  await expect(preview).toContainText("Watch replay");
+  const previewBox = await preview.boundingBox();
+  expect(previewBox?.height).toBeLessThanOrEqual(56);
+  expect(previewBox?.width).toBeLessThanOrEqual(240);
+});
+
 test("completed-game stat editor saves corrections and DNP state through real controls", async ({
   page,
   baseURL,
@@ -1801,6 +1849,8 @@ test("completed-game stat editor saves corrections and DNP state through real co
   await expect.poll(async () => (await readStore(page)).eventReadPaths || []).toEqual([
     "teams/team-1/games/game-1/events",
   ]);
+  await expect(page.getByRole("link", { name: "View game replay" })).toBeVisible();
+  await expect(page.locator("[data-replay-video-preview]")).toHaveCount(0);
 
   await page.locator("#share-report-btn").click();
   await expect
@@ -2644,9 +2694,7 @@ test("completed-game manager links, replaces, and removes a YouTube replay", asy
   await expect(page.locator("#replay-video-status")).toContainText(
     "Replay linked",
   );
-  await expect(
-    replayAction.getByRole("link", { name: "Watch Replay" }),
-  ).toBeVisible();
+  await expect(replayAction.locator("[data-replay-video-preview]")).toBeVisible();
 
   let store = await readStore(page);
   expect(store.game.replayVideo).toMatchObject({

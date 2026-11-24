@@ -135,7 +135,7 @@ describe('homepage index workflow', () => {
         expect(homepageHtml).not.toContain('login.html#signup');
         expect(homepageHtml).toContain('mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Access%20Request');
         expect(homepageHtml).toContain('Request Access');
-        expect(homepageHtml).toContain("./js/homepage.js?v=5");
+        expect(homepageHtml).toContain("./js/homepage.js?v=6");
         expect(homepageHtml).toContain("./js/public-homepage-games.js?v=2");
         expect(homepageHtml).not.toMatch(/import\s+\{[^}]*getLiveGamesNow[^}]*\}\s+from\s+'\.\/js\/db\.js/);
     });
@@ -184,7 +184,7 @@ describe('homepage index workflow', () => {
         expect(replayMarkup).toContain('77 - 72');
         expect(replayMarkup).toContain('DATE:2026-03-29T19:30:00.000Z');
         expect(replayMarkup).toContain('Watch Replay');
-        expect(replayMarkup).toContain('href="live-game.html?teamId=team-9&gameId=game-2&replay=true"');
+        expect(replayMarkup).toContain('href="live-game-overlay.html?teamId=team-9&gameId=game-2&replay=true"');
     });
 
     it('renders db-shaped live, upcoming, and replay games with Timestamp-like dates and parent team metadata', async () => {
@@ -259,12 +259,12 @@ describe('homepage index workflow', () => {
         expect(liveMarkup).toContain('Live Tigers');
         expect(liveMarkup).toContain('Live Now');
         expect(liveMarkup).toContain('9 watching');
-        expect(liveMarkup).toContain('href="live-game.html?teamId=team-live-1&gameId=live-game-1"');
+        expect(liveMarkup).toContain('href="live-game-overlay.html?teamId=team-live-1&gameId=live-game-1"');
         expect(liveMarkup).toContain('Future Panthers');
         expect(liveMarkup).toContain('vs Rockets');
         expect(liveMarkup).toContain('DATE:2026-04-11T20:30:00.000Z');
         expect(liveMarkup).toContain('TIME:2026-04-11T20:30:00.000Z');
-        expect(liveMarkup).toContain('href="live-game.html?teamId=team-upcoming-1&gameId=upcoming-game-1"');
+        expect(liveMarkup).toContain('href="live-game-overlay.html?teamId=team-upcoming-1&gameId=upcoming-game-1"');
 
         const replayMarkup = elements.get('past-games-list').innerHTML;
         expect(replayMarkup).not.toContain('Loading replays...');
@@ -272,7 +272,7 @@ describe('homepage index workflow', () => {
         expect(replayMarkup).toContain('vs Bears');
         expect(replayMarkup).toContain('44 - 41');
         expect(replayMarkup).toContain('DATE:2026-04-09T01:15:00.000Z');
-        expect(replayMarkup).toContain('href="live-game.html?teamId=team-replay-1&gameId=replay-game-1&replay=true"');
+        expect(replayMarkup).toContain('href="live-game-overlay.html?teamId=team-replay-1&gameId=replay-game-1&replay=true"');
     });
 
     it('routes parent users to the parent dashboard CTA', async () => {

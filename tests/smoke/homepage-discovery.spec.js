@@ -82,7 +82,7 @@ async function assertResolvedDiscoverySection(page, selector, { emptyText, linkP
     await expect(section).not.toContainText(/Loading (games|replays)\.\.\./, { timeout: 15000 });
     await expect(section).not.toContainText(/Unable to load/i);
 
-    const cards = section.locator('a[href^="live-game.html?teamId="]');
+    const cards = section.locator('a[href^="live-game-overlay.html?teamId="]');
     if (await cards.count()) {
         const firstCard = cards.first();
         await expect(firstCard).toHaveAttribute('href', linkPattern);
@@ -105,21 +105,21 @@ test('homepage resolves live/upcoming and replay discovery cards', async ({ page
 
     await assertResolvedDiscoverySection(page, '#live-games-list', {
         emptyText: 'No upcoming live games scheduled',
-        linkPattern: /^live-game\.html\?teamId=[^&]+&gameId=[^&]+$/,
+        linkPattern: /^live-game-overlay\.html\?teamId=[^&]+&gameId=[^&]+$/,
         ctaPattern: /Watch Now|View Details/
     });
     await expect(page.locator('#live-games-list')).toContainText('Smoke Tigers');
     await expect(page.locator('#live-games-list')).toContainText('Smoke Panthers');
     await expect(page.locator('#live-games-list')).toContainText('Some live or upcoming games may be missing.');
-    await expect(page.locator('#live-games-list a[href="live-game.html?teamId=smoke-team-live&gameId=smoke-live-1"]')).toHaveCount(1);
-    await expect(page.locator('#live-games-list a[href="live-game.html?teamId=smoke-team-upcoming&gameId=smoke-upcoming-1"]')).toHaveCount(1);
+    await expect(page.locator('#live-games-list a[href="live-game-overlay.html?teamId=smoke-team-live&gameId=smoke-live-1"]')).toHaveCount(1);
+    await expect(page.locator('#live-games-list a[href="live-game-overlay.html?teamId=smoke-team-upcoming&gameId=smoke-upcoming-1"]')).toHaveCount(1);
 
     await assertResolvedDiscoverySection(page, '#past-games-list', {
         emptyText: 'No recent replays available',
-        linkPattern: /^live-game\.html\?teamId=[^&]+&gameId=[^&]+&replay=true$/,
+        linkPattern: /^live-game-overlay\.html\?teamId=[^&]+&gameId=[^&]+&replay=true$/,
         ctaPattern: /Watch Replay/
     });
     await expect(page.locator('#past-games-list')).toContainText('Smoke Wolves');
     await expect(page.locator('#past-games-list')).toContainText('Some recent replays may be missing.');
-    await expect(page.locator('#past-games-list a[href="live-game.html?teamId=smoke-team-replay&gameId=smoke-replay-1&replay=true"]')).toHaveCount(1);
+    await expect(page.locator('#past-games-list a[href="live-game-overlay.html?teamId=smoke-team-replay&gameId=smoke-replay-1&replay=true"]')).toHaveCount(1);
 });

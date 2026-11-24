@@ -1616,7 +1616,7 @@ test('private-team parent opens a live game through the bounded team projection'
     await expect.poll(() => page.evaluate(() => window.__CANONICAL_TEAM_READ_COUNT__ || 0)).toBe(0);
     await page.locator('#share-game-btn').click();
     await expect.poll(() => page.evaluate(() => window.__LIVE_GAME_SHARE_PAYLOADS__?.[0]?.url)).toBe(
-        'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1'
+        'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&overlay=true'
     );
     expect(pageErrors).toEqual([]);
 });

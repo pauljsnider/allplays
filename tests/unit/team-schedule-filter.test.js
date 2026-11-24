@@ -377,7 +377,7 @@ describe('team schedule filtering', () => {
         const source = readFileSync(new URL('../../team.html', import.meta.url), 'utf8');
 
         expect(source).toContain("realGameId: game.id || game.gameId || id");
-        expect(source).toContain('live-game.html?teamId=${currentTeamId}&gameId=${game.realGameId || game.gameId || game.id}');
+        expect(source).toContain('live-game-overlay.html?teamId=${currentTeamId}&gameId=${game.realGameId || game.gameId || game.id}');
         expect(source).toContain('game.html#teamId=${currentTeamId}&gameId=${game.realGameId || game.gameId || game.id}');
         expect(source).toContain('data-share-game-id="${game.realGameId || game.gameId || game.id}"');
         expect(source).toContain('data-game-id="${escapeAttr(game.gameId || game.id)}"');

@@ -65,6 +65,67 @@ function processLiveEventSnapshots(snapshots) {
 
 describe('live game overlay page', () => {
     it.each([
+        [[3000, 2000], 3000, true],
+        [[2100, 2000], 2100, true],
+        [[2001, 2000], 2001, true],
+        [[3000, 2000], 2000, false],
+        [[3000, 2000], 2500, false],
+        [[3000, 2000], 2800, false],
+        [[2100, 2000], 2080, false],
+        [[2000, 2000], 2000, false],
+        [[630000, 690000], 630000, true],
+        [[630000, 690000], 690000, false]
+    ])('distinguishes old seek acknowledgements from current playback (%j, %s)', (targets, elapsedMs, stale) => {
+        const uiState = { recentMediaSeekTargets: targets.map(targetMs => ({ targetMs, atMs: Date.now() })) };
+        const check = new Function('uiState', `
+            ${extractFunction(source, 'isStaleMediaSeekEcho')}
+            return isStaleMediaSeekEcho;
+        `)(uiState);
+        expect(check(elapsedMs)).toBe(stale);
+    });
+
+    it.each(['recorded', 'youtube'].flatMap(videoMode => [1, 50].map(replaySpeed => ({ videoMode, replaySpeed }))))('corrects $videoMode media past the highlight end (speed=$replaySpeed)', ({ videoMode, replaySpeed }) => {
+        const uiState = {
+            isReplay: true, replaySession: {}, replaySpeed, replayPlaying: replaySpeed > 2,
+            replayClip: { status: 'active' }, replayElapsedMs: 2000, videoMode
+        };
+        const syncReplayMedia = vi.fn();
+        const sync = new Function('uiState', 'elements', 'replayBounds', 'isStaleMediaSeekEcho',
+            'resetReplayToElapsed', 'pauseReplay', 'syncReplayMedia', `
+            ${extractFunction(source, 'syncReplayFromMediaTime')}
+            return syncReplayFromMediaTime;
+        `)(uiState, { recordedVideo: { currentTime: 7, paused: true } },
+            () => ({ startMs: 2000, endMs: 4000 }), () => false,
+            (time) => { uiState.replayElapsedMs = time; }, () => { uiState.replayPlaying = false; }, syncReplayMedia);
+
+        sync(7000, {});
+        expect(uiState.replayElapsedMs).toBe(4000);
+        expect(syncReplayMedia).toHaveBeenCalledWith({ seek: true, play: false });
+        expect(uiState.replayPlaying).toBe(false);
+    });
+
+    it.each(['recorded', 'youtube'])('seeks %s media back inside the highlight when provider controls seek before its start', (videoMode) => {
+        const uiState = {
+            isReplay: true, replaySession: {}, replaySpeed: 1, replayPlaying: false,
+            replayClip: { status: 'active' }, replayElapsedMs: 2000, videoMode
+        };
+        const elements = { recordedVideo: { currentTime: 0, paused: true } };
+        const sendYouTubeCommand = vi.fn();
+        const sync = new Function('uiState', 'elements', 'replayBounds', 'isStaleMediaSeekEcho',
+            'rememberMediaSeek', 'sendYouTubeCommand', 'resetReplayToElapsed', 'pauseReplay', 'syncReplayMedia', `
+            ${extractFunction(source, 'syncReplayFromMediaTime')}
+            return syncReplayFromMediaTime;
+        `)(uiState, elements, () => ({ startMs: 2000, endMs: 4000 }), () => false,
+            vi.fn(), sendYouTubeCommand, (time) => { uiState.replayElapsedMs = time; }, vi.fn(), vi.fn());
+
+        sync(0, {});
+        expect(uiState.replayElapsedMs).toBe(2000);
+        if (videoMode === 'recorded') expect(elements.recordedVideo.currentTime).toBe(2);
+        else expect(sendYouTubeCommand).toHaveBeenCalledWith('seekTo', [2, true]);
+        expect(uiState.replayPlaying).toBe(false);
+    });
+
+    it.each([
         [{ uid: 'viewer-1', displayName: 'Alexandra Long Account Name' }, 'Old nickname', 'Alexandra Long Account Name'],
         [{ uid: 'viewer-2', displayName: 'Taylor Account' }, 'Old nickname', 'Taylor Account'],
         [{ uid: 'viewer-3' }, 'Other account nickname', 'Fan'],
@@ -137,9 +198,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="fullscreen-toggle"');
         expect(html).toContain('id="game-actions-menu"');
         expect(html).toContain('aria-haspopup="menu"');
-        expect(html).toContain('id="classic-view-link"');
-        expect(html).toContain('id="classic-view-link-label"');
-        expect(html).toContain('<span id="classic-view-link-label">Game Center</span>');
+        expect(html).not.toContain('id="classic-view-link"');
         expect(html).toContain('id="match-report-link"');
         expect(html).toContain('id="game-details-link"');
         expect(html).toContain('id="replay-access-gate"');
@@ -149,7 +208,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
         expect(html).toMatch(/\.panel-tab\s*\{[^}]*min-width:\s*44px;/);
-        expect(html).toContain('js/live-game-overlay.js?v=75');
+        expect(html).toContain('js/live-game-overlay.js?v=81');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
@@ -161,7 +220,7 @@ describe('live game overlay page', () => {
         expect(source).toContain('stateTools.applyResetEventState');
         expect(source).toContain('reconcileOverlayLiveEvents');
         expect(source).toContain("from './live-game-overlay-model.js?v=34'");
-        expect(source).toContain("import('./live-game-video.js?v=443320')");
+        expect(source).toContain("import('./live-game-video.js?v=443321')");
         expect(source).not.toContain('loadPublicGameResetIdentity');
         expect(source).toContain('resolvePublicProjectionVideoOptions');
         expect(source).toContain('getSafeOverlayProviderUrl(publicUrl)');
@@ -177,7 +236,7 @@ describe('live game overlay page', () => {
         expect(source).toContain("import('./auth.js?v=4433220')");
         expect(source).toContain("import('./live-game-chat.js?v=4')");
         expect(currentLiveGameSource).toContain("from './live-game-overlay-model.js?v=34'");
-        expect(currentLiveGameSource).toContain("from './live-game-video.js?v=443320'");
+        expect(currentLiveGameSource).toContain("from './live-game-video.js?v=443321'");
         expect(currentLiveGameSource).toContain("from './live-game-chat.js?v=4'");
         expect(modelSource).toContain("from './game-replay-video.js?v=3'");
         expect(videoSource).toContain("from './game-replay-video.js?v=3'");
@@ -212,7 +271,7 @@ describe('live game overlay page', () => {
         expect(source).not.toContain('updateGame(');
         expect(source).not.toContain('trackViewerPresence(');
         expect(source).toContain('sendChatReaction');
-        expect(source).toContain("from './game-share-links.js?v=1'");
+        expect(source).toContain("from './game-share-links.js?v=2'");
         expect(source).toContain("from './utils.js?v=443391'");
         expect(source).toContain("from './live-game-announcer.js?v=2'");
         expect(source).toContain("import('./team-entitlements.js?v=11')");
@@ -224,8 +283,7 @@ describe('live game overlay page', () => {
         expect(source).toContain('requestFullscreen');
         expect(source).toContain('buildGameWatchShareUrl');
         expect(source).toContain('toggleScoreboardVisibility');
-        expect(source).toContain('elements.classicViewLink.href = `live-game.html?teamId=');
-        expect(source).toContain("uiState.isReplay ? 'Game Recap' : 'Game Center'");
+        expect(source).not.toContain('elements.classicViewLink');
         expect(source).toContain("setConnectionIssue('replay'");
         expect(source).toContain('connectionIssues: new Map()');
         expect(source).toContain("state.events.slice(pageStart, pageStart + pageSize)");

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { stubReplayPlayback, expectReplayPlayback, RAW_REPLAY_AUTH_FIXTURE, stubDelayedProfileAuth, verifyRawReplayAuthIsolation, verifyReplayProjectionPolling, verifyExplicitReplayRevalidation } from './replay-playback-fixture.js';
 import { expect, test } from '@playwright/test';
 
@@ -7,7 +8,7 @@ function collectPageErrors(page) {
     return errors;
 }
 
-async function stubYouTubeEmbed(page, { responseGate } = {}) {
+async function stubYouTubeEmbed(page, { responseGate, duration = null } = {}) {
     const requests = { count: 0 };
     await page.route('https://www.youtube.com/embed/**', async (route) => {
         requests.count += 1;
@@ -26,7 +27,7 @@ async function stubYouTubeEmbed(page, { responseGate } = {}) {
                             if (command.func === 'playVideo' || command.func === 'pauseVideo') {
                                 parent.postMessage(JSON.stringify({
                                     event: 'infoDelivery',
-                                    info: { currentTime, playerState: command.func === 'playVideo' ? 1 : 2 }
+                                    info: { currentTime, duration: ${JSON.stringify(duration)}, playerState: command.func === 'playVideo' ? 1 : 2 }
                                 }), '*');
                             }
                         } catch {}
@@ -1239,7 +1240,7 @@ test('viewer toolbar shares the canonical watch URL and controls YouTube audio a
     await expect.poll(() => page.evaluate(() => window.__OVERLAY_SHARED__)).toEqual([{
         title: 'Watch Live',
         text: 'Watch Current Academy vs Sporting Blue',
-        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1'
+        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&overlay=true'
     }]);
 
     await page.locator('#scoreboard-toggle').click();
@@ -1273,12 +1274,8 @@ test('viewer toolbar shares the canonical watch URL and controls YouTube audio a
     await expect(page.locator('#match-report-link')).toHaveAttribute('href', 'game.html#teamId=team-1&gameId=game-1');
     await expect(page.locator('#match-report-link')).toBeHidden();
     await expect(page.locator('#game-details-link')).toHaveAttribute('href', 'game.html#teamId=team-1&gameId=game-1');
-    await expect(page.locator('#classic-view-link')).toBeVisible();
-    await expect(page.locator('#classic-view-link')).toContainText('Game Center');
-    await expect(page.locator('#classic-view-link')).toHaveAttribute(
-        'href',
-        'live-game.html?teamId=team-1&gameId=game-1'
-    );
+    await expect(page.locator('#classic-view-link')).toHaveCount(0);
+    await expect(page.locator('#game-details-link')).toHaveAttribute('href', 'game.html#teamId=team-1&gameId=game-1');
     await expect(page.locator('#provider-menu-link')).toContainText('Watch on YouTube');
     await page.locator('#game-actions-toggle').click();
     await expect(page.locator('#game-actions-menu')).toBeHidden();
@@ -1305,11 +1302,8 @@ test('replay navigation stays in replay mode while the initial game load is pend
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
 
     await expect.poll(() => page.evaluate(() => typeof window.__OVERLAY_RELEASE_GAME__)).toBe('function');
-    await expect(page.locator('#classic-view-link')).toContainText('Game Recap');
-    await expect(page.locator('#classic-view-link')).toHaveAttribute(
-        'href',
-        'live-game.html?teamId=team-1&gameId=game-1&replay=true'
-    );
+    await expect(page.locator('#classic-view-link')).toHaveCount(0);
+    await expect(page.locator('#game-details-link')).toHaveAttribute('href', 'game.html#teamId=team-1&gameId=game-1');
     await page.evaluate(() => window.__OVERLAY_RELEASE_GAME__());
     await expect(page.locator('#home-team-name')).toHaveText('Current Academy');
     expect(pageErrors).toEqual([]);
@@ -1332,14 +1326,14 @@ test('short replay menus keep every action reachable by keyboard and touch', asy
     await expect(page.locator('#share-game-menu')).toBeFocused();
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowDown');
-    await expect(page.locator('#classic-view-link')).toBeFocused();
+    await expect(page.locator('#match-report-link')).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(page.locator('#game-actions-menu')).toBeHidden();
     await expect(menuToggle).toBeFocused();
 
     await menuToggle.click();
     const menu = page.locator('#game-actions-menu');
-    await expect.poll(() => menu.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+    await expect(menu).toBeInViewport({ ratio: 1 });
     await page.locator('#provider-menu-link').scrollIntoViewIfNeeded();
     await expect(page.locator('#provider-menu-link')).toBeInViewport();
     expect(pageErrors).toEqual([]);
@@ -1407,7 +1401,7 @@ test('a completed live game exposes replay actions and shares the replay URL wit
     await expect.poll(() => page.evaluate(() => window.__OVERLAY_SHARED__)).toEqual([{
         title: 'Watch Replay',
         text: 'Watch Current Academy vs Sporting Blue',
-        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true'
+        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true&overlay=true'
     }]);
     expect(pageErrors).toEqual([]);
 });
@@ -1442,7 +1436,7 @@ test('a completed live session keeps its event-timeline replay without a recorde
     await expect.poll(() => page.evaluate(() => window.__OVERLAY_SHARED__)).toEqual([{
         title: 'Watch Replay',
         text: 'Watch Current Academy vs Sporting Blue',
-        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true'
+        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true&overlay=true'
     }]);
     expect(pageErrors).toEqual([]);
 });
@@ -1474,7 +1468,7 @@ test('a report-only statsheet completion does not advertise or share an unavaila
     await expect.poll(() => page.evaluate(() => window.__OVERLAY_SHARED__)).toEqual([{
         title: 'Game Center',
         text: 'Watch Current Academy vs Sporting Blue',
-        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1'
+        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&overlay=true'
     }]);
     expect(pageErrors).toEqual([]);
 });
@@ -1615,12 +1609,8 @@ test('signed-out public replay uses the sanitized projected game video when priv
     await expect(page.locator('#open-stream')).toHaveAttribute('href', 'https://www.youtube.com/watch?v=PK1HyC37doc');
     await expect(page.locator('#replay-access-gate')).toBeHidden();
     await page.locator('#game-actions-toggle').click();
-    await expect(page.locator('#classic-view-link')).toBeVisible();
-    await expect(page.locator('#classic-view-link')).toContainText('Game Recap');
-    await expect(page.locator('#classic-view-link')).toHaveAttribute(
-        'href',
-        'live-game.html?teamId=team-1&gameId=game-1&replay=true'
-    );
+    await expect(page.locator('#classic-view-link')).toHaveCount(0);
+    await expect(page.locator('#game-details-link')).toHaveAttribute('href', 'game.html#teamId=team-1&gameId=game-1');
     expect(await page.evaluate(() => window.__OVERLAY_ENTITLEMENT_READS__ || 0)).toBe(0);
     expect(pageErrors).toEqual([]);
 });
@@ -2947,6 +2937,244 @@ for (const viewport of [{ width: 568, height: 320 }, { width: 844, height: 390 }
         await expect(page.locator('#chat-status')).toHaveText('Chatting as Alex Viewer');
         await expect(page.locator('#chat-input')).toBeEnabled();
         expect(new URL(page.url()).pathname + new URL(page.url()).search + new URL(page.url()).hash).toBe(viewerPath);
+        expect(errors).toEqual([]);
+    });
+}
+
+
+for (const provider of ['recorded', 'youtube']) {
+    for (const [bound, playing] of ['start', 'end'].flatMap(bound => [false, true].map(playing => [bound, playing]))) {
+        test(`highlight corrects ${provider} provider seeks ${bound === 'start' ? 'before the start' : 'past the end'} while ${playing ? 'playing' : 'paused'}`, async ({ page, baseURL }) => {
+            const errors = collectPageErrors(page);
+            await page.clock.install();
+            const mediaTime = bound === 'start' ? 0 : 7;
+            const correctedTime = bound === 'start' ? 2 : 6;
+            const staysPlaying = bound === 'start' && playing;
+            await page.addInitScript((recorded) => {
+                window.__OVERLAY_RECORDED_VIDEO__ = recorded;
+                window.__OVERLAY_COMPLETED_GAME__ = true;
+                window.__OVERLAY_YOUTUBE_COMMANDS__ = [];
+                window.addEventListener('message', (event) => {
+                    if (event.data?.source !== 'overlay-youtube-fixture') return;
+                    try { window.__OVERLAY_YOUTUBE_COMMANDS__.push(JSON.parse(event.data.payload)); } catch {}
+                });
+            }, provider === 'recorded');
+            await stubRealOverlayModules(page);
+            if (provider === 'recorded') {
+                const video = readFileSync(new URL('../fixtures/overlay-highlight.mp4', import.meta.url));
+                await page.route('**/overlay-recording-fixture.mp4', (route) => {
+                    const range = route.request().headers().range;
+                    const start = Number(range?.match(/bytes=(\d+)-/)?.[1] || 0);
+                    return route.fulfill({
+                        status: range ? 206 : 200,
+                        contentType: 'video/mp4',
+                        headers: { 'Accept-Ranges': 'bytes', ...(range ? { 'Content-Range': `bytes ${start}-${video.length - 1}/${video.length}` } : {}) },
+                        body: video.subarray(start)
+                    });
+                });
+            } else {
+                await stubYouTubeEmbed(page, { duration: 8 });
+            }
+            await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&clipStart=2000&clipEnd=6000`);
+            expect(errors).toEqual([]);
+            await expect(page.locator('#replay-clip-label')).toHaveText('Highlight · 0:02–0:06');
+            // Let initial seek acknowledgements settle before simulating provider controls.
+            await page.clock.fastForward(2000);
+            if (playing) await page.locator('#replay-play').click();
+            await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', playing ? 'pause' : 'play');
+            if (provider === 'recorded') {
+                await page.locator('#overlay-recorded-video').evaluate((video, time) => { video.currentTime = time; }, mediaTime);
+                const position = () => page.locator('#overlay-recorded-video').evaluate(video => video.currentTime);
+                if (bound === 'start') await expect.poll(position).toBeGreaterThanOrEqual(correctedTime);
+                else await expect.poll(position).toBe(correctedTime);
+                expect(await page.locator('#overlay-recorded-video').evaluate(video => video.paused)).toBe(!staysPlaying);
+            } else {
+                await page.evaluate(() => { window.__OVERLAY_YOUTUBE_COMMANDS__ = []; });
+                const frame = page.frames().find(frame => frame.url().startsWith('https://www.youtube.com/embed/'));
+                await frame.evaluate(({ playing, mediaTime }) => parent.postMessage(JSON.stringify({
+                    event: 'infoDelivery', info: { currentTime: mediaTime, duration: 8, playerState: playing ? 1 : 2 }
+                }), '*'), { playing, mediaTime });
+                await expect.poll(() => page.evaluate(() => window.__OVERLAY_YOUTUBE_COMMANDS__.filter(command => command.func === 'seekTo').at(-1)?.args[0])).toBe(correctedTime);
+            }
+            await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', staysPlaying ? 'pause' : 'play');
+            expect(errors).toEqual([]);
+        });
+    }
+
+    test(`highlight playback cues, stops, restarts, shares, and exits for ${provider}`, async ({ page, baseURL }) => {
+        const errors = collectPageErrors(page);
+        await page.addInitScript((recorded) => {
+            window.__OVERLAY_RECORDED_VIDEO__ = recorded;
+            window.__OVERLAY_COMPLETED_GAME__ = true;
+            window.__CLIP_SHARES__ = [];
+            Object.defineProperty(navigator, 'share', { value: async (data) => window.__CLIP_SHARES__.push(data) });
+        }, provider === 'recorded');
+        await stubRealOverlayModules(page);
+        if (provider === 'recorded') {
+            const video = readFileSync(new URL('../fixtures/overlay-highlight.mp4', import.meta.url));
+            await page.route('**/overlay-recording-fixture.mp4', (route) => {
+                const range = route.request().headers().range;
+                const start = Number(range?.match(/bytes=(\d+)-/)?.[1] || 0);
+                return route.fulfill({
+                    status: range ? 206 : 200,
+                    contentType: 'video/mp4',
+                    headers: { 'Accept-Ranges': 'bytes', ...(range ? { 'Content-Range': `bytes ${start}-${video.length - 1}/${video.length}` } : {}) },
+                    body: video.subarray(start)
+                });
+            });
+        } else {
+            await stubYouTubeEmbed(page, { duration: 8 });
+        }
+        await page.goto(`${baseURL}/live-game-overlay.html#teamId=team-1&gameId=game-1&replay=true&clipStart=2000&clipEnd=4000`);
+        expect(errors).toEqual([]);
+        await expect(page.locator('#replay-clip-label')).toHaveText('Highlight · 0:02–0:04');
+        await expect(page.locator('#replay-current')).toHaveText('0:02');
+        await expect(page.locator('#replay-progress')).toHaveValue('0');
+        await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', 'play');
+        if (provider === 'recorded') {
+            await expect.poll(() => page.locator('#overlay-recorded-video').evaluate(v => v.currentTime)).toBeCloseTo(2, 1);
+            expect(await page.locator('#overlay-recorded-video').evaluate(v => v.paused)).toBe(true);
+        }
+        await page.locator('#replay-play').click();
+        await expect(page.locator('#replay-progress')).toHaveValue('100');
+        await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', 'play');
+        if (provider === 'recorded') {
+            expect(await page.locator('#overlay-recorded-video').evaluate(v => ({ time: v.currentTime, paused: v.paused })))
+                .toEqual({ time: 4, paused: true });
+        }
+        await page.getByRole('button', { name: 'Replay highlight', exact: true }).click();
+        await expect(page.locator('#replay-progress')).not.toHaveValue('100');
+        await page.locator('#replay-play').click();
+        await page.locator('#replay-progress').fill('50');
+        await expect(page.locator('#replay-current')).toHaveText('0:03');
+        await page.locator('#share-game').click();
+        await expect.poll(() => page.evaluate(() => window.__CLIP_SHARES__.length)).toBe(1);
+        const shared = new URL(await page.evaluate(() => window.__CLIP_SHARES__[0].url));
+        expect(shared.searchParams.get('clipStart')).toBe('2000');
+        expect(shared.searchParams.get('clipEnd')).toBe('4000');
+        await page.getByRole('button', { name: 'Watch full game', exact: true }).click();
+        await expect(page.locator('#replay-clip')).toBeHidden();
+        expect(page.url()).not.toContain('clipStart');
+        expect(page.url()).not.toContain('clipEnd');
+        expect(page.url()).toContain('teamId=team-1');
+        expect(page.url()).toContain('gameId=game-1');
+        await page.locator('#share-game').click();
+        const full = new URL(await page.evaluate(() => window.__CLIP_SHARES__[1].url));
+        expect(full.searchParams.has('clipStart')).toBe(false);
+        expect(full.searchParams.has('clipEnd')).toBe(false);
+        expect(errors).toEqual([]);
+    });
+}
+
+for (const [endMs, playerState] of [3000, 4000].flatMap(endMs => [1, 2].map(playerState => [endMs, playerState]))) {
+    test(`restarting a highlight ignores a delayed YouTube acknowledgement at the old end (end=${endMs}, state=${playerState})`, async ({ page, baseURL }) => {
+        const errors = collectPageErrors(page);
+        await stubRealOverlayModules(page);
+        await stubYouTubeEmbed(page, { duration: 8 });
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&clipStart=2000&clipEnd=${endMs}`);
+        expect(errors).toEqual([]);
+        await expect(page.locator('#replay-clip-label')).toHaveText(`Highlight · 0:02–0:0${endMs / 1000}`);
+        await page.locator('#replay-progress').fill('100');
+        await page.getByRole('button', { name: 'Replay highlight', exact: true }).click();
+        await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', 'pause');
+        const frame = page.frames().find(frame => frame.url().startsWith('https://www.youtube.com/embed/'));
+        await frame.evaluate(({ endMs, playerState }) => parent.postMessage(JSON.stringify({
+            event: 'infoDelivery', info: { currentTime: endMs / 1000, duration: 8, playerState }
+        }), '*'), { endMs, playerState });
+        await page.waitForTimeout(50);
+        await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', 'pause');
+        await expect(page.locator('#replay-progress')).not.toHaveValue('100');
+        expect(errors).toEqual([]);
+    });
+}
+
+for (const state of ['pending', 'invalid', 'unavailable']) {
+    test(`sharing a ${state} highlight preserves its range until explicit full-game exit`, async ({ page, baseURL }) => {
+        const errors = collectPageErrors(page);
+        await page.addInitScript((state) => {
+            window.__OVERLAY_COMPLETED_GAME__ = true;
+            window.__OVERLAY_NO_RESOLVED_VIDEO__ = state === 'unavailable';
+            window.__OVERLAY_NO_PUBLIC_VIDEO__ = state === 'unavailable';
+            window.__CLIP_SHARES__ = [];
+            Object.defineProperty(navigator, 'share', { value: async (data) => window.__CLIP_SHARES__.push(data) });
+        }, state);
+        await stubRealOverlayModules(page);
+        await stubYouTubeEmbed(page, { duration: state === 'pending' ? null : 8 });
+        const end = state === 'invalid' ? '9000' : '4000';
+        await page.goto(`${baseURL}/live-game-overlay.html#teamId=team-1&gameId=game-1&replay=true&clipStart=2000&clipEnd=${end}`);
+        expect(errors).toEqual([]);
+        await expect(page.locator('#replay-clip-label')).toContainText(
+            state === 'pending' ? 'Loading highlight' : state === 'invalid' ? 'outside the available recording' : 'unavailable'
+        );
+        await page.locator('#share-game').click();
+        await expect.poll(() => page.evaluate(() => window.__CLIP_SHARES__.length)).toBe(1);
+        const shared = new URL(await page.evaluate(() => window.__CLIP_SHARES__[0].url));
+        expect(shared.searchParams.get('clipStart')).toBe('2000');
+        expect(shared.searchParams.get('clipEnd')).toBe(end);
+        expect(shared.searchParams.get('teamId')).toBe('team-1');
+        expect(shared.searchParams.get('gameId')).toBe('game-1');
+        await page.getByRole('button', { name: 'Watch full game', exact: true }).click();
+        await page.locator('#share-game').click();
+        await expect.poll(() => page.evaluate(() => window.__CLIP_SHARES__.length)).toBe(2);
+        const full = new URL(await page.evaluate(() => window.__CLIP_SHARES__[1].url));
+        expect(full.searchParams.has('clipStart')).toBe(false);
+        expect(full.searchParams.has('clipEnd')).toBe(false);
+        expect(errors).toEqual([]);
+    });
+}
+
+test('invalid highlight requires an intentional full-game exit', async ({ page, baseURL }) => {
+    const errors = collectPageErrors(page);
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page, { duration: 8 });
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&clipStart=6000&clipEnd=9000`);
+    expect(errors).toEqual([]);
+    await expect(page.locator('#replay-clip-label')).toContainText('outside the available recording');
+    await expect(page.locator('#replay-play')).toBeDisabled();
+    await page.getByRole('button', { name: 'Watch full game', exact: true }).click();
+    await expect(page.locator('#replay-play')).toBeEnabled();
+    expect(errors).toEqual([]);
+});
+
+test('highlight score and plays use absolute recording time', async ({ page, baseURL }) => {
+    const errors = collectPageErrors(page);
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page, { duration: 800 });
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true&clipStart=340000&clipEnd=360000`);
+    expect(errors).toEqual([]);
+    await expect(page.locator('#replay-clip-label')).toHaveText('Highlight · 5:40–6:00');
+    await expect(page.locator('#home-score')).toHaveText('0');
+    await page.locator('#replay-progress').fill('50');
+    await expect(page.locator('#replay-current')).toHaveText('5:50');
+    await expect(page.locator('#home-score')).toHaveText('1');
+    await expect(page.locator('#event-list')).toContainText('Lane opens the replay scoring');
+    await expect(page.locator('#event-list')).not.toContainText('Lane scores the replay winner');
+    await page.locator('#replay-progress').fill('0');
+    await expect(page.locator('#home-score')).toHaveText('0');
+    expect(errors).toEqual([]);
+});
+
+for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }, { width: 844, height: 390 }]) {
+    test(`highlight controls remain usable at ${viewport.width}x${viewport.height}`, async ({ page, baseURL }, testInfo) => {
+        const errors = collectPageErrors(page);
+        await page.setViewportSize(viewport);
+        await stubRealOverlayModules(page);
+        await stubYouTubeEmbed(page, { duration: 8 });
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&clipStart=2000&clipEnd=4000`);
+        expect(errors).toEqual([]);
+        await expect(page.locator('#replay-clip-label')).toHaveText('Highlight · 0:02–0:04');
+        await expect(page.locator('#replay-full-game')).toBeInViewport({ ratio: 1 });
+        await expect(page.locator('#replay-progress')).toBeInViewport({ ratio: 1 });
+        await expect(page.locator('#hero-event')).toBeHidden();
+        const layout = await getResponsiveLayout(page);
+        expectLayoutInsideViewport(layout);
+        expect(rectanglesOverlap(layout.score, layout.replay)).toBe(false);
+        expect(rectanglesOverlap(layout.dock, layout.replay)).toBe(false);
+        await page.screenshot({ path: testInfo.outputPath('highlight.png') });
+        await page.locator('#replay-full-game').focus();
+        await page.keyboard.press('Enter');
+        await expect(page.locator('#replay-play')).toBeFocused();
+        await expect(page.locator('#replay-clip')).toBeHidden();
         expect(errors).toEqual([]);
     });
 }

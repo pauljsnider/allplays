@@ -67,7 +67,7 @@
         }
 
         function buildGameClipUrl(clip) {
-            const url = new URL('/live-game.html', window.location.origin);
+            const url = new URL('/live-game-overlay.html', window.location.origin);
             url.searchParams.set('teamId', clip.teamId || '');
             url.searchParams.set('gameId', clip.gameId || '');
             url.searchParams.set('replay', 'true');

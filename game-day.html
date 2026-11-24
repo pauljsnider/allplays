@@ -2929,7 +2929,7 @@ Respond ONLY with valid JSON.`;
             const trackerUrl = getScorekeepingTrackerUrl();
             const watchUrl = state.game?.trackingEngine === DIAMOND_ENGINE
                 ? buildDiamondViewerUrl({ teamId: state.teamId, gameId: state.gameId })
-                : `live-game.html#teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(state.gameId)}`;
+                : `live-game-overlay.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(state.gameId)}`;
             renderTeamAdminBanner(document.getElementById('banner-container'), {
                 team: state.team,
                 teamId: state.teamId,
