@@ -163,6 +163,8 @@ export type ParentScheduleEvent = {
   childId: string;
   childName: string;
   isLinkedParentChild?: boolean;
+  /** True when this row stands in for a whole staff team, not one player (#5322). */
+  isStaffTeamScope?: boolean;
   isDbGame: boolean;
   isCancelled: boolean;
   status?: string | null;
@@ -1545,11 +1547,11 @@ export function buildScheduleIcs(events: ParentScheduleEvent[], now = new Date()
       ? event.endDate
       : new Date(event.date.getTime() + 60 * 60 * 1000);
     const summary = event.type === 'practice'
-      ? `${event.childName} - ${event.title || 'Practice'}`
-      : `${event.childName} vs ${event.opponent || 'TBD'}`;
+      ? `${event.isStaffTeamScope ? event.teamName : event.childName} - ${event.title || 'Practice'}`
+      : `${event.isStaffTeamScope ? event.teamName : event.childName} vs ${event.opponent || 'TBD'}`;
     const uid = `${event.teamId}-${event.id || eventKey}-${event.date.getTime()}@allplays`;
     const description = [
-      `For ${event.childName}`,
+      `For ${event.isStaffTeamScope ? event.teamName : event.childName}`,
       event.teamName ? `Team: ${event.teamName}` : '',
       event.myRsvp ? `Availability: ${normalizeRsvpResponse(event.myRsvp)}` : '',
       event.arrivalTime ? `Arrival: ${formatEventTimeLabel(event.arrivalTime)}` : '',
@@ -1576,7 +1578,9 @@ export function buildScheduleIcs(events: ParentScheduleEvent[], now = new Date()
 
 export function buildScheduleAgendaText(events: ParentScheduleEvent[]) {
   return getCalendarScheduleEntries(events).map((event) => {
-    const childLabel = event.childNames.length ? `For ${event.childNames.join(', ')}` : `For ${event.childName}`;
+    const childLabel = event.isStaffTeamScope
+      ? `For ${event.teamName}`
+      : event.childNames.length ? `For ${event.childNames.join(', ')}` : `For ${event.childName}`;
     return [
       `${formatEventDateLabel(event.date)} ${formatEventTimeLabel(event.date)}`,
       getScheduleTitle(event),

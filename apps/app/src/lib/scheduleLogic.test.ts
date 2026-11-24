@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildScheduleAgendaText,
+  buildScheduleIcs,
   canSubmitScheduleEventRsvp,
   countOpenScheduleAssignments,
   getCalendarScheduleEntries,
@@ -244,5 +246,42 @@ describe('getManageableScheduleTeamOptions', () => {
     ];
     const result = getManageableScheduleTeamOptions(options, events, staffTeams);
     expect(result.map((team) => team.teamId)).toEqual(['team-a', 'team-b']);
+  });
+});
+
+describe('staff-team-scope events (#5322)', () => {
+  it('labels ICS and agenda rows with the team name, never a pseudo-player name', () => {
+    const event = buildParentScheduleEvent({
+      childId: 'staff-team-team-1',
+      childName: 'Bears',
+      isStaffTeamScope: true,
+      isLinkedParentChild: false
+    });
+
+    expect(buildScheduleIcs([event])).toContain('For Bears');
+    expect(buildScheduleIcs([event])).not.toContain('Team schedule');
+    expect(buildScheduleAgendaText([event])).toContain('For Bears');
+    expect(buildScheduleAgendaText([event])).not.toContain('Team schedule');
+  });
+
+  it('uses the team name for a staff-scope row whose child label is a placeholder', () => {
+    const event = buildParentScheduleEvent({
+      childId: 'delegated-team-team-1',
+      childName: 'Game Day',
+      isStaffTeamScope: true,
+      isLinkedParentChild: false
+    });
+
+    expect(buildScheduleIcs([event])).toContain('For Bears');
+    expect(buildScheduleIcs([event])).not.toContain('Game Day');
+    expect(buildScheduleAgendaText([event])).toContain('For Bears');
+    expect(buildScheduleAgendaText([event])).not.toContain('Game Day');
+  });
+
+  it('keeps person grammar for a linked parent child', () => {
+    const event = buildParentScheduleEvent({ childName: 'Pat' });
+
+    expect(buildScheduleIcs([event])).toContain('For Pat');
+    expect(buildScheduleAgendaText([event])).toContain('For Pat');
   });
 });

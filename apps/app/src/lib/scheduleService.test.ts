@@ -934,6 +934,34 @@ describe('parent schedule child scope', () => {
     expect(getStaffTeams).toHaveBeenCalledTimes(1);
   });
 
+  it('names a staff-team schedule row after the team, not a pseudo-player (#5322)', async () => {
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: ['team-owned'] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'team-owned', name: 'Vipers', ownerId: 'coach-1', active: true }],
+      isPartial: false
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-owned', name: 'Vipers', active: true } as any);
+    vi.mocked(getGames).mockResolvedValue([{
+      id: 'game-1',
+      date: new Date(Date.now() + 86400000),
+      opponent: 'Tigers',
+      location: 'Main Gym'
+    }] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+
+    const schedule = await loadParentSchedule(coachUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(schedule.events).toHaveLength(1);
+    expect(schedule.events[0]).toMatchObject({
+      childId: 'staff-team-team-owned',
+      childName: 'Vipers',
+      isStaffTeamScope: true,
+      isLinkedParentChild: false
+    });
+    expect(schedule.events[0].childName).not.toBe('Team schedule');
+  });
+
   it('lets a cold managed-team callable finish beyond the shared schedule timeout', async () => {
     vi.useFakeTimers();
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;

@@ -2228,7 +2228,8 @@ describe('Schedule', () => {
         buildScheduleEvent(1, {
           eventKey: 'team-1::event-1::staff-team-team-1::2100-06-01T18:00:00.000Z::game',
           childId: 'staff-team-team-1',
-          childName: 'Team schedule',
+          childName: 'Bears',
+          isStaffTeamScope: true,
           isLinkedParentChild: false,
           isTeamStaff: true,
           myRsvp: 'not_responded'
@@ -2255,7 +2256,8 @@ describe('Schedule', () => {
         buildScheduleEvent(1, {
           eventKey: 'team-1::event-1::staff-team-team-1::2100-06-01T18:00:00.000Z::game',
           childId: 'staff-team-team-1',
-          childName: 'Team schedule',
+          childName: 'Bears',
+          isStaffTeamScope: true,
           isLinkedParentChild: false,
           isTeamStaff: true,
           myRsvp: 'not_responded',

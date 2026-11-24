@@ -434,6 +434,13 @@ export type ParentScheduleChild = {
   playerId: string;
   playerName: string;
   isLinkedParentChild?: boolean;
+  /**
+   * True when this row stands in for a whole staff team rather than one player
+   * (e.g. a coach viewing a team with no linked parent children). Consumers
+   * must use team grammar ("Is the team going?"), never person grammar
+   * ("Is <playerName> going?"). See #5322.
+   */
+  isStaffTeamScope?: boolean;
 };
 
 type ParentScopeLink = ParentScheduleChild & {
@@ -4309,6 +4316,7 @@ function createScheduleEvent(input: {
     childId: input.child.playerId,
     childName: input.child.playerName,
     isLinkedParentChild: input.child.isLinkedParentChild === true,
+    isStaffTeamScope: input.child.isStaffTeamScope === true,
     isDbGame: input.isDbGame,
     isCancelled: input.isCancelled === true,
     status: input.status || null,
@@ -4748,7 +4756,8 @@ export async function loadTeamOverviewSchedule(teamId: string, teamName: string,
     teamId: normalizedTeamId,
     teamName: normalizedTeamName,
     playerId: `staff-team-${normalizedTeamId}`,
-    playerName: normalizedTeamName
+    playerName: normalizedTeamName,
+    isStaffTeamScope: true
   }], user);
 }
 
@@ -5297,8 +5306,9 @@ async function buildParentScheduleTeamChildren(
           teamId,
           teamName,
           playerId: `staff-team-${teamId}`,
-          playerName: 'Team schedule',
-          isLinkedParentChild: false
+          playerName: teamName,
+          isLinkedParentChild: false,
+          isStaffTeamScope: true
         }]);
       }
       return;
@@ -5347,7 +5357,8 @@ async function buildParentScheduleTeamChildren(
         teamName,
         playerId: `delegated-team-${targetTeamId}`,
         playerName: 'Game Day',
-        isLinkedParentChild: false
+        isLinkedParentChild: false,
+        isStaffTeamScope: true
       }]);
     }
   }

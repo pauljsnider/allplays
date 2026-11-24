@@ -225,7 +225,7 @@ export function buildHomeActionItems({
         id: `rsvp:${event.eventKey}`,
         kind: 'rsvp',
         tone: 'amber',
-        title: `${event.childName} needs availability`,
+        title: event.isStaffTeamScope ? 'Team availability needed' : `${event.childName} needs availability`,
         detail: `${event.teamName} ${getScheduleTitle(event)} · ${formatHomeActionDate(event.date)}`,
         to: getEventDetailPath(event, 'availability'),
         priority: 10,
