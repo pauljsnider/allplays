@@ -52,6 +52,9 @@ type AuthoritativeTeamSchedule = {
   teamId: string;
   userId: string;
   events: ParentScheduleEvent[];
+  // True when the load that produced these events only reached some sources.
+  // The header count and Overview next-event only trust complete schedules.
+  isPartial?: boolean;
 };
 
 const initialStandingsRowLimit = 5;
@@ -168,6 +171,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [authoritativeSchedule, setAuthoritativeSchedule] = useState<AuthoritativeTeamSchedule | null>(null);
   const [authoritativeScheduleLoading, setAuthoritativeScheduleLoading] = useState(false);
   const [authoritativeScheduleError, setAuthoritativeScheduleError] = useState('');
+  // True when the targeted schedule load returned events from only some sources
+  // (#5318). The tab still renders those events and says so, instead of
+  // refusing to show anything.
+  const [authoritativeSchedulePartial, setAuthoritativeSchedulePartial] = useState(false);
   const [authoritativeScheduleReloadVersion, setAuthoritativeScheduleReloadVersion] = useState(0);
   const authUserRef = useRef(auth.user);
   const activeTabRef = useRef(activeTab);
@@ -184,7 +191,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     ? authoritativeSchedule
     : null;
   const authoritativeScheduleSummary = useMemo(() => {
-    if (!authoritativeTeamSchedule) return null;
+    // Counts and the next event only trust a complete schedule. A partial
+    // result may omit events, so it must not feed a definitive "0 upcoming"
+    // or next-event card; the tab shows the partial events with a notice.
+    if (!authoritativeTeamSchedule || authoritativeTeamSchedule.isPartial) return null;
     const now = Date.now();
     return {
       upcomingCount: countUpcomingTeamScheduleEvents(authoritativeTeamSchedule.events, teamId, now),
@@ -204,6 +214,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     setAuthoritativeSchedule(null);
     setAuthoritativeScheduleLoading(false);
     setAuthoritativeScheduleError('');
+    setAuthoritativeSchedulePartial(false);
     setAuthoritativeScheduleReloadVersion(0);
   }, [authUserId, teamId]);
 
@@ -255,9 +266,11 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       setLoading(true);
       setError(null);
       try {
-        // The authoritative targeted schedule loads separately below. Do not block
-        // roster/navigation on optional account-wide calendar discovery.
-        const nextModel = await loadParentTeamDetailBootstrap(teamId, authUserRef.current, { includeOverviewSchedule: false });
+        // The bootstrap restores the overview schedule below so the Schedule tab
+        // has fallback rows while the targeted load runs. The overview load is
+        // bounded by the optional-calendar timeout and falls back to null, so it
+        // can delay but never block roster/navigation (#5318).
+        const nextModel = await loadParentTeamDetailBootstrap(teamId, authUserRef.current);
         if (!cancelled) {
           setModel(nextModel);
           setDetailCollectionsLoaded(false);
@@ -324,6 +337,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       if (!teamId || !authUserId || model?.team.id !== teamId) return;
       setAuthoritativeScheduleLoading(true);
       setAuthoritativeScheduleError('');
+      setAuthoritativeSchedulePartial(false);
       try {
         const loadOptions = {
           hydrateDetails: false,
@@ -333,21 +347,40 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
         } as const;
         let result = await loadParentSchedule(authUserRef.current, loadOptions);
         if (cancelled) return;
-        if (result.isPartial !== false) {
+        // A partial result gets one automatic retry (a source may still be
+        // warming up), but it is no longer thrown away: the events that did
+        // load are shown with a partial-data notice (#5318). Refusing to show
+        // anything left the tab empty whenever any source lagged.
+        let partial = result.isPartial !== false;
+        if (partial) {
           result = await loadParentSchedule(authUserRef.current, loadOptions);
-        }
-        if (result.isPartial !== false) {
-          throw new Error('The complete team schedule could not be loaded. Retry to avoid showing missing events.');
+          partial = result.isPartial !== false;
         }
         if (!cancelled) {
-          setAuthoritativeSchedule({
-            teamId,
-            userId: authUserId,
-            events: result.events.filter((event) => event.teamId === teamId)
-          });
+          const teamEvents = result.events.filter((event) => event.teamId === teamId);
+          if (partial && teamEvents.length === 0) {
+            // An empty partial result proves nothing: a lagging source could
+            // explain the emptiness. Keep the last schedule we have (if any)
+            // instead of wiping known events, but still flag the tab partial
+            // so it shows the notice and merges the model overview events.
+            setAuthoritativeSchedule((current) =>
+              current?.teamId === teamId && current.userId === authUserId
+                ? current
+                : { teamId, userId: authUserId, events: [], isPartial: true }
+            );
+          } else {
+            setAuthoritativeSchedule({
+              teamId,
+              userId: authUserId,
+              events: teamEvents,
+              isPartial: partial
+            });
+          }
+          setAuthoritativeSchedulePartial(partial);
         }
       } catch (loadError) {
         if (!cancelled) {
+          setAuthoritativeSchedulePartial(false);
           setAuthoritativeScheduleError(loadError instanceof Error && loadError.message
             ? loadError.message
             : 'Unable to load the team schedule.');
@@ -710,6 +743,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
           nextEvent={authoritativeNextEvent ?? null}
           scheduleLoading={authoritativeSchedulePending}
           scheduleError={authoritativeScheduleError}
+          schedulePartial={authoritativeSchedulePartial}
         />
       ) : null}
       {activeTab === 'schedule' ? (
@@ -719,6 +753,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
           authoritativeEvents={authoritativeTeamSchedule?.events || null}
           scheduleLoading={authoritativeSchedulePending}
           scheduleError={authoritativeScheduleError}
+          schedulePartial={authoritativeSchedulePartial}
           onScheduleRetry={() => setAuthoritativeScheduleReloadVersion((current) => current + 1)}
           onOpenStatTrackerConfigs={() => navigateToTab('more')}
         />
@@ -795,12 +830,14 @@ function OverviewTab({
   model,
   nextEvent,
   scheduleLoading,
-  scheduleError
+  scheduleError,
+  schedulePartial
 }: {
   model: TeamDetailModel;
   nextEvent: TeamDetailEvent | null;
   scheduleLoading: boolean;
   scheduleError: string;
+  schedulePartial?: boolean;
 }) {
   const nextEventValue = nextEvent
     ? formatEventDate(nextEvent.date)
@@ -808,14 +845,18 @@ function OverviewTab({
       ? 'Checking schedule…'
       : scheduleError
         ? 'Schedule unavailable'
-        : 'No upcoming';
+        : schedulePartial
+          ? 'Schedule incomplete'
+          : 'No upcoming';
   const nextEventDetail = nextEvent
-    ? `${nextEvent.title} · ${nextEvent.locationDetail || nextEvent.location}`
+    ? `${nextEvent.title} · ${nextEvent.locationDetail || nextEvent.location}${schedulePartial ? ' · Some sources could not be loaded.' : ''}`
     : scheduleLoading
       ? 'Loading the latest team events.'
       : scheduleError
         ? 'Open the schedule to retry.'
-        : 'Schedule is clear for now';
+        : schedulePartial
+          ? 'Some schedule sources could not be loaded. Open the schedule to retry.'
+          : 'Schedule is clear for now';
 
   return (
     <div className="space-y-4">
@@ -1152,6 +1193,7 @@ function ScheduleTab({
   authoritativeEvents,
   scheduleLoading,
   scheduleError,
+  schedulePartial,
   onScheduleRetry,
   onOpenStatTrackerConfigs
 }: {
@@ -1160,18 +1202,16 @@ function ScheduleTab({
   authoritativeEvents: ParentScheduleEvent[] | null;
   scheduleLoading: boolean;
   scheduleError: string;
+  schedulePartial?: boolean;
   onScheduleRetry: () => void;
   onOpenStatTrackerConfigs: () => void;
 }) {
   const modelEvents = useMemo(() => [...model.upcomingEvents, ...model.recentResults], [model.recentResults, model.upcomingEvents]);
   const events = useMemo(
-    () => buildTeamSchedulePreviewEvents(
-      authoritativeEvents || [],
-      modelEvents,
-      model.team.id,
-      Date.now(),
-      { includeModelOnlyEvents: authoritativeEvents === null }
-    ),
+    () =>
+      buildTeamSchedulePreviewEvents(authoritativeEvents || [], modelEvents, model.team.id, Date.now(), {
+        includeModelOnlyEvents: authoritativeEvents === null || schedulePartial
+      }),
     [authoritativeEvents, model.team.id, modelEvents]
   );
   const reminderPreviewLoader = useMemo(() => createStaffRsvpReminderPreviewLoader(), []);
@@ -1187,6 +1227,16 @@ function ScheduleTab({
       </div>
       <div className="mt-3 space-y-2">
         {scheduleLoading ? <InlineDeferredLoading copy="Loading the complete team schedule…" /> : null}
+        {schedulePartial && !scheduleError ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3" role="status">
+            <div className="text-xs font-semibold text-amber-800">
+              Some schedule sources could not be loaded, so this list may be incomplete.
+            </div>
+            <button type="button" className="secondary-button mt-2 !min-h-9 text-xs" onClick={onScheduleRetry}>
+              Retry schedule
+            </button>
+          </div>
+        ) : null}
         {scheduleError ? (
           <div className="rounded-xl border border-rose-200 bg-rose-50 p-4">
             <div className="text-sm font-black text-gray-950">Team schedule unavailable</div>
