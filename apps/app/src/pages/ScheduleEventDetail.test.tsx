@@ -4254,7 +4254,6 @@ describe('ScheduleEventDetail assignments', () => {
     });
     scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
     scheduleServiceMocks.cancelScheduledGameForApp.mockResolvedValue({ notificationError: null });
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     renderScheduleEventDetail();
 
@@ -4270,6 +4269,7 @@ describe('ScheduleEventDetail assignments', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel game' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Confirm cancel game' })).getByRole('button', { name: 'Cancel game' }));
 
     await waitFor(() => {
       expect(scheduleServiceMocks.cancelScheduledGameForApp).toHaveBeenCalledWith(expect.any(Object), auth.user);
@@ -4291,6 +4291,29 @@ describe('ScheduleEventDetail assignments', () => {
       children: []
     });
     scheduleServiceMocks.cancelScheduledGameForApp.mockResolvedValue({ notificationError: null });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Cancel game' })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel game' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Confirm cancel game' });
+    expect(within(dialog).getByText(/notifies the team in chat/)).toBeTruthy();
+    expect(within(dialog).queryByText(/both team chats/)).toBeNull();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel game' }));
+    await waitFor(() => {
+      expect(screen.getByText('Game cancelled and team chat notified.')).toBeTruthy();
+    });
+  });
+
+  it('opens an in-app cancel confirmation instead of relying on window.confirm (#5325)', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ canUpdateScore: true })],
+      children: []
+    });
+    scheduleServiceMocks.cancelScheduledGameForApp.mockResolvedValue({ notificationError: null });
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     renderScheduleEventDetail();
@@ -4300,11 +4323,26 @@ describe('ScheduleEventDetail assignments', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Cancel game' }));
 
-    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('notifies the team in chat'));
-    expect(confirmSpy).not.toHaveBeenCalledWith(expect.stringContaining('both team chats'));
+    // The dialog appears immediately, before any service call, and the
+    // native confirm is never consulted.
+    const dialog = screen.getByRole('dialog', { name: 'Confirm cancel game' });
+    expect(within(dialog).getByText('Cancel this game?')).toBeTruthy();
+    expect(scheduleServiceMocks.cancelScheduledGameForApp).not.toHaveBeenCalled();
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    // Dismissing leaves the game alone.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep game' }));
+    expect(screen.queryByRole('dialog', { name: 'Confirm cancel game' })).toBeNull();
+    expect(scheduleServiceMocks.cancelScheduledGameForApp).not.toHaveBeenCalled();
+
+    // Confirming cancels and surfaces the result.
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel game' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Confirm cancel game' })).getByRole('button', { name: 'Cancel game' }));
     await waitFor(() => {
+      expect(scheduleServiceMocks.cancelScheduledGameForApp).toHaveBeenCalledWith(expect.any(Object), auth.user);
       expect(screen.getByText('Game cancelled and team chat notified.')).toBeTruthy();
     });
+    confirmSpy.mockRestore();
   });
 
   it('does not offer Diamond cancellation to a delegated scorekeeper without manager access', async () => {
@@ -4349,7 +4387,6 @@ describe('ScheduleEventDetail assignments', () => {
       masterId: 'practice-master',
       instanceDate: '2026-06-04'
     });
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     renderScheduleEventDetail();
 
@@ -4358,6 +4395,7 @@ describe('ScheduleEventDetail assignments', () => {
     });
     fireEvent.click(screen.getAllByRole('button', { name: 'More' })[0]);
     fireEvent.click(screen.getByRole('button', { name: 'Cancel this occurrence' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Confirm cancel practice occurrence' })).getByRole('button', { name: 'Cancel this occurrence' }));
 
     await waitFor(() => {
       expect(scheduleServiceMocks.cancelPracticeOccurrenceForApp).toHaveBeenCalledWith(
