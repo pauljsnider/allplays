@@ -76,6 +76,18 @@ function validFunctionUpdatedEvidence(expected = expectedFunctionDeployment) {
     };
 }
 
+function validFunctionUnchangedEvidence(expected = expectedFunctionDeployment) {
+    return {
+        schemaVersion: FIREBASE_APPLICATION_EVIDENCE_SCHEMA_VERSION,
+        targetType: FIREBASE_FUNCTION_TARGET_TYPE,
+        status: 'unchanged',
+        projectId: expected.projectId,
+        functionTarget: expected.functionTarget,
+        artifactSha: expected.artifactSha,
+        deploymentId: expected.deploymentId
+    };
+}
+
 function verifyFunction(evidence, expected = expectedFunctionDeployment) {
     return verifyFirebaseApplicationDeployment({ evidence, expectedDeployment: expected });
 }
@@ -232,7 +244,6 @@ describe('individual Firebase function explicitly updated evidence', () => {
         ['schema version', { schemaVersion: 2 }],
         ['Hosting target', { targetType: 'firebase-hosting' }],
         ['current state', { status: 'current' }],
-        ['unchanged state', { status: 'unchanged' }],
         ['partial state', { status: 'partial' }],
         ['extra metadata', { retryAttempt: 2 }]
     ])('rejects unsupported updated-evidence %s', (_label, mutation) => {
@@ -250,6 +261,37 @@ describe('individual Firebase function explicitly updated evidence', () => {
     ])('rejects updated evidence with mismatched %s', (field, value) => {
         expect(() => verifyFunction({
             ...validFunctionUpdatedEvidence(),
+            [field]: value
+        })).toThrow(/does not match the expected deployment/);
+    });
+});
+
+describe('individual Firebase function explicitly unchanged evidence', () => {
+    it('accepts evidence binding the intended artifact to the current deployment', () => {
+        expect(verifyFunction(validFunctionUnchangedEvidence())).toEqual({
+            status: 'unchanged',
+            targetType: FIREBASE_FUNCTION_TARGET_TYPE,
+            projectId: expectedFunctionDeployment.projectId,
+            functionTarget: expectedFunctionDeployment.functionTarget,
+            artifactSha: expectedFunctionDeployment.artifactSha,
+            deploymentId: expectedFunctionDeployment.deploymentId
+        });
+    });
+
+    it.each([
+        ['artifact identity only', validFunctionArtifactEvidence],
+        ['deployment identity only', validFunctionDeploymentEvidence]
+    ])('rejects unsupported unchanged evidence with %s', (_label, buildEvidence) => {
+        expect(() => verifyFunction({ ...buildEvidence(), status: 'unchanged' }))
+            .toThrow(/supported individual function evidence shape/);
+    });
+
+    it.each([
+        ['artifactSha', 'b'.repeat(40)],
+        ['deploymentId', 'another-deployment']
+    ])('rejects unchanged evidence with mismatched %s', (field, value) => {
+        expect(() => verifyFunction({
+            ...validFunctionUnchangedEvidence(),
             [field]: value
         })).toThrow(/does not match the expected deployment/);
     });
