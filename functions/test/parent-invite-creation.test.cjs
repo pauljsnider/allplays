@@ -184,6 +184,29 @@ function inviteInput(overrides = {}) {
   };
 }
 
+test('permits an unverified manager to create a blank-email shareable-link invite (#5324)', async () => {
+  const harness = createHarness();
+
+  const result = await harness.handler(inviteInput({ email: '' }), {
+    auth: { uid: 'owner-1', token: { email: 'owner@example.com', email_verified: false } }
+  });
+
+  assert.equal(result.created, true);
+  assert.equal(result.email, null);
+  assert.equal(getDocsWithPrefix(harness.docs, 'accessCodes/').length, 1);
+});
+
+test('permits an unverified team admin to create a blank-email shareable-link invite (#5324)', async () => {
+  const harness = createHarness();
+
+  const result = await harness.handler(inviteInput({ email: '', playerId: 'player-2' }), {
+    auth: { uid: 'admin-1', token: { email: 'admin@example.com', email_verified: false } }
+  });
+
+  assert.equal(result.created, true);
+  assert.equal(result.email, null);
+});
+
 test('rejects unverified managers without persisting invite, limiter, or mail state', async () => {
   const harness = createHarness();
 

@@ -1388,6 +1388,22 @@ export async function revokeTeamAdminAccessForApp(teamId: string, email: string,
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 }
 
+export const PARENT_INVITE_EMAIL_VERIFICATION_MESSAGE =
+  'Verify your email before sending a parent invite by email. You can still create a shareable link and code with the email left blank.';
+
+/** True when an invite failure is the unverified-email gate for emailed invites (#5324). */
+export function isParentInviteEmailVerificationError(error: unknown): boolean {
+  return Boolean(
+    error && typeof error === 'object' && (error as { parentInviteEmailVerificationRequired?: unknown }).parentInviteEmailVerificationRequired === true
+  );
+}
+
+function parentInviteEmailVerificationError(): Error {
+  const error = new Error(PARENT_INVITE_EMAIL_VERIFICATION_MESSAGE);
+  (error as { parentInviteEmailVerificationRequired?: boolean }).parentInviteEmailVerificationRequired = true;
+  return error;
+}
+
 export async function createRosterParentInviteForApp(
   teamId: string,
   user: AuthUser | null,
@@ -1403,6 +1419,11 @@ export async function createRosterParentInviteForApp(
   if (!normalizedPlayerId) throw new Error('Player ID is required.');
   if (normalizedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
     throw new Error('Enter a valid parent email address.');
+  }
+  // Blank-email (shareable link/code) invites need no verified caller email
+  // (#5324); only an emailed invite is gated on verification.
+  if (normalizedEmail && user?.emailVerified === false) {
+    throw parentInviteEmailVerificationError();
   }
 
   const { team } = await loadTeamDetailBaseSnapshot(normalizedTeamId);
@@ -1420,6 +1441,9 @@ export async function createRosterParentInviteForApp(
     const errorCode = cleanString(error?.code).replace(/^functions\//, '');
     if (errorCode === 'resource-exhausted') {
       throw new Error('Too many parent invites. Please wait and try again. No email was sent.');
+    }
+    if (errorCode === 'failed-precondition' && /verify your email/i.test(cleanString(error?.message))) {
+      throw parentInviteEmailVerificationError();
     }
     throw error;
   }
