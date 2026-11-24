@@ -10,6 +10,7 @@ const shellLayoutMocks = vi.hoisted(() => ({
 }));
 
 const teamDetailServiceMocks = vi.hoisted(() => ({
+  deleteTeamForApp: vi.fn(),
   loadParentTeamDetail: vi.fn(),
   loadParentTeamDetailBootstrap: vi.fn(),
   updateTeamSettingsForApp: vi.fn()
@@ -132,6 +133,7 @@ describe('TeamSettings', () => {
     });
     teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue(managedModel);
     teamDetailServiceMocks.updateTeamSettingsForApp.mockResolvedValue(undefined);
+    teamDetailServiceMocks.deleteTeamForApp.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -434,5 +436,43 @@ describe('TeamSettings', () => {
     expect(await screen.findByRole('heading', { name: 'Edit team' })).toBeTruthy();
     expect(teamDetailServiceMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledTimes(1);
     expect(teamDetailServiceMocks.loadParentTeamDetail).not.toHaveBeenCalled();
+  });
+
+  it('shows the Danger zone to the team owner and deletes after confirm (#5315)', async () => {
+    const ownerAuth = { ...auth, user: { ...auth.user, uid: 'owner-1' } as AuthState['user'] };
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1/edit']}>
+        <Routes>
+          <Route path="/teams/:teamId/edit" element={<TeamSettings auth={ownerAuth} />} />
+          <Route path="/teams" element={<div>Teams list</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Danger zone')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete team' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete Bears?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete team' }));
+
+    await waitFor(() => {
+      expect(teamDetailServiceMocks.deleteTeamForApp).toHaveBeenCalledWith('team-1', ownerAuth.user);
+    });
+    expect(await screen.findByText('Teams list')).toBeTruthy();
+  });
+
+  it('hides the Danger zone from a non-owner manager (#5315)', async () => {
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1/edit']}>
+        <Routes>
+          <Route path="/teams/:teamId/edit" element={<TeamSettings auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('button', { name: 'Save team' })).toBeTruthy();
+    expect(screen.queryByText('Danger zone')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete team' })).toBeNull();
+    expect(teamDetailServiceMocks.deleteTeamForApp).not.toHaveBeenCalled();
   });
 });

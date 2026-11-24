@@ -13,6 +13,7 @@ import {
   db,
   deactivatePlayer,
   deleteLegacyImageUpload,
+  deleteTeam,
   describeScheduleReminderWindow,
   doc,
   getAdSpaceSponsors,
@@ -1852,6 +1853,25 @@ export async function reactivateRosterPlayerForApp(teamId: string, playerId: str
   if (!normalizedTeamId) throw new Error('Team ID is required.');
   if (!normalizedPlayerId) throw new Error('Player ID is required.');
   await reactivatePlayer(normalizedTeamId, normalizedPlayerId);
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+}
+
+// Owner-only team delete, mirroring the legacy rule (dashboard.html renders
+// "Delete Team" only when team.ownerId === user.uid; js/admin.js
+// canCurrentUserDeactivateTeam is the same check). Deliberately NOT
+// hasFullTeamAccess and NOT isAdmin: a manager or platform admin who does
+// not own the team must not be able to delete it (#5315). The legacy
+// deleteTeam() is a soft-deactivate (active: false + deactivatedAt).
+export async function deleteTeamForApp(teamId: string, user: AuthUser | null) {
+  const normalizedTeamId = cleanString(teamId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+  if (!user?.uid) throw new Error('A signed-in account is required.');
+  const { team } = await loadTeamDetailBaseSnapshot(normalizedTeamId);
+  if (!team) throw new Error('Team not found.');
+  if (cleanString(team?.ownerId) !== user.uid) {
+    throw new Error('Only the team owner can delete this team.');
+  }
+  await deleteTeam(normalizedTeamId);
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 }
 

@@ -40,6 +40,7 @@ const dbMocks = vi.hoisted(() => ({
   applyRosterCsvImportOperations: vi.fn(),
   createConfig: vi.fn(),
   deleteLegacyImageUpload: vi.fn(),
+  deleteTeam: vi.fn(),
   getAggregatedStatsForGames: vi.fn(),
   getAdSpaceSponsors: vi.fn(),
   getConfigs: vi.fn(),
@@ -211,6 +212,7 @@ import {
   buildTeamAnalytics,
   buildTeamDetailModel,
   createStatTrackerConfigForApp,
+  deleteTeamForApp,
   isEligiblePrivateCalendarSubscriberForApp,
   loadParentTeamDetail,
   loadParentTeamDetailBootstrap,
@@ -819,6 +821,43 @@ describe('updateTeamSettingsForApp', () => {
     ).rejects.toThrow('save denied');
 
     expect(dbMocks.deleteLegacyImageUpload).toHaveBeenCalledWith('profile-photos/teams/team-1/team/team.jpg');
+  });
+});
+
+describe('deleteTeamForApp', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1' });
+    dbMocks.getPlayers.mockResolvedValue([]);
+    dbMocks.getGames.mockResolvedValue([]);
+    dbMocks.getConfigs.mockResolvedValue([]);
+    __resetTeamDetailBaseSnapshotCacheForTests();
+  });
+
+  it('lets the team owner delete the team (#5315)', async () => {
+    await deleteTeamForApp('team-1', { uid: 'owner-1' } as any);
+
+    expect(dbMocks.deleteTeam).toHaveBeenCalledWith('team-1');
+  });
+
+  it('rejects a non-owner manager before writing (#5315)', async () => {
+    await expect(deleteTeamForApp('team-1', { uid: 'coach-1' } as any)).rejects.toThrow('Only the team owner can delete this team.');
+
+    expect(dbMocks.deleteTeam).not.toHaveBeenCalled();
+  });
+
+  it('rejects a signed-out caller before writing (#5315)', async () => {
+    await expect(deleteTeamForApp('team-1', null)).rejects.toThrow('A signed-in account is required.');
+
+    expect(dbMocks.deleteTeam).not.toHaveBeenCalled();
+  });
+
+  it('rejects a delete for a missing team (#5315)', async () => {
+    dbMocks.getTeam.mockResolvedValue(null);
+
+    await expect(deleteTeamForApp('team-1', { uid: 'owner-1' } as any)).rejects.toThrow('Team not found.');
+
+    expect(dbMocks.deleteTeam).not.toHaveBeenCalled();
   });
 });
 
