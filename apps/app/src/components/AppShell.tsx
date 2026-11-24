@@ -561,7 +561,7 @@ export function AppShell({ auth, children }: AppShellProps) {
               </nav>
               <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-3">
                 <div className="app-label">Account</div>
-                <div className="mt-1 truncate text-sm font-black text-gray-950">{auth.user?.displayName || auth.user?.email || 'Public visitor'}</div>
+                <div className="mt-1 truncate text-sm font-black text-gray-950">{auth.loading ? 'Loading…' : auth.user?.displayName || auth.user?.email || 'Public visitor'}</div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {auth.roles.map((role) => <RoleBadge key={role} role={role} />)}
                 </div>

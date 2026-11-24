@@ -68,7 +68,7 @@ export function Teams({ auth }: { auth: AuthState }) {
   const refreshing = !loading && (teamSummaryLoading || teamEnrichmentLoading);
   const error = teamSummaryError || teamEnrichmentError || '';
 
-  const loadTeams = async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
+  const loadTeams = async ({ showLoading = false, force }: { showLoading?: boolean; force?: boolean } = {}) => {
     const user = auth.user;
     if (!user) return;
     const loadId = activeLoadIdRef.current + 1;
@@ -80,6 +80,10 @@ export function Teams({ auth }: { auth: AuthState }) {
     clearTeamSummaryError();
     clearTeamEnrichmentError();
     setTeamsLoadError(null);
+    // Foreground returns pass force: false for a cheap cache revalidation.
+    // Pull-to-refresh calls loadTeams() with no force, which still forces a
+    // fresh load, as before.
+    const forceLoad = force ?? !showLoading;
 
     let teamSummaryBootstrap: Awaited<ReturnType<typeof loadParentTeamsSummaryBootstrap>> | null = null;
     let hasStreamedTeams = false;
@@ -93,7 +97,7 @@ export function Teams({ auth }: { auth: AuthState }) {
     const fastHome = await runTeamSummaryLoad(
       async () => {
         teamSummaryBootstrap = await loadParentTeamsSummaryBootstrap(user, {
-          force: !showLoading,
+          force: forceLoad,
           onPartial: (partialHome) => applyTeamSummary(partialHome, true)
         });
         return teamSummaryBootstrap.home;
@@ -120,7 +124,7 @@ export function Teams({ auth }: { auth: AuthState }) {
     const hasFastTeams = fastHome.teams.length > 0;
     await runTeamEnrichmentLoad(
       () => loadParentHomeSummary(user, {
-        force: !showLoading,
+        force: forceLoad,
         scheduleScope: teamSummaryBootstrap?.scheduleScope
       }),
       {
@@ -162,7 +166,9 @@ export function Teams({ auth }: { auth: AuthState }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
 
-  useRefreshOnResume(() => loadTeams(), { enabled: Boolean(auth.user?.uid) });
+  // Foreground returns revalidate from cache instead of forcing a full
+  // reload: the hook already waits for the 5-minute staleness window.
+  useRefreshOnResume(() => loadTeams({ force: false }), { enabled: Boolean(auth.user?.uid) });
 
   const showBlockingErrorState = !loading && !hasLoadedTeamSummary && !hasLoadedTeamDetails && Boolean(teamsLoadError);
 

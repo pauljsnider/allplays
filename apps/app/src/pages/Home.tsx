@@ -431,7 +431,10 @@ export function Home({ auth }: { auth: AuthState }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
 
-  useRefreshOnResume(() => refreshHome({ force: true }), { enabled: Boolean(auth.user?.uid) });
+  // Foreground returns revalidate from cache instead of forcing a full
+  // reload: the hook already waits for the 5-minute staleness window, and a
+  // forced reload re-ran the whole Home waterfall on every return.
+  useRefreshOnResume(() => refreshHome(), { enabled: Boolean(auth.user?.uid) });
 
   useEffect(() => {
     if (!hasStartedInitialHomeLoadRef.current) {

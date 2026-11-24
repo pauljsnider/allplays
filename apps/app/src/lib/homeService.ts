@@ -29,7 +29,7 @@ import type { AuthUser } from './types';
 const homeSummaryTtlMs = 45 * 1000;
 const homeSecondaryTtlMs = 30 * 1000;
 const homeMaxStaleMs = 5 * 60 * 1000;
-const teamsSummaryTtlMs = 30 * 1000;
+const teamsSummaryTtlMs = 5 * 60 * 1000;
 const logger = createLogger('home');
 
 type ParentSchedulePreviewState = {
