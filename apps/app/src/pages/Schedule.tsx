@@ -1,4 +1,5 @@
 import { ResourcePacketQueue } from '../components/schedule/ResourcePacketQueue';
+import { EventDeleteControl, canDeleteScheduledEvent } from '../components/schedule/EventDeleteControl';
 import { resourcePacketsAvailable } from '../lib/resourcePacketsService';
 import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, ListChecks, MapPin, MessageCircle, RefreshCw, Sparkles } from 'lucide-react';
@@ -1504,6 +1505,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
               loadingMore={filter === 'past-all' && loadingPastHistory}
               preferGameHubForStaff={!isDesktopWeb}
               onShowMore={handleShowMore}
+              auth={auth}
+              onDeleted={() => void refreshSchedule(true)}
             />
           )}
 
@@ -2189,7 +2192,7 @@ function ScheduleProgressLoading() {
   );
 }
 
-function ScheduleList({ events, totalCount, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }: {
+function ScheduleList({ events, totalCount, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore, auth, onDeleted }: {
   events: CalendarScheduleEntry[];
   totalCount: number;
   visibleCount: number;
@@ -2198,6 +2201,8 @@ function ScheduleList({ events, totalCount, visibleCount, pageSize, canShowMore,
   loadingMore: boolean;
   preferGameHubForStaff: boolean;
   onShowMore: () => void;
+  auth?: AuthState;
+  onDeleted?: () => void;
 }) {
   if (!totalCount) {
     return (
@@ -2216,7 +2221,7 @@ function ScheduleList({ events, totalCount, visibleCount, pageSize, canShowMore,
     <div className="space-y-3">
       <div className="schedule-list overflow-hidden rounded-xl border border-gray-200 bg-white shadow-app sm:space-y-3 sm:overflow-visible sm:border-0 sm:bg-transparent sm:shadow-none">
         {renderedEvents.map((event) => (
-          <ScheduleEventCard key={event.eventKey} event={event} preferGameHubForStaff={preferGameHubForStaff} />
+          <ScheduleEventCard key={event.eventKey} event={event} preferGameHubForStaff={preferGameHubForStaff} auth={auth} onDeleted={onDeleted} />
         ))}
       </div>
       {canShowMore ? (
@@ -2372,9 +2377,11 @@ function PracticePacketsPanel({ rows, totalCount, readyCount, visibleCount, page
   );
 }
 
-function ScheduleEventCard({ event, preferGameHubForStaff }: {
+function ScheduleEventCard({ event, preferGameHubForStaff, auth, onDeleted }: {
   event: ParentScheduleEvent | CalendarScheduleEntry;
   preferGameHubForStaff: boolean;
+  auth?: AuthState;
+  onDeleted?: () => void;
 }) {
   const rsvp = normalizeRsvpResponse(event.myRsvp);
   const rsvpBadge = getScheduleRsvpBadge(event, rsvp);
@@ -2447,6 +2454,11 @@ function ScheduleEventCard({ event, preferGameHubForStaff }: {
             Directions
           </button>
         ) : null}
+        {auth && canDeleteScheduledEvent(event, auth.user) ? (
+          <div className="border-t border-gray-100 px-3 py-2">
+            <EventDeleteControl event={event} auth={auth} onDeleted={onDeleted} buttonClassName="flex min-h-9 w-full items-center justify-center gap-1.5 rounded-full border border-rose-200 px-3 text-xs font-black text-rose-700 transition hover:bg-rose-50" />
+          </div>
+        ) : null}
       </div>
 
       <article className={`app-card schedule-event-card hidden p-4 transition sm:block ${event.isCancelled ? 'opacity-65' : ''}`}>
@@ -2509,6 +2521,7 @@ function ScheduleEventCard({ event, preferGameHubForStaff }: {
                 {event.type === 'practice' ? 'Event details' : 'Game details'}
                 <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
               </Link>
+              {auth ? <EventDeleteControl event={event} auth={auth} onDeleted={onDeleted} buttonClassName="secondary-button min-h-9 px-3 py-2 text-xs !border-rose-200 !text-rose-700 hover:!bg-rose-50" /> : null}
               <div className="hidden text-xs font-bold text-gray-400 xl:block">
                 {formatEventDateLabel(event.date)}
               </div>

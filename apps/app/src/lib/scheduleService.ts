@@ -37,6 +37,9 @@ import {
   submitRsvpForPlayer,
   broadcastLiveEvent,
   getLiveEvents,
+  deleteGame,
+  deleteEvent,
+  deleteSeries,
   updateGame,
   updatePracticeAttendance,
   updatePracticeSession,
@@ -749,6 +752,11 @@ export type PlayerScoringStatResult = GameScoreSnapshot & {
 export type CancelScheduledGameResult = {
   cancelled: true;
   notificationError: string | null;
+};
+
+export type DeleteScheduledEventResult = {
+  deleted: true;
+  scope: 'game' | 'practice' | 'practice-series';
 };
 
 export type CancelPracticeOccurrenceResult = {
@@ -7873,6 +7881,115 @@ export async function cancelPracticeOccurrenceForApp(event: ParentScheduleEvent,
     masterId: occurrence.masterId,
     instanceDate: occurrence.instanceDate
   };
+}
+
+/**
+ * Hard-delete a scheduled game (#5314). This permanently removes the game
+ * document (and its shared-schedule counterpart, via legacy deleteGame) —
+ * unlike cancelScheduledGameForApp, which only marks it cancelled and leaves
+ * it listed struck through. Same permission gates as cancel.
+ */
+export async function deleteScheduledGameForApp(event: ParentScheduleEvent, user: AuthUser): Promise<DeleteScheduledEventResult> {
+  if (!event?.teamId || !event?.id || !event.isDbGame || event.type !== 'game') {
+    throw new Error('A scheduled game is required before deleting.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before deleting the game.');
+  }
+  const isDiamondGame = compactString(event.trackingEngine) === 'diamond-v2';
+  if (isDiamondGame && !event.isTeamAdmin) {
+    throw new Error('Team owner or admin access is required to delete a Diamond game.');
+  }
+  if (!isDiamondGame && !event.canUpdateScore) {
+    throw new Error('Coach or admin access is required to delete this game.');
+  }
+
+  try {
+    await withTimeout(Promise.resolve(deleteGame(event.teamId, event.id)), 'Game deletion');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST game deletion.', 'game-delete', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id });
+    const sourceGame = await nativeGetDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`);
+    if (!sourceGame) {
+      throw new Error('Scheduled game not found.');
+    }
+    await nativeDeleteDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`);
+    const counterpartTeamId = compactString(sourceGame.sharedScheduleOpponentTeamId);
+    const counterpartGameId = compactString(sourceGame.sharedScheduleOpponentGameId);
+    if (sourceGame.sharedScheduleId && counterpartTeamId && counterpartGameId) {
+      await nativeDeleteDocumentIfExists(`teams/${encodeURIComponent(counterpartTeamId)}/games/${encodeURIComponent(counterpartGameId)}`);
+    }
+  }
+
+  invalidateParentScheduleCaches(user);
+  return { deleted: true, scope: 'game' };
+}
+
+/**
+ * Hard-delete a one-off practice (#5314). Recurring occurrences are not
+ * documents — use cancelPracticeOccurrenceForApp for one date, or
+ * deleteScheduledPracticeSeriesForApp for the whole series.
+ */
+export async function deleteScheduledPracticeForApp(event: ParentScheduleEvent, user: AuthUser): Promise<DeleteScheduledEventResult> {
+  if (!event?.teamId || !event?.id || !event.isDbGame || event.type !== 'practice') {
+    throw new Error('A scheduled practice is required before deleting.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before deleting the practice.');
+  }
+  if (!event.isTeamAdmin) {
+    throw new Error('Team owner or admin access is required to delete this practice.');
+  }
+  if (parseRecurringPracticeOccurrenceId(event.id)) {
+    throw new Error('This is a recurring practice occurrence. Delete just this date, or delete the whole series, instead.');
+  }
+
+  try {
+    await withTimeout(Promise.resolve(deleteEvent(event.teamId, event.id)), 'Practice deletion');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST practice deletion.', 'practice-delete', error, { fallback: 'rest', teamId: event.teamId, eventId: event.id });
+    await nativeDeleteDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`);
+  }
+
+  invalidateParentScheduleCaches(user);
+  return { deleted: true, scope: 'practice' };
+}
+
+/**
+ * Hard-delete a whole recurring practice series (#5314): permanently removes
+ * the series master document, so every occurrence goes with it. Mirrors the
+ * legacy edit-schedule "Cancel entire series" choice, which called
+ * deleteSeries.
+ */
+export async function deleteScheduledPracticeSeriesForApp(
+  event: ParentScheduleEvent,
+  user: AuthUser,
+  options: { seriesMasterId?: string | null } = {}
+): Promise<DeleteScheduledEventResult> {
+  if (!event?.teamId || !event?.id || !event.isDbGame || event.type !== 'practice') {
+    throw new Error('A scheduled practice is required before deleting the series.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before deleting the practice series.');
+  }
+  if (!event.isTeamAdmin) {
+    throw new Error('Team owner or admin access is required to delete this practice series.');
+  }
+  const masterId = compactString(options.seriesMasterId)
+    || parseRecurringPracticeOccurrenceId(event.id)?.masterId
+    || event.id;
+
+  try {
+    await withTimeout(Promise.resolve(deleteSeries(event.teamId, masterId)), 'Practice series deletion');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST practice series deletion.', 'practice-series-delete', error, { fallback: 'rest', teamId: event.teamId, masterId });
+    await nativeDeleteDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(masterId)}`);
+  }
+
+  invalidateParentScheduleCaches(user);
+  return { deleted: true, scope: 'practice-series' };
 }
 
 async function nativeClaimAssignment(event: ParentScheduleEvent, user: AuthUser, role: string, name: string) {

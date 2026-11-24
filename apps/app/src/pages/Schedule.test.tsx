@@ -2982,7 +2982,7 @@ describe('Schedule', () => {
   it('keeps list pagination props in sync with the parent schedule view', () => {
     const source = readFileSync(resolveAppSourcePath('src/pages/Schedule.tsx'), 'utf8');
 
-    expect(source).toContain('function ScheduleList({ events, totalCount, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }');
+    expect(source).toContain('function ScheduleList({ events, totalCount, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore, auth, onDeleted }');
     expect(source).toContain('function CompactScheduleList({ events, totalCount, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }');
     expect(source).toContain("{loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, remainingCount || pageSize)} more`}");
   });
