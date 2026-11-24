@@ -43,7 +43,7 @@ const FUNCTION_DEPLOYMENT_EVIDENCE_FIELDS = Object.freeze([
     'status',
     'targetType'
 ]);
-const FUNCTION_UPDATED_EVIDENCE_FIELDS = Object.freeze([
+const FUNCTION_RESULT_EVIDENCE_FIELDS = Object.freeze([
     'artifactSha',
     'deploymentId',
     'functionTarget',
@@ -231,14 +231,18 @@ function verifyFunctionDeployment(evidence, expectedDeployment) {
         evidence,
         FUNCTION_DEPLOYMENT_EVIDENCE_FIELDS
     );
-    const hasUpdatedIdentity = hasExactFields(
+    const hasResultIdentity = hasExactFields(
         evidence,
-        FUNCTION_UPDATED_EVIDENCE_FIELDS
+        FUNCTION_RESULT_EVIDENCE_FIELDS
+    );
+    const hasResultStatus = (
+        evidence.status === 'updated'
+        || evidence.status === 'unchanged'
     );
     if (
-        (evidence.status === 'updated' && !hasUpdatedIdentity)
+        (hasResultStatus && !hasResultIdentity)
         || (
-            evidence.status !== 'updated'
+            !hasResultStatus
             && !hasArtifactIdentity
             && !hasDeploymentIdentity
         )
@@ -248,14 +252,14 @@ function verifyFunctionDeployment(evidence, expectedDeployment) {
         );
     }
 
-    const expectedStatus = hasUpdatedIdentity ? 'updated' : 'current';
+    const expectedStatus = hasResultIdentity ? evidence.status : 'current';
     validateEvidenceEnvelope(evidence, FIREBASE_FUNCTION_TARGET_TYPE, expectedStatus);
     requireProjectId(evidence.projectId, 'evidence projectId');
     requireNonEmptyString(evidence.functionTarget, 'evidence functionTarget');
     requireMatchingIdentity(evidence, expected, 'projectId');
     requireMatchingIdentity(evidence, expected, 'functionTarget');
 
-    if (hasUpdatedIdentity) {
+    if (hasResultIdentity) {
         requireArtifactSha(evidence.artifactSha, 'evidence artifactSha');
         requireNonEmptyString(evidence.deploymentId, 'evidence deploymentId');
         requireMatchingIdentity(evidence, expected, 'artifactSha');
