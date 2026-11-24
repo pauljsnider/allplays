@@ -1,7 +1,7 @@
 import {
   getOpenScheduleAssignments,
   getScheduleTitle,
-  normalizeRsvpResponse,
+  isScheduleEventAvailabilityNeeded,
   type ParentScheduleEvent
 } from './scheduleLogic';
 import type { ParentScheduleChild } from './scheduleService';
@@ -219,8 +219,7 @@ export function buildHomeActionItems({
   const actions: ParentHomeAction[] = [];
 
   upcoming.forEach((event) => {
-    const rsvp = normalizeRsvpResponse(event.myRsvp);
-    if (event.myRsvpNoteHydrated !== false && event.isDbGame && !event.availabilityLocked && rsvp === 'not_responded') {
+    if (isScheduleEventAvailabilityNeeded(event)) {
       actions.push({
         id: `rsvp:${event.eventKey}`,
         kind: 'rsvp',
@@ -456,12 +455,7 @@ function buildHomeEventIndex(events: ParentScheduleEvent[], now: Date): HomeEven
     const openAssignments = event.assignmentClaimsHydrated === false
       ? 0
       : getOpenScheduleAssignments(event.assignments).length;
-    const needsRsvp = event.myRsvpNoteHydrated !== false
-      && event.isDbGame
-      && !event.availabilityLocked
-      && normalizeRsvpResponse(event.myRsvp) === 'not_responded'
-      ? 1
-      : 0;
+    const needsRsvp = isScheduleEventAvailabilityNeeded(event) ? 1 : 0;
     const packetReady = event.type === 'practice' && event.practiceHomePacketSummary ? 1 : 0;
 
     teamBucket.openActions += needsRsvp + Number(packetReady) + openAssignments;

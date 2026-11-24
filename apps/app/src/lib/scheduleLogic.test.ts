@@ -23,7 +23,13 @@ describe('schedule RSVP capability', () => {
   ])('derives %s consistently', (_label, event, capability, canSubmit) => {
     expect(getScheduleEventRsvpCapability(event)).toBe(capability);
     expect(canSubmitScheduleEventRsvp(event)).toBe(canSubmit);
-    expect(isScheduleEventAvailabilityNeeded(event)).toBe(canSubmit);
+    expect(isScheduleEventAvailabilityNeeded({ ...event, myRsvpNoteHydrated: true })).toBe(canSubmit);
+  });
+
+  it('does not count an unhydrated default response as needed', () => {
+    expect(isScheduleEventAvailabilityNeeded(buildParentScheduleEvent({ myRsvpNoteHydrated: false }))).toBe(false);
+    expect(isScheduleEventAvailabilityNeeded(buildParentScheduleEvent({ myRsvpNoteHydrated: undefined }))).toBe(false);
+    expect(isScheduleEventAvailabilityNeeded(buildParentScheduleEvent({ myRsvpNoteHydrated: true }))).toBe(true);
   });
 
   it('does not mark a saved tracked response as needed', () => {

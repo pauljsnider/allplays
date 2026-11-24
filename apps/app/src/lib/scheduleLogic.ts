@@ -494,8 +494,18 @@ export function canSubmitScheduleEventRsvp(event: Pick<ParentScheduleEvent, 'isD
   return getScheduleEventRsvpCapability(event) === 'editable';
 }
 
-export function isScheduleEventAvailabilityNeeded(event: Pick<ParentScheduleEvent, 'isDbGame' | 'isCancelled' | 'availabilityLocked' | 'isImported' | 'sourceType' | 'myRsvp'>) {
-  return canSubmitScheduleEventRsvp(event) && normalizeRsvpResponse(event.myRsvp) === 'not_responded';
+/**
+ * The single RSVP-needed definition shared by the Schedule header count, the
+ * bulk-RSVP launcher, and Home: a response is only "needed" once the private
+ * note has actually been read and no response exists. Before hydration the
+ * stored default is `not_responded`, which must not be counted as a real
+ * missing response — counting it is what made the three on-screen numbers
+ * disagree. Each caller labels its own scope; the gate is the same.
+ */
+export function isScheduleEventAvailabilityNeeded(event: Pick<ParentScheduleEvent, 'isDbGame' | 'isCancelled' | 'availabilityLocked' | 'isImported' | 'sourceType' | 'myRsvp' | 'myRsvpNoteHydrated'>) {
+  return canSubmitScheduleEventRsvp(event)
+    && normalizeRsvpResponse(event.myRsvp) === 'not_responded'
+    && event.myRsvpNoteHydrated === true;
 }
 
 function compactString(value: unknown) {

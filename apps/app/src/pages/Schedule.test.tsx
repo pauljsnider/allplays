@@ -1025,7 +1025,7 @@ describe('Schedule', () => {
     expect(screen.queryByRole('dialog', { name: 'Respond to multiple events' })).toBeNull();
   });
 
-  it('does not open bulk review while a scoped private note is unavailable', async () => {
+  it('does not show the private-note banner until full-scope hydration has been attempted', async () => {
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
       children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
       events: [
@@ -1037,8 +1037,12 @@ describe('Schedule', () => {
     scheduleServiceMocks.submitParentScheduleRsvp.mockResolvedValue(null);
     renderSchedule();
 
+    const reviewButton = await screen.findByRole('button', { name: 'Review RSVPs' });
+    await waitFor(() => expect(reviewButton).toBeEnabled());
+    expect(screen.queryByText('1 RSVP is waiting for private note data. Refresh before updating it.')).toBeNull();
+
+    fireEvent.click(reviewButton);
     expect(await screen.findByText('1 RSVP is waiting for private note data. Refresh before updating it.')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Review RSVPs' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Respond to multiple events' })).toBeNull());
     expect(scheduleServiceMocks.submitParentScheduleRsvp).not.toHaveBeenCalled();
   });
@@ -2212,7 +2216,7 @@ describe('Schedule', () => {
 
     renderSchedule();
 
-    expect(await screen.findByText('1 event · 0 RSVP · 0 packets')).toBeTruthy();
+    expect(await screen.findByText('1 event · 0 RSVP needed in this view · 0 packets')).toBeTruthy();
   });
 
   it('counts staff team schedule availability in the RSVP summary when the card needs action', async () => {
@@ -2238,7 +2242,7 @@ describe('Schedule', () => {
 
     renderSchedule('/schedule?scope=staff');
 
-    expect(await screen.findByText('1 event · 1 RSVP · 0 packets')).toBeTruthy();
+    expect(await screen.findByText('1 event · 1 RSVP needed in this view · 0 packets')).toBeTruthy();
     expect(screen.getAllByText('Availability needed').length).toBeGreaterThan(0);
   });
 
@@ -2266,7 +2270,7 @@ describe('Schedule', () => {
 
     renderSchedule('/schedule?scope=staff');
 
-    expect(await screen.findByText('1 event · 0 RSVP · 0 packets')).toBeTruthy();
+    expect(await screen.findByText('1 event · 0 RSVP needed in this view · 0 packets')).toBeTruthy();
     expect(screen.queryByText('Availability needed')).toBeNull();
   });
 
@@ -2562,9 +2566,9 @@ describe('Schedule', () => {
     expect((screen.getAllByLabelText('Schedule filter')[0] as HTMLSelectElement).value).toBe('upcoming-games');
     expect(screen.getByRole('button', { name: 'Show games' }).getAttribute('aria-pressed')).toBe('true');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show rsvp needed' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show rsvp · this view' }));
     expect((screen.getAllByLabelText('Schedule filter')[0] as HTMLSelectElement).value).toBe('availability');
-    expect(screen.getByRole('button', { name: 'Show rsvp needed' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Show rsvp · this view' }).getAttribute('aria-pressed')).toBe('true');
 
     fireEvent.click(screen.getByRole('button', { name: 'Show packets' }));
     expect(screen.getByRole('button', { name: 'Show packets' }).getAttribute('aria-pressed')).toBe('true');
@@ -2591,7 +2595,7 @@ describe('Schedule', () => {
     expect((await screen.findAllByText('Calendar only')).length).toBeGreaterThan(0);
     expect(screen.getByText('Imported')).toBeTruthy();
     expect(screen.queryByText('RSVP needed')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Show rsvp needed' }).textContent).toContain('0');
+    expect(screen.getByRole('button', { name: 'Show rsvp · this view' }).textContent).toContain('0');
   });
 
   it('renders web-created tournament game metadata and the create tournament flow', async () => {
