@@ -1540,6 +1540,57 @@ describe('Schedule', () => {
     expect(publicActionMocks.exportCalendarIcsFile.mock.calls[0][1]).not.toContain('Family-only practice');
   });
 
+  it('includes teams the user coaches in the family agenda (#5316)', async () => {
+    shellLayoutMocks.isDesktopWeb = true;
+    const familyEvent = buildPracticePacketEvent(1, {
+      teamId: 'team-family',
+      teamName: 'Family Falcons',
+      childId: 'player-family',
+      childName: 'Avery',
+      title: 'Family-only practice',
+      isLinkedParentChild: true,
+      isTeamStaff: false
+    });
+    const staffEvent = buildScheduleEvent(2, {
+      teamId: 'team-staff',
+      teamName: 'Staff Sharks',
+      childId: 'staff-team-team-staff',
+      childName: 'Staff Sharks',
+      opponent: 'Staff-only opponent',
+      isLinkedParentChild: false,
+      isTeamStaff: true
+    });
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+      profile: {},
+      children: [{
+        playerId: 'player-family',
+        playerName: 'Avery',
+        teamId: 'team-family',
+        teamName: 'Family Falcons'
+      }],
+      staffTeams: [{ teamId: 'team-staff', teamName: 'Staff Sharks' }],
+      isPartial: false
+    });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [{
+        playerId: 'player-family',
+        playerName: 'Avery',
+        teamId: 'team-family',
+        teamName: 'Family Falcons'
+      }],
+      events: [familyEvent, staffEvent],
+      staffTeams: [{ teamId: 'team-staff', teamName: 'Staff Sharks' }]
+    });
+    renderSchedule();
+
+    expect((await screen.findAllByText('Family-only practice')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('vs. Staff-only opponent')).length).toBeGreaterThan(0);
+
+    const teamFilter = await screen.findByLabelText('Team');
+    expect(within(teamFilter).getByRole('option', { name: 'Family Falcons' })).toBeTruthy();
+    expect(within(teamFilter).getByRole('option', { name: 'Staff Sharks' })).toBeTruthy();
+  });
+
   it('exports family, team, and player schedules with native-aware result and failure states', async () => {
     const schedule = buildMixedTeamScheduleResult();
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(schedule);
