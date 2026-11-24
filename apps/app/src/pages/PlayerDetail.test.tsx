@@ -549,6 +549,63 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(await screen.findByText('Fast break finish')).toBeTruthy();
   });
 
+  it('shows the next few upcoming events and labels a live game in the reports count (#5319)', async () => {
+    const now = Date.now();
+    const practiceEvent = {
+      eventKey: 'team-current-practice-1-player-current',
+      id: 'practice-1',
+      teamId: 'team-current',
+      teamName: 'Current Team',
+      type: 'practice',
+      date: new Date(now + 30 * 60 * 1000),
+      location: 'Main Gym',
+      opponent: 'TBD',
+      childId: 'player-current',
+      childName: 'Sam Player',
+      isDbGame: true,
+      isCancelled: false,
+      assignments: [],
+      openAssignmentCount: 0
+    };
+    const liveGameEvent = {
+      eventKey: 'team-current-game-1-player-current',
+      id: 'game-1',
+      teamId: 'team-current',
+      teamName: 'Current Team',
+      type: 'game',
+      date: new Date(now + 60 * 60 * 1000),
+      location: 'Main Gym',
+      opponent: 'Tigers',
+      childId: 'player-current',
+      childName: 'Sam Player',
+      isDbGame: true,
+      isCancelled: false,
+      liveStatus: 'live',
+      status: 'live',
+      homeScore: 3,
+      awayScore: 0,
+      assignments: [],
+      openAssignmentCount: 0
+    };
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(
+      buildDetailData({
+        events: [practiceEvent, liveGameEvent],
+        nextEvent: practiceEvent,
+        statRows: [{ event: liveGameEvent, stats: { pts: 2 }, isLive: true }]
+      })
+    );
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+
+    // Both upcoming events render: the earlier practice no longer hides the game.
+    expect(screen.getByText('Practice')).toBeTruthy();
+    expect(screen.getByText('vs. Tigers')).toBeTruthy();
+    expect(screen.getByText('Live')).toBeTruthy();
+    expect(screen.getByText('1 recent games · 1 live')).toBeTruthy();
+  });
+
   it('renders lazy-loaded season summary ranks totals and player event rows', async () => {
     const gameEvent = {
       eventKey: 'team-current-game-1-player-current',

@@ -339,6 +339,9 @@ export type ParentPlayerStatRow = {
   statDefinitions?: ReadonlyArray<Record<string, unknown>>;
   statVisibility?: 'public' | 'manager-internal';
   privateStatsStatus?: 'not-requested' | 'complete' | 'partial' | 'unavailable';
+  // True when the game was in progress when the row was built (#5319). Live
+  // rows carry stats already, but the UI must not present them as completed.
+  isLive?: boolean;
 };
 
 export type ParentPlayerTopStat = {
@@ -939,7 +942,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
           : 'partial'
       : 'not-requested';
   const statRows = loadedPublicRows.map((row): ParentPlayerStatRow => {
-    if (!row.publicDocument) return { event: row.event, stats: row.legacyStats || {} };
+    if (!row.publicDocument) return { event: row.event, stats: row.legacyStats || {}, isLive: isLiveScheduleEvent(row.event) };
     const selected = managerStatsComplete
       ? resolvePlayerDiamondStatDocument({
           playerId: resolvedPlayerId,
@@ -972,6 +975,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
       statDefinitions: definitions,
       statVisibility: selected.statVisibility,
       privateStatsStatus: selected.privateStatsStatus,
+      isLive: isLiveScheduleEvent(row.event),
       participated: (selected.document as Record<string, any>)?.participated === true,
       timeMs: getGamePlayerTimeMs(row.gameEvidence, resolvedPlayerId, presentation.values, selected.document)
     };
@@ -1074,7 +1078,7 @@ async function loadParentPlayerStatsDetailUncached(user: AuthUser, teamId: strin
   }
 
   const completedGames = (Array.isArray(games) ? games : [])
-    .filter(isCompletedGame)
+    .filter(isReportableGame)
     .sort((a, b) => getGameDate(b).getTime() - getGameDate(a).getTime());
   const limitedGames = completedGames.slice(0, playerStatsDetailGameLimit);
   const completedDiamondGames = completedGames.filter((game) => isDiamondV2Game(game));
@@ -1201,6 +1205,7 @@ async function loadParentPlayerStatsDetailUncached(user: AuthUser, teamId: strin
             })
           : selected.document,
         event: buildStatsEventFromGame(game, teamId, team, playerId),
+        isLive: isLiveScheduleEvent(game),
         stats,
         completeStats,
         statPresentation: presentation.isDiamond ? { ...presentation, statVisibility: selected.statVisibility } : undefined,
@@ -1216,6 +1221,7 @@ async function loadParentPlayerStatsDetailUncached(user: AuthUser, teamId: strin
   );
   const toStatRow = ({
     event,
+    isLive,
     stats,
     completeStats,
     statPresentation,
@@ -1226,6 +1232,7 @@ async function loadParentPlayerStatsDetailUncached(user: AuthUser, teamId: strin
     timeMs
   }: (typeof loadedSeasonStatRows)[number]): ParentPlayerStatRow => ({
     event,
+    isLive,
     stats,
     completeStats,
     ...(statPresentation ? { statPresentation } : {}),
@@ -1581,7 +1588,7 @@ export async function loadParentPlayerStatTotals(user: AuthUser | null, teamId: 
   };
 }
 
-function isCompletedGame(game: Record<string, any>) {
+function isReportableGame(game: Record<string, any>) {
   const status = String(game?.status || '').toLowerCase();
   const liveStatus = String(game?.liveStatus || '').toLowerCase();
   return (
@@ -1589,6 +1596,8 @@ function isCompletedGame(game: Record<string, any>) {
     status === 'final' ||
     liveStatus === 'completed' ||
     liveStatus === 'final' ||
+    isLiveScheduleEvent(game) ||
+    game?.liveHasData === true ||
     getGameDate(game).getTime() < Date.now()
   );
 }
@@ -3237,7 +3246,18 @@ function isPastOrCompleted(event: ParentScheduleEvent) {
     event.date.getTime() < Date.now() ||
     status === 'final' ||
     status === 'completed' ||
+    status === 'live' ||
     liveStatus === 'final' ||
-    liveStatus === 'completed'
+    liveStatus === 'completed' ||
+    liveStatus === 'live'
   );
+}
+
+// A game is live when either its status or its liveStatus says so. Live games
+// carry stats already (the live tracker writes them as play happens), so they
+// belong in stat rows alongside completed games — just labelled live, not
+// recent (#5319). The same check covers raw game records, which also carry
+// liveHasData.
+function isLiveScheduleEvent(event: ParentScheduleEvent | Record<string, any>) {
+  return String(event?.status || '').toLowerCase() === 'live' || String(event?.liveStatus || '').toLowerCase() === 'live';
 }

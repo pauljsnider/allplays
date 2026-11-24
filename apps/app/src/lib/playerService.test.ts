@@ -1613,6 +1613,94 @@ describe('loadParentPlayerDetail custom roster fields', () => {
     });
   });
 
+  it('includes a live future-dated game with recorded stats in stat rows (#5319)', async () => {
+    const now = Date.now();
+    const liveGame = {
+      eventKey: 'team-1-live-game-1-player-1',
+      id: 'live-game-1',
+      teamId: 'team-1',
+      teamName: 'Comets',
+      type: 'game',
+      date: new Date(now + 60 * 60 * 1000),
+      endDate: null,
+      location: 'Main Gym',
+      opponent: 'Tigers',
+      childId: 'player-1',
+      childName: 'Sam Player',
+      isDbGame: true,
+      isCancelled: false,
+      status: 'scheduled',
+      liveStatus: 'live',
+      homeScore: 3,
+      awayScore: 0,
+      assignments: [],
+      openAssignmentCount: 0
+    };
+    const futureGame = {
+      ...liveGame,
+      eventKey: 'team-1-future-game-1-player-1',
+      id: 'future-game-1',
+      date: new Date(now + 2 * 60 * 60 * 1000),
+      liveStatus: 'scheduled',
+      homeScore: null,
+      awayScore: null
+    };
+    scheduleServiceMocks.loadParentPlayerSchedule.mockResolvedValue({
+      children: [{ teamId: 'team-1', teamName: 'Comets', playerId: 'player-1', playerName: 'Sam Player' }],
+      events: [futureGame, liveGame]
+    });
+    legacyPlayerDbMocks.getAggregatedStatsForPlayer.mockResolvedValue({ pts: 2 });
+
+    const detail = await loadParentPlayerDetail(
+      {
+        uid: 'parent-1',
+        email: 'parent@example.com',
+        parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+      } as any,
+      'team-1',
+      'player-1'
+    );
+
+    expect(detail.statRows).toHaveLength(1);
+    expect(detail.statRows[0]).toMatchObject({ isLive: true, stats: { pts: 2 } });
+    expect(detail.statRows[0].event.id).toBe('live-game-1');
+  });
+
+  it('includes a live future-dated game in the full stats detail (#5319)', async () => {
+    legacyPlayerDbMocks.getGames.mockResolvedValue([
+      {
+        id: 'live-game-1',
+        status: 'scheduled',
+        liveStatus: 'live',
+        liveHasData: true,
+        date: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        opponent: 'Tigers'
+      }
+    ]);
+    legacyPlayerDbMocks.getAggregatedStatsDocumentForPlayer.mockResolvedValue({
+      stats: { pts: 2 },
+      timeMs: 0
+    });
+
+    const detail = await loadParentPlayerStatsDetail(
+      {
+        uid: 'parent-1',
+        email: 'parent@example.com',
+        parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+      } as any,
+      'team-1',
+      'player-1'
+    );
+
+    expect(detail.statRows).toHaveLength(1);
+    expect(detail.statRows[0]).toEqual(
+      expect.objectContaining({
+        isLive: true,
+        stats: { pts: 2 }
+      })
+    );
+  });
+
   it('accepts a linked-parent Diamond schedule event only when its propagated snapshot hash matches the real catalog', async () => {
     const actualSnapshot = await useRealDiamondStatConfigSnapshotImplementation();
     const config = {
