@@ -1,5 +1,6 @@
 import { formatLongDate, formatShortDate, formatTimeOfDay } from './datetime';
 import type { ReplayArchiveState, YouTubeReplayVideo } from './youtubeReplay';
+import { isLiveGameTimeWindowCurrent } from './youtubeReplay';
 
 export type ParentScheduleFilter = 'upcoming-all' | 'upcoming-games' | 'upcoming-practices' | 'availability' | 'recent-results' | 'past-all';
 export type ScheduleViewMode = 'list' | 'compact' | 'calendar' | 'packets';
@@ -376,13 +377,33 @@ function formatLiveClockMs(clockMs: number) {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
-export function getLiveClockViewModel(event: Pick<ParentScheduleEvent, 'type' | 'liveStatus' | 'liveClockMs' | 'liveClockRunning' | 'liveClockPeriod' | 'liveClockUpdatedAt'>, now: Date = new Date()): LiveClockViewModel | null {
+/**
+ * Display-side "is this game live right now" (#5321): a live/in-progress
+ * status string counts only inside the scheduled window (see
+ * isLiveGameTimeWindowCurrent). A future game stamped live by an early score
+ * or stat write is not live yet; a stale live stamp long after the scheduled
+ * start is not live either.
+ */
+export function isScheduleEventLiveNow(event: Pick<ParentScheduleEvent, 'status' | 'liveStatus' | 'date'>, now: Date = new Date()): boolean {
+  const statuses = [event.status, event.liveStatus]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean);
+  if (!statuses.some((status) => status === 'live' || status === 'in_progress' || status === 'in-progress')) return false;
+  return isLiveGameTimeWindowCurrent(event.date, now);
+}
+
+export function getLiveClockViewModel(event: Pick<ParentScheduleEvent, 'type' | 'liveStatus' | 'status' | 'date' | 'liveClockMs' | 'liveClockRunning' | 'liveClockPeriod' | 'liveClockUpdatedAt'> & { liveStartedAt?: unknown }, now: Date = new Date()): LiveClockViewModel | null {
   if (event.type !== 'game') return null;
   const clockMs = normalizeLiveClockMs(event.liveClockMs);
   const period = String(event.liveClockPeriod || '').trim();
   const hasClockData = clockMs !== null;
-  const isLive = String(event.liveStatus || '').toLowerCase() === 'live';
-  if (!hasClockData && !period) return null;
+  const isLive = isScheduleEventLiveNow(event, now);
+  // Never render a manufactured clock (#5321): a defaulted H1/00:00 with no
+  // clock data, no running clock, and no live start is not a live clock.
+  const hasClockEvidence = hasClockData
+    || event.liveClockRunning === true
+    || Boolean(event.liveStartedAt);
+  if (!hasClockEvidence) return null;
 
   let displayClockMs = clockMs ?? 0;
   const updatedAtMs = event.liveClockUpdatedAt instanceof Date ? event.liveClockUpdatedAt.getTime() : NaN;

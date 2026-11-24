@@ -49,6 +49,7 @@ import {
   getScheduleEventRsvpCapability,
   isScheduleAssignmentOpen,
   getScheduleTitle,
+  isScheduleEventLiveNow,
   normalizeRsvpResponse,
   type ParentScheduleEvent,
   type PracticePacketCompletion,
@@ -1191,7 +1192,7 @@ function getScoreLabel(event: ParentScheduleEvent) {
   const liveStatus = String(event.liveStatus || '').trim().toLowerCase();
   if (event.isCancelled || ['cancelled', 'canceled'].includes(status)
     || ['cancelled', 'canceled'].includes(liveStatus)) return '';
-  const isLive = status === 'live' || liveStatus === 'live';
+  const isLive = isScheduleEventLiveNow(event);
   const isCompleted = status === 'completed' || status === 'final' || liveStatus === 'completed' || liveStatus === 'final';
   const isPastScheduledResult = event.date.getTime() < Date.now() - pastScheduledGameScoreCutoffMs;
   if (!isLive && !isCompleted && !isPastScheduledResult) return '';

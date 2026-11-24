@@ -3,11 +3,13 @@ import {
   canSubmitScheduleEventRsvp,
   countOpenScheduleAssignments,
   getCalendarScheduleEntries,
+  getLiveClockViewModel,
   getManageableScheduleTeamOptions,
   getScheduleEventRsvpCapability,
   getWindowedCalendarScheduleEntries,
   getWindowedPracticePacketRows,
   isScheduleEventAvailabilityNeeded,
+  isScheduleEventLiveNow,
   type ParentScheduleEvent,
   type ParentScheduleTeamOption
 } from './scheduleLogic';
@@ -244,5 +246,62 @@ describe('getManageableScheduleTeamOptions', () => {
     ];
     const result = getManageableScheduleTeamOptions(options, events, staffTeams);
     expect(result.map((team) => team.teamId)).toEqual(['team-a', 'team-b']);
+  });
+});
+
+describe('live game display guards (#5321)', () => {
+  const now = new Date('2026-11-23T18:00:00.000Z');
+
+  function buildLiveEvent(overrides: Partial<ParentScheduleEvent> = {}): ParentScheduleEvent {
+    return {
+      eventKey: 'team-1::game-1::player-1::2026-11-24T18:30:00.000Z::game',
+      id: 'game-1',
+      teamId: 'team-1',
+      teamName: 'Bears',
+      type: 'game',
+      date: new Date('2026-11-24T18:30:00.000Z'),
+      location: 'Main Gym',
+      childId: 'player-1',
+      childName: 'Pat',
+      isDbGame: true,
+      isCancelled: false,
+      status: 'scheduled',
+      liveStatus: 'live',
+      ...overrides
+    } as ParentScheduleEvent;
+  }
+
+  it('does not count a future game stamped live as live now', () => {
+    expect(isScheduleEventLiveNow(buildLiveEvent(), now)).toBe(false);
+    expect(isScheduleEventLiveNow(buildLiveEvent({ date: new Date('2026-11-23T18:30:00.000Z') }), now)).toBe(true);
+    expect(isScheduleEventLiveNow(buildLiveEvent({ liveStatus: 'scheduled' }), now)).toBe(false);
+  });
+
+  it('does not render a defaulted H1/00:00 clock for a game that never started', () => {
+    expect(getLiveClockViewModel(buildLiveEvent(), now)).toBeNull();
+  });
+
+  it('renders the live clock once the clock has real data', () => {
+    const view = getLiveClockViewModel(buildLiveEvent({
+      date: new Date('2026-11-23T18:30:00.000Z'),
+      liveClockMs: 0,
+      liveClockRunning: true,
+      liveClockPeriod: 'H1',
+      liveClockUpdatedAt: now
+    }), now);
+    expect(view?.label).toBe('LIVE · H1 · 00:00');
+  });
+
+  it('renders a completed game clock without the live prefix', () => {
+    const view = getLiveClockViewModel(buildLiveEvent({
+      date: new Date('2026-11-23T18:30:00.000Z'),
+      liveStatus: 'completed',
+      status: 'completed',
+      liveClockMs: 2520000,
+      liveClockRunning: false,
+      liveClockPeriod: 'H2',
+      liveClockUpdatedAt: now
+    }), now);
+    expect(view?.label).toBe('H2 · 42:00');
   });
 });

@@ -10,6 +10,8 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   cancelParentScheduleRideRequest: vi.fn(),
   cancelPracticeOccurrenceForApp: vi.fn(),
   cancelScheduledGameForApp: vi.fn(),
+  isGameLiveStatusStuck: vi.fn(() => false),
+  repairStuckLiveGameStatusForApp: vi.fn(),
   claimParentScheduleAssignmentSlot: vi.fn(),
   createScheduleAssignment: vi.fn(),
   createParentScheduleRideOffer: vi.fn(),
@@ -985,7 +987,7 @@ describe('ScheduleEventDetail loading states', () => {
   it('shows the live score label for games that are currently live', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
-        date: new Date('2099-11-15T18:00:00.000Z'),
+        date: new Date(Date.now() - 30 * 60 * 1000),
         homeScore: 3,
         awayScore: 2,
         status: 'live',
@@ -2227,7 +2229,7 @@ describe('ScheduleEventDetail assignments', () => {
     fireEvent.click(within(tray).getByRole('button', { name: 'Sticky home score up' }));
 
     expect(within(tray).getByText('42-38')).toBeTruthy();
-    expect(within(tray).getByText('Autosaving manual score change…')).toBeTruthy();
+    expect(within(tray).getByText('Autosaving score change…')).toBeTruthy();
     await waitFor(() => {
       expect(scheduleServiceMocks.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 42, awayScore: 38 }, auth.user);
     }, { timeout: 2000 });
@@ -2386,7 +2388,7 @@ describe('ScheduleEventDetail assignments', () => {
     expect(screen.getByRole('button', { name: 'Sign up' })).toBeTruthy();
   });
 
-  it('surfaces sticky autosave failures and retries through the existing manual save path', async () => {
+  it('surfaces sticky autosave failures and retries through the retry save button', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({ liveStatus: 'live', status: 'live', canUpdateScore: true, homeScore: 12, awayScore: 9 })],
       children: []
@@ -2410,7 +2412,7 @@ describe('ScheduleEventDetail assignments', () => {
 
     await waitFor(() => {
       expect(scheduleServiceMocks.updateGameScore).toHaveBeenCalledTimes(2);
-      expect(within(tray).getByText('Score saved and posted to live play-by-play.')).toBeTruthy();
+      expect(within(tray).getByText('Score autosaved and posted to live play-by-play.')).toBeTruthy();
     });
   });
 
@@ -3204,11 +3206,10 @@ describe('ScheduleEventDetail assignments', () => {
 
     const liveScoreEditor = await screen.findByTestId('live-score-editor');
     fireEvent.click(within(liveScoreEditor).getByRole('button', { name: 'Home score up' }));
-    fireEvent.click(within(liveScoreEditor).getByRole('button', { name: 'Save score' }));
 
     await waitFor(() => {
       expect(scheduleServiceMocks.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 1, awayScore: 0 }, auth.user);
-    });
+    }, { timeout: 2000 });
     expect((screen.getByLabelText('Location') as HTMLInputElement).value).toBe('Aux Gym');
 
     fireEvent.click(screen.getByRole('button', { name: 'Save game' }));
@@ -4027,7 +4028,7 @@ describe('ScheduleEventDetail assignments', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Home score up' }));
-    expect(within(screen.getByTestId('live-score-editor')).getByText('Autosaving manual score change…')).toBeTruthy();
+    expect(within(screen.getByTestId('live-score-editor')).getByText('Autosaving score change…')).toBeTruthy();
     expect(scheduleServiceMocks.updateGameScore).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: '#1 Avery Smith plus 2 points' })).toHaveProperty('disabled', true);
 

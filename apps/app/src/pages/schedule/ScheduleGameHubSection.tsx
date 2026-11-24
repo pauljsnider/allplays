@@ -4,8 +4,10 @@ import { ChevronDown, ClipboardCheck, ExternalLink, FileText, Radio, RefreshCw, 
 import {
   cancelPracticeOccurrenceForApp,
   cancelScheduledGameForApp,
+  isGameLiveStatusStuck,
   loadScheduleStatTrackerConfigsForApp,
   loadScheduledPracticeSeriesForEdit,
+  repairStuckLiveGameStatusForApp,
   updateScheduledGameForApp,
   updateScheduledPracticeForApp,
   revertScheduledPracticeOccurrenceForApp,
@@ -54,6 +56,7 @@ import {
   getScheduleLocationLabel,
   getScheduleTitle,
   getLiveClockViewModel,
+  isScheduleEventLiveNow,
   type ParentScheduleEvent,
   type PracticePacketCompletion,
 } from '../../lib/scheduleLogic';
@@ -1329,6 +1332,20 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
   const canCancelGame = Boolean(
     !isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && (!isDiamondOwned || event.isTeamAdmin) && auth.user
   );
+  const repairedStuckLiveStatusRef = useRef<string | null>(null);
+  useEffect(() => {
+    // Repair path (#5321): a game stamped live by an early score/stat write
+    // shows as live before it starts. When a score keeper opens the hub,
+    // reset it to scheduled once and refresh; the display guard already
+    // hides the false live label everywhere else.
+    if (!auth.user || !canUpdateScore || isPractice) return;
+    if (repairedStuckLiveStatusRef.current === event.eventKey) return;
+    if (!isGameLiveStatusStuck(event as Record<string, any>)) return;
+    repairedStuckLiveStatusRef.current = event.eventKey;
+    void repairStuckLiveGameStatusForApp(event.teamId, event.id, event as Record<string, any>, auth.user)
+      .then((repaired) => { if (repaired) void onEventRefresh(); })
+      .catch((error) => logger.warn('Unable to repair stuck live game status.', { error }));
+  }, [auth.user, canUpdateScore, event, isPractice, onEventRefresh]);
   const isRecurringPracticeOccurrence = Boolean(isPractice && event.id.includes('__'));
   const canCancelPracticeOccurrence = Boolean(isRecurringPracticeOccurrence && event.isDbGame && !event.isCancelled && event.isTeamAdmin && auth.user);
   const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff && isLegacyOwned);
@@ -3287,7 +3304,6 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
   const pendingLocalSaveRef = useRef<ScoreSnapshot | null>(null);
   const autosaveTimeoutRef = useRef<number | null>(null);
   const lastAutosaveFailureRef = useRef<ScoreSnapshot | null>(null);
-  const activeSaveModeRef = useRef<'manual' | 'autosave'>('manual');
 
   useEffect(() => {
     const pendingLocalSave = pendingLocalSaveRef.current;
@@ -3338,7 +3354,10 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
     });
   };
 
-  const saveScore = useCallback(async (mode: 'manual' | 'autosave' = 'manual', scoreOverride?: ScoreSnapshot) => {
+  // Autosave-only editor (#5321): the manual Save button was dead because the
+  // 700ms autosave cleared dirty state before it could be clicked. Scores save
+  // automatically; only a Retry button appears, after a failed autosave.
+  const saveScore = useCallback(async (scoreOverride?: ScoreSnapshot) => {
     if (!auth.user) return;
     const nextScore = scoreOverride || { homeScore, awayScore };
     if (nextScore.homeScore === savedHomeScore && nextScore.awayScore === savedAwayScore) return;
@@ -3347,7 +3366,6 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
       autosaveTimeoutRef.current = null;
     }
     setAutosaveScheduled(false);
-    activeSaveModeRef.current = mode;
     const previousScore = { homeScore: savedHomeScore, awayScore: savedAwayScore };
     setSaving(true);
     setStatus(null);
@@ -3359,23 +3377,21 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
       lastAutosaveFailureRef.current = null;
       onScoreUpdated(nextHomeScore, nextAwayScore);
       if (nextHomeScore === previousScore.homeScore && nextAwayScore === previousScore.awayScore) {
-        setStatus({ tone: 'success', message: mode === 'autosave' ? 'Score autosaved.' : 'Score saved.' });
+        setStatus({ tone: 'success', message: 'Score autosaved.' });
         return;
       }
       try {
         const { publishLiveScoreUpdateEvent } = await loadScheduleGameDayService();
         const published = await publishLiveScoreUpdateEvent(event.teamId, event.id, { homeScore: nextHomeScore, awayScore: nextAwayScore }, auth.user, previousScore);
         if (published?.committedLifecycle?.liveStatus === 'live') onLiveStatusUpdated();
-        setStatus({ tone: 'success', message: mode === 'autosave' ? 'Score autosaved and posted to live play-by-play.' : 'Score saved and posted to live play-by-play.' });
+        setStatus({ tone: 'success', message: 'Score autosaved and posted to live play-by-play.' });
       } catch (publishError) {
         logger.warn('Score saved but live play-by-play posting failed.', { error: publishError });
-        setStatus({ tone: 'warning', message: mode === 'autosave' ? 'Score autosaved. Live play-by-play post failed.' : 'Score saved. Live play-by-play post failed.' });
+        setStatus({ tone: 'warning', message: 'Score autosaved. Live play-by-play post failed.' });
       }
     } catch (error: any) {
-      if (mode === 'autosave') {
-        lastAutosaveFailureRef.current = nextScore;
-      }
-      setStatus({ tone: 'error', message: error?.message || (mode === 'autosave' ? 'Unable to autosave score. Retry save.' : 'Unable to save score.') });
+      lastAutosaveFailureRef.current = nextScore;
+      setStatus({ tone: 'error', message: error?.message || 'Unable to autosave score.' });
     } finally {
       setSaving(false);
     }
@@ -3392,7 +3408,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
     autosaveTimeoutRef.current = window.setTimeout(() => {
       autosaveTimeoutRef.current = null;
       setAutosaveScheduled(false);
-      void saveScore('autosave', { homeScore, awayScore });
+      void saveScore({ homeScore, awayScore });
     }, autosaveDelayMs);
 
     return () => {
@@ -3404,17 +3420,17 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
     };
   }, [auth.user, awayScore, dirty, homeScore, playerScoringId, saveScore, saving]);
 
-  const manualScoreSaveLabel = status?.tone === 'error' && dirty ? 'Retry save' : (saving ? 'Saving score' : 'Save score');
+  const showRetrySave = status?.tone === 'error' && dirty;
   const helperText = autosaveScheduled
-    ? 'Autosaving manual score change…'
-    : (saving && activeSaveModeRef.current === 'autosave')
-      ? 'Saving manual score change…'
-      : 'Save or undo manual score changes before recording player stats.';
+    ? 'Autosaving score change…'
+    : saving
+      ? 'Saving score change…'
+      : 'Score changes save automatically.';
   const stickyStatusMessage = status?.message
     || (autosaveScheduled
-      ? 'Autosaving manual score change…'
+      ? 'Autosaving score change…'
       : saving
-        ? (activeSaveModeRef.current === 'autosave' ? 'Saving manual score change…' : 'Saving score…')
+        ? 'Saving score change…'
         : dirty
           ? 'Unsaved score changes.'
           : 'Score saved.');
@@ -3496,14 +3512,16 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
       </div> : null}
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              className="primary-button min-h-11 px-4 text-sm"
-              onClick={() => void saveScore('manual')}
-              disabled={saving || Boolean(playerScoringId) || !dirty}
-            >
-              {manualScoreSaveLabel}
-            </button>
+            {showRetrySave ? (
+              <button
+                type="button"
+                className="primary-button min-h-11 px-4 text-sm"
+                onClick={() => void saveScore()}
+                disabled={saving || Boolean(playerScoringId) || !dirty}
+              >
+                Retry save
+              </button>
+            ) : null}
             {previousScoreSnapshots.length ? (
               <button
                 type="button"
@@ -3533,15 +3551,17 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
             <span className={`min-w-0 text-xs font-bold ${status?.tone === 'error' ? 'text-rose-700' : status?.tone === 'warning' || dirty ? 'text-amber-700' : 'text-emerald-700'}`} aria-live="polite">
               {stickyStatusMessage}
             </span>
-            <button
-              type="button"
-              className="primary-button min-h-11 flex-none px-3 text-xs"
-              onClick={() => void saveScore('manual')}
-              disabled={saving || Boolean(playerScoringId) || !dirty}
-              aria-label={`${manualScoreSaveLabel} from sticky controls`}
-            >
-              {manualScoreSaveLabel}
-            </button>
+            {showRetrySave ? (
+              <button
+                type="button"
+                className="primary-button min-h-11 flex-none px-3 text-xs"
+                onClick={() => void saveScore()}
+                disabled={saving || Boolean(playerScoringId) || !dirty}
+                aria-label="Retry save from sticky controls"
+              >
+                Retry save
+              </button>
+            ) : null}
           </div>
         </div>
       </div> : null}
@@ -4532,7 +4552,7 @@ function getScoreLabel(event: ParentScheduleEvent) {
   const liveStatus = String(event.liveStatus || '').trim().toLowerCase();
   if (event.isCancelled || ['cancelled', 'canceled'].includes(status)
     || ['cancelled', 'canceled'].includes(liveStatus)) return '';
-  const isLive = status === 'live' || liveStatus === 'live';
+  const isLive = isScheduleEventLiveNow(event);
   const isCompleted = status === 'completed' || status === 'final' || liveStatus === 'completed' || liveStatus === 'final';
   const isPastScheduledResult = event.date.getTime() < Date.now() - pastScheduledGameScoreCutoffMs;
   if (!isLive && !isCompleted && !isPastScheduledResult) return '';

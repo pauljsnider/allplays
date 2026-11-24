@@ -463,6 +463,41 @@ export function isCompletedGameForReplay(game: {
     || (isEmptyStatus && isFinalLiveStatus);
 }
 
+/** A game may go live up to this long before its scheduled start (#5321). */
+export const LIVE_STATUS_PRE_START_GRACE_MS = 60 * 60 * 1000;
+/** A game still stamped live this long after its scheduled start is stale, not live. */
+export const LIVE_STATUS_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+
+function toLiveStatusDate(value: unknown): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof (value as { toDate?: unknown }).toDate === 'function') {
+    const date = (value as { toDate: () => Date }).toDate();
+    return date instanceof Date && !Number.isNaN(date.getTime()) ? date : null;
+  }
+  if (typeof (value as { seconds?: unknown }).seconds === 'number') {
+    const date = new Date((value as { seconds: number }).seconds * 1000);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const date = new Date(value as string | number);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/**
+ * Display-side time guard (#5321): a game counts as live only inside its
+ * scheduled window — from the pre-start grace window until the max age after
+ * its scheduled start. Games without a parseable scheduled date fall back to
+ * the status strings, as before.
+ */
+export function isLiveGameTimeWindowCurrent(date: unknown, now: Date = new Date()): boolean {
+  const scheduledStart = toLiveStatusDate(date);
+  if (!scheduledStart) return true;
+  const nowMs = now.getTime();
+  if (nowMs < scheduledStart.getTime() - LIVE_STATUS_PRE_START_GRACE_MS) return false;
+  if (nowMs - scheduledStart.getTime() > LIVE_STATUS_MAX_AGE_MS) return false;
+  return true;
+}
+
 export function isActiveGameForLive(game: {
   status?: unknown;
   liveStatus?: unknown;
@@ -472,7 +507,9 @@ export function isActiveGameForLive(game: {
   isCancelled?: unknown;
   deleted?: unknown;
   isDeleted?: unknown;
-} | null | undefined) {
+  date?: unknown;
+  liveStartedAt?: unknown;
+} | null | undefined, now: Date = new Date()) {
   if (game?.isCancelled === true || game?.deleted === true || game?.isDeleted === true) return false;
   const rawLifecycle = replayRecord(game?.rawReplayLifecycle);
   if (game?.isDbGame === true && !rawLifecycle) return false;
@@ -494,6 +531,12 @@ export function isActiveGameForLive(game: {
     .filter(Boolean);
   const activeStatuses = new Set(['live', 'in_progress', 'in-progress']);
   const compatibleStatuses = new Set(['scheduled', ...activeStatuses]);
-  return statuses.some((status) => activeStatuses.has(status))
-    && statuses.every((status) => compatibleStatuses.has(status));
+  if (!statuses.some((status) => activeStatuses.has(status))
+    || !statuses.every((status) => compatibleStatuses.has(status))) return false;
+  // Time guard (#5321): a game whose scheduled start is still ahead (outside
+  // the pre-start grace window) is not live yet, whatever liveStatus says —
+  // score/stat writes used to stamp future games live. Likewise a game whose
+  // scheduled start is long past with no wrapup is stale, not live. When no
+  // scheduled date is available the status strings decide, as before.
+  return isLiveGameTimeWindowCurrent(game?.date, now);
 }
