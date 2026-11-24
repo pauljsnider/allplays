@@ -532,6 +532,62 @@ describe('TeamDetail', () => {
     });
   });
 
+  it('does not treat a past practice with 0-0 scores as a recent result (#5317)', () => {
+    const pastPractice = {
+      eventKey: 'team-1:practice-1:player-1',
+      id: 'practice-1',
+      teamId: 'team-1',
+      teamName: 'Bears',
+      title: 'Practice',
+      type: 'practice',
+      date: new Date(Date.now() - 24 * 60 * 60 * 1000),
+      location: 'Field 2',
+      opponent: null,
+      childId: 'player-1',
+      childName: 'Avery',
+      isDbGame: true,
+      isCancelled: false,
+      status: 'scheduled',
+      homeScore: 0,
+      awayScore: 0,
+      assignments: [],
+      openAssignmentCount: 0
+    } as any;
+
+    const preview = buildTeamSchedulePreviewEvents([pastPractice], [], 'team-1');
+
+    expect(preview).toHaveLength(0);
+  });
+
+  it('gives a bare-titled practice a dated title in the team preview (#5317)', () => {
+    const practice = {
+      eventKey: 'team-1:practice-1:player-1',
+      id: 'practice-1',
+      teamId: 'team-1',
+      teamName: 'Bears',
+      title: 'Practice',
+      type: 'practice',
+      date: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      location: 'Field 2',
+      opponent: null,
+      childId: 'player-1',
+      childName: 'Avery',
+      isDbGame: true,
+      isCancelled: false,
+      status: 'scheduled',
+      homeScore: null,
+      awayScore: null,
+      assignments: [],
+      openAssignmentCount: 0
+    } as any;
+
+    const preview = buildTeamSchedulePreviewEvents([practice], [], 'team-1');
+
+    expect(preview).toHaveLength(1);
+    expect(preview[0].title).toMatch(/^Practice · /);
+    expect(preview[0].title).not.toBe('Practice');
+  });
+
   it('shows the shared team skeleton while team detail is loading', () => {
     teamDetailServiceMocks.loadParentTeamDetail.mockReturnValue(new Promise(() => {}));
 

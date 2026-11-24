@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildScheduleAgendaText,
+  buildScheduleIcs,
   canSubmitScheduleEventRsvp,
   countOpenScheduleAssignments,
   getCalendarScheduleEntries,
   getManageableScheduleTeamOptions,
+  getPracticeTitleFallback,
+  getScheduleMapHref,
+  getScheduleTitle,
+  looksLikeVenueLocation,
+  normalizePracticeTitle,
   getScheduleEventRsvpCapability,
   getWindowedCalendarScheduleEntries,
   getWindowedPracticePacketRows,
@@ -244,5 +251,37 @@ describe('getManageableScheduleTeamOptions', () => {
     ];
     const result = getManageableScheduleTeamOptions(options, events, staffTeams);
     expect(result.map((team) => team.teamId)).toEqual(['team-a', 'team-b']);
+  });
+});
+
+describe('practice titles and locations (#5317)', () => {
+  it('derives a dated title for an untitled or bare-titled practice', () => {
+    const date = new Date('2026-06-24T18:00:00.000Z');
+    expect(getPracticeTitleFallback(date)).toMatch(/^Practice · /);
+    expect(getPracticeTitleFallback(date)).not.toBe('Practice');
+    expect(getPracticeTitleFallback(null)).toBe('Practice');
+    expect(normalizePracticeTitle('', date)).toBe(getPracticeTitleFallback(date));
+    expect(normalizePracticeTitle('Practice', date)).toBe(getPracticeTitleFallback(date));
+    expect(normalizePracticeTitle('  practice  ', date)).toBe(getPracticeTitleFallback(date));
+    expect(normalizePracticeTitle('Skills night', date)).toBe('Skills night');
+  });
+
+  it('uses the dated practice title in getScheduleTitle and leaves games alone', () => {
+    const practice = buildParentScheduleEvent({ type: 'practice', title: 'Practice', date: new Date('2026-06-24T18:00:00.000Z') });
+    expect(getScheduleTitle(practice)).toMatch(/^Practice · /);
+    expect(getScheduleTitle(buildParentScheduleEvent({ type: 'practice', title: 'Shooting' }))).toBe('Shooting');
+    expect(getScheduleTitle(buildParentScheduleEvent({ type: 'game', opponent: 'Tigers' }))).toBe('vs. Tigers');
+  });
+
+  it('never links a bare personal name to a map, but links real venues', () => {
+    expect(looksLikeVenueLocation("Dad's")).toBe(false);
+    expect(getScheduleMapHref("Dad's")).toBe('');
+    expect(looksLikeVenueLocation('TBD')).toBe(false);
+    expect(getScheduleMapHref('')).toBe('');
+    expect(looksLikeVenueLocation('Main Gym')).toBe(true);
+    expect(getScheduleMapHref('Main Gym')).toContain('google.com/maps/search');
+    expect(looksLikeVenueLocation('123 Main St')).toBe(true);
+    expect(looksLikeVenueLocation('Prairie Star')).toBe(true);
+    expect(looksLikeVenueLocation('Hilltop Learning Center')).toBe(true);
   });
 });

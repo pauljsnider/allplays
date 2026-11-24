@@ -411,11 +411,27 @@ export function formatEventTimeLabel(date: Date) {
   return formatTimeOfDay(date);
 }
 
-export function getScheduleTitle(event: Pick<ParentScheduleEvent, 'type' | 'title' | 'opponent'>) {
+export function getScheduleTitle(event: Pick<ParentScheduleEvent, 'type' | 'title' | 'opponent' | 'date'>) {
   if (event.type === 'practice') {
-    return event.title || 'Practice';
+    return normalizePracticeTitle(event.title, event.date);
   }
   return `vs. ${event.opponent || 'TBD'}`;
+}
+
+/**
+ * Distinguishing title for a practice (#5317). A stored title of exactly
+ * "Practice" (or no title at all) says nothing about which practice this is,
+ * so fall back to the date/time instead of repeating the bare word.
+ */
+export function getPracticeTitleFallback(date: Date | null | undefined) {
+  if (!date || Number.isNaN(date.getTime())) return 'Practice';
+  return `Practice · ${formatShortDate(date)}, ${formatTimeOfDay(date)}`;
+}
+
+export function normalizePracticeTitle(title: string | null | undefined, date: Date | null | undefined) {
+  const normalized = compactString(title);
+  if (normalized && normalized.toLowerCase() !== 'practice') return normalized;
+  return getPracticeTitleFallback(date);
 }
 
 export function getScheduleLocationLabel(
@@ -1545,7 +1561,7 @@ export function buildScheduleIcs(events: ParentScheduleEvent[], now = new Date()
       ? event.endDate
       : new Date(event.date.getTime() + 60 * 60 * 1000);
     const summary = event.type === 'practice'
-      ? `${event.childName} - ${event.title || 'Practice'}`
+      ? `${event.childName} - ${getScheduleTitle(event)}`
       : `${event.childName} vs ${event.opponent || 'TBD'}`;
     const uid = `${event.teamId}-${event.id || eventKey}-${event.date.getTime()}@allplays`;
     const description = [
@@ -1587,9 +1603,23 @@ export function buildScheduleAgendaText(events: ParentScheduleEvent[]) {
   }).join('\n');
 }
 
+/**
+ * True when a location string looks like a venue or address worth linking to
+ * a map (#5317). A bare personal/household name such as "Dad's" is stored
+ * verbatim but must never get a Directions link: it needs a street number,
+ * a comma, a venue keyword, or at least two words to count as a place.
+ */
+export function looksLikeVenueLocation(location: string | null | undefined) {
+  const normalized = String(location || '').trim();
+  if (!normalized || normalized.toLowerCase() === 'tbd') return false;
+  if (/\d/.test(normalized) || normalized.includes(',')) return true;
+  if (/\b(gym|gymnasium|field|fieldhouse|court|park|center|centre|school|stadium|arena|complex|dome|rink|pool|track|diamond|pavilion|hall|club|sportsplex|turf)\b/i.test(normalized)) return true;
+  return normalized.split(/\s+/).length >= 2;
+}
+
 export function getScheduleMapHref(location: string | null | undefined) {
   const normalized = String(location || '').trim();
-  if (!normalized || normalized.toLowerCase() === 'tbd') return '';
+  if (!looksLikeVenueLocation(normalized)) return '';
   const url = new URL('https://www.google.com/maps/search/');
   url.searchParams.set('api', '1');
   url.searchParams.set('query', normalized);
@@ -1598,7 +1628,7 @@ export function getScheduleMapHref(location: string | null | undefined) {
 
 export function getScheduleForecastHref(location: string | null | undefined, date?: Date | null) {
   const normalizedLocation = String(location || '').trim();
-  if (!normalizedLocation || normalizedLocation.toLowerCase() === 'tbd') return '';
+  if (!looksLikeVenueLocation(normalizedLocation)) return '';
 
   let query = `weather in ${normalizedLocation}`;
   if (date) {

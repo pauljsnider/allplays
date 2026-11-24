@@ -78,7 +78,7 @@ function getEventDetailRows(event: ParentScheduleEvent) {
       icon: MapPin,
       emphasis: Boolean(event.locationDetail)
     },
-    { label: 'Game info', value: formatGameInfo(event), icon: ClipboardCheck },
+    { label: event.type === 'practice' ? 'Practice info' : 'Game info', value: formatGameInfo(event), icon: ClipboardCheck },
     event.seasonLabel ? { label: 'Season', value: event.seasonLabel, icon: CalendarDays } : null,
     event.competitionType ? { label: 'Competition', value: event.competitionType, icon: ClipboardCheck } : null,
     event.sourceLabel ? { label: 'Source', value: event.sourceLabel, icon: ExternalLink } : null,
@@ -137,5 +137,5 @@ function formatGameInfo(event: ParentScheduleEvent) {
     event.countsTowardSeasonRecord === false ? 'Exhibition' : '',
     event.isCancelled ? 'Cancelled' : ''
   ].filter(Boolean);
-  return pieces.length ? pieces.join(' · ') : 'Game-day details';
+  return pieces.length ? pieces.join(' · ') : event.type === 'practice' ? 'Practice details' : 'Game-day details';
 }
