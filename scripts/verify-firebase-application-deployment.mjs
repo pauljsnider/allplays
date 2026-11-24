@@ -43,6 +43,15 @@ const FUNCTION_DEPLOYMENT_EVIDENCE_FIELDS = Object.freeze([
     'status',
     'targetType'
 ]);
+const FUNCTION_UPDATED_EVIDENCE_FIELDS = Object.freeze([
+    'artifactSha',
+    'deploymentId',
+    'functionTarget',
+    'projectId',
+    'schemaVersion',
+    'status',
+    'targetType'
+]);
 
 function fail(message) {
     throw new Error(`Firebase application deployment evidence is invalid: ${message}`);
@@ -166,7 +175,7 @@ function requireMatchingIdentity(evidence, expectedDeployment, field) {
     }
 }
 
-function validateCurrentEvidenceEnvelope(evidence, expectedTargetType) {
+function validateEvidenceEnvelope(evidence, expectedTargetType, expectedStatus) {
     if (evidence.schemaVersion !== FIREBASE_APPLICATION_EVIDENCE_SCHEMA_VERSION) {
         fail(
             `schemaVersion must be ${FIREBASE_APPLICATION_EVIDENCE_SCHEMA_VERSION}.`
@@ -175,8 +184,8 @@ function validateCurrentEvidenceEnvelope(evidence, expectedTargetType) {
     if (evidence.targetType !== expectedTargetType) {
         fail(`targetType must be ${expectedTargetType}.`);
     }
-    if (evidence.status !== 'current') {
-        fail('status must be current.');
+    if (evidence.status !== expectedStatus) {
+        fail(`status must be ${expectedStatus}.`);
     }
 }
 
@@ -185,9 +194,10 @@ function verifyApplicationDeployment(evidence, expectedDeployment) {
 
     requirePlainObject(evidence, 'evidence');
     requireExactFields(evidence, APPLICATION_EVIDENCE_FIELDS, 'evidence');
-    validateCurrentEvidenceEnvelope(
+    validateEvidenceEnvelope(
         evidence,
-        FIREBASE_APPLICATION_FUNCTIONS_TARGET_TYPE
+        FIREBASE_APPLICATION_FUNCTIONS_TARGET_TYPE,
+        'current'
     );
 
     requireProjectId(evidence.projectId, 'evidence projectId');
@@ -221,17 +231,45 @@ function verifyFunctionDeployment(evidence, expectedDeployment) {
         evidence,
         FUNCTION_DEPLOYMENT_EVIDENCE_FIELDS
     );
-    if (!hasArtifactIdentity && !hasDeploymentIdentity) {
+    const hasUpdatedIdentity = hasExactFields(
+        evidence,
+        FUNCTION_UPDATED_EVIDENCE_FIELDS
+    );
+    if (
+        (evidence.status === 'updated' && !hasUpdatedIdentity)
+        || (
+            evidence.status !== 'updated'
+            && !hasArtifactIdentity
+            && !hasDeploymentIdentity
+        )
+    ) {
         fail(
             'evidence fields must exactly match a supported individual function evidence shape.'
         );
     }
 
-    validateCurrentEvidenceEnvelope(evidence, FIREBASE_FUNCTION_TARGET_TYPE);
+    const expectedStatus = hasUpdatedIdentity ? 'updated' : 'current';
+    validateEvidenceEnvelope(evidence, FIREBASE_FUNCTION_TARGET_TYPE, expectedStatus);
     requireProjectId(evidence.projectId, 'evidence projectId');
     requireNonEmptyString(evidence.functionTarget, 'evidence functionTarget');
     requireMatchingIdentity(evidence, expected, 'projectId');
     requireMatchingIdentity(evidence, expected, 'functionTarget');
+
+    if (hasUpdatedIdentity) {
+        requireArtifactSha(evidence.artifactSha, 'evidence artifactSha');
+        requireNonEmptyString(evidence.deploymentId, 'evidence deploymentId');
+        requireMatchingIdentity(evidence, expected, 'artifactSha');
+        requireMatchingIdentity(evidence, expected, 'deploymentId');
+
+        return Object.freeze({
+            status: evidence.status,
+            targetType: evidence.targetType,
+            projectId: evidence.projectId,
+            functionTarget: evidence.functionTarget,
+            artifactSha: evidence.artifactSha,
+            deploymentId: evidence.deploymentId
+        });
+    }
 
     const identityField = hasArtifactIdentity ? 'artifactSha' : 'deploymentId';
     if (identityField === 'artifactSha') {
