@@ -1,11 +1,13 @@
 export const FIREBASE_APPLICATION_EVIDENCE_SCHEMA_VERSION = 1;
 export const FIREBASE_APPLICATION_FUNCTIONS_TARGET_TYPE = 'firebase-application-functions';
 export const FIREBASE_FUNCTION_TARGET_TYPE = 'firebase-function';
+export const FIREBASE_HOSTING_TARGET_TYPE = 'firebase-hosting';
 export const FIREBASE_APPLICATION_DEPLOY_TARGETS = 'hosting,functions';
 export const FIREBASE_APPLICATION_DEPLOY_LABEL = 'application';
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const PROJECT_ID_PATTERN = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
+const SITE_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,28}[a-z0-9])?$/;
 const EXPECTED_APPLICATION_DEPLOYMENT_FIELDS = Object.freeze([
     'artifactSha',
     'deployLabel',
@@ -17,6 +19,11 @@ const EXPECTED_FUNCTION_DEPLOYMENT_FIELDS = Object.freeze([
     'deploymentId',
     'functionTarget',
     'projectId'
+]);
+const EXPECTED_HOSTING_DEPLOYMENT_FIELDS = Object.freeze([
+    'artifactSha',
+    'projectId',
+    'siteId'
 ]);
 const APPLICATION_EVIDENCE_FIELDS = Object.freeze([
     'artifactSha',
@@ -49,6 +56,16 @@ const FUNCTION_RESULT_EVIDENCE_FIELDS = Object.freeze([
     'functionTarget',
     'projectId',
     'schemaVersion',
+    'status',
+    'targetType'
+]);
+const HOSTING_EVIDENCE_FIELDS = Object.freeze([
+    'artifactSha',
+    'deploymentSummary',
+    'projectId',
+    'releaseSummary',
+    'schemaVersion',
+    'siteId',
     'status',
     'targetType'
 ]);
@@ -125,6 +142,14 @@ function requireArtifactSha(value, label) {
     return value;
 }
 
+function requireSiteId(value, label) {
+    const siteId = requireNonEmptyString(value, label);
+    if (!SITE_ID_PATTERN.test(siteId)) {
+        fail(`${label} must be a valid Firebase Hosting site ID.`);
+    }
+    return siteId;
+}
+
 function validateExpectedApplicationDeployment(expectedDeployment) {
     requirePlainObject(expectedDeployment, 'expected deployment');
     requireExactFields(
@@ -188,6 +213,30 @@ function validateExpectedFunctionDeployment(expectedDeployment) {
     };
 }
 
+function validateExpectedHostingDeployment(expectedDeployment) {
+    requirePlainObject(expectedDeployment, 'expected deployment');
+    requireExactFields(
+        expectedDeployment,
+        EXPECTED_HOSTING_DEPLOYMENT_FIELDS,
+        'expected deployment'
+    );
+
+    return {
+        projectId: requireProjectId(
+            expectedDeployment.projectId,
+            'expected deployment projectId'
+        ),
+        siteId: requireSiteId(
+            expectedDeployment.siteId,
+            'expected deployment siteId'
+        ),
+        artifactSha: requireArtifactSha(
+            expectedDeployment.artifactSha,
+            'expected deployment artifactSha'
+        )
+    };
+}
+
 function requireMatchingIdentity(evidence, expectedDeployment, field) {
     if (evidence[field] !== expectedDeployment[field]) {
         fail(`evidence ${field} does not match the expected deployment.`);
@@ -235,6 +284,48 @@ function verifyApplicationDeployment(evidence, expectedDeployment) {
         deployTargets: evidence.deployTargets,
         deployLabel: evidence.deployLabel,
         artifactSha: evidence.artifactSha
+    });
+}
+
+function verifyHostingDeployment(evidence, expectedDeployment) {
+    const expected = validateExpectedHostingDeployment(expectedDeployment);
+
+    requirePlainObject(evidence, 'Hosting evidence');
+    requireExactFields(evidence, HOSTING_EVIDENCE_FIELDS, 'Hosting evidence');
+    validateEvidenceEnvelope(evidence, FIREBASE_HOSTING_TARGET_TYPE, 'released');
+
+    requireProjectId(evidence.projectId, 'Hosting evidence projectId');
+    requireSiteId(evidence.siteId, 'Hosting evidence siteId');
+    requireArtifactSha(evidence.artifactSha, 'Hosting evidence artifactSha');
+
+    for (const field of EXPECTED_HOSTING_DEPLOYMENT_FIELDS) {
+        requireMatchingIdentity(evidence, expected, field);
+    }
+
+    const releaseSummary = requireNonEmptyString(
+        evidence.releaseSummary,
+        'Hosting evidence releaseSummary'
+    );
+    if (releaseSummary !== `✔  hosting[${expected.siteId}]: release complete`) {
+        fail('Hosting evidence must contain the authoritative completed release summary.');
+    }
+
+    const deploymentSummary = requireNonEmptyString(
+        evidence.deploymentSummary,
+        'Hosting evidence deploymentSummary'
+    );
+    if (deploymentSummary !== '✔ Deploy complete!') {
+        fail('Hosting evidence must contain the authoritative final deployment summary.');
+    }
+
+    return Object.freeze({
+        status: evidence.status,
+        targetType: evidence.targetType,
+        projectId: evidence.projectId,
+        siteId: evidence.siteId,
+        artifactSha: evidence.artifactSha,
+        releaseSummary: evidence.releaseSummary,
+        deploymentSummary: evidence.deploymentSummary
     });
 }
 
@@ -420,6 +511,16 @@ function verifyFunctionDeployments(evidence, expectedDeployment, previousEvidenc
     return Object.freeze(results);
 }
 
+function isHostingDeploymentRequest(evidence, expectedDeployment) {
+    return (
+        isPlainObject(evidence)
+        && evidence.targetType === FIREBASE_HOSTING_TARGET_TYPE
+    ) || (
+        isPlainObject(expectedDeployment)
+        && Object.prototype.hasOwnProperty.call(expectedDeployment, 'siteId')
+    );
+}
+
 function isFunctionDeploymentRequest(evidence, expectedDeployment) {
     return (
         isPlainObject(evidence)
@@ -444,6 +545,9 @@ export function verifyFirebaseApplicationDeployment({
     }
     if (previousEvidence !== undefined) {
         fail('previous evidence is supported only for aggregate function verification.');
+    }
+    if (isHostingDeploymentRequest(evidence, expectedDeployment)) {
+        return verifyHostingDeployment(evidence, expectedDeployment);
     }
     if (isFunctionDeploymentRequest(evidence, expectedDeployment)) {
         return verifyFunctionDeployment(evidence, expectedDeployment);
