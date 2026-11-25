@@ -90,7 +90,7 @@ import {
     isUserInConversation,
     normalizeConversationParticipantIds,
     normalizeConversationType
-} from './team-chat-conversations.js';
+} from './team-chat-conversations.js?v=3';
 import {
     shouldMirrorSharedGame,
     createSharedScheduleId,
@@ -825,7 +825,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443391'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443392'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
