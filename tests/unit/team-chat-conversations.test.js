@@ -53,6 +53,26 @@ describe('team chat conversations', () => {
         expect(isUserInConversation({ id: DEFAULT_TEAM_CONVERSATION_ID, type: 'team' }, user)).toBe(true);
     });
 
+    it.each([
+        { id: 'group_old-coach', type: 'group', participantRoles: ['staff'], participantIds: ['other-coach'] },
+        { id: 'group_old-coach', type: 'group', participantRoles: ['staff'], participantIds: ['user:u1'] },
+        { id: 'group_role%3Astaff', type: 'group', participantRoles: ['staff'], participantIds: ['u1'] },
+        { id: 'group_role%3Astaff', type: 'team', participantRoles: ['staff'], participantIds: [] },
+        { id: 'group_role%3Astaff', type: 'group', participantRoles: [], participantIds: [] },
+        { id: 'group_role%3Astaff', type: 'group', participantRoles: ['staff'], participantIds: null }
+    ])('excludes list-visible staff records whose messages are unreadable: %j', (conversation) => {
+        for (const canModerate of [false, true]) {
+            expect(isUserInConversation(conversation, { uid: 'u1' }, { canModerate })).toBe(false);
+        }
+    });
+
+    it.each([[], undefined])('keeps canonical staff messages available only to staff (%j)', (participantIds) => {
+        const conversation = { id: 'group_role%3Astaff', type: 'group', participantRoles: ['staff'] };
+        if (participantIds !== undefined) conversation.participantIds = participantIds;
+        expect(isUserInConversation(conversation, { uid: 'u1' }, { canModerate: true })).toBe(true);
+        expect(isUserInConversation(conversation, { uid: 'u1' })).toBe(false);
+    });
+
     it('recognizes linked parent player participant tokens for defensive local filtering', () => {
         const user = {
             uid: 'parent-1',
