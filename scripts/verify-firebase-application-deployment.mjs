@@ -70,6 +70,12 @@ function requirePlainObject(value, label) {
     }
 }
 
+function requireNonEmptyArray(value, label) {
+    if (!Array.isArray(value) || value.length === 0) {
+        fail(`${label} must be a non-empty array.`);
+    }
+}
+
 function hasExactFields(value, expectedFields) {
     const actualFields = Object.keys(value).sort();
     const sortedExpectedFields = [...expectedFields].sort();
@@ -292,6 +298,58 @@ function verifyFunctionDeployment(evidence, expectedDeployment) {
     });
 }
 
+function functionTargetKey(projectId, functionTarget) {
+    return JSON.stringify([projectId, functionTarget]);
+}
+
+function verifyFunctionDeployments(evidence, expectedDeployment) {
+    requireNonEmptyArray(evidence, 'function evidence');
+    requireNonEmptyArray(expectedDeployment, 'expected function deployments');
+
+    const expectedByTarget = new Map();
+    const expectedDeployments = expectedDeployment.map((expected) => {
+        const validated = validateExpectedFunctionDeployment(expected);
+        const key = functionTargetKey(validated.projectId, validated.functionTarget);
+        if (expectedByTarget.has(key)) {
+            fail(`duplicate intended function target ${validated.functionTarget}.`);
+        }
+        expectedByTarget.set(key, validated);
+        return validated;
+    });
+
+    const evidenceByTarget = new Map();
+    for (const entry of evidence) {
+        requirePlainObject(entry, 'function evidence entry');
+        const projectId = requireProjectId(
+            entry.projectId,
+            'function evidence entry projectId'
+        );
+        const functionTarget = requireNonEmptyString(
+            entry.functionTarget,
+            'function evidence entry functionTarget'
+        );
+        const key = functionTargetKey(projectId, functionTarget);
+        if (!expectedByTarget.has(key)) {
+            fail(`evidence references unexpected function target ${functionTarget}.`);
+        }
+        if (evidenceByTarget.has(key)) {
+            fail(`duplicate evidence for function target ${functionTarget}.`);
+        }
+        evidenceByTarget.set(key, entry);
+    }
+
+    const results = expectedDeployments.map((expected) => {
+        const key = functionTargetKey(expected.projectId, expected.functionTarget);
+        const matchingEvidence = evidenceByTarget.get(key);
+        if (!matchingEvidence) {
+            fail(`missing evidence for intended function target ${expected.functionTarget}.`);
+        }
+        return verifyFunctionDeployment(matchingEvidence, expected);
+    });
+
+    return Object.freeze(results);
+}
+
 function isFunctionDeploymentRequest(evidence, expectedDeployment) {
     return (
         isPlainObject(evidence)
@@ -306,6 +364,9 @@ export function verifyFirebaseApplicationDeployment({
     evidence,
     expectedDeployment
 }) {
+    if (Array.isArray(expectedDeployment)) {
+        return verifyFunctionDeployments(evidence, expectedDeployment);
+    }
     if (isFunctionDeploymentRequest(evidence, expectedDeployment)) {
         return verifyFunctionDeployment(evidence, expectedDeployment);
     }
