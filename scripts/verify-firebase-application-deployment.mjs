@@ -57,6 +57,19 @@ function fail(message) {
     throw new Error(`Firebase application deployment evidence is invalid: ${message}`);
 }
 
+function failIncompleteFunctionTargets(incompleteTargets) {
+    const safeIncompleteTargets = Object.freeze([...incompleteTargets]);
+    const error = new Error(
+        'Firebase application deployment evidence is invalid: '
+        + `incomplete intended function targets: ${safeIncompleteTargets.join(', ')}.`
+    );
+    error.code = 'firebase-functions-incomplete-targets';
+    error.metadata = Object.freeze({
+        incompleteTargets: safeIncompleteTargets
+    });
+    throw error;
+}
+
 function isPlainObject(value) {
     return value !== null
         && typeof value === 'object'
@@ -338,14 +351,29 @@ function verifyFunctionDeployments(evidence, expectedDeployment) {
         evidenceByTarget.set(key, entry);
     }
 
-    const results = expectedDeployments.map((expected) => {
+    const incompleteTargets = [];
+    const matchedDeployments = expectedDeployments.map((expected) => {
         const key = functionTargetKey(expected.projectId, expected.functionTarget);
         const matchingEvidence = evidenceByTarget.get(key);
-        if (!matchingEvidence) {
-            fail(`missing evidence for intended function target ${expected.functionTarget}.`);
+        if (
+            !matchingEvidence
+            || (
+                matchingEvidence.status !== 'updated'
+                && matchingEvidence.status !== 'unchanged'
+            )
+        ) {
+            incompleteTargets.push(expected.functionTarget);
         }
-        return verifyFunctionDeployment(matchingEvidence, expected);
+        return { expected, matchingEvidence };
     });
+
+    if (incompleteTargets.length > 0) {
+        failIncompleteFunctionTargets(incompleteTargets);
+    }
+
+    const results = matchedDeployments.map(({ expected, matchingEvidence }) => (
+        verifyFunctionDeployment(matchingEvidence, expected)
+    ));
 
     return Object.freeze(results);
 }
