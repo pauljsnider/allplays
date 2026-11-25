@@ -315,8 +315,48 @@ function functionTargetKey(projectId, functionTarget) {
     return JSON.stringify([projectId, functionTarget]);
 }
 
-function verifyFunctionDeployments(evidence, expectedDeployment) {
-    requireNonEmptyArray(evidence, 'function evidence');
+function indexFunctionEvidence(
+    evidence,
+    expectedByTarget,
+    label,
+    allowEmpty = false
+) {
+    if (
+        !Array.isArray(evidence)
+        || (!allowEmpty && evidence.length === 0)
+    ) {
+        fail(`${label} must be a non-empty array.`);
+    }
+
+    const evidenceByTarget = new Map();
+    for (const entry of evidence) {
+        requirePlainObject(entry, `${label} entry`);
+        const projectId = requireProjectId(
+            entry.projectId,
+            `${label} entry projectId`
+        );
+        const functionTarget = requireNonEmptyString(
+            entry.functionTarget,
+            `${label} entry functionTarget`
+        );
+        const key = functionTargetKey(projectId, functionTarget);
+        if (!expectedByTarget.has(key)) {
+            fail(`${label} references unexpected function target ${functionTarget}.`);
+        }
+        if (evidenceByTarget.has(key)) {
+            const duplicateLabel = label === 'function evidence' ? 'evidence' : label;
+            fail(`duplicate ${duplicateLabel} for function target ${functionTarget}.`);
+        }
+        evidenceByTarget.set(key, entry);
+    }
+    return evidenceByTarget;
+}
+
+function isCompleteFunctionEvidence(evidence) {
+    return evidence?.status === 'updated' || evidence?.status === 'unchanged';
+}
+
+function verifyFunctionDeployments(evidence, expectedDeployment, previousEvidence) {
     requireNonEmptyArray(expectedDeployment, 'expected function deployments');
 
     const expectedByTarget = new Map();
@@ -330,38 +370,29 @@ function verifyFunctionDeployments(evidence, expectedDeployment) {
         return validated;
     });
 
-    const evidenceByTarget = new Map();
-    for (const entry of evidence) {
-        requirePlainObject(entry, 'function evidence entry');
-        const projectId = requireProjectId(
-            entry.projectId,
-            'function evidence entry projectId'
+    const evidenceByTarget = indexFunctionEvidence(
+        evidence,
+        expectedByTarget,
+        'function evidence',
+        previousEvidence !== undefined
+    );
+    const previousEvidenceByTarget = previousEvidence === undefined
+        ? new Map()
+        : indexFunctionEvidence(
+            previousEvidence,
+            expectedByTarget,
+            'previous function evidence'
         );
-        const functionTarget = requireNonEmptyString(
-            entry.functionTarget,
-            'function evidence entry functionTarget'
-        );
-        const key = functionTargetKey(projectId, functionTarget);
-        if (!expectedByTarget.has(key)) {
-            fail(`evidence references unexpected function target ${functionTarget}.`);
-        }
-        if (evidenceByTarget.has(key)) {
-            fail(`duplicate evidence for function target ${functionTarget}.`);
-        }
-        evidenceByTarget.set(key, entry);
-    }
 
     const incompleteTargets = [];
     const matchedDeployments = expectedDeployments.map((expected) => {
         const key = functionTargetKey(expected.projectId, expected.functionTarget);
-        const matchingEvidence = evidenceByTarget.get(key);
-        if (
-            !matchingEvidence
-            || (
-                matchingEvidence.status !== 'updated'
-                && matchingEvidence.status !== 'unchanged'
-            )
-        ) {
+        const previousTargetEvidence = previousEvidenceByTarget.get(key);
+        const currentTargetEvidence = evidenceByTarget.get(key);
+        const matchingEvidence = isCompleteFunctionEvidence(previousTargetEvidence)
+            ? previousTargetEvidence
+            : currentTargetEvidence;
+        if (!isCompleteFunctionEvidence(matchingEvidence)) {
             incompleteTargets.push(expected.functionTarget);
         }
         return { expected, matchingEvidence };
@@ -369,6 +400,17 @@ function verifyFunctionDeployments(evidence, expectedDeployment) {
 
     if (incompleteTargets.length > 0) {
         failIncompleteFunctionTargets(incompleteTargets);
+    }
+
+    for (const entriesByTarget of [
+        previousEvidenceByTarget,
+        evidenceByTarget
+    ]) {
+        for (const [key, entry] of entriesByTarget) {
+            if (isCompleteFunctionEvidence(entry)) {
+                verifyFunctionDeployment(entry, expectedByTarget.get(key));
+            }
+        }
     }
 
     const results = matchedDeployments.map(({ expected, matchingEvidence }) => (
@@ -390,10 +432,18 @@ function isFunctionDeploymentRequest(evidence, expectedDeployment) {
 
 export function verifyFirebaseApplicationDeployment({
     evidence,
-    expectedDeployment
+    expectedDeployment,
+    previousEvidence
 }) {
     if (Array.isArray(expectedDeployment)) {
-        return verifyFunctionDeployments(evidence, expectedDeployment);
+        return verifyFunctionDeployments(
+            evidence,
+            expectedDeployment,
+            previousEvidence
+        );
+    }
+    if (previousEvidence !== undefined) {
+        fail('previous evidence is supported only for aggregate function verification.');
     }
     if (isFunctionDeploymentRequest(evidence, expectedDeployment)) {
         return verifyFunctionDeployment(evidence, expectedDeployment);
