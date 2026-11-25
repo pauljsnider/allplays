@@ -96,6 +96,15 @@ function verifyFunctions(evidence, expectedDeployment) {
     return verifyFirebaseApplicationDeployment({ evidence, expectedDeployment });
 }
 
+function captureVerificationError(callback) {
+    try {
+        callback();
+    } catch (error) {
+        return error;
+    }
+    throw new Error('Expected Firebase application deployment verification to fail.');
+}
+
 describe('Firebase application deployment evidence', () => {
     it('accepts complete current evidence for the production application Functions target', () => {
         expect(verify(validCurrentEvidence())).toEqual({
@@ -319,7 +328,7 @@ describe('aggregate Firebase function deployment evidence', () => {
     function mixedAuthoritativeEvidence() {
         return [
             validFunctionUnchangedEvidence(expectedDeployments[2]),
-            validFunctionArtifactEvidence(expectedDeployments[0]),
+            validFunctionUnchangedEvidence(expectedDeployments[0]),
             validFunctionUpdatedEvidence(expectedDeployments[1])
         ];
     }
@@ -330,11 +339,12 @@ describe('aggregate Firebase function deployment evidence', () => {
             expectedDeployments
         )).toEqual([
             {
-                status: 'current',
+                status: 'unchanged',
                 targetType: FIREBASE_FUNCTION_TARGET_TYPE,
                 projectId: expectedDeployments[0].projectId,
                 functionTarget: expectedDeployments[0].functionTarget,
-                artifactSha
+                artifactSha,
+                deploymentId: expectedDeployments[0].deploymentId
             },
             {
                 status: 'updated',
@@ -355,22 +365,45 @@ describe('aggregate Firebase function deployment evidence', () => {
         ]);
     });
 
-    it('rejects the complete validation when one target has unsupported evidence', () => {
+    it('rejects identity-only evidence as an incomplete deployment target', () => {
         const evidence = mixedAuthoritativeEvidence();
-        evidence[2] = {
-            ...validFunctionUpdatedEvidence(expectedDeployments[1]),
-            status: 'partial'
-        };
+        evidence[1] = validFunctionArtifactEvidence(expectedDeployments[0]);
 
-        expect(() => verifyFunctions(evidence, expectedDeployments))
-            .toThrow(/supported individual function evidence shape/);
+        const error = captureVerificationError(
+            () => verifyFunctions(evidence, expectedDeployments)
+        );
+
+        expect(error).toMatchObject({
+            code: 'firebase-functions-incomplete-targets',
+            metadata: {
+                incompleteTargets: ['sendNotification']
+            }
+        });
     });
 
-    it('rejects an intended target with no evidence', () => {
-        expect(() => verifyFunctions(
-            mixedAuthoritativeEvidence().slice(0, 2),
-            expectedDeployments
-        )).toThrow(/missing evidence for intended function target sendTeamEmail/);
+    it('rejects a quota-pressure partial deployment and records only safe metadata', () => {
+        const evidence = [
+            validFunctionUpdatedEvidence(expectedDeployments[0]),
+            validFunctionUnchangedEvidence(expectedDeployments[2])
+        ];
+
+        const error = captureVerificationError(
+            () => verifyFunctions(evidence, expectedDeployments)
+        );
+
+        expect(error).toMatchObject({
+            code: 'firebase-functions-incomplete-targets',
+            metadata: {
+                incompleteTargets: ['sendTeamEmail']
+            }
+        });
+        expect(Object.keys(error.metadata)).toEqual(['incompleteTargets']);
+
+        const serializedMetadata = JSON.stringify(error.metadata);
+        expect(serializedMetadata).not.toContain(expectedDeployments[0].projectId);
+        expect(serializedMetadata).not.toContain(artifactSha);
+        expect(serializedMetadata).not.toContain(expectedDeployments[1].deploymentId);
+        expect(serializedMetadata).not.toMatch(/projectId|artifactSha|deploymentId|credential/i);
     });
 
     it('rejects duplicate evidence for one intended target', () => {
