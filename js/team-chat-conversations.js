@@ -60,6 +60,15 @@ export function isDefaultTeamConversation(conversationId) {
 
 export function isUserInConversation(conversation, user = {}, { canModerate = false } = {}) {
     if (!conversation) return false;
+    const hasStaffRole = Array.isArray(conversation.participantRoles) && conversation.participantRoles.includes('staff');
+    if (conversation.id === STAFF_ROLE_CONVERSATION_ID || hasStaffRole) {
+        // Staff can list legacy records for repair, but message rules permit
+        // only the canonical staff channel with an empty participant list.
+        const participantIds = conversation.participantIds === undefined ? [] : conversation.participantIds;
+        return canModerate === true && conversation.id === STAFF_ROLE_CONVERSATION_ID &&
+            conversation.type === 'group' && hasStaffRole &&
+            Array.isArray(participantIds) && participantIds.length === 0;
+    }
     if (conversation.id === DEFAULT_TEAM_CONVERSATION_ID || conversation.type === 'team') return true;
     if (canModerate) return true;
 
