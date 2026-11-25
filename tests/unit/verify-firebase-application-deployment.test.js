@@ -103,7 +103,7 @@ function validHostingEvidence(expected = expectedHostingDeployment) {
         siteId: expected.siteId,
         artifactSha: expected.artifactSha,
         releaseSummary: `✔  hosting[${expected.siteId}]: release complete`,
-        deploymentSummary: '✔ Deploy complete!'
+        deploymentSummary: '✔  Deploy complete!'
     };
 }
 
@@ -240,7 +240,7 @@ describe('Firebase Hosting deployment evidence', () => {
             siteId: expectedHostingDeployment.siteId,
             artifactSha,
             releaseSummary: '✔  hosting[game-flow-c6311]: release complete',
-            deploymentSummary: '✔ Deploy complete!'
+            deploymentSummary: '✔  Deploy complete!'
         });
     });
 
@@ -267,6 +267,7 @@ describe('Firebase Hosting deployment evidence', () => {
 
     it.each([
         'Deploy complete!',
+        '✔ Deploy complete!',
         '✔ Deployment complete!',
         'success'
     ])('rejects non-authoritative final deployment summary %s', (deploymentSummary) => {

@@ -314,7 +314,7 @@ function verifyHostingDeployment(evidence, expectedDeployment) {
         evidence.deploymentSummary,
         'Hosting evidence deploymentSummary'
     );
-    if (deploymentSummary !== '✔ Deploy complete!') {
+    if (deploymentSummary !== '✔  Deploy complete!') {
         fail('Hosting evidence must contain the authoritative final deployment summary.');
     }
 
