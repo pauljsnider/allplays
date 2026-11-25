@@ -92,8 +92,12 @@ function verifyFunction(evidence, expected = expectedFunctionDeployment) {
     return verifyFirebaseApplicationDeployment({ evidence, expectedDeployment: expected });
 }
 
-function verifyFunctions(evidence, expectedDeployment) {
-    return verifyFirebaseApplicationDeployment({ evidence, expectedDeployment });
+function verifyFunctions(evidence, expectedDeployment, previousEvidence) {
+    return verifyFirebaseApplicationDeployment({
+        evidence,
+        expectedDeployment,
+        previousEvidence
+    });
 }
 
 function captureVerificationError(callback) {
@@ -362,6 +366,103 @@ describe('aggregate Firebase function deployment evidence', () => {
                 artifactSha,
                 deploymentId: expectedDeployments[2].deploymentId
             }
+        ]);
+    });
+
+    it('preserves complete target evidence when retrying the same exact artifact', () => {
+        const previousEvidence = mixedAuthoritativeEvidence();
+        const previousResult = verifyFunctions(previousEvidence, expectedDeployments);
+        const retryEvidence = expectedDeployments.map(validFunctionUnchangedEvidence);
+
+        expect(verifyFunctions(
+            retryEvidence,
+            expectedDeployments,
+            previousEvidence
+        )).toEqual(previousResult);
+        expect(verifyFunctions(
+            retryEvidence,
+            expectedDeployments,
+            previousEvidence
+        )).toEqual(previousResult);
+    });
+
+    it('rejects terminal retry evidence from a different artifact', () => {
+        const previousEvidence = mixedAuthoritativeEvidence();
+        const retryEvidence = expectedDeployments.map(validFunctionUnchangedEvidence);
+        retryEvidence[1] = {
+            ...retryEvidence[1],
+            artifactSha: 'b'.repeat(40)
+        };
+
+        expect(() => verifyFunctions(
+            retryEvidence,
+            expectedDeployments,
+            previousEvidence
+        )).toThrow(/artifactSha does not match the expected deployment/);
+    });
+
+    it('keeps a partial quota retry incomplete without new authoritative evidence', () => {
+        const partialEvidence = [
+            validFunctionUpdatedEvidence(expectedDeployments[0]),
+            validFunctionUnchangedEvidence(expectedDeployments[2])
+        ];
+        const firstError = captureVerificationError(
+            () => verifyFunctions(partialEvidence, expectedDeployments)
+        );
+        const retryError = captureVerificationError(
+            () => verifyFunctions(
+                [],
+                expectedDeployments,
+                partialEvidence
+            )
+        );
+
+        expect(retryError).toMatchObject({
+            code: firstError.code,
+            metadata: firstError.metadata
+        });
+        expect(retryError.metadata).toEqual({
+            incompleteTargets: ['sendTeamEmail']
+        });
+    });
+
+    it('fills a partial retry gap only with new authoritative target evidence', () => {
+        const previousEvidence = [
+            validFunctionUpdatedEvidence(expectedDeployments[0]),
+            validFunctionUnchangedEvidence(expectedDeployments[2])
+        ];
+        const identityOnlyRetry = [
+            validFunctionArtifactEvidence(expectedDeployments[1])
+        ];
+
+        const incompleteError = captureVerificationError(
+            () => verifyFunctions(
+                identityOnlyRetry,
+                expectedDeployments,
+                previousEvidence
+            )
+        );
+        expect(incompleteError.metadata).toEqual({
+            incompleteTargets: ['sendTeamEmail']
+        });
+
+        expect(verifyFunctions(
+            [validFunctionUpdatedEvidence(expectedDeployments[1])],
+            expectedDeployments,
+            previousEvidence
+        )).toEqual([
+            verifyFunction(
+                validFunctionUpdatedEvidence(expectedDeployments[0]),
+                expectedDeployments[0]
+            ),
+            verifyFunction(
+                validFunctionUpdatedEvidence(expectedDeployments[1]),
+                expectedDeployments[1]
+            ),
+            verifyFunction(
+                validFunctionUnchangedEvidence(expectedDeployments[2]),
+                expectedDeployments[2]
+            )
         ]);
     });
 
