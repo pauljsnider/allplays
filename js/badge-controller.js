@@ -1,5 +1,5 @@
-import { checkAuth } from './auth.js?v=4433220';
-import { getUserTeamsWithAccess, getGames } from './db.js?v=4433215';
+import { checkAuth } from './auth.js?v=4433221';
+import { getUserTeamsWithAccess, getGames } from './db.js?v=4433216';
 import { functions, httpsCallable } from './firebase.js?v=4433197';
 const $ = id => document.getElementById(id);
 const configure = httpsCallable(functions, 'configureBadgeScoreController');

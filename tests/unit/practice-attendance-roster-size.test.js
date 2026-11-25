@@ -84,7 +84,7 @@ describe('updatePracticeAttendance roster size', () => {
     });
 
     it('loads the roster-size fix through a fresh drills page cache key', () => {
-        expect(drillsHtml).toContain("from './js/db.js?v=4433215';");
+        expect(drillsHtml).toContain("from './js/db.js?v=4433216';");
         expect(drillsHtml).not.toContain("from './js/db.js?v=94';");
     });
 });
