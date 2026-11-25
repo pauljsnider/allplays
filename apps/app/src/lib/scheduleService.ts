@@ -6198,6 +6198,10 @@ export async function updateGameScore(teamId: string, gameId: string, score: Gam
     await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, payload);
   }
 
+  // Score writes must invalidate the schedule caches (#5326): the schedule
+  // list, home, and detail warm-start read the cached summary, so without
+  // this they keep showing the pre-write score until the TTL expires.
+  invalidateParentScheduleCaches(user, { teamId, id: gameId });
   return payload;
 }
 
@@ -6316,6 +6320,7 @@ export async function adjustGameScore(
     }
   }
 
+  invalidateParentScheduleCaches(user, { teamId, id: gameId });
   return { ...resolved, shared };
 }
 
@@ -6574,6 +6579,7 @@ async function runNativeScoreUpdatePublish(
         homeScore: payload.homeScore,
         awayScore: payload.awayScore
       }));
+      invalidateParentScheduleCaches(user, { teamId, id: gameId });
       return {
         ...payload,
         committedLifecycle: { liveStatus: 'live' as const }
@@ -6698,6 +6704,7 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
         homeScore: payload.homeScore,
         awayScore: payload.awayScore
       }));
+      invalidateParentScheduleCaches(user, { teamId, id: gameId });
       return {
         ...payload,
         committedLifecycle: { liveStatus: 'live' as const }
@@ -7072,6 +7079,7 @@ async function runNativePlayerGameStatWrite(
           [playerId]: statKey === 'pts' ? playerStatTotal : normalizeGameScoreValue(local.playerPoints?.[playerId])
         }
       }));
+      invalidateParentScheduleCaches(user, { teamId, id: gameId });
 
       return {
         homeScore,
@@ -7215,6 +7223,7 @@ export async function recordPlayerGameStat(teamId: string, gameId: string, playe
           [playerId]: stat.statKey === 'pts' ? result.playerStatTotal : normalizeGameScoreValue(local.playerPoints?.[playerId])
         }
       }));
+      invalidateParentScheduleCaches(user, { teamId, id: gameId });
       return result;
     } catch (error) {
       if (!isNativeRuntime()) throw error;
@@ -7304,7 +7313,7 @@ export async function undoRecordedPlayerGameStat(teamId: string, gameId: string,
   const statsPath = `${gamePath}/aggregatedStats/${stat.playerId}`;
 
   try {
-    return await withTimeout(runTransaction(db, async (transaction: any) => {
+    const result: UndoPlayerGameStatResult = await withTimeout(runTransaction(db, async (transaction: any) => {
       const gameRef = doc(db, gamePath);
       const statsRef = doc(db, statsPath);
       const [gameSnap, statsSnap] = await Promise.all([
@@ -7381,6 +7390,8 @@ export async function undoRecordedPlayerGameStat(teamId: string, gameId: string,
         liveEvent
       };
     }), 'Undo player game stat');
+    invalidateParentScheduleCaches(user, { teamId, id: gameId });
+    return result;
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST player stat undo.', 'player-stat-undo', error, { fallback: 'rest', teamId, gameId, playerId: stat.playerId });
@@ -7461,6 +7472,7 @@ export async function undoRecordedPlayerGameStat(teamId: string, gameId: string,
         currentDocument: { exists: false } }
     ]);
 
+    invalidateParentScheduleCaches(user, { teamId, id: gameId });
     return {
       homeScore: nextHomeScore,
       awayScore: nextAwayScore,
