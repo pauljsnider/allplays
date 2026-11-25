@@ -46,6 +46,7 @@ const elements = {
     iframe: document.querySelector('#overlay-video'),
     recordedVideo: document.querySelector('#overlay-recorded-video'),
     videoFallback: document.querySelector('#video-fallback'),
+    videoFallbackTitle: document.querySelector('#video-fallback-title'),
     videoFallbackCopy: document.querySelector('#video-fallback-copy'),
     openStream: document.querySelector('#open-stream'),
     openStreamLabel: document.querySelector('#open-stream-label'),
@@ -1829,8 +1830,9 @@ function resetVideoElements() {
     updateMuteControl();
 }
 
-function showVideoFallback(message = 'The scoreboard and live context stay ready while video connects.') {
+function showVideoFallback(message = 'The scoreboard and live context stay ready while video connects.', title = 'Waiting for the game feed') {
     resetVideoElements();
+    if (elements.videoFallbackTitle) elements.videoFallbackTitle.textContent = title;
     elements.videoFallbackCopy.textContent = message;
     elements.videoFallback.hidden = false;
     refreshReplayClip();
@@ -2257,7 +2259,7 @@ async function startRealMode(params) {
     const teamId = String(params.teamId || '').trim();
     const gameId = String(params.gameId || '').trim();
     if (!isValidDocumentId(teamId) || !isValidDocumentId(gameId)) {
-        showVideoFallback('Add valid teamId and gameId values to load a real game, or add ?demo=1 to explore the preview.');
+        showVideoFallback('Add valid teamId and gameId values to load a real game, or add ?demo=1 to explore the preview.', 'Game link incomplete');
         setConnectionMessage('This broadcast view needs a teamId and gameId. Add ?demo=1 for the interactive local demo.');
         setStatus('scheduled');
         return;
@@ -2354,7 +2356,7 @@ async function startRealMode(params) {
                     // player. Changed projection data and raw auth events still
                     // invalidate immediately; denial/failure clears below.
                     const projection = JSON.stringify(playbackGame);
-                    if (projection !== replayPlaybackProjection) showVideoFallback('Checking replay access…');
+                    if (projection !== replayPlaybackProjection) showVideoFallback('Checking replay access…', 'Checking replay access');
                     replayPlaybackProjection = projection;
                     if (!await playbackAuthReady || requestId !== uiState.videoRequestId) return false;
                     const { resolveAuthorizedReplayPlayback } = await import('./game-replay-playback.js?v=5');
@@ -2429,13 +2431,16 @@ async function startRealMode(params) {
                 else if (options.mode === 'recorded' && options.sourceUrl) {
                     showRecordedVideo(options.sourceUrl, options.publicUrl, options.publicLabel);
                 }
-                else showVideoFallback(options.replayState?.message || 'No video feed is configured for this game yet.');
+                else showVideoFallback(
+                    options.replayState?.message || 'The scoreboard, plays, and chat stay live here. If the coach adds a stream, it will appear here — check back at game time.',
+                    'No stream for this game yet'
+                );
                 return true;
             } catch (error) {
                 if (requestId !== uiState.videoRequestId) return false;
                 console.warn('Overlay video refresh failed:', error);
                 if (needsAuthorizedReplay || elements.iframe.hidden && elements.recordedVideo.hidden) {
-                    showVideoFallback('The video feed is temporarily unavailable. Live score and play updates remain connected.');
+                    showVideoFallback('The video feed is temporarily unavailable. Live score and play updates remain connected.', 'Video temporarily unavailable');
                 }
                 setConnectionIssue('video', 'Video refresh is delayed. Score, clock, plays, and chat continue independently.');
                 return false;
@@ -2468,7 +2473,7 @@ async function startRealMode(params) {
                     const playbackGame = isReplay ? game : uiState.game.game;
                     if (!hasCompletedReplayLifecycle(playbackGame)) return;
                     ++uiState.videoRequestId;
-                    showVideoFallback('Checking replay access…');
+                    showVideoFallback('Checking replay access…', 'Checking replay access');
                     void renderVideoSafely();
                 });
                 if (replayPlaybackRevalidator) {
@@ -2481,7 +2486,7 @@ async function startRealMode(params) {
                 return true;
             })().catch(() => {
                 ++uiState.videoRequestId;
-                showVideoFallback('Replay video is temporarily unavailable. Reload to try again.');
+                showVideoFallback('Replay video is temporarily unavailable. Reload to try again.', 'Replay unavailable');
                 return false;
             });
         }
@@ -2648,7 +2653,7 @@ async function startRealMode(params) {
         setConnectionMessage('');
     } catch (error) {
         console.warn('Overlay broadcast failed to connect:', error);
-        showVideoFallback('The game could not be loaded. The interactive preview remains available.');
+        showVideoFallback('The game could not be loaded. The interactive preview remains available.', 'Game could not be loaded');
         setConnectionMessage(`Could not load this game. Open ${window.location.pathname}?demo=1 to use the interactive preview.`);
         setStatus('scheduled');
     }
@@ -2668,6 +2673,6 @@ async function init() {
 
 init().catch((error) => {
     console.error('Overlay broadcast failed to start:', error);
-    showVideoFallback('The overlay broadcast could not start. Refresh the page to try again.');
+    showVideoFallback('The overlay broadcast could not start. Refresh the page to try again.', 'Broadcast could not start');
     setConnectionMessage('The overlay broadcast could not start. Refresh the page to try again.');
 });
