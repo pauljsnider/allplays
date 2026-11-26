@@ -92,8 +92,21 @@ function verifyFunction(evidence, expected = expectedFunctionDeployment) {
     return verifyFirebaseApplicationDeployment({ evidence, expectedDeployment: expected });
 }
 
-function verifyFunctions(evidence, expectedDeployment) {
-    return verifyFirebaseApplicationDeployment({ evidence, expectedDeployment });
+function verifyFunctions(evidence, expectedDeployment, previousEvidence) {
+    return verifyFirebaseApplicationDeployment({
+        evidence,
+        expectedDeployment,
+        previousEvidence
+    });
+}
+
+function captureVerificationError(callback) {
+    try {
+        callback();
+    } catch (error) {
+        return error;
+    }
+    throw new Error('Expected Firebase application deployment verification to fail.');
 }
 
 describe('Firebase application deployment evidence', () => {
@@ -319,7 +332,7 @@ describe('aggregate Firebase function deployment evidence', () => {
     function mixedAuthoritativeEvidence() {
         return [
             validFunctionUnchangedEvidence(expectedDeployments[2]),
-            validFunctionArtifactEvidence(expectedDeployments[0]),
+            validFunctionUnchangedEvidence(expectedDeployments[0]),
             validFunctionUpdatedEvidence(expectedDeployments[1])
         ];
     }
@@ -330,11 +343,12 @@ describe('aggregate Firebase function deployment evidence', () => {
             expectedDeployments
         )).toEqual([
             {
-                status: 'current',
+                status: 'unchanged',
                 targetType: FIREBASE_FUNCTION_TARGET_TYPE,
                 projectId: expectedDeployments[0].projectId,
                 functionTarget: expectedDeployments[0].functionTarget,
-                artifactSha
+                artifactSha,
+                deploymentId: expectedDeployments[0].deploymentId
             },
             {
                 status: 'updated',
@@ -355,22 +369,142 @@ describe('aggregate Firebase function deployment evidence', () => {
         ]);
     });
 
-    it('rejects the complete validation when one target has unsupported evidence', () => {
-        const evidence = mixedAuthoritativeEvidence();
-        evidence[2] = {
-            ...validFunctionUpdatedEvidence(expectedDeployments[1]),
-            status: 'partial'
-        };
+    it('preserves complete target evidence when retrying the same exact artifact', () => {
+        const previousEvidence = mixedAuthoritativeEvidence();
+        const previousResult = verifyFunctions(previousEvidence, expectedDeployments);
+        const retryEvidence = expectedDeployments.map(validFunctionUnchangedEvidence);
 
-        expect(() => verifyFunctions(evidence, expectedDeployments))
-            .toThrow(/supported individual function evidence shape/);
+        expect(verifyFunctions(
+            retryEvidence,
+            expectedDeployments,
+            previousEvidence
+        )).toEqual(previousResult);
+        expect(verifyFunctions(
+            retryEvidence,
+            expectedDeployments,
+            previousEvidence
+        )).toEqual(previousResult);
     });
 
-    it('rejects an intended target with no evidence', () => {
+    it('rejects terminal retry evidence from a different artifact', () => {
+        const previousEvidence = mixedAuthoritativeEvidence();
+        const retryEvidence = expectedDeployments.map(validFunctionUnchangedEvidence);
+        retryEvidence[1] = {
+            ...retryEvidence[1],
+            artifactSha: 'b'.repeat(40)
+        };
+
         expect(() => verifyFunctions(
-            mixedAuthoritativeEvidence().slice(0, 2),
-            expectedDeployments
-        )).toThrow(/missing evidence for intended function target sendTeamEmail/);
+            retryEvidence,
+            expectedDeployments,
+            previousEvidence
+        )).toThrow(/artifactSha does not match the expected deployment/);
+    });
+
+    it('keeps a partial quota retry incomplete without new authoritative evidence', () => {
+        const partialEvidence = [
+            validFunctionUpdatedEvidence(expectedDeployments[0]),
+            validFunctionUnchangedEvidence(expectedDeployments[2])
+        ];
+        const firstError = captureVerificationError(
+            () => verifyFunctions(partialEvidence, expectedDeployments)
+        );
+        const retryError = captureVerificationError(
+            () => verifyFunctions(
+                [],
+                expectedDeployments,
+                partialEvidence
+            )
+        );
+
+        expect(retryError).toMatchObject({
+            code: firstError.code,
+            metadata: firstError.metadata
+        });
+        expect(retryError.metadata).toEqual({
+            incompleteTargets: ['sendTeamEmail']
+        });
+    });
+
+    it('fills a partial retry gap only with new authoritative target evidence', () => {
+        const previousEvidence = [
+            validFunctionUpdatedEvidence(expectedDeployments[0]),
+            validFunctionUnchangedEvidence(expectedDeployments[2])
+        ];
+        const identityOnlyRetry = [
+            validFunctionArtifactEvidence(expectedDeployments[1])
+        ];
+
+        const incompleteError = captureVerificationError(
+            () => verifyFunctions(
+                identityOnlyRetry,
+                expectedDeployments,
+                previousEvidence
+            )
+        );
+        expect(incompleteError.metadata).toEqual({
+            incompleteTargets: ['sendTeamEmail']
+        });
+
+        expect(verifyFunctions(
+            [validFunctionUpdatedEvidence(expectedDeployments[1])],
+            expectedDeployments,
+            previousEvidence
+        )).toEqual([
+            verifyFunction(
+                validFunctionUpdatedEvidence(expectedDeployments[0]),
+                expectedDeployments[0]
+            ),
+            verifyFunction(
+                validFunctionUpdatedEvidence(expectedDeployments[1]),
+                expectedDeployments[1]
+            ),
+            verifyFunction(
+                validFunctionUnchangedEvidence(expectedDeployments[2]),
+                expectedDeployments[2]
+            )
+        ]);
+    });
+
+    it('rejects identity-only evidence as an incomplete deployment target', () => {
+        const evidence = mixedAuthoritativeEvidence();
+        evidence[1] = validFunctionArtifactEvidence(expectedDeployments[0]);
+
+        const error = captureVerificationError(
+            () => verifyFunctions(evidence, expectedDeployments)
+        );
+
+        expect(error).toMatchObject({
+            code: 'firebase-functions-incomplete-targets',
+            metadata: {
+                incompleteTargets: ['sendNotification']
+            }
+        });
+    });
+
+    it('rejects a quota-pressure partial deployment and records only safe metadata', () => {
+        const evidence = [
+            validFunctionUpdatedEvidence(expectedDeployments[0]),
+            validFunctionUnchangedEvidence(expectedDeployments[2])
+        ];
+
+        const error = captureVerificationError(
+            () => verifyFunctions(evidence, expectedDeployments)
+        );
+
+        expect(error).toMatchObject({
+            code: 'firebase-functions-incomplete-targets',
+            metadata: {
+                incompleteTargets: ['sendTeamEmail']
+            }
+        });
+        expect(Object.keys(error.metadata)).toEqual(['incompleteTargets']);
+
+        const serializedMetadata = JSON.stringify(error.metadata);
+        expect(serializedMetadata).not.toContain(expectedDeployments[0].projectId);
+        expect(serializedMetadata).not.toContain(artifactSha);
+        expect(serializedMetadata).not.toContain(expectedDeployments[1].deploymentId);
+        expect(serializedMetadata).not.toMatch(/projectId|artifactSha|deploymentId|credential/i);
     });
 
     it('rejects duplicate evidence for one intended target', () => {
