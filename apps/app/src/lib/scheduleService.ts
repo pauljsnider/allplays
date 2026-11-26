@@ -100,7 +100,13 @@ import {
   type TournamentScheduleGroupQuery
 } from './tournamentScheduleStandings';
 import { loadManagedTeamsFromNativeCallable, loadProfileDocument, saveProfileDocument } from './profileService';
-import { mergeParentOfLinks, mergeParentScopeStrings } from './parentAccessScope';
+import {
+  mergeParentOfLinks,
+  mergeParentScopeStrings,
+  parseParentPlayerKey,
+  playerListsParent,
+  profileHasParentScope
+} from './parentAccessScope';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { callNativeFirebaseFunction } from './nativeCallable';
 import { startUxTimer } from './uxTiming';
@@ -3301,27 +3307,6 @@ function isActiveRosterPlayer(player: any) {
   return player?.active !== false && player?.archived !== true && (!player?.status || player.status === 'active');
 }
 
-/**
- * Live parent membership on the player document (#5252). Link-creation
- * flows record the parent here (membership approval, registration) and
- * `removeParentFromPlayer` prunes the entry, so the player document is the
- * live record for a link the fresh profile no longer carries. Parent
- * entries may store the id under `userId`, `uid`, `parentUserId`, or
- * `accountUserId`; a scalar `parentUserId`/`guardianUserId` on the player
- * is the same membership in legacy form.
- */
-function playerListsParent(player: any, parentUid: string) {
-  const uid = compactString(parentUid);
-  if (!uid) return false;
-  if (compactString(player?.parentUserId) === uid) return true;
-  if (compactString(player?.guardianUserId) === uid) return true;
-  const parents = Array.isArray(player?.parents) ? player.parents : [];
-  return parents.some((parent: any) => {
-    const candidate = compactString(parent?.userId || parent?.uid || parent?.parentUserId || parent?.accountUserId);
-    return candidate !== '' && candidate === uid;
-  });
-}
-
 async function loadAggregatedStats(teamId: string, gameId: string) {
   return readWithNativeFallback(
     `aggregated stats ${teamId}/${gameId}`,
@@ -3419,31 +3404,9 @@ function getProfileArray(profile: Record<string, unknown>, key: string) {
   return Array.isArray(value) ? value : [];
 }
 
-/**
- * Whether the loaded profile carries any parent-scope record at all
- * (#5252). A profile with `parentOf`/`parentTeamIds`/`parentPlayerKeys`
- * present (even empty) is a live record: a link absent from it was removed
- * or never existed. A profile with none of those fields has not hydrated
- * yet (or the load failed), so it proves nothing either way and the
- * sign-in snapshot is the only evidence available.
- */
-function profileHasParentScope(profile: Record<string, unknown>) {
-  return ['parentOf', 'parentTeamIds', 'parentPlayerKeys'].some((key) => Array.isArray(profile[key]));
-}
-
 function getUserArray(user: AuthUser, key: keyof AuthUser | 'parentTeamIds' | 'parentPlayerKeys') {
   const value = (user as any)[key];
   return Array.isArray(value) ? value : [];
-}
-
-function parseParentPlayerKey(value: unknown) {
-  const raw = compactString(value);
-  const separatorIndex = raw.indexOf('::');
-  if (separatorIndex <= 0 || separatorIndex >= raw.length - 2) return null;
-  const teamId = compactString(raw.slice(0, separatorIndex));
-  const playerId = compactString(raw.slice(separatorIndex + 2));
-  if (!teamId || !playerId) return null;
-  return { teamId, playerId };
 }
 
 function collectParentScopeLinks(user: AuthUser, profile: Record<string, unknown>): ParentScopeLink[] {

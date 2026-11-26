@@ -1966,6 +1966,38 @@ describe('team detail bootstrap loading', () => {
     __resetTeamDetailBaseSnapshotCacheForTests();
   });
 
+  it('excludes a revoked snapshot child when another child remains linked on the team (#5252)', async () => {
+    __resetTeamDetailBaseSnapshotCacheForTests();
+    seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026']);
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', sport: 'Basketball' });
+    dbMocks.getPlayers.mockResolvedValue([
+      { id: 'player-1', name: 'Revoked Player', active: true, parents: [{ userId: 'other-parent' }] },
+      { id: 'player-2', name: 'Linked Player', active: true, parents: [{ userId: 'parent-1' }] }
+    ]);
+    dbMocks.getGames.mockResolvedValue([
+      { id: 'current', type: 'game', status: 'scheduled', seasonLabel: '2026', date: '2026-03-01T18:00:00Z' }
+    ]);
+    dbMocks.getPublicTrackingItems.mockResolvedValue([]);
+    dbMocks.getPlayerTrackingStatuses.mockResolvedValue([]);
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-1', playerId: 'player-2', playerName: 'Linked Player' }],
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-2']
+    } as any);
+
+    await loadTeamDetailInsights('team-1', {
+      uid: 'parent-1',
+      parentOf: [
+        { teamId: 'team-1', playerId: 'player-1', playerName: 'Revoked Player' },
+        { teamId: 'team-1', playerId: 'player-2', playerName: 'Linked Player' }
+      ],
+      parentPlayerKeys: ['team-1::player-1', 'team-1::player-2']
+    } as any);
+
+    expect(dbMocks.getPlayerTrackingStatuses).toHaveBeenCalledWith('team-1', ['player-2']);
+    __resetTeamDetailBaseSnapshotCacheForTests();
+  });
+
   it('keeps leaderboards aggregated across all completed games while roster statistics stay season scoped', async () => {
     __resetTeamDetailBaseSnapshotCacheForTests();
     seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026', '2025']);

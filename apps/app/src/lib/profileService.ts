@@ -22,7 +22,13 @@ import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeR
 import { captureHandledAppError, createAppTimer } from './telemetry';
 import { getFriendInviteTargetError } from './friendInviteCapabilities';
 import { raceFirstSuccessfulRead } from './adapters/legacyHedgedRead';
-import { mergeParentAccessUser } from './parentAccessScope';
+import { getPlayers } from './adapters/legacyPlayerDb';
+import {
+  getParentScopeLinkKeys,
+  mergeParentAccessUser,
+  playerListsParent,
+  profileHasParentScope
+} from './parentAccessScope';
 import type { AuthUser } from './types';
 
 export {
@@ -604,10 +610,10 @@ export async function saveProfileDocument(userId: string, profile: ProfileDocume
  * sign-in, so a parent link created after sign-in (e.g. a web-app invite
  * auto-link landing while the parent is already signed in, or an account
  * switch that reuses a stale snapshot) is invisible to every consumer that
- * reads `user.parentOf` directly. Unioning both stores — instead of letting
- * one win — keeps a link visible as soon as it exists in either place; the
- * schedule resolver still validates each link against the live team/player
- * records, so a stale entry cannot resurrect a removed child.
+ * reads `user.parentOf` directly. Profile-backed links are merged into the
+ * snapshot. When the profile has current parent-scope fields, snapshot-only
+ * links are retained only if the live player document still lists this
+ * parent, preventing a stale sign-in snapshot from reviving a revoked child.
  * Fails soft: when the profile cannot be read, the input user is returned
  * unchanged.
  */
@@ -615,7 +621,36 @@ export async function hydrateParentAccessUser(user: AuthUser | null): Promise<Au
   if (!user?.uid) return user;
   const profile = await loadProfileDocument(user.uid).catch(() => null) as Record<string, unknown> | null;
   if (!profile) return user;
-  return mergeParentAccessUser(user, profile);
+  if (!profileHasParentScope(profile)) return mergeParentAccessUser(user, profile);
+
+  const profileLinkKeys = getParentScopeLinkKeys(profile);
+  const snapshotOnlyLinks = [...getParentScopeLinkKeys(user)]
+    .filter((key) => !profileLinkKeys.has(key));
+  const linksByTeam = new Map<string, string[]>();
+  snapshotOnlyLinks.forEach((key) => {
+    const separatorIndex = key.indexOf('::');
+    const teamId = key.slice(0, separatorIndex);
+    const playerId = key.slice(separatorIndex + 2);
+    const players = linksByTeam.get(teamId) || [];
+    players.push(playerId);
+    linksByTeam.set(teamId, players);
+  });
+
+  const validatedSnapshotLinkKeys = new Set<string>();
+  await Promise.all([...linksByTeam.entries()].map(async ([teamId, playerIds]) => {
+    // Snapshot-only links are authorization claims. If the current player
+    // documents cannot be read, fail closed for those links while retaining
+    // every profile-backed link.
+    const players = await getPlayers(teamId, { includeInactive: true }).catch(() => []);
+    const playersById = new Map(players.map((player) => [String(player?.id || '').trim(), player]));
+    playerIds.forEach((playerId) => {
+      if (playerListsParent(playersById.get(playerId), user.uid)) {
+        validatedSnapshotLinkKeys.add(`${teamId}::${playerId}`);
+      }
+    });
+  }));
+
+  return mergeParentAccessUser(user, profile, { validatedSnapshotLinkKeys });
 }
 
 export async function loadNotificationTeams(userId: string, email?: string | null): Promise<NotificationTeam[]> {

@@ -205,6 +205,28 @@ describe('parentFeesService checkout destinations', () => {
             .rejects.toThrow('checkout unavailable');
     });
 
+    it('does not pass a revoked snapshot-only child to fee lookup (#5252)', async () => {
+        profileServiceMocks.loadProfileDocument.mockResolvedValue({
+            parentOf: [{ teamId: 'team-1', playerId: 'player-2' }],
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::player-2']
+        });
+
+        await loadParentFeesForApp({
+            uid: 'parent-1',
+            parentOf: [
+                { teamId: 'team-1', playerId: 'player-1' },
+                { teamId: 'team-1', playerId: 'player-2' }
+            ],
+            parentPlayerKeys: ['team-1::player-1', 'team-1::player-2']
+        } as any);
+
+        expect(parentFeeRecipientMocks.listParentTeamFeeRecipientsForApp).toHaveBeenCalledWith(
+            'parent-1',
+            [{ teamId: 'team-1', playerId: 'player-2' }]
+        );
+    });
+
     it('passes a child linked in the profile after sign-in to the fee lookup (#5246)', async () => {
         profileServiceMocks.loadProfileDocument.mockResolvedValue({
             parentOf: [{ teamId: 'team-2', teamName: 'Hawks', playerId: 'player-2', playerName: 'Will Player' }],

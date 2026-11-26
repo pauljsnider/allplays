@@ -43,20 +43,44 @@ describe('mergeParentAccessUser', () => {
       parentPlayerKeys: ['team-2::player-2']
     };
 
-    const merged = mergeParentAccessUser(user, profile);
+    const merged = mergeParentAccessUser(user, profile, {
+      validatedSnapshotLinkKeys: new Set(['team-1::player-1'])
+    });
 
     expect(merged?.parentOf).toEqual([madisonLink, willLink]);
     expect(merged?.parentTeamIds).toEqual(['team-1', 'team-2']);
     expect(merged?.parentPlayerKeys).toEqual(['team-1::player-1', 'team-2::player-2']);
   });
 
-  it('keeps an auth-user link when the stored profile is stale (#5246)', () => {
+  it('drops an unvalidated snapshot-only link when the profile has current parent scope (#5252)', () => {
     const user = {
       uid: 'parent-1',
       parentOf: [willLink],
       parentTeamIds: ['team-2'],
       parentPlayerKeys: ['team-2::player-2'],
+      coachOf: ['team-old-coach']
+    } as any;
+    const profile = {
+      parentOf: [madisonLink],
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1'],
       coachOf: []
+    };
+
+    const merged = mergeParentAccessUser(user, profile);
+
+    expect(merged?.parentOf).toEqual([madisonLink]);
+    expect(merged?.parentTeamIds).toEqual(['team-1']);
+    expect(merged?.parentPlayerKeys).toEqual(['team-1::player-1']);
+    expect(merged?.coachOf).toEqual([]);
+  });
+
+  it('keeps a snapshot-only link only after live player membership validates it (#5252)', () => {
+    const user = {
+      uid: 'parent-1',
+      parentOf: [willLink],
+      parentTeamIds: ['team-2'],
+      parentPlayerKeys: ['team-2::player-2']
     } as any;
     const profile = {
       parentOf: [madisonLink],
@@ -64,10 +88,28 @@ describe('mergeParentAccessUser', () => {
       parentPlayerKeys: ['team-1::player-1']
     };
 
-    const merged = mergeParentAccessUser(user, profile);
+    const merged = mergeParentAccessUser(user, profile, {
+      validatedSnapshotLinkKeys: new Set(['team-2::player-2'])
+    });
 
     expect(merged?.parentOf).toEqual([willLink, madisonLink]);
     expect(merged?.parentTeamIds).toEqual(['team-2', 'team-1']);
+    expect(merged?.parentPlayerKeys).toEqual(['team-2::player-2', 'team-1::player-1']);
+  });
+
+  it('keeps the sign-in snapshot when the profile has no parent-scope fields', () => {
+    const user = {
+      uid: 'parent-1',
+      parentOf: [willLink],
+      parentTeamIds: ['team-2'],
+      parentPlayerKeys: ['team-2::player-2']
+    } as any;
+
+    expect(mergeParentAccessUser(user, {})).toMatchObject({
+      parentOf: [willLink],
+      parentTeamIds: ['team-2'],
+      parentPlayerKeys: ['team-2::player-2']
+    });
   });
 
   it('returns the user unchanged without a uid or profile', () => {

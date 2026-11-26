@@ -97,6 +97,7 @@ import { createLogger } from './logger';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import { isNativeRuntime as isNativeAppRuntime } from './nativeRuntime';
 import { loadProfileDocument } from './profileService';
+import { getParentScopeLinkKeys, mergeParentAccessUser, playerListsParent, profileHasParentScope } from './parentAccessScope';
 import { listNativeFirestoreCollectionPages } from './nativeFirestoreListPager';
 import { normalizeOptionalHttpUrl, parseTeamLivestreamInput } from './teamLinks';
 import type { ParentScheduleEvent } from './scheduleLogic';
@@ -4513,28 +4514,21 @@ function getLinkedPlayerIds(user: AuthUser | null, teamId: string, players: any[
 
 async function hydrateTeamDetailAccessUser(user: AuthUser | null, teamId: string, players: any[]): Promise<AuthUser | null> {
   if (!user?.uid) return user;
-  if (getLinkedPlayerIds(user, teamId, players).length > 0) return user;
   const profile = await loadProfileDocument(user.uid).catch(() => null);
   if (!profile) return user;
-  return {
-    ...user,
-    parentOf: mergeAccessArray(user.parentOf, (profile as any).parentOf),
-    parentTeamIds: mergeAccessArray(user.parentTeamIds, (profile as any).parentTeamIds),
-    parentPlayerKeys: mergeAccessArray(user.parentPlayerKeys, (profile as any).parentPlayerKeys),
-    coachOf: mergeAccessArray(user.coachOf, (profile as any).coachOf)
-  };
-}
-
-function mergeAccessArray<T>(userValues: T[] | undefined, profileValues: unknown): T[] {
-  const merged = [...(Array.isArray(userValues) ? userValues : [])];
-  if (Array.isArray(profileValues)) {
-    profileValues.forEach((value) => {
-      if (!merged.some((current) => JSON.stringify(current) === JSON.stringify(value))) {
-        merged.push(value as T);
-      }
-    });
+  if (!profileHasParentScope(profile as Record<string, unknown>)) {
+    return mergeParentAccessUser(user, profile as Record<string, unknown>);
   }
-  return merged;
+
+  const profileLinkKeys = getParentScopeLinkKeys(profile as Record<string, unknown>);
+  const validatedSnapshotLinkKeys = new Set<string>();
+  getParentScopeLinkKeys(user).forEach((key) => {
+    if (profileLinkKeys.has(key) || !key.startsWith(`${teamId}::`)) return;
+    const playerId = key.slice(teamId.length + 2);
+    const player = players.find((candidate) => cleanString(candidate?.id || candidate?.playerId) === playerId);
+    if (playerListsParent(player, user.uid)) validatedSnapshotLinkKeys.add(key);
+  });
+  return mergeParentAccessUser(user, profile as Record<string, unknown>, { validatedSnapshotLinkKeys });
 }
 
 function normalizeSponsorList(sponsors: any[]): TeamDetailSponsor[] {

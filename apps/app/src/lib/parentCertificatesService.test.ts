@@ -241,6 +241,38 @@ describe('parent certificate loading', () => {
         expect(cards[0].teamName).toBe('Family Bears');
     });
 
+    it('does not list or open certificates for a revoked snapshot-only child (#5252)', async () => {
+        profileServiceMocks.loadProfileDocument.mockResolvedValue({
+            parentOf: [{ teamId: 'team-1', playerId: 'player-2' }],
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::player-2']
+        });
+        const staleUser = {
+            uid: 'parent-1',
+            parentOf: [
+                { teamId: 'team-1', playerId: 'player-1' },
+                { teamId: 'team-1', playerId: 'player-2' }
+            ],
+            parentPlayerKeys: ['team-1::player-1', 'team-1::player-2']
+        } as any;
+
+        await loadParentCertificates(staleUser);
+        expect(legacyParentToolsMocks.listCertificatesForPlayer).toHaveBeenCalledTimes(1);
+        expect(legacyParentToolsMocks.listCertificatesForPlayer).toHaveBeenCalledWith(
+            'team-1',
+            'player-2',
+            { status: 'published', limit: 25 }
+        );
+
+        legacyParentToolsMocks.getCertificate.mockResolvedValue({
+            id: 'cert-revoked',
+            playerId: 'player-1',
+            status: 'published'
+        });
+        expect(await loadParentCertificate(staleUser, 'team-1', 'cert-revoked')).toBeNull();
+        expect(legacyParentToolsMocks.getCertificate).toHaveBeenCalledWith('team-1', 'cert-revoked');
+    });
+
     it('lists certificates for a child linked in the profile after sign-in (#5246)', async () => {
         profileServiceMocks.loadProfileDocument.mockResolvedValue({
             parentOf: [{ teamId: 'team-2', teamName: 'Hawks', playerId: 'player-2', playerName: 'Will Player' }],

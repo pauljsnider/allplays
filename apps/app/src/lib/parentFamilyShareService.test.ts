@@ -78,6 +78,31 @@ describe('parentFamilyShareService', () => {
     expect(getFamilyShareUrl('token value')).toBe('https://allplays.ai/app/#/family/token%20value');
   });
 
+  it('does not include a revoked snapshot-only child in a new share (#5252)', async () => {
+    profileServiceMocks.loadProfileDocument.mockResolvedValue({
+      parentOf: [{ teamId: 'team-1', playerId: 'player-2' }],
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-2']
+    });
+    legacyParentToolsMocks.createFamilyShareToken.mockResolvedValue('token/current');
+
+    await createParentFamilyShare({
+      uid: 'parent-1',
+      parentOf: [
+        { teamId: 'team-1', playerId: 'player-1' },
+        { teamId: 'team-1', playerId: 'player-2' }
+      ],
+      parentPlayerKeys: ['team-1::player-1', 'team-1::player-2']
+    } as any, 'Grandma', []);
+
+    expect(legacyParentToolsMocks.createFamilyShareToken).toHaveBeenCalledWith(
+      'parent-1',
+      [{ teamId: 'team-1', teamName: '', playerId: 'player-2', playerName: '', playerNumber: '', playerPhotoUrl: null }],
+      'Grandma',
+      []
+    );
+  });
+
   it('shares a child linked in the profile after sign-in (#5246)', async () => {
     profileServiceMocks.loadProfileDocument.mockResolvedValue({
       parentOf: [{ teamId: 'team-2', teamName: 'Hawks', playerId: 'player-2', playerName: 'Will Player' }],

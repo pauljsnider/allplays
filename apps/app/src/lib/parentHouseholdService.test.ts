@@ -192,6 +192,28 @@ describe('createParentHouseholdMemberInvite', () => {
         );
     });
 
+    it('rejects a revoked snapshot-only child after profile hydration (#5252)', async () => {
+        profileServiceMocks.loadProfileDocument.mockResolvedValue({
+            parentOf: [{ teamId: 'team-1', playerId: 'player-2' }],
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::player-2']
+        });
+        legacyParentToolsMocks.readFamilyMembers.mockResolvedValue([]);
+
+        await expect(createParentHouseholdMemberInvite(
+            {
+                uid: 'parent-1',
+                parentOf: [
+                    { teamId: 'team-1', playerId: 'player-1' },
+                    { teamId: 'team-1', playerId: 'player-2' }
+                ],
+                parentPlayerKeys: ['team-1::player-1', 'team-1::player-2']
+            } as any,
+            { playerKey: 'team-1::player-1', email: 'grandma@example.com', relation: 'Grandmother' }
+        )).rejects.toThrow('Choose a linked player to share.');
+        expect(legacyParentToolsMocks.addPendingFamilyMember).not.toHaveBeenCalled();
+    });
+
     it('still rejects an unlinked player after profile hydration', async () => {
         profileServiceMocks.loadProfileDocument.mockResolvedValue({
             parentOf: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Madison Player' }]
