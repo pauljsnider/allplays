@@ -123,13 +123,8 @@ export function mergeParentAccessUser(
     ...parentPlayerKeys.map((value) => parseParentPlayerKey(value)?.teamId || '')
   ].filter(Boolean));
   const parentTeamIds = authoritativeProfile
-    ? [...linkedTeamIds]
+    ? mergeParentScopeStrings([...linkedTeamIds], profile.parentTeamIds)
     : mergeParentScopeStrings(user.parentTeamIds, profile.parentTeamIds);
-  if (authoritativeProfile) {
-    mergeParentScopeStrings([], profile.parentTeamIds).forEach((teamId) => {
-      if (linkedTeamIds.has(teamId) && !parentTeamIds.includes(teamId)) parentTeamIds.push(teamId);
-    });
-  }
   return {
     ...user,
     parentOf,

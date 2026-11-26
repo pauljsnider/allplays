@@ -112,6 +112,25 @@ describe('mergeParentAccessUser', () => {
     });
   });
 
+  it('preserves a fresh profile team scope even when no player link is available', () => {
+    const user = {
+      uid: 'parent-1',
+      parentOf: [],
+      parentTeamIds: ['stale-team'],
+      parentPlayerKeys: []
+    } as any;
+
+    expect(mergeParentAccessUser(user, {
+      parentOf: [],
+      parentTeamIds: ['current-team'],
+      parentPlayerKeys: []
+    })).toMatchObject({
+      parentOf: [],
+      parentTeamIds: ['current-team'],
+      parentPlayerKeys: []
+    });
+  });
+
   it('returns the user unchanged without a uid or profile', () => {
     const user = { uid: 'parent-1', parentOf: [madisonLink] } as any;
     expect(mergeParentAccessUser(user, null)).toBe(user);

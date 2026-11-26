@@ -28,6 +28,7 @@ import {
     rejectTeamRegistration
 } from './adapters/legacyParentTools';
 import { formatCurrencyFromCents as formatCurrency } from './money';
+import { hydrateParentAccessUser } from './profileService';
 import { requireTrustedStripeCheckoutUrl } from './stripeCheckoutUrl';
 import type { AuthUser } from './types';
 
@@ -144,7 +145,8 @@ export type TeamRegistrationQueueModel = {
 };
 
 export async function loadParentRegistrations(user: AuthUser | null): Promise<ParentRegistrationCard[]> {
-    const teamIds = getLinkedTeamIds(user);
+    const accessUser = (await hydrateParentAccessUser(user)) || user;
+    const teamIds = getLinkedTeamIds(accessUser);
     const cards = await Promise.all(teamIds.map(async (teamId) => {
         const [team, forms] = await Promise.all([
             Promise.resolve(getTeam(teamId)).catch(() => null),
@@ -290,7 +292,8 @@ export async function loadParentRegistrationDetail(
     if (!user?.uid || !teamId || !formId) {
         throw new Error('Team and form are required.');
     }
-    if (!getLinkedTeamIds(user).includes(teamId)) {
+    const accessUser = (await hydrateParentAccessUser(user)) || user;
+    if (!getLinkedTeamIds(accessUser).includes(teamId)) {
         throw new Error('Registration is not linked to your family.');
     }
     return loadRegistrationDetailModel(teamId, formId);
