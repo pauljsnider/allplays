@@ -75,6 +75,21 @@ describe('parent invite auto-linking', () => {
         expect(existingUserBlock).toContain('An invite email was sent to');
     });
 
+    it('forces a fresh delivery when a reused legacy roster invite was deduplicated', () => {
+        const source = readFileSync(resolve(process.cwd(), 'edit-roster.html'), 'utf8');
+        const newUserBranchStart = source.indexOf('// New user - send email invite');
+        const newUserBranchEnd = source.indexOf('// Email failed - show manual code with error message', newUserBranchStart);
+        expect(newUserBranchStart).toBeGreaterThanOrEqual(0);
+        expect(newUserBranchEnd).toBeGreaterThan(newUserBranchStart);
+
+        const newUserBranch = source.slice(newUserBranchStart, newUserBranchEnd);
+        expect(newUserBranch).toContain('const emailDelivery = await queueInviteEmail(result.code);');
+        expect(newUserBranch).toContain('result.reused && emailDelivery.deduplicated === true');
+        expect(newUserBranch).toContain('queueInviteEmail(result.code, { forceNewDelivery: true })');
+        expect(newUserBranch).toContain("result.reused ? 'resent' : 'sent'");
+        expect(newUserBranch.indexOf('forceNewDelivery')).toBeLessThan(newUserBranch.indexOf('invite-email-sent-message'));
+    });
+
     it('reports auto-linked bulk invite email failures as retryable', () => {
         const source = readFileSync(resolve(process.cwd(), 'edit-roster.html'), 'utf8');
         const helperStart = source.indexOf('async function sendImportedRosterContactInvite');

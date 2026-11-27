@@ -79,6 +79,14 @@ test.describe('help topic and workflow pages', () => {
         await expect(page.getByRole('link', { name: 'Team Chat' })).toHaveAttribute('href', 'team-chat.html#teamId=team-123');
     });
 
+    test('help-watch-chat preserves team context when returning to the Help Portal', async ({ page, baseURL }) => {
+        await page.goto(`${baseURL}/help-watch-chat.html?context=team&teamId=team-123&role=parent`);
+        await page.getByRole('link', { name: 'Back to Help Portal' }).click();
+
+        await expect(page).toHaveURL(/\/help\.html\?context=team&teamId=team-123&role=parent$/);
+        await expect(page.locator('#help-role')).toHaveValue('Parent');
+    });
+
     test('help-watch-chat hides team-scoped links without team context', async ({ page, baseURL }) => {
         await assertPageBootsWithoutFatalErrors(page, {
             baseURL,
