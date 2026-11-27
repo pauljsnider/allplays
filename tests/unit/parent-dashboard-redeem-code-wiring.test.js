@@ -6,10 +6,10 @@ function readRepoFile(relativePath) {
 }
 
 describe('parent dashboard redeem code wiring', () => {
-    it('redeems parent invite codes directly through the duplicate-aware helper', () => {
+    it('routes entered codes through the shared accept-invite flow', () => {
         const html = readRepoFile('parent-dashboard.html');
 
-        expect(html).toMatch(/document\.getElementById\('redeem-code-btn'\)\.addEventListener\('click', async \(\) => \{[\s\S]*await redeemParentInvite\(user\.uid, code\);/);
-        expect(html).not.toMatch(/document\.getElementById\('redeem-code-btn'\)\.addEventListener\('click', async \(\) => \{[\s\S]*validateAccessCode\(code\)/);
+        expect(html).toMatch(/document\.getElementById\('redeem-code-btn'\)\.addEventListener\('click', \(\) => \{[\s\S]*location\.assign\(`\/app\/#\/accept-invite\?code=\$\{encodeURIComponent\(code\)\}`\);/);
+        expect(html).not.toContain('redeemParentInvite');
     });
 });
