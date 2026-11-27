@@ -252,7 +252,6 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
                 onSuccess: (result) => {
                     if (requestId !== playerLoadRequestRef.current) return;
                     setPlayers(result);
-                    setSelectedPlayerId(result[0]?.id || '');
                 }
             }
         );

@@ -443,6 +443,7 @@ describe('ParentTools access', () => {
         deferredPlayers.resolve([{ id: 'player-1', name: 'Sam Player', number: '12' }]);
 
         expect(await screen.findByRole('option', { name: '#12 Sam Player' })).toBeTruthy();
+        fireEvent.change(screen.getByLabelText('Player'), { target: { value: 'player-1' } });
         expect((screen.getByLabelText('Player') as HTMLSelectElement).value).toBe('player-1');
     });
 
@@ -488,6 +489,7 @@ describe('ParentTools access', () => {
         await screen.findByRole('option', { name: 'Bears - Soccer' });
         fireEvent.change(screen.getByLabelText('Team'), { target: { value: 'team-1' } });
         await screen.findByRole('option', { name: '#12 Sam Player' });
+        fireEvent.change(screen.getByLabelText('Player'), { target: { value: 'player-1' } });
         const submitButton = screen.getByRole('button', { name: 'Send request' });
         expect(submitButton.hasAttribute('disabled')).toBe(false);
         fireEvent.click(submitButton);
