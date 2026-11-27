@@ -465,7 +465,7 @@ function verifyFunctionDeployments(evidence, expectedDeployment, previousEvidenc
         evidence,
         expectedByTarget,
         'function evidence',
-        previousEvidence !== undefined
+        true
     );
     const previousEvidenceByTarget = previousEvidence === undefined
         ? new Map()
