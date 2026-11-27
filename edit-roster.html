@@ -2018,9 +2018,13 @@
                      } else {
                          // New user - send email invite
                          try {
-                             await queueInviteEmail(result.code);
+                             const emailDelivery = await queueInviteEmail(result.code);
+                             if (result.reused && emailDelivery.deduplicated === true) {
+                                 await queueInviteEmail(result.code, { forceNewDelivery: true });
+                             }
+                             const deliveryVerb = result.reused ? 'resent' : 'sent';
                              document.getElementById('invite-email-sent-message').textContent =
-                                 `We sent an invite to ${email}. They'll receive a link to join and follow ${currentInvitePlayer.name}.`;
+                                 `We ${deliveryVerb} an invite to ${email}. They'll receive a link to join and follow ${currentInvitePlayer.name}.`;
                              document.getElementById('fallback-code').textContent = result.code;
                              const codeSection = document.getElementById('existing-user-code-section');
                              if (codeSection) codeSection.classList.remove('hidden');
