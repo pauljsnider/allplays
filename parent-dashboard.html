@@ -354,7 +354,6 @@
         import {
             getParentDashboardData,
             listParentRegistrationApplicationsPage,
-            redeemParentInvite,
             getTeam,
             getTeams,
             getPlayers,
@@ -1607,27 +1606,11 @@
                 queueParentDashboardHydration(data.children, user.uid);
 
                 // Redeem Code Logic
-                document.getElementById('redeem-code-btn').addEventListener('click', async () => {
+                document.getElementById('redeem-code-btn').addEventListener('click', () => {
                     const code = document.getElementById('redeem-code-input').value.trim();
                     if(!code) return alert('Please enter a code');
 
-                    const btn = document.getElementById('redeem-code-btn');
-                    const originalText = btn.textContent;
-                    btn.textContent = 'Processing...';
-                    btn.disabled = true;
-
-                    try {
-                        console.log('[parent-dashboard] redeem click', { code });
-                        await redeemParentInvite(user.uid, code);
-                        console.log('[parent-dashboard] redeem completed successfully');
-                        alert('Player added successfully!');
-                        location.reload();
-                    } catch (e) {
-                        console.error('[parent-dashboard] redeem error', e);
-                        alert('Error: ' + e.message);
-                        btn.textContent = originalText;
-                        btn.disabled = false;
-                    }
+                    location.assign(`/app/#/accept-invite?code=${encodeURIComponent(code)}`);
                 });
                 document.getElementById('request-team-select')?.addEventListener('change', async () => {
                     try {
