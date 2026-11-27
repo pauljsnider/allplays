@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 const mock = vi.hoisted(() => ({ load: vi.fn(), prepare: vi.fn(), confirm: vi.fn() }));
 vi.mock('../lib/mcpActionReviewService', () => ({
@@ -40,6 +40,7 @@ const renderReview = () =>
       </Routes>
     </MemoryRouter>
   );
+afterEach(cleanup);
 beforeEach(() => {
   vi.clearAllMocks();
   mock.load.mockResolvedValue({ request, pending: null });
@@ -58,6 +59,55 @@ describe('MCP review screen', () => {
     expect(mock.confirm).toHaveBeenCalledWith(user, requestId, pending);
     expect(screen.queryByRole('button', { name: 'Confirm change' })).toBeNull();
   });
+  it('reconciles a completed confirmation into the rendered terminal status', async () => {
+    mock.load.mockResolvedValue({ request: { ...request, reviewStatus: 'prepared' }, pending });
+    renderReview();
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm change' }));
+    expect(await screen.findByText('Status: completed')).toBeTruthy();
+    expect(screen.getByText('Change completed.')).toBeTruthy();
+    expect(screen.queryByText('Status: prepared')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Confirm change' })).toBeNull();
+  });
+
+  it('renders a failed confirmation without claiming completion or offering replay', async () => {
+    mock.load.mockResolvedValue({ request: { ...request, reviewStatus: 'prepared' }, pending });
+    mock.confirm.mockResolvedValue({ status: 'failed', result: { ok: false, error: 'Synthetic failure.' } });
+    renderReview();
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm change' }));
+    expect(await screen.findByText('Status: failed')).toBeTruthy();
+    expect(screen.getByText('This request did not complete. Check current app data before creating another request.')).toBeTruthy();
+    expect(screen.queryByText('Change completed.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Confirm change' })).toBeNull();
+  });
+
+  it('reloads and displays only the remaining prepared work after a partial result', async () => {
+    const remaining = { ...pending, args: { name: 'Only remaining work' } };
+    mock.load
+      .mockResolvedValueOnce({ request: { ...request, reviewStatus: 'prepared' }, pending })
+      .mockResolvedValueOnce({ request: { ...request, reviewStatus: 'partial' }, pending: remaining });
+    mock.confirm.mockResolvedValue({ status: 'partial', result: { ok: true, requiresConfirmation: true } });
+    renderReview();
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm change' }));
+    expect(await screen.findByText('Status: partial')).toBeTruthy();
+    expect(screen.getByText('Only remaining work')).toBeTruthy();
+    expect(screen.getByText(/Some changes completed/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Confirm remaining changes' })).toBeTruthy();
+    expect(screen.queryByText('Change completed.')).toBeNull();
+  });
+
+  it('explains an executing request as in progress or uncertain without offering replay', async () => {
+    mock.load.mockResolvedValue({ request: { ...request, reviewStatus: 'executing' }, pending: null });
+    renderReview();
+    expect(await screen.findByText('Status: executing')).toBeTruthy();
+    expect(
+      screen.getByText(
+        'This request may still be executing, or its outcome could not be confirmed. Reload to check its status and do not repeat the change.'
+      )
+    ).toBeTruthy();
+    expect(screen.queryByText('Change completed.')).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
   it('shows denial without controls and does not call prepare or confirm', async () => {
     mock.load.mockRejectedValue(new Error('Review unavailable for this account.'));
     renderReview();

@@ -6,6 +6,7 @@ import {
     FIREBASE_APPLICATION_EVIDENCE_SCHEMA_VERSION,
     FIREBASE_APPLICATION_FUNCTIONS_TARGET_TYPE,
     FIREBASE_FUNCTION_TARGET_TYPE,
+    FIREBASE_HOSTING_TARGET_TYPE,
     verifyFirebaseApplicationDeployment
 } from '../../scripts/verify-firebase-application-deployment.mjs';
 
@@ -21,6 +22,11 @@ const expectedFunctionDeployment = Object.freeze({
     functionTarget: 'sendNotification',
     artifactSha,
     deploymentId: 'projects/game-flow-c6311/locations/us-central1/functions/sendNotification/versions/42'
+});
+const expectedHostingDeployment = Object.freeze({
+    projectId: 'game-flow-c6311',
+    siteId: 'game-flow-c6311',
+    artifactSha
 });
 
 function validCurrentEvidence() {
@@ -86,6 +92,23 @@ function validFunctionUnchangedEvidence(expected = expectedFunctionDeployment) {
         artifactSha: expected.artifactSha,
         deploymentId: expected.deploymentId
     };
+}
+
+function validHostingEvidence(expected = expectedHostingDeployment) {
+    return {
+        schemaVersion: FIREBASE_APPLICATION_EVIDENCE_SCHEMA_VERSION,
+        targetType: FIREBASE_HOSTING_TARGET_TYPE,
+        status: 'released',
+        projectId: expected.projectId,
+        siteId: expected.siteId,
+        artifactSha: expected.artifactSha,
+        releaseSummary: `✔  hosting[${expected.siteId}]: release complete`,
+        deploymentSummary: '✔  Deploy complete!'
+    };
+}
+
+function verifyHosting(evidence, expected = expectedHostingDeployment) {
+    return verifyFirebaseApplicationDeployment({ evidence, expectedDeployment: expected });
 }
 
 function verifyFunction(evidence, expected = expectedFunctionDeployment) {
@@ -205,6 +228,75 @@ describe('Firebase application deployment evidence', () => {
         }]
     ])('rejects %s', (_label, expected) => {
         expect(() => verify(validCurrentEvidence(), expected)).toThrow();
+    });
+});
+
+describe('Firebase Hosting deployment evidence', () => {
+    it('accepts an authoritative completed Hosting release and final deployment summary', () => {
+        expect(verifyHosting(validHostingEvidence())).toEqual({
+            status: 'released',
+            targetType: FIREBASE_HOSTING_TARGET_TYPE,
+            projectId: expectedHostingDeployment.projectId,
+            siteId: expectedHostingDeployment.siteId,
+            artifactSha,
+            releaseSummary: '✔  hosting[game-flow-c6311]: release complete',
+            deploymentSummary: '✔  Deploy complete!'
+        });
+    });
+
+    it.each([
+        'releaseSummary',
+        'deploymentSummary'
+    ])('rejects Hosting evidence missing %s', (field) => {
+        const evidence = validHostingEvidence();
+        delete evidence[field];
+
+        expect(() => verifyHosting(evidence)).toThrow(/fields must exactly match/);
+    });
+
+    it.each([
+        '✔  hosting[game-flow-c6311]: file upload complete',
+        '✔  hosting[game-flow-c6311]: version finalized',
+        'i  hosting[game-flow-c6311]: releasing new version...'
+    ])('rejects progress-only Hosting summary %s', (releaseSummary) => {
+        expect(() => verifyHosting({
+            ...validHostingEvidence(),
+            releaseSummary
+        })).toThrow(/authoritative completed release/);
+    });
+
+    it.each([
+        'Deploy complete!',
+        '✔ Deploy complete!',
+        '✔ Deployment complete!',
+        'success'
+    ])('rejects non-authoritative final deployment summary %s', (deploymentSummary) => {
+        expect(() => verifyHosting({
+            ...validHostingEvidence(),
+            deploymentSummary
+        })).toThrow(/authoritative final deployment summary/);
+    });
+
+    it.each([
+        ['projectId', 'another-project'],
+        ['siteId', 'another-site'],
+        ['artifactSha', 'b'.repeat(40)]
+    ])('rejects Hosting evidence with mismatched %s', (field, value) => {
+        expect(() => verifyHosting({
+            ...validHostingEvidence(),
+            [field]: value
+        })).toThrow(/does not match the expected deployment/);
+    });
+
+    it.each([
+        ['current status', { status: 'current' }],
+        ['Function target type', { targetType: FIREBASE_FUNCTION_TARGET_TYPE }],
+        ['extra progress metadata', { uploadComplete: true }]
+    ])('rejects unsupported %s', (_label, mutation) => {
+        expect(() => verifyHosting({
+            ...validHostingEvidence(),
+            ...mutation
+        })).toThrow();
     });
 });
 
