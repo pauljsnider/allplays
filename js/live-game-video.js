@@ -1,3 +1,4 @@
+import { upgradeGameViewerUrl } from './game-viewer-links.js?v=1';
 import { normalizeYouTubeEmbedUrl } from './live-stream-utils.js';
 import { getChatMediaDownloadName, isSafeChatMediaUrl } from './team-chat-media.js';
 import { hasStreamTeamAccess } from './team-access.js?v=44338';
@@ -53,7 +54,7 @@ function normalizeSafeVideoUrl(value) {
 function getClipVideoUrl(clip) {
     if (!clip || typeof clip !== 'object') return null;
     const video = clip.video && typeof clip.video === 'object' ? clip.video : {};
-    return normalizeSafeVideoUrl(firstSafeString([
+    return upgradeGameViewerUrl(normalizeSafeVideoUrl(firstSafeString([
         clip.videoUrl,
         clip.url,
         clip.publicUrl,
@@ -64,7 +65,7 @@ function getClipVideoUrl(clip) {
         video.url,
         video.publicUrl,
         video.sourceUrl
-    ]));
+    ])));
 }
 
 function toCleanString(value) {
@@ -784,13 +785,14 @@ export function normalizeGameClipRecords(game, { players = [], includeHidden = f
         .sort((a, b) => b.createdAtMs - a.createdAtMs || a.title.localeCompare(b.title));
 }
 
-export function buildHighlightShareUrl({ origin, pathname = '/live-game.html', teamId, gameId, startMs, endMs }) {
+export function buildHighlightShareUrl({ origin, pathname = '/live-game-overlay.html', teamId, gameId, startMs, endMs }) {
     const url = new URL(pathname, origin);
     url.searchParams.set('teamId', teamId);
     url.searchParams.set('gameId', gameId);
     url.searchParams.set('replay', 'true');
     url.searchParams.set('clipStart', `${Math.max(0, toFiniteNumber(startMs) || 0)}`);
     url.searchParams.set('clipEnd', `${Math.max(0, toFiniteNumber(endMs) || 0)}`);
+    if (url.hostname === 'share.allplays.ai' && url.pathname === '/watch') url.searchParams.set('overlay', 'true');
     return url.toString();
 }
 

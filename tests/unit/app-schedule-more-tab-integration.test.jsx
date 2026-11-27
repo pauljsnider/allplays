@@ -642,11 +642,11 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         expect(container.textContent).toContain('Match report');
 
         await clickButton(container, 'Watch replay');
-        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true');
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true');
 
         await clickButton(container, 'Share replay');
         expect(publicActionMocks.sharePublicUrl).toHaveBeenCalledWith(expect.objectContaining({
-            url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true'
+            url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true&overlay=true'
         }));
 
         await clickButton(container, 'Share match report');

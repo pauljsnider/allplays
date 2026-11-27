@@ -86,7 +86,7 @@ describe('scoreboard widget embed', () => {
         const source = readPage('widget-scoreboard.html');
 
         expect(source).toContain('ALL PLAYS live scoreboard');
-        expect(source).toContain("import { getTeam, getGames } from './js/db.js?v=4433215';");
+        expect(source).toContain("import { getTeam, getGames } from './js/db.js?v=4433216';");
         expect(source).toContain('const REFRESH_MS = 60000;');
         expect(source).toContain('function selectWidgetGames(games)');
         expect(source).toContain('.filter((game) => game._date && (isLive(game) || game._date >= now || (isCompleted(game) && game._date >= recentCutoff)))');
@@ -104,7 +104,7 @@ describe('scoreboard widget embed', () => {
         expect(source).toContain('home - away');
         expect(source).not.toContain('tracking-wide">team - opponent</div>');
         expect(source).not.toContain('${homeScore} - ${awayScore}');
-        expect(source).toContain('live-game.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(gameId)}');
+        expect(source).toContain('live-game-overlay.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(gameId)}');
         expect(source).toContain('function clearRefreshTimer()');
         expect(source).toContain("window.addEventListener('pagehide', clearRefreshTimer);");
         expect(source).toContain("window.addEventListener('beforeunload', clearRefreshTimer);");
@@ -199,7 +199,7 @@ describe('scoreboard widget embed', () => {
 
         const articles = [...document.querySelectorAll('#widget-games article')];
         expect(articles).toHaveLength(2);
-        expect(articles[0].querySelector('a').getAttribute('href')).toBe('live-game.html?teamId=team%201%2Fblue&gameId=live-game');
+        expect(articles[0].querySelector('a').getAttribute('href')).toBe('live-game-overlay.html?teamId=team%201%2Fblue&gameId=live-game');
         expect(articles[1].querySelector('a').getAttribute('href')).toBe('game.html?teamId=team%201%2Fblue&gameId=away-final');
         expect(articles[1].textContent).toContain('68 - 71');
         expect(articles[1].textContent).toContain('team - opponent');

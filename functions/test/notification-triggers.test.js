@@ -690,6 +690,7 @@ test('notifyGameUpdated sends liveScore notifications and records once-only audi
         assert.equal(result?.successCount, 1);
         assert.equal(env.messagingCalls.length, 1);
         assert.equal(env.messagingCalls[0].data.category, 'liveScore');
+        assert.match(env.messagingCalls[0].data.link, /^https:\/\/allplays\.ai\/live-game-overlay\.html\?teamId=/);
         assert.equal(env.auditWrites.length, 1);
         assert.equal(env.auditWrites[0].value.category, 'liveScore');
         assert.equal(env.auditWrites[0].value.dedupGuardApplied, false);
@@ -817,7 +818,7 @@ test('notifyLiveEventCreated sends one deduped big-moment notification to eligib
         assert.equal(env.messagingCalls[0].data.category, 'liveScore');
         assert.equal(env.messagingCalls[0].data.eventId, 'doc-event-1');
         assert.equal(env.messagingCalls[0].data.appRoute, '/schedule/team-1/game-3?section=game');
-        assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-3');
+        assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/live-game-overlay.html?teamId=team-1&gameId=game-3');
         assert.equal(env.auditWrites.length, 1);
         assert.deepEqual(env.auditWrites[0].value.targetUserIds.sort(), ['assistant-1', 'parent-1']);
         assert.equal(env.auditWrites[0].value.dedupGuardApplied, false);

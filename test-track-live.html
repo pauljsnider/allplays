@@ -462,9 +462,9 @@
             assertContains(html, 'if (gameState.isRunning)', 'isRunning guard present');
         });
 
-        test('share link uses live-game.html with query params', async () => {
+        test('share link uses live-game-overlay.html with query params', async () => {
             const html = await fetchSrc('track-live.html');
-            assertContains(html, 'live-game.html?teamId=', 'share link format correct');
+            assertContains(html, 'live-game-overlay.html?teamId=', 'share link format correct');
         });
 
         test('title is Live Track Game', async () => {

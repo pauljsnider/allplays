@@ -58,7 +58,7 @@ test.describe('help topic and workflow pages', () => {
         });
 
         await expect(page.getByRole('link', { name: 'Team Page' })).toHaveAttribute('href', 'team.html#teamId=team-123');
-        await expect(page.getByRole('link', { name: 'Game Viewer' })).toHaveAttribute('href', 'live-game.html#teamId=team-123&gameId=game-456');
+        await expect(page.getByRole('link', { name: 'Game Viewer' })).toHaveAttribute('href', 'live-game-overlay.html?teamId=team-123&gameId=game-456');
         await expect(page.getByRole('link', { name: 'Team Chat' })).toHaveAttribute('href', 'team-chat.html#teamId=team-123');
     });
 
@@ -77,6 +77,14 @@ test.describe('help topic and workflow pages', () => {
         await expect(page.getByRole('link', { name: 'Team Page' })).toHaveAttribute('href', 'team.html#teamId=team-123');
         await expect(page.locator('a[data-quick-link-label="Game Viewer"]')).toBeHidden();
         await expect(page.getByRole('link', { name: 'Team Chat' })).toHaveAttribute('href', 'team-chat.html#teamId=team-123');
+    });
+
+    test('help-watch-chat preserves team context when returning to the Help Portal', async ({ page, baseURL }) => {
+        await page.goto(`${baseURL}/help-watch-chat.html?context=team&teamId=team-123&role=parent`);
+        await page.getByRole('link', { name: 'Back to Help Portal' }).click();
+
+        await expect(page).toHaveURL(/\/help\.html\?context=team&teamId=team-123&role=parent$/);
+        await expect(page.locator('#help-role')).toHaveValue('Parent');
     });
 
     test('help-watch-chat hides team-scoped links without team context', async ({ page, baseURL }) => {

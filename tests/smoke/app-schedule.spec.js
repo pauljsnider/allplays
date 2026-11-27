@@ -1273,7 +1273,7 @@ async function mockScheduleModules(page, options = {}) {
                         teamStats: { turnovers: 6, assists: 11 },
                         statSheetPhotoUrl: 'https://allplays.ai/mock-statsheet.jpg',
                         highlightClips: [
-                            { title: 'Fast break', description: 'Pat scores in transition', period: 'Q1', gameTime: '8:12', startMs: 1000, endMs: 5000, url: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true&clipStart=1000&clipEnd=5000' }
+                            { title: 'Fast break', description: 'Pat scores in transition', period: 'Q1', gameTime: '8:12', startMs: 1000, endMs: 5000, url: 'https://allplays.ai/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true&clipStart=1000&clipEnd=5000' }
                         ],
                         plays: ${mockReportPlays},
                         teamInsights: [
@@ -1998,10 +1998,10 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
     await expect(reportSections.locator('li').filter({ hasText: 'Shared the ball well' })).toBeVisible();
     await expect(page.getByRole('link', { name: /Team chat/ })).toHaveCount(0);
     await page.getByRole('button', { name: 'Watch replay' }).click();
-    expect(await page.evaluate(() => window.__openedPublicUrls)).toContain('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true');
+    expect(await page.evaluate(() => window.__openedPublicUrls)).toContain('https://allplays.ai/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true');
     await page.getByRole('button', { name: 'Share replay' }).click();
-    expect(await page.evaluate(() => window.__sharedPayloads[0]?.url)).toBe('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true');
-    expect(await page.evaluate(() => window.__sharedPayloads[0]?.text)).toContain('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true');
+    expect(await page.evaluate(() => window.__sharedPayloads[0]?.url)).toBe('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true&overlay=true');
+    expect(await page.evaluate(() => window.__sharedPayloads[0]?.text)).toContain('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true&overlay=true');
     await expect(page.getByRole('button', { name: 'Open report', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Share match report' }).click();
     expect(await page.evaluate(() => window.__sharedPayloads[1]?.url)).toBe('https://share.allplays.ai/report?teamId=team-1&gameId=game-1');

@@ -707,7 +707,7 @@ describe('live game replay video helpers', () => {
             startMs: clips[0].startMs,
             endMs: clips[0].endMs
         });
-        expect(fallbackUrl).toBe('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true&clipStart=45000&clipEnd=60000');
+        expect(fallbackUrl).toBe('https://allplays.ai/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true&clipStart=45000&clipEnd=60000');
         expect(JSON.stringify({ clips, fallbackUrl })).not.toContain('dQw4w9WgXcQ');
     });
 
@@ -1035,7 +1035,7 @@ describe('live game replay video helpers', () => {
             endMs: 72_000
         });
 
-        expect(url).toBe('https://allplays.example/live-game.html?teamId=team-1&gameId=game-1&replay=true&clipStart=12000&clipEnd=72000');
+        expect(url).toBe('https://allplays.example/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true&clipStart=12000&clipEnd=72000');
 
         expect(buildHighlightShareUrl({
             origin: 'https://share.allplays.ai',
@@ -1044,7 +1044,7 @@ describe('live game replay video helpers', () => {
             gameId: 'game-1',
             startMs: 12_000,
             endMs: 72_000
-        })).toBe('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true&clipStart=12000&clipEnd=72000');
+        })).toBe('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true&clipStart=12000&clipEnd=72000&overlay=true');
     });
 
     it('keeps embedded playback running when the source is unchanged', () => {

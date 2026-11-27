@@ -89,6 +89,33 @@ describe('authenticated smoke failure diagnostics', () => {
         }
     });
 
+    it('distinguishes the Messages inbox alert from exact chat-pane errors without leaking text', async () => {
+        const page = mockPage();
+        const sensitive = 'private-fixture-team';
+        const invisible = { isVisible: async () => false, first() { return this; } };
+        const visible = { isVisible: async () => true, first() { return this; } };
+        const rawText = vi.fn(() => { throw Error('Diagnostics must not read page text'); });
+        page.url = () => `https://allplays.ai/app/#/messages/${sensitive}?q=private-fixture-query`;
+        page.getByText = (text) => text === 'Messages couldn’t load' ? visible : invisible;
+        page.getByRole = (role) => role === 'alert' ? visible : invisible;
+        page.locator = (selector) => selector === '.chat-window' ? {
+            ...visible,
+            locator: () => invisible,
+            getByRole: (role, options) => role === 'button' && options.name === 'Retry' ? visible : invisible,
+            getByText: (text) => text === 'You do not have access to this team chat.' ? visible : invisible,
+            innerText: rawText, textContent: rawText
+        } : invisible;
+
+        const { data, text } = await captureResponses([], { page, baseline: false, includeApiFailures: true });
+        expect(data.route).toBe('/messages/:id');
+        expect(data.state.alert).toBe(true);
+        expect(data.state.messages).toEqual({ composerVisible: false, inboxLoadError: true,
+            chatRetryVisible: true, accessDenied: true, teamUnavailable: false,
+            contextTimedOut: false, conversationReadError: false });
+        expect(text).not.toMatch(/private-fixture-team|private-fixture-query|You do not have access|https:/i);
+        expect(rawText).not.toHaveBeenCalled();
+    });
+
     it('identifies resource packet failures without recording private request data', async () => {
         const { data, text } = await captureResponses([mockResponse({
             url: 'https://us-central1-game-flow-c6311.cloudfunctions.net/resourcePacketsQuery?player=PRIVATE', status: 401, type: 'fetch'

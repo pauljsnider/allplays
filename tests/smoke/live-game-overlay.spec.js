@@ -1240,7 +1240,7 @@ test('viewer toolbar shares the canonical watch URL and controls YouTube audio a
     await expect.poll(() => page.evaluate(() => window.__OVERLAY_SHARED__)).toEqual([{
         title: 'Watch Live',
         text: 'Watch Current Academy vs Sporting Blue',
-        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1'
+        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&overlay=true'
     }]);
 
     await page.locator('#scoreboard-toggle').click();
@@ -1274,12 +1274,8 @@ test('viewer toolbar shares the canonical watch URL and controls YouTube audio a
     await expect(page.locator('#match-report-link')).toHaveAttribute('href', 'game.html#teamId=team-1&gameId=game-1');
     await expect(page.locator('#match-report-link')).toBeHidden();
     await expect(page.locator('#game-details-link')).toHaveAttribute('href', 'game.html#teamId=team-1&gameId=game-1');
-    await expect(page.locator('#classic-view-link')).toBeVisible();
-    await expect(page.locator('#classic-view-link')).toContainText('Game Center');
-    await expect(page.locator('#classic-view-link')).toHaveAttribute(
-        'href',
-        'live-game.html?teamId=team-1&gameId=game-1'
-    );
+    await expect(page.locator('#classic-view-link')).toHaveCount(0);
+    await expect(page.locator('#game-details-link')).toHaveAttribute('href', 'game.html#teamId=team-1&gameId=game-1');
     await expect(page.locator('#provider-menu-link')).toContainText('Watch on YouTube');
     await page.locator('#game-actions-toggle').click();
     await expect(page.locator('#game-actions-menu')).toBeHidden();
@@ -1306,11 +1302,8 @@ test('replay navigation stays in replay mode while the initial game load is pend
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
 
     await expect.poll(() => page.evaluate(() => typeof window.__OVERLAY_RELEASE_GAME__)).toBe('function');
-    await expect(page.locator('#classic-view-link')).toContainText('Game Recap');
-    await expect(page.locator('#classic-view-link')).toHaveAttribute(
-        'href',
-        'live-game.html?teamId=team-1&gameId=game-1&replay=true'
-    );
+    await expect(page.locator('#classic-view-link')).toHaveCount(0);
+    await expect(page.locator('#game-details-link')).toHaveAttribute('href', 'game.html#teamId=team-1&gameId=game-1');
     await page.evaluate(() => window.__OVERLAY_RELEASE_GAME__());
     await expect(page.locator('#home-team-name')).toHaveText('Current Academy');
     expect(pageErrors).toEqual([]);
@@ -1333,14 +1326,14 @@ test('short replay menus keep every action reachable by keyboard and touch', asy
     await expect(page.locator('#share-game-menu')).toBeFocused();
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowDown');
-    await expect(page.locator('#classic-view-link')).toBeFocused();
+    await expect(page.locator('#match-report-link')).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(page.locator('#game-actions-menu')).toBeHidden();
     await expect(menuToggle).toBeFocused();
 
     await menuToggle.click();
     const menu = page.locator('#game-actions-menu');
-    await expect.poll(() => menu.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+    await expect(menu).toBeInViewport({ ratio: 1 });
     await page.locator('#provider-menu-link').scrollIntoViewIfNeeded();
     await expect(page.locator('#provider-menu-link')).toBeInViewport();
     expect(pageErrors).toEqual([]);
@@ -1408,7 +1401,7 @@ test('a completed live game exposes replay actions and shares the replay URL wit
     await expect.poll(() => page.evaluate(() => window.__OVERLAY_SHARED__)).toEqual([{
         title: 'Watch Replay',
         text: 'Watch Current Academy vs Sporting Blue',
-        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true'
+        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true&overlay=true'
     }]);
     expect(pageErrors).toEqual([]);
 });
@@ -1443,7 +1436,7 @@ test('a completed live session keeps its event-timeline replay without a recorde
     await expect.poll(() => page.evaluate(() => window.__OVERLAY_SHARED__)).toEqual([{
         title: 'Watch Replay',
         text: 'Watch Current Academy vs Sporting Blue',
-        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true'
+        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true&overlay=true'
     }]);
     expect(pageErrors).toEqual([]);
 });
@@ -1475,7 +1468,7 @@ test('a report-only statsheet completion does not advertise or share an unavaila
     await expect.poll(() => page.evaluate(() => window.__OVERLAY_SHARED__)).toEqual([{
         title: 'Game Center',
         text: 'Watch Current Academy vs Sporting Blue',
-        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1'
+        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&overlay=true'
     }]);
     expect(pageErrors).toEqual([]);
 });
@@ -1616,12 +1609,8 @@ test('signed-out public replay uses the sanitized projected game video when priv
     await expect(page.locator('#open-stream')).toHaveAttribute('href', 'https://www.youtube.com/watch?v=PK1HyC37doc');
     await expect(page.locator('#replay-access-gate')).toBeHidden();
     await page.locator('#game-actions-toggle').click();
-    await expect(page.locator('#classic-view-link')).toBeVisible();
-    await expect(page.locator('#classic-view-link')).toContainText('Game Recap');
-    await expect(page.locator('#classic-view-link')).toHaveAttribute(
-        'href',
-        'live-game.html?teamId=team-1&gameId=game-1&replay=true'
-    );
+    await expect(page.locator('#classic-view-link')).toHaveCount(0);
+    await expect(page.locator('#game-details-link')).toHaveAttribute('href', 'game.html#teamId=team-1&gameId=game-1');
     expect(await page.evaluate(() => window.__OVERLAY_ENTITLEMENT_READS__ || 0)).toBe(0);
     expect(pageErrors).toEqual([]);
 });

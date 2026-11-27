@@ -526,10 +526,10 @@
             getConfigs, updateGame, logStatEvent, updatePlayerStats,
             broadcastLiveEvent, subscribeLiveEvents, getLiveEvents, subscribeAggregatedStats,
             setGameLiveStatus, submitRsvpForPlayer, postChatMessage
-        } from './js/db.js?v=4433215';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime } from './js/utils.js?v=443391';
-        import { checkAuth } from './js/auth.js?v=4433220';
-        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443366';
+        } from './js/db.js?v=4433216';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime } from './js/utils.js?v=443392';
+        import { checkAuth } from './js/auth.js?v=4433221';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443367';
         import { buildRotationPlanFromGamePlan } from './js/game-plan-interop.js?v=2';
         import { getPeriodsForFormation, normalizeActivePeriod, sortSubstitutionPeriods } from './js/game-day-periods.js?v=2';
         import {
@@ -2929,7 +2929,7 @@ Respond ONLY with valid JSON.`;
             const trackerUrl = getScorekeepingTrackerUrl();
             const watchUrl = state.game?.trackingEngine === DIAMOND_ENGINE
                 ? buildDiamondViewerUrl({ teamId: state.teamId, gameId: state.gameId })
-                : `live-game.html#teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(state.gameId)}`;
+                : `live-game-overlay.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(state.gameId)}`;
             renderTeamAdminBanner(document.getElementById('banner-container'), {
                 team: state.team,
                 teamId: state.teamId,

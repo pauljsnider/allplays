@@ -379,7 +379,7 @@ function parseScheduleRange({ startDate, endDate } = {}, now = new Date()) {
 function gameDeepLink(teamId, gameId, { replay = false } = {}) {
     const params = new URLSearchParams({ teamId, gameId });
     if (replay) params.set('replay', 'true');
-    return `${APP_BASE_URL}/live-game.html?${params.toString()}`;
+    return `${APP_BASE_URL}/live-game-overlay.html?${params.toString()}`;
 }
 
 function calendarEventDeepLink(teamId, eventId) {

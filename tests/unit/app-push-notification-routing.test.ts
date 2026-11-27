@@ -66,6 +66,7 @@ describe('app push notification routing', () => {
         expect(resolvePushNotificationRoute({ link: 'https://allplays.ai/team-chat.html?teamId=team-1&conversationId=staff-2' })).toBe('/messages/team-1?conversationId=staff-2');
         expect(resolvePushNotificationRoute({ link: 'https://allplays.ai/team-chat.html?teamId=team-1&conversation=staff-2' })).toBe('/messages/team-1?conversation=staff-2');
         expect(resolvePushNotificationRoute({ link: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-7' })).toBe('/schedule/team-1/game-7?section=game');
+        expect(resolvePushNotificationRoute({ link: 'https://allplays.ai/live-game-overlay.html?teamId=team-1&gameId=game-7' })).toBe('/schedule/team-1/game-7?section=game');
         expect(resolvePushNotificationRoute({ link: 'https://allplays.ai/game-day.html?teamId=team-1&gameId=game-7' })).toBe('/schedule/team-1/game-7?section=game');
     });
 

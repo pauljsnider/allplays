@@ -354,7 +354,6 @@
         import {
             getParentDashboardData,
             listParentRegistrationApplicationsPage,
-            redeemParentInvite,
             getTeam,
             getTeams,
             getPlayers,
@@ -388,8 +387,8 @@
             listFamilyShareTokens,
             revokeFamilyShareToken,
             updateFamilyShareTokenCalendars
-        } from './js/db.js?v=4433215';
-        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=443391';
+        } from './js/db.js?v=4433216';
+        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=443392';
         import {
             getIncentiveRules,
             saveIncentiveRule as saveIncentiveRuleFn,
@@ -408,9 +407,9 @@
             saveCapSetting as saveCapSettingFn,
         } from './js/parent-incentives.js?v=11';
         import { functions, httpsCallable } from './js/firebase.js?v=4433197';
-        import { requireAuth, checkAuth } from './js/auth.js?v=4433220';
+        import { requireAuth, checkAuth } from './js/auth.js?v=4433221';
         import { assertCompletePlayerStatEvidence, loadCompletePlayerStatsForGames } from './js/diamond-legacy-game-context.js?v=3';
-        import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=3';
+        import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=4';
         import {
             resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase,
             resolvePracticePacketContextForEvent as resolvePracticePacketContextForEventBase,
@@ -1607,27 +1606,11 @@
                 queueParentDashboardHydration(data.children, user.uid);
 
                 // Redeem Code Logic
-                document.getElementById('redeem-code-btn').addEventListener('click', async () => {
+                document.getElementById('redeem-code-btn').addEventListener('click', () => {
                     const code = document.getElementById('redeem-code-input').value.trim();
                     if(!code) return alert('Please enter a code');
 
-                    const btn = document.getElementById('redeem-code-btn');
-                    const originalText = btn.textContent;
-                    btn.textContent = 'Processing...';
-                    btn.disabled = true;
-
-                    try {
-                        console.log('[parent-dashboard] redeem click', { code });
-                        await redeemParentInvite(user.uid, code);
-                        console.log('[parent-dashboard] redeem completed successfully');
-                        alert('Player added successfully!');
-                        location.reload();
-                    } catch (e) {
-                        console.error('[parent-dashboard] redeem error', e);
-                        alert('Error: ' + e.message);
-                        btn.textContent = originalText;
-                        btn.disabled = false;
-                    }
+                    location.assign(`/app/#/accept-invite?code=${encodeURIComponent(code)}`);
                 });
                 document.getElementById('request-team-select')?.addEventListener('change', async () => {
                     try {

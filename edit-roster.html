@@ -557,14 +557,14 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getPlayerPrivateProfile, getUsersByParentPlayerKey, getUsersByParentTeamId, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, deleteLegacyImageUpload, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=4433215';
+        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getPlayerPrivateProfile, getUsersByParentPlayerKey, getUsersByParentTeamId, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, deleteLegacyImageUpload, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=4433216';
         import { buildFullRosterCsvTemplate, buildRosterFieldDefinitionPayload, collectRosterParentContacts, collectRosterProfileValues, getRosterAiImportFieldCatalog, getRosterProfileValues, mergeStandardRosterFieldDefinitions, normalizeRosterFieldDefinitions, planRosterAiImport, planRosterCsvImport, renderRosterProfileFields, splitProtectedRosterProfileValues, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults, validateRosterProfileValues } from './js/roster-profile-fields.js?v=9';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=18';
-        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443391';
-        import { checkAuth } from './js/auth.js?v=4433220';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443392';
+        import { checkAuth } from './js/auth.js?v=4433221';
         import { queueInviteEmail } from './js/invite-email.js?v=9';
         import { buildAppJoinUrl } from './js/join-code.js?v=3';
-        import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443366';
+        import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443367';
         import { hasFullTeamAccess, normalizeTeamPermissions } from './js/team-access.js?v=44338';
         import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, hasConfiguredRegistrationProviderMetadata, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=3';
         import { createBulkAiImageController } from './js/edit-schedule-ai-import.js?v=2';
@@ -2018,9 +2018,13 @@
                      } else {
                          // New user - send email invite
                          try {
-                             await queueInviteEmail(result.code);
+                             const emailDelivery = await queueInviteEmail(result.code);
+                             if (result.reused && emailDelivery.deduplicated === true) {
+                                 await queueInviteEmail(result.code, { forceNewDelivery: true });
+                             }
+                             const deliveryVerb = result.reused ? 'resent' : 'sent';
                              document.getElementById('invite-email-sent-message').textContent =
-                                 `We sent an invite to ${email}. They'll receive a link to join and follow ${currentInvitePlayer.name}.`;
+                                 `We ${deliveryVerb} an invite to ${email}. They'll receive a link to join and follow ${currentInvitePlayer.name}.`;
                              document.getElementById('fallback-code').textContent = result.code;
                              const codeSection = document.getElementById('existing-user-code-section');
                              if (codeSection) codeSection.classList.remove('hidden');

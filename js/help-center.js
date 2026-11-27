@@ -332,7 +332,7 @@ const HELP_GUIDES = [
         relatedGuideIds: ['track-game', 'team-chat-basics'],
         quickLinks: [
             { label: 'Team Page', url: 'team.html#teamId={teamId}' },
-            { label: 'Game Viewer', url: 'live-game.html#teamId={teamId}&gameId={gameId}' }
+            { label: 'Game Viewer', url: 'live-game-overlay.html?teamId={teamId}&gameId={gameId}' }
         ],
         lastUpdated: '2026-03-03'
     },

@@ -75,7 +75,19 @@ export function McpActionReview({ auth }: { auth: AuthState }) {
         if (!review?.pending) throw new Error('Review the prepared change first.');
         const { status, result } = await confirmMcpActionReview(auth.user, requestId, review.pending);
         setFinished(status !== 'partial');
-        if (status === 'partial') setReview(await loadMcpActionReview(auth.user, requestId));
+        if (status === 'partial') {
+          setReview(await loadMcpActionReview(auth.user, requestId));
+        } else {
+          setReview((current) =>
+            current
+              ? {
+                  ...current,
+                  request: { ...current.request, reviewStatus: status },
+                  pending: null
+                }
+              : current
+          );
+        }
         setMessage(
           status === 'completed'
             ? 'Change completed.'
@@ -132,7 +144,11 @@ export function McpActionReview({ auth }: { auth: AuthState }) {
             <p>
               {status === 'completed'
                 ? 'This request has already completed.'
-                : 'This request cannot be repeated here. Check current app data before creating another request.'}
+                : status === 'failed'
+                  ? 'This request did not complete. Check current app data before creating another request.'
+                  : status === 'executing'
+                    ? 'This request may still be executing, or its outcome could not be confirmed. Reload to check its status and do not repeat the change.'
+                    : 'This request cannot be repeated here. Check current app data before creating another request.'}
             </p>
           )}
         </section>

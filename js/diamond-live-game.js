@@ -103,7 +103,7 @@ const elements = {
   plays: document.querySelector("[data-diamond-plays]"),
   empty: document.querySelector("[data-diamond-empty]"),
   loadMore: document.querySelector("[data-diamond-load-more]"),
-  classicLink: document.querySelector("[data-diamond-classic-link]"),
+  gameReportLink: document.querySelector("[data-diamond-game-report-link]"),
   modeLabel: document.querySelector("[data-diamond-mode-label]"),
   media: document.querySelector("[data-diamond-media]"),
   mediaTitle: document.querySelector("[data-diamond-media-title]"),
@@ -147,10 +147,8 @@ function parseContext() {
       ? "Game replay"
       : "Live scorebook";
   document.title = `${elements.modeLabel.textContent} — ALL PLAYS Diamond`;
-  const classicParams = new URLSearchParams(params);
-  classicParams.set("classic", "1");
-  classicParams.delete("overlay");
-  elements.classicLink.href = `/live-game.html?${classicParams.toString()}`;
+  const reportParams = new URLSearchParams({ teamId: state.teamId, gameId: state.gameId });
+  elements.gameReportLink.href = `/game.html#${reportParams.toString()}`;
   const returnPath = `${window.location.pathname}${window.location.search}`;
   const authHref = `/app/#/auth?next=${encodeURIComponent(returnPath)}`;
   elements.signIn.href = authHref;

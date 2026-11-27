@@ -19,10 +19,11 @@
 
   <script src="https://cdn.tailwindcss.com"></script>
   <script type="module" src="/js/telemetry.js?v=4"></script>
+  <script type="module" src="./js/help-context.js?v=2"></script>
 </head>
 <body class="bg-slate-50 text-slate-900 min-h-screen">
   <main class="max-w-6xl mx-auto px-4 py-8">
-    <a href="help.html" class="text-sm text-blue-700 hover:text-blue-900">← Back to Help Portal</a>
+    <a href="help.html" data-help-back-link class="text-sm text-blue-700 hover:text-blue-900">← Back to Help Portal</a>
     <h1 class="mt-2 text-3xl font-extrabold">Watch and Chat</h1>
     <p class="mt-2 text-slate-600">Who owns live viewing and communication actions in production pages.</p>
 
@@ -30,7 +31,7 @@
       <article class="bg-white rounded-xl border border-slate-200 p-5">
         <h2 class="text-xl font-bold">Watching Live and Replay</h2>
         <ul class="mt-3 list-disc list-inside text-sm text-slate-700 space-y-1">
-          <li><strong>Parent/Coach/Admin/Member:</strong> Open live/replay views via <code>team.html</code> and <code>live-game.html</code>.</li>
+          <li><strong>Parent/Coach/Admin/Member:</strong> Open live/replay views via <code>team.html</code> and <code>live-game-overlay.html</code>.</li>
           <li><strong>Coach/Admin:</strong> Configure stream source and game live status.</li>
           <li><strong>Parent/Member:</strong> Consume view-only watching experience.</li>
         </ul>
@@ -53,7 +54,7 @@
             data-guide-id="watch-game"
             data-quick-link-label="Game Viewer"
             data-required-context="teamId,gameId"
-            data-route-template="live-game.html#teamId={teamId}&gameId={gameId}"
+            data-route-template="live-game-overlay.html?teamId={teamId}&gameId={gameId}"
           >Game Viewer</a>
         </div>
       </article>

@@ -421,7 +421,7 @@ describe('familyShareViewerService', () => {
     expect(resolveFamilyShareWatchCta(buildFamilyEvent())).toEqual({
       kind: 'replay',
       label: 'Watch Replay',
-      href: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true'
+      href: 'https://allplays.ai/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true'
     });
     expect(resolveFamilyShareWatchCta(buildFamilyEvent({
       hasReplayVideo: false,
@@ -439,14 +439,14 @@ describe('familyShareViewerService', () => {
     }))).toEqual({
       kind: 'live',
       label: 'Watch Live',
-      href: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1'
+      href: 'https://allplays.ai/live-game-overlay.html?teamId=team-1&gameId=game-1'
     });
     const sharedPath = `organizations/${'o'.repeat(128)}/sharedGames/${'g'.repeat(128)}`;
     const sharedId = `shared_${encodeURIComponent(sharedPath)}`;
     expect(resolveFamilyShareWatchCta(buildFamilyEvent({ id: sharedId }))).toEqual({
       kind: 'replay',
       label: 'Watch Replay',
-      href: `https://allplays.ai/live-game.html?teamId=team-1&gameId=${encodeURIComponent(sharedId)}&replay=true`
+      href: `https://allplays.ai/live-game-overlay.html?teamId=team-1&gameId=${encodeURIComponent(sharedId)}&replay=true`
     });
   });
 

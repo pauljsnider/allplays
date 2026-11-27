@@ -28,7 +28,7 @@ function buildLiveGameHref(game, replay = false) {
         params.set('replay', 'true');
     }
 
-    return `live-game.html?${params.toString()}`;
+    return `live-game-overlay.html?${params.toString()}`;
 }
 
 function isVisibleUpcomingHomepageGame(game) {

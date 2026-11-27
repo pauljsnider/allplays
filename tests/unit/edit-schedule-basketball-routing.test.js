@@ -443,7 +443,7 @@ describe('edit schedule basketball tracker routing', () => {
         expect(source).toContain('const hasReplayPlayback = hasReplayLifecycle');
         expect(source).toContain('${!isCompleted && !isCancelled ? `<button data-game-id="${game.id}" class="track-game-btn');
         expect(source).toContain('${isCompleted ? `<a href="game.html#teamId=${currentTeamId}&gameId=${game.id}"');
-        expect(source).toContain('${hasReplayPlayback ? `<a href="live-game.html?teamId=${currentTeamId}&gameId=${game.id}&replay=true"');
+        expect(source).toContain('${hasReplayPlayback ? `<a href="live-game-overlay.html?teamId=${currentTeamId}&gameId=${game.id}&replay=true"');
     });
 
     it('renders replay actions only for playable object or flat URL evidence', () => {

@@ -448,22 +448,23 @@
     <script type="module">
         import { getTeamScorePair } from './js/season-record.js';
         import { getLiveStatsEpoch } from './js/live-aggregate-stats.js?v=2';
-        import { getTeam, getDelegatedTeamContext, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433215';
+        import { getTeam, getDelegatedTeamContext, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433216';
         import { generateGameInsights } from './js/post-game-insights.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=443391';
-        import { checkAuth } from './js/auth.js?v=4433220';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=443392';
+        import { checkAuth } from './js/auth.js?v=4433221';
         import { collection, deleteField, doc, functions, getDocs, httpsCallable, query, orderBy, runTransaction } from "./js/firebase.js?v=4433197";
         import { db } from './js/firebase.js?v=4433197';
-        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443366';
-        import { resolveLiveStatConfig } from './js/live-game-state.js?v=63';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443367';
+        import { resolveLiveStatConfig } from './js/live-game-state.js?v=64';
         import { splitPlayerStatsByVisibility } from './js/stat-leaderboards.js?v=4';
         import { formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=8';
         import { normalizeStatKey, resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=11';
         import { getActivationPinnedDiamondStatCatalog, getCoverageAwareStatValue, getDiamondProjectionIdentity, getDiamondPublicPlayerStatsCollectionPath, isDiamondV2Game, readCoverageAwareOpponentStats, readCoverageAwareStatDocument, resolveDiamondManagerStatDocuments, resolveDiamondManagerTeamStatDocument, resolveDiamondProjectionState, resolveDiamondPublicStatDocuments, resolveDiamondPublicTeamStatDocument, resolveDiamondStatConfigsForGames } from './js/diamond-stat-presentation.js?v=7';
         import { buildDiamondReportPlayers, loadCompleteDiamondManagerStats } from './js/diamond-manager-stats.js?v=5';
         import { buildDiamondStatsCsv, downloadDiamondStatsCsv, getDiamondStatsExportFilename } from './js/diamond-stat-export.js?v=7';
-        import { buildHighlightShareUrl, normalizeGameRecapHighlightClips, resolveReplayVideoOptions } from './js/live-game-video.js?v=443320';
-        import { buildGameReportShareUrl } from './js/game-share-links.js?v=1';
+        import { buildHighlightShareUrl, normalizeGameRecapHighlightClips, resolveReplayVideoOptions } from './js/live-game-video.js?v=443321';
+        import { resolveGameReportReplayPreview } from './js/game-report-replay-preview.js?v=1';
+        import { buildGameReportShareUrl } from './js/game-share-links.js?v=2';
         import { normalizePublishedDiamondAiArtifact } from './js/diamond-ai-presentation.js?v=1';
         import { GAME_REPLAY_ARCHIVE_FIELDS, GAME_REPLAY_CLEAR_FIELDS, buildYouTubeReplayVideo, fingerprintGameReplayArchiveState, getGameReplayArchiveState, getGameReplayLifecycle, hasGameReplayArchiveEvidence, normalizeYouTubeReplayUrl } from './js/game-replay-video.js?v=3';
         import { loadCompleteDiamondReportEvents } from './js/diamond-report-events.js?v=1';
@@ -672,15 +673,48 @@
 
             const hasCompletedTimelineReplay = ['completed', 'final'].includes(game?.liveStatus)
                 && gameCompleted;
-            if ((replayOptions.hasVideo && replayOptions.isRecordedReplay === true) || hasCompletedTimelineReplay) {
+            const replayHref = `live-game-overlay.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}&replay=true`;
+            const hasRecordedVideo = replayOptions.hasVideo && replayOptions.isRecordedReplay === true;
+
+            if (hasRecordedVideo) {
+                const preview = resolveGameReportReplayPreview({
+                    sourceUrl: replayOptions.sourceUrl,
+                    publicUrl: replayOptions.publicUrl,
+                    posterUrl: replayOptions.posterUrl
+                });
                 return `
-                    <a href="live-game.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}&replay=true"
-                       class="inline-flex items-center gap-2 bg-teal-500 text-white px-5 py-2 rounded-full font-semibold shadow hover:bg-teal-600 transition">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                        Watch Replay
+                    <a href="${replayHref}"
+                       data-replay-video-preview
+                       aria-label="${escapeHtml(preview.accessibleLabel)}"
+                       class="group inline-flex min-h-[52px] max-w-full items-center gap-2 rounded-xl border border-teal-200 bg-white p-1.5 pr-3 text-left shadow-sm transition hover:border-teal-400 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-2">
+                        <span class="relative grid h-8 w-14 shrink-0 place-items-center overflow-hidden rounded-lg bg-gradient-to-br from-slate-800 via-slate-700 to-red-700" aria-hidden="true">
+                            ${preview.thumbnailUrl ? `<img data-replay-preview-thumbnail src="${escapeHtml(preview.thumbnailUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" class="absolute inset-0 h-full w-full object-cover">` : ''}
+                            <span class="relative grid h-6 w-6 place-items-center rounded-full bg-red-600 text-white shadow-sm">
+                                <svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 16 16"><path d="M5 3.5v9l7-4.5z"></path></svg>
+                            </span>
+                        </span>
+                        <span class="flex min-w-0 flex-col gap-0.5">
+                            <span class="flex items-center gap-1.5 text-[10px] font-bold leading-3 uppercase tracking-wide text-teal-800">
+                                Video available
+                                ${preview.providerLabel === 'YouTube' ? '<span class="text-red-600">YouTube</span>' : ''}
+                            </span>
+                            <span class="inline-flex items-center gap-1 text-sm font-semibold leading-4 text-gray-900">
+                                Watch replay
+                                <svg class="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14m-7-7 7 7-7 7"></path></svg>
+                            </span>
+                        </span>
+                    </a>
+                `;
+            }
+
+            if (hasCompletedTimelineReplay) {
+                return `
+                    <a href="${replayHref}"
+                       aria-label="View game replay"
+                       class="inline-flex min-h-11 items-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-4 py-2 text-sm font-semibold text-teal-800 shadow-sm transition hover:border-teal-300 hover:bg-teal-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-2">
+                        <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7-4.5z"></path></svg>
+                        View game replay
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14m-7-7 7 7-7 7"></path></svg>
                     </a>
                 `;
             }
@@ -2467,14 +2501,14 @@ Write the match report now:`;
                     <div class="flex flex-wrap justify-center gap-3 mb-4">
                     <span id="replay-report-action">${replayReportAction}</span>
                     ${reportLifecycle.isActiveLive ? `
-                        <a href="live-game.html?teamId=${teamId}&gameId=${gameId}"
+                        <a href="live-game-overlay.html?teamId=${teamId}&gameId=${gameId}"
                            class="inline-flex items-center gap-2 bg-red-500 text-white px-5 py-2 rounded-full font-semibold shadow hover:bg-red-600 transition">
                             <span class="w-2 h-2 bg-white rounded-full animate-pulse"></span>
                             Live Now
                         </a>
                     ` : ''}
                     ${game.status !== 'completed' && reportLifecycle.isActiveLive ? `
-                        <a href="live-game.html?teamId=${teamId}&gameId=${gameId}"
+                        <a href="live-game-overlay.html?teamId=${teamId}&gameId=${gameId}"
                            class="inline-flex items-center gap-2 bg-slate-800 text-white px-5 py-2 rounded-full font-semibold shadow hover:bg-slate-900 transition">
                             <span class="text-xs">👁️</span>
                             View Live
@@ -2496,6 +2530,9 @@ Write the match report now:`;
                         </div>
                     ` : ''}
                 `;
+
+                const replayPreviewImage = document.querySelector('[data-replay-preview-thumbnail]');
+                replayPreviewImage?.addEventListener('error', () => replayPreviewImage.remove(), { once: true });
 
                 const shareBtn = document.getElementById('share-report-btn');
                 if (shareBtn) {

@@ -150,10 +150,25 @@ describe('help team-context deep links', () => {
         expect(link.searchParams.get('role')).toBe('coach');
     });
 
+    it('preserves team context on the watch-and-chat back link', () => {
+        const { document } = bootStaticPage('help-watch-chat.html', '?context=team&teamId=TEAM123&role=parent');
+
+        preserveHelpBackLinkContext(document, '?context=team&teamId=TEAM123&role=parent');
+
+        const link = new URL(document.querySelector('[data-help-back-link]').href);
+        expect(link.pathname).toBe('/help.html');
+        expect(link.searchParams.get('context')).toBe('team');
+        expect(link.searchParams.get('teamId')).toBe('TEAM123');
+        expect(link.searchParams.get('role')).toBe('parent');
+        expect(document.querySelector('[data-quick-link-label="Team Page"]').getAttribute('href')).toBe('team.html');
+        expect(document.querySelector('[data-quick-link-label="Game Viewer"]').getAttribute('href')).toBe('team.html');
+        expect(document.querySelector('[data-quick-link-label="Open Team Chat"]').getAttribute('href')).toBe('team-chat.html');
+    });
+
     it('wires help context preservation into every workflow back link', () => {
         const repoRoot = process.cwd();
         const htmlPages = readdirSync(repoRoot)
-            .filter((file) => /^workflow-.*\.html$/.test(file) || file === 'help-team-operations.html' || file === 'help-page-reference.html')
+            .filter((file) => /^workflow-.*\.html$/.test(file) || file === 'help-team-operations.html' || file === 'help-page-reference.html' || file === 'help-watch-chat.html')
             .sort();
 
         expect(htmlPages.length).toBeGreaterThan(0);

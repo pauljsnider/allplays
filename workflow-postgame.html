@@ -338,7 +338,7 @@
 <li>Quick share: Open <code>team.html</code> and share from <code>Recent Results</code>.</li>
 <li>Full review: Open <code>game.html</code> to confirm summary, play-by-play, and player performance.</li>
 <li>Player follow-up: From <code>game.html</code>, open a player in <code>player.html</code>.</li>
-<li>Replay sharing: Share replay from <code>team.html</code>, <code>game.html</code>, or <code>live-game.html</code> when available.</li>
+<li>Replay sharing: Share replay from <code>team.html</code>, <code>game.html</code>, or <code>live-game-overlay.html</code> when available.</li>
 <li>Check replay status before sharing: open <code>game.html</code> to see the replay state (unavailable, processing, failed, or ready).</li>
 <li>Browse game highlights: open the game media hub to see saved highlight clips with timestamps and player tags.</li>
 </ul>
@@ -421,7 +421,7 @@
 <ul class="ml-6 list-disc space-y-1">
 <li>Where can I share replay only?</li>
 </ul>
-<p>Share from completed live games in <code>team.html</code>, <code>game.html</code>, or <code>live-game.html</code>.</p>
+<p>Share from completed live games in <code>team.html</code>, <code>game.html</code>, or <code>live-game-overlay.html</code>.</p>
 <ul class="ml-6 list-disc space-y-1">
 <li>How do I review one player after the game?</li>
 </ul>
@@ -482,8 +482,8 @@
     </main>
     <div id="footer-container"></div>
     <script type="module">
-      import { checkAuth } from './js/auth.js?v=4433220';
-      import { renderHeader, renderFooter } from './js/utils.js?v=443391';
+      import { checkAuth } from './js/auth.js?v=4433221';
+      import { renderHeader, renderFooter } from './js/utils.js?v=443392';
       renderHeader(document.getElementById('header-container'), null);
       renderFooter(document.getElementById('footer-container'));
       checkAuth((user) => {
