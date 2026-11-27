@@ -209,6 +209,14 @@ export async function assertAuthenticatedAppRoute(page, route, options = {}) {
         heading,
         forbidden = [/Unable to load/i, /\bnot found\b/i, /temporarily unavailable/i],
         requiredHref = '',
+        // The fixture link waits on the parent schedule cold load (profile,
+        // team, player, and staff-team reads), not on navigation. Give it its
+        // own budget instead of the leftover navigation deadline: a slow cold
+        // production load can exhaust the shared 25s budget before the link
+        // renders, which flaked the parent smoke test in post-deploy-smoke
+        // #2423 (run 45092075484, issue #5272) even though the fixture data
+        // was intact and the test passed on retry.
+        requiredHrefTimeoutMs = 60_000,
         panelHeading,
         seededFees = false,
         deadline = Date.now() + 25_000
@@ -249,7 +257,7 @@ export async function assertAuthenticatedAppRoute(page, route, options = {}) {
                 links.some((link) => String(link.getAttribute('href') || '').includes(String(expected)))
             ), requiredHref),
             {
-                timeout: remaining(),
+                timeout: requiredHrefTimeoutMs,
                 message: `Expected a meaningful fixture link containing ${requiredHref}`
             }
         ).toBe(true);
