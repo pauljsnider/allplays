@@ -151,6 +151,25 @@ async function collectResponseMetadata(responses) {
     }
 }
 
+// Messages can show a desktop inbox alert while its separate chat pane is
+// loading or failed. Record only fixed probes, never the text under either pane.
+async function readMessagesFailureState(page, visible) {
+    const window = page.locator('.chat-window').first();
+    const hasText = (text) => visible(window.getByText(text, { exact: true }));
+    const [composerVisible, inboxLoadError, chatRetryVisible, accessDenied, teamUnavailable,
+        contextTimedOut, conversationReadError] = await Promise.all([
+        visible(window.locator('.chat-composer-textarea').first()),
+        visible(page.getByText('Messages couldn’t load', { exact: true })),
+        visible(window.getByRole('button', { name: 'Retry', exact: true }).first()),
+        hasText('You do not have access to this team chat.'),
+        hasText('Team not found.'),
+        visible(window.getByText(/^Chat (?:team|profile) load timed out\.$/)),
+        visible(window.getByText(/^(?:We couldn't open this conversation\. Your team access may have changed\.|Unable to load chat messages\.|Unable to load team chat conversations\. Try again\.)$/))
+    ]);
+    return { composerVisible, inboxLoadError, chatRetryVisible, accessDenied, teamUnavailable,
+        contextTimedOut, conversationReadError };
+}
+
 export function createAppFailureRecorder(page, { baseline = false, includeApiFailures = false, sessionIndex } = {}) {
     const startedAt = Date.now();
     routeTimings.delete(page);
@@ -215,6 +234,10 @@ export function createAppFailureRecorder(page, { baseline = false, includeApiFai
                     }
                     state.feesError = await visible(page.getByText('Unable to load fees.', { exact: true }));
                     state.alert = await visible(page.getByRole('alert').first());
+                    const route = routeTemplate(page.url(), baseline);
+                    if (!baseline && route === '/messages/:id') {
+                        state.messages = await readMessagesFailureState(page, visible);
+                    }
                     if (baseline) {
                         state.playerHeaderAttached = await page.locator('#player-header').count().then((count) => count > 0).catch(() => null);
                         state.playerNotFound = await visible(page.getByText('Player not found', { exact: true }));
@@ -234,7 +257,7 @@ export function createAppFailureRecorder(page, { baseline = false, includeApiFai
                     if (!collecting) return;
                     const diagnostic = JSON.stringify({
                         retry: testInfo.retry, elapsedMs: Date.now() - startedAt,
-                        route: routeTemplate(page.url(), baseline), activeTabs: activeTabs.filter(Boolean), state,
+                        route, activeTabs: activeTabs.filter(Boolean), state,
                         navigation: timing ? { route: routeTemplate(timing.url), elapsedMs: Date.now() - timing.startedAt,
                             shellMs: timing.shellMs ?? null, panelMs: timing.panelMs ?? null } : null,
                         events: snapshotEvents, droppedEvents: snapshotDropped,
