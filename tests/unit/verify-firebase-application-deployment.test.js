@@ -461,6 +461,23 @@ describe('aggregate Firebase function deployment evidence', () => {
         ]);
     });
 
+    it('identifies every intended target when no deployment evidence is present', () => {
+        const error = captureVerificationError(
+            () => verifyFunctions([], expectedDeployments)
+        );
+
+        expect(error).toMatchObject({
+            code: 'firebase-functions-incomplete-targets',
+            metadata: {
+                incompleteTargets: [
+                    'sendNotification',
+                    'sendTeamEmail',
+                    'syncTeamNotificationTargets'
+                ]
+            }
+        });
+    });
+
     it('preserves complete target evidence when retrying the same exact artifact', () => {
         const previousEvidence = mixedAuthoritativeEvidence();
         const previousResult = verifyFunctions(previousEvidence, expectedDeployments);
