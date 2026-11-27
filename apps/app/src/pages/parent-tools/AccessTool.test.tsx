@@ -172,7 +172,8 @@ describe('AccessTool deep-link reconciliation (#3088)', () => {
     it('clears the prior team and player when an unmatched deep-link lookup rejects', async () => {
         let rejectTargetLookup: (reason?: unknown) => void = () => {};
         accessServiceMocks.loadParentAccessPlayers.mockResolvedValue([
-            { id: 'player-a', name: 'Player A', number: '7' }
+            { id: 'player-a', name: 'Player A', number: '7' },
+            { id: 'player-b', name: 'Player B', number: '8' }
         ]);
         accessServiceMocks.loadParentAccessTeam.mockImplementation((teamId: string) => {
             if (teamId === 'team-a') return Promise.resolve({ id: 'team-a', name: 'Team A' });
@@ -185,6 +186,10 @@ describe('AccessTool deep-link reconciliation (#3088)', () => {
         await waitFor(() => expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-a'));
         expect(await view.findByRole('option', { name: '#7 Player A' })).toBeTruthy();
         expect((view.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-a');
+        expect((view.getByLabelText('Player') as HTMLSelectElement).value).toBe('');
+        expect(view.getByRole('button', { name: 'Send request' })).toBeDisabled();
+
+        fireEvent.change(view.getByLabelText('Player'), { target: { value: 'player-a' } });
         expect((view.getByLabelText('Player') as HTMLSelectElement).value).toBe('player-a');
         expect(view.getByRole('button', { name: 'Send request' })).not.toBeDisabled();
 
@@ -305,6 +310,9 @@ describe('AccessTool manual public team discovery', () => {
         fireEvent.change(view.getByLabelText('Team'), { target: { value: 'team-a' } });
         expect(await view.findByRole('option', { name: '#7 Player A' })).toBeTruthy();
         expect((view.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-a');
+        expect((view.getByLabelText('Player') as HTMLSelectElement).value).toBe('');
+
+        fireEvent.change(view.getByLabelText('Player'), { target: { value: 'player-a' } });
         expect((view.getByLabelText('Player') as HTMLSelectElement).value).toBe('player-a');
 
         fireEvent.change(view.getByPlaceholderText('Team name, city, state, or zip'), { target: { value: 'Chicago' } });
@@ -312,6 +320,54 @@ describe('AccessTool manual public team discovery', () => {
         expect((view.getByLabelText('Team') as HTMLSelectElement).value).toBe('');
         expect((view.getByLabelText('Player') as HTMLSelectElement).value).toBe('');
         expect(view.getByRole('option', { name: 'Search or browse teams' })).toBeTruthy();
+    });
+
+    it('requires an explicit player choice and clears it when teams change', async () => {
+        accessServiceMocks.discoverParentAccessTeams.mockResolvedValue({
+            teams: [
+                { id: 'team-a', name: 'Team A' },
+                { id: 'team-b', name: 'Team B' }
+            ],
+            nextCursor: null
+        });
+        accessServiceMocks.loadParentAccessPlayers.mockImplementation(async (teamId: string) => (
+            teamId === 'team-a'
+                ? [
+                    { id: 'player-a1', name: 'Player A One', number: '7' },
+                    { id: 'player-a2', name: 'Player A Two', number: '9' }
+                ]
+                : [{ id: 'player-b', name: 'Player B', number: '8' }]
+        ));
+
+        const view = renderTool('');
+
+        fireEvent.click(await view.findByRole('button', { name: 'Request access without a code' }));
+        fireEvent.click(view.getByRole('button', { name: 'Browse' }));
+        expect(await view.findByRole('option', { name: 'Team A' })).toBeTruthy();
+
+        fireEvent.change(view.getByLabelText('Team'), { target: { value: 'team-a' } });
+        expect(await view.findByRole('option', { name: '#9 Player A Two' })).toBeTruthy();
+        expect((view.getByLabelText('Player') as HTMLSelectElement).value).toBe('');
+        expect(view.getByRole('option', { name: 'Choose a player' })).toBeTruthy();
+        expect(view.getByRole('button', { name: 'Send request' })).toBeDisabled();
+
+        fireEvent.change(view.getByLabelText('Player'), { target: { value: 'player-a2' } });
+        expect(view.getByRole('button', { name: 'Send request' })).not.toBeDisabled();
+
+        fireEvent.change(view.getByLabelText('Team'), { target: { value: 'team-b' } });
+        expect((view.getByLabelText('Player') as HTMLSelectElement).value).toBe('');
+        expect(view.getByRole('button', { name: 'Send request' })).toBeDisabled();
+        expect(accessServiceMocks.submitParentAccessRequest).not.toHaveBeenCalled();
+
+        expect(await view.findByRole('option', { name: '#8 Player B' })).toBeTruthy();
+        expect((view.getByLabelText('Player') as HTMLSelectElement).value).toBe('');
+        expect(view.getByRole('button', { name: 'Send request' })).toBeDisabled();
+
+        fireEvent.change(view.getByLabelText('Player'), { target: { value: 'player-b' } });
+        fireEvent.click(view.getByRole('button', { name: 'Send request' }));
+
+        await waitFor(() => expect(accessServiceMocks.submitParentAccessRequest).toHaveBeenCalledWith('team-b', 'player-b', 'Parent'));
+        expect(accessServiceMocks.submitParentAccessRequest).toHaveBeenCalledTimes(1);
     });
 
     it('ignores stale team search results that resolve after a newer search', async () => {
@@ -456,7 +512,8 @@ describe('AccessTool manual public team discovery', () => {
         });
 
         expect((view.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-b');
-        expect((view.getByLabelText('Player') as HTMLSelectElement).value).toBe('player-b');
+        expect((view.getByLabelText('Player') as HTMLSelectElement).value).toBe('');
+        expect(view.getByRole('button', { name: 'Send request' })).toBeDisabled();
         expect(view.queryByRole('option', { name: '#7 Player A' })).toBeNull();
     });
 

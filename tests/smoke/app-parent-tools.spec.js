@@ -378,7 +378,10 @@ async function mockParentToolsModules(page, { paymentsEnabled = false } = {}) {
                 export async function loadParentAccessPlayers(teamId) {
                     window.__playerLoads.push(String(teamId));
                     if (String(teamId) === 'team-2') {
-                        return [{ id: 'player-2', name: 'Cam Comet', number: '22', photoUrl: null }];
+                        return [
+                            { id: 'player-2', name: 'Cam Comet', number: '22', photoUrl: null },
+                            { id: 'player-3', name: 'Sam Satellite', number: '33', photoUrl: null }
+                        ];
                     }
                     return [{ id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null }];
                 }
@@ -461,7 +464,10 @@ async function mockParentToolsModules(page, { paymentsEnabled = false } = {}) {
                 export async function loadParentAccessPlayers(teamId) {
                     window.__playerLoads.push(String(teamId));
                     if (String(teamId) === 'team-2') {
-                        return [{ id: 'player-2', name: 'Cam Comet', number: '22', photoUrl: null }];
+                        return [
+                            { id: 'player-2', name: 'Cam Comet', number: '22', photoUrl: null },
+                            { id: 'player-3', name: 'Sam Satellite', number: '33', photoUrl: null }
+                        ];
                     }
                     return [{ id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null }];
                 }
@@ -639,9 +645,13 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await expect.poll(() => page.evaluate(() => window.__publicTeamLoads)).toBe(2);
     await page.getByLabel('Team', { exact: true }).selectOption('team-2');
     await expect.poll(() => page.evaluate(() => window.__playerLoads)).toEqual(['team-2']);
-    await page.getByLabel('Player').selectOption('player-2');
+    await expect(page.getByLabel('Player')).toHaveValue('');
+    await expect(page.getByLabel('Player').getByRole('option', { name: 'Choose a player' })).toBeAttached();
+    await expect(page.getByRole('button', { name: /Send request/ })).toBeDisabled();
+    await expect.poll(() => page.evaluate(() => window.__accessRequests)).toEqual([]);
+    await page.getByLabel('Player').selectOption('player-3');
     await page.getByRole('button', { name: /Send request/ }).click();
-    await expect.poll(() => page.evaluate(() => window.__accessRequests.at(-1))).toEqual({ teamId: 'team-2', playerId: 'player-2', relation: 'Parent' });
+    await expect.poll(() => page.evaluate(() => window.__accessRequests.at(-1))).toEqual({ teamId: 'team-2', playerId: 'player-3', relation: 'Parent' });
 
     await page.getByRole('navigation', { name: 'Family tools' }).getByRole('link', { name: 'Fees' }).click();
     await expect(page.getByText('Team dues')).toBeVisible();
