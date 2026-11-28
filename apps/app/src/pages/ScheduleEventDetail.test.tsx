@@ -2269,7 +2269,7 @@ describe('ScheduleEventDetail assignments', () => {
     consoleWarn.mockRestore();
   });
 
-  it('keeps the empty Tasks tab visible for team admins before assignments exist', async () => {
+  it('keeps the empty Assignments tab visible for team admins before assignments exist', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
         isDbGame: false,

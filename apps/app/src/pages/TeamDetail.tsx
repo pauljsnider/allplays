@@ -1377,7 +1377,7 @@ function TeamEventReminderAction({ event, model, auth, reminderPreviewLoader }: 
       <div className="mt-3 flex justify-start">
         <button type="button" className="secondary-button !min-h-9 px-3 text-xs" onClick={loadPreview}>
           <Zap className="h-3.5 w-3.5" aria-hidden="true" />
-          Review reminder
+          Review RSVP reminder
         </button>
       </div>
     );

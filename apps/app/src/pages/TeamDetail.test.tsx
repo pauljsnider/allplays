@@ -867,7 +867,7 @@ describe('TeamDetail', () => {
     await waitFor(() => expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2));
     expect(await screen.findByText('Bears vs Tigers')).toBeTruthy();
     expect(screen.getByRole('link', { name: /1\s+Upcoming/ })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Review reminder' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Review RSVP reminder' })).toBeNull();
     expect(teamDetailServiceMocks.loadParentTeamDetail).not.toHaveBeenCalled();
 
     fireEvent.click(within(screen.getByRole('navigation', { name: 'Team detail sections' })).getByRole('button', { name: /overview/i }));
@@ -1545,7 +1545,7 @@ describe('TeamDetail', () => {
     );
 
     expect(await screen.findByText('Bears vs Tigers')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Review reminder' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Review RSVP reminder' }));
 
     expect(await screen.findByText('Reminder preview temporarily unavailable.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Retry reminder preview' }));
@@ -1606,7 +1606,7 @@ describe('TeamDetail', () => {
     );
 
     expect(await screen.findByText('Bears Practice')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Review reminder' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Review RSVP reminder' })).toBeNull();
   });
 
   it('does not reload team detail when the auth object identity changes but the signed-in user does not', async () => {

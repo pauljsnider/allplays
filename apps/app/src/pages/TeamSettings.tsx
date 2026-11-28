@@ -286,7 +286,7 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
               onChange={(event) => setForm((current) => ({ ...current, zip: event.target.value }))}
               inputMode="numeric"
               className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-950 shadow-sm outline-none focus:border-primary-500"
-              placeholder="66210"
+              placeholder="e.g. 66210"
             />
           </label>
 

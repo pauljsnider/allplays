@@ -200,7 +200,7 @@ describe('TeamSettings', () => {
 
     fireEvent.change(nameInput, { target: { value: 'Lady Bears' } });
     fireEvent.change(screen.getByPlaceholderText('Basketball'), { target: { value: 'Soccer' } });
-    fireEvent.change(screen.getByPlaceholderText('66210'), { target: { value: '66210-1234' } });
+    fireEvent.change(screen.getByPlaceholderText('e.g. 66210'), { target: { value: '66210-1234' } });
     fireEvent.change(screen.getByPlaceholderText('https://league.example.com/standings'), { target: { value: 'https://league.example.test/new' } });
     fireEvent.change(screen.getByPlaceholderText('https://youtu.be/... or https://twitch.tv/...'), { target: { value: 'https://youtu.be/LJNfHqRRhBI' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save team' }));
