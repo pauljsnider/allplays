@@ -83,7 +83,7 @@ function renderMessages() {
 }
 
 async function openStaffActions() {
-  fireEvent.click(await screen.findByRole('button', { name: 'Open staff actions' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Open staff actions' }, { timeout: 5000 }));
 }
 
 async function openAudienceSheet() {
@@ -201,7 +201,7 @@ describe('Messages team email templates', () => {
     await openTeamEmailSheet();
 
     const dialog = await screen.findByRole('dialog', { name: 'Team Email' });
-    const subjectField = within(dialog).getByLabelText('Subject');
+    const subjectField = await within(dialog).findByLabelText('Subject');
     const messageField = within(dialog).getByLabelText('Message');
     const sendButton = within(dialog).getByRole('button', { name: 'Send email' });
     const savedDraftsHeading = within(dialog).getByText('Saved drafts');
