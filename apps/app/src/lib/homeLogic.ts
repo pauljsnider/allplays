@@ -7,7 +7,7 @@ import {
 import type { ParentScheduleChild } from './scheduleService';
 import { isTeamActive } from './adapters/legacyTeamVisibility';
 
-export type HomeActionKind = 'rsvp' | 'packet' | 'assignment' | 'rideshare' | 'fee' | 'message';
+export type HomeActionKind = 'rsvp' | 'packet' | 'practice' | 'assignment' | 'rideshare' | 'fee' | 'message';
 export type HomeActionTone = 'amber' | 'blue' | 'emerald' | 'rose' | 'gray';
 
 export type ParentHomeFee = {

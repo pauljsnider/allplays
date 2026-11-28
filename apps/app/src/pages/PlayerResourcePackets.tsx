@@ -17,14 +17,19 @@ export function PlayerResourcePackets({ auth }: { auth: AuthState }) {
   const uid = auth.user?.uid;
   const enabled = resourcePacketsAvailable();
   useEffect(() => {
-    if (!enabled || !uid || (teamId && playerId)) return;
+    if (!enabled || !uid) return;
     let cancelled = false;
     setLoadedUid('');
     setError('');
+    setPlayers([]);
     void loadResourcePacketLinkedPlayers()
       .then(async (result) => {
-        let linked = result.players.filter((player) => !assignmentTeam || player.teamId === assignmentTeam);
-        if (assignmentId) {
+        let linked = result.players.filter((player) =>
+          teamId && playerId
+            ? player.teamId === teamId && player.playerId === playerId
+            : !assignmentTeam || player.teamId === assignmentTeam
+        );
+        if (!teamId && !playerId && assignmentId) {
           const assigned = [];
           for (const player of linked) {
             const page = await loadResourcePacketFamily(player.teamId, player.playerId, undefined, assignmentId);
@@ -46,55 +51,52 @@ export function PlayerResourcePackets({ auth }: { auth: AuthState }) {
   }, [uid, enabled, teamId, playerId, reload, assignmentTeam, assignmentId]);
   return (
     <main className="mx-auto max-w-3xl space-y-4 p-4 pb-24">
-      <Link className="inline-block min-h-11 py-3 text-emerald-800 underline" to="/schedule?view=packets">
-        Back to Schedule
+      <Link className="inline-block min-h-11 py-3 text-emerald-800 underline" to="/home">
+        Back to Home
       </Link>
-      <h1 className="text-2xl font-bold">Player practice resources</h1>
+      <h1 className="text-2xl font-bold">Practice task</h1>
       {enabled && auth.user ? (
-        teamId && playerId ? (
-          <ResourcePacketQueue
-            singlePlayer
-            uid={auth.user.uid}
-            children={[{ teamId, playerId, teamName: 'Selected team', playerName: 'Selected player' }]}
-            staffTeams={[]}
-          />
-        ) : (
-          <section aria-label="Your linked players">
-            {error ? (
-              <div role="alert">
-                {error}{' '}
-                <button className="min-h-11 underline" onClick={() => setReload((value) => value + 1)}>
-                  Retry
-                </button>
-              </div>
-            ) : loadedUid !== uid ? (
-              <p role="status">Loading your players…</p>
-            ) : players.length === 1 && assignmentId ? (
-              <ResourcePacketQueue uid={auth.user.uid} children={players} staffTeams={[]} singlePlayer />
-            ) : players.length ? (
-              <ul>
-                {players.map((player) => (
-                  <li key={`${player.teamId}:${player.playerId}`}>
-                    <Link
-                      className="inline-block min-h-11 py-3 text-emerald-800 underline"
-                      to={`/players/${encodeURIComponent(player.teamId)}/${encodeURIComponent(player.playerId)}/resources${assignmentId ? `?assignmentId=${encodeURIComponent(assignmentId)}` : ''}`}
-                    >
-                      {player.playerName} · {player.teamName}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+        <section aria-label="Your linked players">
+          {error ? (
+            <div role="alert">
+              {error}{' '}
+              <button className="min-h-11 underline" onClick={() => setReload((value) => value + 1)}>
+                Retry
+              </button>
+            </div>
+          ) : loadedUid !== uid ? (
+            <p role="status">Loading your players…</p>
+          ) : teamId && playerId ? (
+            players.length === 1 ? (
+              <ResourcePacketQueue uid={auth.user.uid} linkedChildren={players} staffTeams={[]} singlePlayer />
             ) : (
-              <p>
-                {assignmentId
-                  ? 'This assignment is not available for your linked players.'
-                  : 'No active players are linked to your account.'}
-              </p>
-            )}
-          </section>
-        )
+              <p>This player is not available for your account.</p>
+            )
+          ) : players.length === 1 && assignmentId ? (
+            <ResourcePacketQueue uid={auth.user.uid} linkedChildren={players} staffTeams={[]} singlePlayer />
+          ) : players.length ? (
+            <ul>
+              {players.map((player) => (
+                <li key={`${player.teamId}:${player.playerId}`}>
+                  <Link
+                    className="inline-block min-h-11 py-3 text-emerald-800 underline"
+                    to={`/players/${encodeURIComponent(player.teamId)}/${encodeURIComponent(player.playerId)}/resources${assignmentId ? `?assignmentId=${encodeURIComponent(assignmentId)}` : ''}`}
+                  >
+                    {player.playerName} · {player.teamName}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>
+              {assignmentId
+                ? 'This assignment is not available for your linked players.'
+                : 'No active players are linked to your account.'}
+            </p>
+          )}
+        </section>
       ) : (
-        <p>Resource packets are not available in this app.</p>
+        <p>Practice tasks are not available right now.</p>
       )}
     </main>
   );
