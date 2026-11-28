@@ -224,6 +224,7 @@ import {
 import { computeNativeStandings } from '../../../../js/native-standings.js';
 import { hasFullTeamAccess } from '../../../../js/team-access.js';
 import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from '../../../../js/stat-leaderboards.js';
+import { loadProfileDocument } from './profileService';
 
 describe('buildTeamAnalytics', () => {
   it('builds chronological score trends, recent form, averages, and differential', () => {
@@ -1932,6 +1933,69 @@ describe('team detail bootstrap loading', () => {
     expect(insights.teamAnalytics.seasonLabel).toBe('2026');
     expect(insights.teamAnalytics.completedGameCount).toBe(0);
     expect(insights.teamAnalytics.availableSeasons).toEqual(['2026', '2025']);
+  });
+
+  it('hydrates a parent link from the Firestore profile for the Overview linked count (#5246)', async () => {
+    __resetTeamDetailBaseSnapshotCacheForTests();
+    seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026', '2025']);
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', sport: 'Basketball' });
+    dbMocks.getPlayers.mockResolvedValue([
+      { id: 'player-1', name: 'Will Player', number: '0', active: true }
+    ]);
+    dbMocks.getGames.mockResolvedValue([
+      { id: 'current', type: 'game', status: 'scheduled', seasonLabel: '2026', date: '2026-03-01T18:00:00Z' },
+      { id: 'older', type: 'game', status: 'completed', seasonLabel: '2025', date: '2025-10-01T18:00:00Z', homeScore: 5, awayScore: 0 }
+    ]);
+    dbMocks.getPublicTrackingItems.mockResolvedValue([]);
+    dbMocks.getPlayerTrackingStatuses.mockResolvedValue([]);
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', teamName: 'Team One', playerName: 'Will Player' }],
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1']
+    } as any);
+
+    // The in-memory auth user predates the invite auto-link, so the linked
+    // player must come from the hydrated profile, not the sign-in snapshot.
+    const insights = await loadTeamDetailInsights('team-1', { uid: 'parent-1', parentOf: [] } as any);
+
+    expect(vi.mocked(loadProfileDocument)).toHaveBeenCalledWith('parent-1');
+    // Tracking reads only run for linked players; without hydration this
+    // stays uncalled and the Overview reports "0 linked to your account".
+    expect(dbMocks.getPublicTrackingItems).toHaveBeenCalledWith('team-1');
+    expect(insights.trackingSummaries).toEqual([]);
+    __resetTeamDetailBaseSnapshotCacheForTests();
+  });
+
+  it('excludes a revoked snapshot child when another child remains linked on the team (#5252)', async () => {
+    __resetTeamDetailBaseSnapshotCacheForTests();
+    seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026']);
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', sport: 'Basketball' });
+    dbMocks.getPlayers.mockResolvedValue([
+      { id: 'player-1', name: 'Revoked Player', active: true, parents: [{ userId: 'other-parent' }] },
+      { id: 'player-2', name: 'Linked Player', active: true, parents: [{ userId: 'parent-1' }] }
+    ]);
+    dbMocks.getGames.mockResolvedValue([
+      { id: 'current', type: 'game', status: 'scheduled', seasonLabel: '2026', date: '2026-03-01T18:00:00Z' }
+    ]);
+    dbMocks.getPublicTrackingItems.mockResolvedValue([]);
+    dbMocks.getPlayerTrackingStatuses.mockResolvedValue([]);
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-1', playerId: 'player-2', playerName: 'Linked Player' }],
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-2']
+    } as any);
+
+    await loadTeamDetailInsights('team-1', {
+      uid: 'parent-1',
+      parentOf: [
+        { teamId: 'team-1', playerId: 'player-1', playerName: 'Revoked Player' },
+        { teamId: 'team-1', playerId: 'player-2', playerName: 'Linked Player' }
+      ],
+      parentPlayerKeys: ['team-1::player-1', 'team-1::player-2']
+    } as any);
+
+    expect(dbMocks.getPlayerTrackingStatuses).toHaveBeenCalledWith('team-1', ['player-2']);
+    __resetTeamDetailBaseSnapshotCacheForTests();
   });
 
   it('keeps leaderboards aggregated across all completed games while roster statistics stay season scoped', async () => {

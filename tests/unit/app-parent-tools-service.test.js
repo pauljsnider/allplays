@@ -281,6 +281,8 @@ beforeEach(() => {
     delete window.ALLPLAYS_TEAM_CALENDAR_FEED_URL;
     authMocks.firebaseAuth.currentUser.getIdToken.mockResolvedValue('firebase-token');
     authMocks.getNativeAuthIdToken.mockResolvedValue('native-token');
+    dbMocks.getUserProfile.mockResolvedValue({});
+    dbMocks.getPlayers.mockResolvedValue([]);
 });
 
 describe('React app parent tools service', () => {
@@ -667,6 +669,55 @@ describe('React app parent tools service', () => {
         expect(dbMocks.revokeFamilyShareToken).toHaveBeenCalledWith('token-1');
         expect(dbMocks.updateFamilyShareTokenCalendars).toHaveBeenCalledWith('token-1', ['https://calendar.example.test/b.ics']);
         vi.useRealTimers();
+    });
+
+    it('applies current parent scope across fees, shares, certificates, registrations, and media (#5252)', async () => {
+        const staleUser = {
+            uid: 'parent-1',
+            parentOf: [
+                { teamId: 'team-revoked', playerId: 'player-1', playerName: 'Revoked Player' },
+                { teamId: 'team-current', playerId: 'player-2', playerName: 'Current Player' }
+            ],
+            parentTeamIds: ['team-revoked', 'team-current'],
+            parentPlayerKeys: ['team-revoked::player-1', 'team-current::player-2'],
+            coachOf: []
+        };
+        dbMocks.getUserProfile.mockResolvedValue({
+            parentOf: [{ teamId: 'team-current', playerId: 'player-2', playerName: 'Current Player' }],
+            parentTeamIds: ['team-current'],
+            parentPlayerKeys: ['team-current::player-2'],
+            coachOf: []
+        });
+        dbMocks.getPlayers.mockImplementation(async (teamId) => (
+            teamId === 'team-revoked'
+                ? [{ id: 'player-1', parents: [{ userId: 'other-parent' }] }]
+                : [{ id: 'player-2', parents: [{ userId: 'parent-1' }] }]
+        ));
+        dbMocks.listParentTeamFeeRecipients.mockResolvedValue([]);
+        dbMocks.createFamilyShareToken.mockResolvedValue('token-current');
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-revoked', name: 'Former Team' });
+        dbMocks.getTeamMediaFolders.mockResolvedValue([]);
+
+        await loadParentFeesForApp(staleUser);
+        await createParentFamilyShare(staleUser, 'Family', []);
+        await loadParentCertificates(staleUser);
+        await expect(loadParentRegistrationDetail(staleUser, 'team-revoked', 'form-1'))
+            .rejects.toThrow('Registration is not linked to your family.');
+        await loadTeamMediaForApp(staleUser, 'team-revoked');
+
+        const currentLink = expect.objectContaining({ teamId: 'team-current', playerId: 'player-2' });
+        expect(dbMocks.listParentTeamFeeRecipients).toHaveBeenCalledWith('parent-1', [currentLink]);
+        expect(dbMocks.createFamilyShareToken).toHaveBeenCalledWith('parent-1', [currentLink], 'Family', []);
+        expect(dbMocks.listCertificatesForPlayer).toHaveBeenCalledTimes(1);
+        expect(dbMocks.listCertificatesForPlayer).toHaveBeenCalledWith(
+            'team-current',
+            'player-2',
+            { status: 'published', limit: 25 }
+        );
+        expect(mediaMocks.canContributeTeamMedia).toHaveBeenCalledWith(
+            expect.objectContaining({ parentOf: [currentLink] }),
+            expect.objectContaining({ id: 'team-revoked' })
+        );
     });
 
     it('loads published registrations for parent and coach teams without scanning every form', async () => {

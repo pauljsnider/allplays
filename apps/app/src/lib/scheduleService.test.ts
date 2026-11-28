@@ -645,6 +645,204 @@ describe('parent schedule child scope', () => {
     expect(getPlayers).not.toHaveBeenCalled();
   });
 
+  it('unions profile and auth-user parent links instead of letting one source win (#5246)', async () => {
+    const mixedUser = {
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      roles: ['parent'],
+      parentOf: [{ teamId: 'team-2', playerId: 'player-2', teamName: 'Hawks', playerName: 'Will Player' }]
+    } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', teamName: 'Bears', playerName: 'Madison Player' }],
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1']
+    } as any);
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
+      'team-1': { id: 'team-1', name: 'Bears', active: true },
+      'team-2': { id: 'team-2', name: 'Hawks', active: true }
+    }[teamId] || null) as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      if (ref?.path === 'teams/team-1/players/player-1') {
+        return playerSnapshot('player-1', { name: 'Madison Player', active: true }) as any;
+      }
+      if (ref?.path === 'teams/team-2/players/player-2') {
+        // Snapshot-only link (#5252): the live player document must still
+        // list the parent, or the union would resurrect a revoked link.
+        return playerSnapshot('player-2', { name: 'Will Player', active: true, parents: [{ userId: 'parent-1' }] }) as any;
+      }
+      return playerSnapshot(String(ref?.path || '').split('/').pop() || 'missing', null) as any;
+    });
+
+    const children = await loadParentScheduleChildren(mixedUser);
+
+    expect(children).toHaveLength(2);
+    expect(children).toEqual(expect.arrayContaining([
+      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Madison Player', isLinkedParentChild: true },
+      { teamId: 'team-2', teamName: 'Hawks', playerId: 'player-2', playerName: 'Will Player', isLinkedParentChild: true }
+    ]));
+    expect(getPlayers).not.toHaveBeenCalled();
+  });
+
+  it('keeps a snapshot-only link when the live player document still lists the parent (#5252)', async () => {
+    const mixedUser = {
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      roles: ['parent'],
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', teamName: 'Bears', playerName: 'Madison Player' }]
+    } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-2', playerId: 'player-2', teamName: 'Hawks', playerName: 'Will Player' }],
+      parentTeamIds: ['team-2'],
+      parentPlayerKeys: ['team-2::player-2']
+    } as any);
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
+      'team-1': { id: 'team-1', name: 'Bears', active: true },
+      'team-2': { id: 'team-2', name: 'Hawks', active: true }
+    }[teamId] || null) as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      if (ref?.path === 'teams/team-1/players/player-1') {
+        return playerSnapshot('player-1', {
+          name: 'Madison Player',
+          active: true,
+          parents: [{ userId: 'parent-1', email: 'parent@example.com', relation: 'Parent' }]
+        }) as any;
+      }
+      if (ref?.path === 'teams/team-2/players/player-2') {
+        return playerSnapshot('player-2', { name: 'Will Player', active: true }) as any;
+      }
+      return playerSnapshot(String(ref?.path || '').split('/').pop() || 'missing', null) as any;
+    });
+
+    const children = await loadParentScheduleChildren(mixedUser);
+
+    expect(children).toHaveLength(2);
+    expect(children).toEqual(expect.arrayContaining([
+      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Madison Player', isLinkedParentChild: true },
+      { teamId: 'team-2', teamName: 'Hawks', playerId: 'player-2', playerName: 'Will Player', isLinkedParentChild: true }
+    ]));
+  });
+
+  it('drops a revoked snapshot-only link when the player document no longer lists the parent (#5252)', async () => {
+    const mixedUser = {
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      roles: ['parent'],
+      // Revoked after sign-in: the auth snapshot still carries player-1,
+      // but the fresh profile only retains player-2 on the same team.
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', teamName: 'Bears', playerName: 'Revoked Player' }]
+    } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-1', playerId: 'player-2', teamName: 'Bears', playerName: 'Kept Player' }],
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-2']
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', active: true } as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      if (ref?.path === 'teams/team-1/players/player-1') {
+        // Active roster player, but the parent entry was removed with the link.
+        return playerSnapshot('player-1', { name: 'Revoked Player', active: true, parents: [{ userId: 'other-parent' }] }) as any;
+      }
+      if (ref?.path === 'teams/team-1/players/player-2') {
+        return playerSnapshot('player-2', { name: 'Kept Player', active: true }) as any;
+      }
+      return playerSnapshot(String(ref?.path || '').split('/').pop() || 'missing', null) as any;
+    });
+
+    const children = await loadParentScheduleChildren(mixedUser);
+
+    expect(children).toEqual([
+      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Kept Player', isLinkedParentChild: true }
+    ]);
+  });
+
+  it('validates snapshot-only parentPlayerKeys links against live membership (#5252)', async () => {
+    const mixedUser = {
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      roles: ['parent'],
+      parentOf: [],
+      parentPlayerKeys: ['team-1::player-1', 'team-1::player-2']
+    } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [],
+      parentTeamIds: [],
+      parentPlayerKeys: []
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', active: true } as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      if (ref?.path === 'teams/team-1/players/player-1') {
+        return playerSnapshot('player-1', { name: 'Linked Player', active: true, parents: [{ userId: 'parent-1' }] }) as any;
+      }
+      if (ref?.path === 'teams/team-1/players/player-2') {
+        return playerSnapshot('player-2', { name: 'Unlinked Player', active: true, parents: [] }) as any;
+      }
+      return playerSnapshot(String(ref?.path || '').split('/').pop() || 'missing', null) as any;
+    });
+
+    const children = await loadParentScheduleChildren(mixedUser);
+
+    expect(children).toEqual([
+      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Linked Player', isLinkedParentChild: true }
+    ]);
+  });
+
+  it('keeps a profile parent link when the auth user carries a different child (#5246)', async () => {
+    const mixedUser = {
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      roles: ['parent'],
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', teamName: 'Bears', playerName: 'Madison Player' }]
+    } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-2', playerId: 'player-2', teamName: 'Hawks', playerName: 'Will Player' }],
+      parentTeamIds: ['team-2'],
+      parentPlayerKeys: ['team-2::player-2']
+    } as any);
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
+      'team-1': { id: 'team-1', name: 'Bears', active: true },
+      'team-2': { id: 'team-2', name: 'Hawks', active: true }
+    }[teamId] || null) as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      if (ref?.path === 'teams/team-1/players/player-1') {
+        // Snapshot-only link (#5252): the live player document must still
+        // list the parent, or the union would resurrect a revoked link.
+        return playerSnapshot('player-1', { name: 'Madison Player', active: true, parents: [{ userId: 'parent-1' }] }) as any;
+      }
+      if (ref?.path === 'teams/team-2/players/player-2') {
+        return playerSnapshot('player-2', { name: 'Will Player', active: true }) as any;
+      }
+      return playerSnapshot(String(ref?.path || '').split('/').pop() || 'missing', null) as any;
+    });
+
+    const children = await loadParentScheduleChildren(mixedUser);
+
+    expect(children).toHaveLength(2);
+    expect(children).toEqual(expect.arrayContaining([
+      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Madison Player', isLinkedParentChild: true },
+      { teamId: 'team-2', teamName: 'Hawks', playerId: 'player-2', playerName: 'Will Player', isLinkedParentChild: true }
+    ]));
+  });
+
+  it('trusts snapshot-only links when the profile carries no parent-scope record yet (#5252)', async () => {
+    const mixedUser = {
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      roles: ['parent'],
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', teamName: 'Bears', playerName: 'User fallback' }]
+    } as any;
+    // Profile has not hydrated yet: no parent-scope fields at all, so it
+    // proves nothing either way and the snapshot is the only evidence.
+    vi.mocked(loadProfileDocument).mockResolvedValue({} as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', active: true } as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('player-1', { name: 'User fallback', active: true }) as any);
+
+    const children = await loadParentScheduleChildren(mixedUser);
+
+    expect(children).toEqual([
+      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'User fallback', isLinkedParentChild: true }
+    ]);
+  });
+
   it('loads parent-linked players without requiring a browser window for timeout guards', async () => {
     const previousWindow = (globalThis as any).window;
     delete (globalThis as any).window;

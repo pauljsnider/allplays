@@ -1,4 +1,5 @@
 import { createFamilyShareToken, listFamilyShareTokens, revokeFamilyShareToken, updateFamilyShareTokenCalendars } from './adapters/legacyParentTools';
+import { hydrateParentAccessUser } from './profileService';
 import type { AuthUser } from './types';
 
 const legacyOrigin = 'https://allplays.ai';
@@ -10,7 +11,10 @@ export type FamilyShareTokenCard = Record<string, any> & {
 
 export async function loadFamilyShareModel(user: AuthUser | null): Promise<{ children: any[]; tokens: FamilyShareTokenCard[] }> {
     if (!user?.uid) return { children: [], tokens: [] };
-    const children = normalizeFamilyChildren(user.parentOf || []);
+    // Hydrate from the Firestore profile (#5246): the in-memory auth user is
+    // a sign-in snapshot and misses parent links created after sign-in.
+    const accessUser = (await hydrateParentAccessUser(user)) || user;
+    const children = normalizeFamilyChildren(accessUser.parentOf || []);
     const tokens = await Promise.resolve(listFamilyShareTokens(user.uid));
     return {
         children,
@@ -26,7 +30,9 @@ export async function loadFamilyShareModel(user: AuthUser | null): Promise<{ chi
 
 export async function createParentFamilyShare(user: AuthUser | null, label: string, extraCalendarUrls: string[] = []) {
     if (!user?.uid) throw new Error('Sign in before creating a family share link.');
-    const tokenId = await createFamilyShareToken(user.uid, normalizeFamilyChildren(user.parentOf || []), label, extraCalendarUrls);
+    // Hydrate from the Firestore profile (#5246).
+    const accessUser = (await hydrateParentAccessUser(user)) || user;
+    const tokenId = await createFamilyShareToken(user.uid, normalizeFamilyChildren(accessUser.parentOf || []), label, extraCalendarUrls);
     return { tokenId, url: getFamilyShareUrl(tokenId) };
 }
 

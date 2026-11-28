@@ -1,4 +1,5 @@
 import { getCertificate, getTeam, listCertificatesForPlayer } from './adapters/legacyParentTools';
+import { hydrateParentAccessUser } from './profileService';
 import type { AuthUser } from './types';
 
 const legacyOrigin = 'https://allplays.ai';
@@ -18,7 +19,10 @@ export type LoadParentCertificatesOptions = {
 };
 
 export async function loadParentCertificates(user: AuthUser | null, options: LoadParentCertificatesOptions = {}): Promise<ParentCertificateCard[]> {
-    const children = normalizeFamilyChildren(user?.parentOf || []);
+    // Hydrate from the Firestore profile (#5246): the in-memory auth user is
+    // a sign-in snapshot and misses parent links created after sign-in.
+    const accessUser = (await hydrateParentAccessUser(user)) || user;
+    const children = normalizeFamilyChildren(accessUser?.parentOf || []);
     const teamReads = new Map<string, Promise<any>>();
     const readTeam = (teamId: string) => {
         if (!teamReads.has(teamId)) {
@@ -63,7 +67,9 @@ export async function loadParentCertificate(
 ): Promise<ParentCertificateCard | null> {
     const teamId = compactString(requestedTeamId);
     const certificateId = compactString(requestedCertificateId);
-    const linkedChildren = normalizeFamilyChildren(user?.parentOf || [])
+    // Hydrate from the Firestore profile (#5246).
+    const accessUser = (await hydrateParentAccessUser(user)) || user;
+    const linkedChildren = normalizeFamilyChildren(accessUser?.parentOf || [])
         .filter((child) => child.teamId === teamId);
     if (!teamId || !certificateId || !linkedChildren.length) return null;
 

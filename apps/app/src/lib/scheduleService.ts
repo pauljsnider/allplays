@@ -100,6 +100,13 @@ import {
   type TournamentScheduleGroupQuery
 } from './tournamentScheduleStandings';
 import { loadManagedTeamsFromNativeCallable, loadProfileDocument, saveProfileDocument } from './profileService';
+import {
+  mergeParentOfLinks,
+  mergeParentScopeStrings,
+  parseParentPlayerKey,
+  playerListsParent,
+  profileHasParentScope
+} from './parentAccessScope';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { callNativeFirebaseFunction } from './nativeCallable';
 import { startUxTimer } from './uxTiming';
@@ -440,6 +447,8 @@ type ParentScopeLink = ParentScheduleChild & {
   playerNumber?: string;
   playerPhotoUrl?: string | null;
   hasMetadata: boolean;
+  /** True when the link is present in the fresh Firestore profile. */
+  profileBacked: boolean;
 };
 
 export type ParentScheduleStaffTeam = {
@@ -3400,24 +3409,30 @@ function getUserArray(user: AuthUser, key: keyof AuthUser | 'parentTeamIds' | 'p
   return Array.isArray(value) ? value : [];
 }
 
-function parseParentPlayerKey(value: unknown) {
-  const raw = compactString(value);
-  const separatorIndex = raw.indexOf('::');
-  if (separatorIndex <= 0 || separatorIndex >= raw.length - 2) return null;
-  const teamId = compactString(raw.slice(0, separatorIndex));
-  const playerId = compactString(raw.slice(separatorIndex + 2));
-  if (!teamId || !playerId) return null;
-  return { teamId, playerId };
-}
-
 function collectParentScopeLinks(user: AuthUser, profile: Record<string, unknown>): ParentScopeLink[] {
   const linksByKey = new Map<string, ParentScopeLink>();
 
-  const addLink = (link: ParentScopeLink) => {
+  // Keys backed by the fresh Firestore profile. A link is "snapshot-only"
+  // when it comes from the in-memory auth user (hydrated once at sign-in)
+  // but is absent here; the profile may have lost it after sign-in, so a
+  // snapshot-only link is not proof of membership on its own (#5252).
+  const profileBackedKeys = new Set<string>();
+  getProfileArray(profile, 'parentOf').forEach((entry: any) => {
+    const teamId = compactString(entry?.teamId);
+    const playerId = compactString(entry?.playerId || entry?.childId);
+    if (teamId && playerId) profileBackedKeys.add(`${teamId}::${playerId}`);
+  });
+  getProfileArray(profile, 'parentPlayerKeys').forEach((key) => {
+    const parsed = parseParentPlayerKey(key);
+    if (parsed) profileBackedKeys.add(`${parsed.teamId}::${parsed.playerId}`);
+  });
+
+  const addLink = (link: Omit<ParentScopeLink, 'profileBacked'>) => {
     const key = `${link.teamId}::${link.playerId}`;
+    const profileBacked = profileBackedKeys.has(key);
     const existing = linksByKey.get(key);
     if (!existing) {
-      linksByKey.set(key, link);
+      linksByKey.set(key, { ...link, profileBacked });
       return;
     }
     linksByKey.set(key, {
@@ -3426,7 +3441,8 @@ function collectParentScopeLinks(user: AuthUser, profile: Record<string, unknown
       playerName: existing.playerName === 'Player' ? link.playerName : existing.playerName,
       playerNumber: existing.playerNumber || link.playerNumber,
       playerPhotoUrl: existing.playerPhotoUrl || link.playerPhotoUrl,
-      hasMetadata: existing.hasMetadata || link.hasMetadata
+      hasMetadata: existing.hasMetadata || link.hasMetadata,
+      profileBacked: existing.profileBacked || profileBacked
     });
   };
 
@@ -3451,9 +3467,19 @@ function collectParentScopeLinks(user: AuthUser, profile: Record<string, unknown
 
   const profileParentOf = getProfileArray(profile, 'parentOf');
   const profileParentPlayerKeys = getProfileArray(profile, 'parentPlayerKeys');
-  const hasProfileScope = profileParentOf.length > 0 || profileParentPlayerKeys.length > 0;
-  const parentOf = hasProfileScope ? profileParentOf : getUserArray(user, 'parentOf');
-  const parentPlayerKeys = profileParentPlayerKeys.length > 0 ? profileParentPlayerKeys : getUserArray(user, 'parentPlayerKeys');
+  // Union the Firestore profile and the in-memory auth user instead of
+  // letting one source win (#5246, regression of #2525). Either store can
+  // hold a link the other lacks: the profile may have a parent link created
+  // after sign-in (web-app invite auto-link), while the auth user may carry
+  // a link the stored profile has not been repaired to include yet. Links
+  // are still validated against the live team/player records downstream,
+  // and snapshot-only links additionally need live parent membership on the
+  // player document when the profile carries a parent-scope record, so
+  // unioning cannot resurrect a revoked link (#5252). When the profile
+  // carries no parent-scope fields at all it has not hydrated yet and the
+  // snapshot is the only evidence available.
+  const parentOf = mergeParentOfLinks(getUserArray(user, 'parentOf'), profileParentOf);
+  const parentPlayerKeys = mergeParentScopeStrings(getUserArray(user, 'parentPlayerKeys'), profileParentPlayerKeys);
 
   parentOf.forEach(addParentOfEntry);
   parentPlayerKeys
@@ -3486,6 +3512,8 @@ async function resolveParentScheduleChildren(
   const links = collectParentScopeLinks(user, profile)
     .filter((link) => !targetTeamId || link.teamId === targetTeamId);
   if (!links.length) return { children: [], isPartial: false };
+  // Whether the loaded profile is a live parent-scope record (#5252).
+  const profileAuthoritative = profileHasParentScope(profile);
 
   const linksByTeam = new Map<string, ParentScopeLink[]>();
   let isPartial = false;
@@ -3528,6 +3556,17 @@ async function resolveParentScheduleChildren(
       .map((link) => {
         const player = playersById.get(link.playerId) || null;
         if (!player || !isActiveRosterPlayer(player)) return null;
+        // A snapshot-only link (in the sign-in snapshot but absent from the
+        // fresh profile) may be a revoked link the auth user still carries:
+        // the profile lost it when the parent was unlinked, but the stale
+        // snapshot kept it. When the profile carries a parent-scope record
+        // it is live evidence, so only the live player document can still
+        // prove that membership — require it here (#5252). When the profile
+        // carries no parent-scope fields at all it has not hydrated yet (or
+        // the load failed), so the snapshot is the only evidence available
+        // and is trusted as before. Profile-backed links are already proven
+        // by the fresh profile read above.
+        if (!link.profileBacked && profileAuthoritative && !playerListsParent(player, user.uid)) return null;
         return {
           teamId: link.teamId,
           teamName: teamName || link.teamName,

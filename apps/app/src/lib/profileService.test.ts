@@ -8,6 +8,7 @@ const dbMocks = vi.hoisted(() => ({
     generateAccessCode: vi.fn(() => 'CODE1234'),
     getNotificationPreferencesForTeam: vi.fn(),
     getParentTeams: vi.fn(),
+    getPlayers: vi.fn(),
     getUserAccessCodes: vi.fn(),
     getUserAccessCodesPage: vi.fn(),
     getUserProfile: vi.fn(),
@@ -64,7 +65,7 @@ vi.mock('../../../../js/team-visibility.js', () => ({
 
 import { normalizeProfilePhoto } from './profilePhotoService';
 import { getNativeAuthIdToken } from './authService';
-import { createProfileAccessCode, loadManagedTeamsFromNativeCallable, loadNotificationTeams, loadParentTeams, loadProfileAccessCodesPage, loadProfileDocument, requestAccountMerge } from './profileService';
+import { createProfileAccessCode, hydrateParentAccessUser, loadManagedTeamsFromNativeCallable, loadNotificationTeams, loadParentTeams, loadProfileAccessCodesPage, loadProfileDocument, requestAccountMerge } from './profileService';
 
 describe('createProfileAccessCode', () => {
     beforeEach(() => {
@@ -575,5 +576,108 @@ describe('loadProfileAccessCodesPage', () => {
             codes: [],
             nextCursor: null
         });
+    });
+});
+
+describe('hydrateParentAccessUser', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.unstubAllGlobals();
+        dbMocks.getPlayers.mockResolvedValue([]);
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.useRealTimers();
+    });
+
+    it('merges a profile parent link created after sign-in into the auth user (#5246)', async () => {
+        dbMocks.getUserProfile.mockResolvedValue({
+            parentOf: [{ teamId: 'team-2', teamName: 'Hawks', playerId: 'player-2', playerName: 'Will Player' }],
+            parentTeamIds: ['team-2'],
+            parentPlayerKeys: ['team-2::player-2']
+        });
+
+        dbMocks.getPlayers.mockResolvedValue([
+            { id: 'player-1', parents: [{ userId: 'parent-1' }] }
+        ]);
+
+        const hydrated = await hydrateParentAccessUser({
+            uid: 'parent-1',
+            parentOf: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Madison Player' }],
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::player-1']
+        } as any);
+
+        expect(dbMocks.getUserProfile).toHaveBeenCalledWith('parent-1');
+        expect(hydrated?.parentOf).toEqual([
+            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Madison Player' },
+            { teamId: 'team-2', teamName: 'Hawks', playerId: 'player-2', playerName: 'Will Player' }
+        ]);
+        expect(hydrated?.parentTeamIds).toEqual(['team-1', 'team-2']);
+        expect(hydrated?.parentPlayerKeys).toEqual(['team-1::player-1', 'team-2::player-2']);
+    });
+
+    it('drops a revoked snapshot link while retaining another live child on the same team (#5252)', async () => {
+        dbMocks.getUserProfile.mockResolvedValue({
+            parentOf: [{ teamId: 'team-1', playerId: 'player-2', playerName: 'Still Linked' }],
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::player-2']
+        });
+        dbMocks.getPlayers.mockResolvedValue([
+            { id: 'player-1', parents: [{ userId: 'other-parent' }] },
+            { id: 'player-2', parents: [{ userId: 'parent-1' }] }
+        ]);
+
+        const hydrated = await hydrateParentAccessUser({
+            uid: 'parent-1',
+            parentOf: [
+                { teamId: 'team-1', playerId: 'player-1', playerName: 'Revoked' },
+                { teamId: 'team-1', playerId: 'player-2', playerName: 'Still Linked' }
+            ],
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::player-1', 'team-1::player-2']
+        } as any);
+
+        expect(dbMocks.getPlayers).toHaveBeenCalledWith('team-1', { includeInactive: true });
+        expect(hydrated?.parentOf).toEqual([
+            { teamId: 'team-1', playerId: 'player-2', playerName: 'Still Linked' }
+        ]);
+        expect(hydrated?.parentPlayerKeys).toEqual(['team-1::player-2']);
+        expect(hydrated?.parentTeamIds).toEqual(['team-1']);
+    });
+
+    it('fails closed for snapshot-only links when live membership cannot be read', async () => {
+        dbMocks.getUserProfile.mockResolvedValue({
+            parentOf: [],
+            parentTeamIds: [],
+            parentPlayerKeys: []
+        });
+        dbMocks.getPlayers.mockRejectedValue(new Error('player read failed'));
+
+        const hydrated = await hydrateParentAccessUser({
+            uid: 'parent-1',
+            parentOf: [{ teamId: 'team-1', playerId: 'player-1' }],
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::player-1']
+        } as any);
+
+        expect(hydrated?.parentOf).toEqual([]);
+        expect(hydrated?.parentTeamIds).toEqual([]);
+        expect(hydrated?.parentPlayerKeys).toEqual([]);
+    });
+
+    it('returns the input user unchanged when the profile cannot be read', async () => {
+        dbMocks.getUserProfile.mockRejectedValue(new Error('profile read failed'));
+        vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+        vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+
+        const user = { uid: 'parent-1', parentOf: [] } as any;
+        await expect(hydrateParentAccessUser(user)).resolves.toBe(user);
+    });
+
+    it('returns null users unchanged without reading a profile', async () => {
+        await expect(hydrateParentAccessUser(null)).resolves.toBeNull();
+        expect(dbMocks.getUserProfile).not.toHaveBeenCalled();
     });
 });

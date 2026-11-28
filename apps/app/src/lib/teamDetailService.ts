@@ -97,6 +97,7 @@ import { createLogger } from './logger';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import { isNativeRuntime as isNativeAppRuntime } from './nativeRuntime';
 import { loadProfileDocument } from './profileService';
+import { getParentScopeLinkKeys, mergeParentAccessUser, playerListsParent, profileHasParentScope } from './parentAccessScope';
 import { listNativeFirestoreCollectionPages } from './nativeFirestoreListPager';
 import { normalizeOptionalHttpUrl, parseTeamLivestreamInput } from './teamLinks';
 import type { ParentScheduleEvent } from './scheduleLogic';
@@ -3214,9 +3215,14 @@ export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): P
 
     if (!team) throw new Error('Team not found.');
 
-    const requestManagerStats = hasFullTeamAccess(user, team);
+    // Hydrate from the Firestore profile (#5246): the in-memory auth user is
+    // a sign-in snapshot, so a parent link created after sign-in would
+    // otherwise read as "0 linked to your account" on the Overview tab even
+    // though the roster shows the parent accepted.
+    const accessUser = await hydrateTeamDetailAccessUser(user, normalizedTeamId, players);
+    const requestManagerStats = hasFullTeamAccess(accessUser, team);
 
-    const linkedPlayerIds = getLinkedPlayerIds(user, normalizedTeamId, players);
+    const linkedPlayerIds = getLinkedPlayerIds(accessUser, normalizedTeamId, players);
     const seasonLabels = listSeasonLabels(games);
     const currentYearLabel = String(new Date().getFullYear());
     const seasonLabel = seasonLabels.includes(currentYearLabel) ? currentYearLabel : seasonLabels[0] || currentYearLabel;
@@ -4508,28 +4514,21 @@ function getLinkedPlayerIds(user: AuthUser | null, teamId: string, players: any[
 
 async function hydrateTeamDetailAccessUser(user: AuthUser | null, teamId: string, players: any[]): Promise<AuthUser | null> {
   if (!user?.uid) return user;
-  if (getLinkedPlayerIds(user, teamId, players).length > 0) return user;
   const profile = await loadProfileDocument(user.uid).catch(() => null);
   if (!profile) return user;
-  return {
-    ...user,
-    parentOf: mergeAccessArray(user.parentOf, (profile as any).parentOf),
-    parentTeamIds: mergeAccessArray(user.parentTeamIds, (profile as any).parentTeamIds),
-    parentPlayerKeys: mergeAccessArray(user.parentPlayerKeys, (profile as any).parentPlayerKeys),
-    coachOf: mergeAccessArray(user.coachOf, (profile as any).coachOf)
-  };
-}
-
-function mergeAccessArray<T>(userValues: T[] | undefined, profileValues: unknown): T[] {
-  const merged = [...(Array.isArray(userValues) ? userValues : [])];
-  if (Array.isArray(profileValues)) {
-    profileValues.forEach((value) => {
-      if (!merged.some((current) => JSON.stringify(current) === JSON.stringify(value))) {
-        merged.push(value as T);
-      }
-    });
+  if (!profileHasParentScope(profile as Record<string, unknown>)) {
+    return mergeParentAccessUser(user, profile as Record<string, unknown>);
   }
-  return merged;
+
+  const profileLinkKeys = getParentScopeLinkKeys(profile as Record<string, unknown>);
+  const validatedSnapshotLinkKeys = new Set<string>();
+  getParentScopeLinkKeys(user).forEach((key) => {
+    if (profileLinkKeys.has(key) || !key.startsWith(`${teamId}::`)) return;
+    const playerId = key.slice(teamId.length + 2);
+    const player = players.find((candidate) => cleanString(candidate?.id || candidate?.playerId) === playerId);
+    if (playerListsParent(player, user.uid)) validatedSnapshotLinkKeys.add(key);
+  });
+  return mergeParentAccessUser(user, profile as Record<string, unknown>, { validatedSnapshotLinkKeys });
 }
 
 function normalizeSponsorList(sponsors: any[]): TeamDetailSponsor[] {

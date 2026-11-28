@@ -9,6 +9,26 @@ const legacyParentToolsMocks = vi.hoisted(() => ({
 
 vi.mock('./adapters/legacyParentTools', () => legacyParentToolsMocks);
 
+const profileServiceMocks = vi.hoisted(() => ({
+  loadProfileDocument: vi.fn()
+}));
+
+// Exercise the real parent-scope merge while stubbing only the profile read:
+// the service must hydrate from the Firestore profile before trusting the
+// in-memory auth user (#5246).
+vi.mock('./profileService', async () => {
+  const { mergeParentAccessUser } = await import('./parentAccessScope');
+  return {
+    loadProfileDocument: profileServiceMocks.loadProfileDocument,
+    hydrateParentAccessUser: async (user: any) => {
+      if (!user?.uid) return user;
+      const profile = await profileServiceMocks.loadProfileDocument(user.uid).catch(() => null);
+      if (!profile) return user;
+      return mergeParentAccessUser(user, profile);
+    }
+  };
+});
+
 import { createParentFamilyShare, getFamilyShareUrl, loadFamilyShareModel } from './parentFamilyShareService';
 
 describe('parentFamilyShareService', () => {
@@ -17,6 +37,8 @@ describe('parentFamilyShareService', () => {
     legacyParentToolsMocks.listFamilyShareTokens.mockReset();
     legacyParentToolsMocks.revokeFamilyShareToken.mockReset();
     legacyParentToolsMocks.updateFamilyShareTokenCalendars.mockReset();
+    profileServiceMocks.loadProfileDocument.mockReset();
+    profileServiceMocks.loadProfileDocument.mockResolvedValue({});
   });
 
   it('creates app-native family share links for new tokens', async () => {
@@ -54,5 +76,56 @@ describe('parentFamilyShareService', () => {
 
   it('exposes a stable family share URL builder', () => {
     expect(getFamilyShareUrl('token value')).toBe('https://allplays.ai/app/#/family/token%20value');
+  });
+
+  it('does not include a revoked snapshot-only child in a new share (#5252)', async () => {
+    profileServiceMocks.loadProfileDocument.mockResolvedValue({
+      parentOf: [{ teamId: 'team-1', playerId: 'player-2' }],
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-2']
+    });
+    legacyParentToolsMocks.createFamilyShareToken.mockResolvedValue('token/current');
+
+    await createParentFamilyShare({
+      uid: 'parent-1',
+      parentOf: [
+        { teamId: 'team-1', playerId: 'player-1' },
+        { teamId: 'team-1', playerId: 'player-2' }
+      ],
+      parentPlayerKeys: ['team-1::player-1', 'team-1::player-2']
+    } as any, 'Grandma', []);
+
+    expect(legacyParentToolsMocks.createFamilyShareToken).toHaveBeenCalledWith(
+      'parent-1',
+      [{ teamId: 'team-1', teamName: '', playerId: 'player-2', playerName: '', playerNumber: '', playerPhotoUrl: null }],
+      'Grandma',
+      []
+    );
+  });
+
+  it('shares a child linked in the profile after sign-in (#5246)', async () => {
+    profileServiceMocks.loadProfileDocument.mockResolvedValue({
+      parentOf: [{ teamId: 'team-2', teamName: 'Hawks', playerId: 'player-2', playerName: 'Will Player' }],
+      parentTeamIds: ['team-2'],
+      parentPlayerKeys: ['team-2::player-2']
+    });
+    legacyParentToolsMocks.createFamilyShareToken.mockResolvedValue('token/two');
+    legacyParentToolsMocks.listFamilyShareTokens.mockResolvedValue([]);
+
+    await expect(createParentFamilyShare({ uid: 'parent-1', parentOf: [] } as any, 'Grandma', [])).resolves.toEqual({
+      tokenId: 'token/two',
+      url: 'https://allplays.ai/app/#/family/token%2Ftwo'
+    });
+    expect(legacyParentToolsMocks.createFamilyShareToken).toHaveBeenCalledWith(
+      'parent-1',
+      [expect.objectContaining({ teamId: 'team-2', playerId: 'player-2', playerName: 'Will Player' })],
+      'Grandma',
+      []
+    );
+
+    const model = await loadFamilyShareModel({ uid: 'parent-1', parentOf: [] } as any);
+    expect(model.children).toEqual([
+      expect.objectContaining({ teamId: 'team-2', playerId: 'player-2', playerName: 'Will Player' })
+    ]);
   });
 });
