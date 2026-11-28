@@ -1,6 +1,6 @@
 import {
   canSubmitScheduleEventRsvp,
-  normalizeRsvpResponse,
+  isScheduleEventAvailabilityNeeded,
   type ParentScheduleEvent,
   type RsvpResponse
 } from './scheduleLogic';
@@ -80,8 +80,11 @@ export function getInitialBulkRsvpCandidates(
 }
 
 export function getNeededBulkRsvpEventKeys(events: ParentScheduleEvent[]) {
+  // Same single RSVP-needed definition as the Schedule header count and
+  // Home; callers pass the note-ready candidate set, so this is the count of
+  // responses that are both missing and ready to update.
   return events
-    .filter((event) => normalizeRsvpResponse(event.myRsvp) === 'not_responded')
+    .filter((event) => isScheduleEventAvailabilityNeeded(event))
     .map((event) => event.eventKey);
 }
 

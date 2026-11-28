@@ -246,6 +246,11 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [bulkRsvpFullScopeRequested, setBulkRsvpFullScopeRequested] = useState(false);
   const [bulkRsvpFullScopePending, setBulkRsvpFullScopePending] = useState(false);
   const [bulkRsvpFullScopeKey, setBulkRsvpFullScopeKey] = useState('');
+  // Scope key for which full-scope RSVP hydration has been attempted, even if
+  // it did not complete. The private-note banner must not render before this
+  // — the first partial hydration pass leaves most notes unread, so its
+  // "waiting" count is not a fact about the data yet.
+  const [bulkRsvpFullScopeAttemptedKey, setBulkRsvpFullScopeAttemptedKey] = useState('');
   const [bulkRsvpOpenRequested, setBulkRsvpOpenRequested] = useState(false);
   const [rsvpHydrationPending, setRsvpHydrationPending] = useState(true);
   const [loadedScheduleUserId, setLoadedScheduleUserId] = useState<string | null>(null);
@@ -886,6 +891,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     const requestedScopeKey = bulkRsvpScopeKey;
     const requestedScheduleGeneration = scheduleRefreshVersionRef.current;
     setBulkRsvpFullScopePending(true);
+    setBulkRsvpFullScopeAttemptedKey(requestedScopeKey);
     void hydrateScheduleRsvpsInBackground({
       children: childrenRef.current,
       events: eventsRef.current
@@ -1243,7 +1249,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           <div className="min-w-0">
             <h1 className="text-lg font-black leading-tight text-gray-950">Schedule</h1>
             <div className="mt-0.5 text-xs font-bold text-gray-500">
-              {formatCount(counts.total, 'event')} · {counts.rsvpNeeded} RSVP · {counts.packetsReady} packets
+              {formatCount(counts.total, 'event')} · {rsvpHydrationPending ? '…' : counts.rsvpNeeded} RSVP needed in this view · {counts.packetsReady} packets
             </div>
           </div>
           <div className="flex flex-none gap-1.5">
@@ -1275,7 +1281,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
               <Metric label="Events" value={String(counts.total)} onClick={() => { setFilter('upcoming-all'); setView('list'); }} active={filter === 'upcoming-all' && view !== 'packets'} />
               <Metric label="Games" value={String(counts.games)} onClick={() => { setFilter('upcoming-games'); setView('list'); }} active={filter === 'upcoming-games' && view !== 'packets'} />
               <Metric label="Practices" value={String(counts.practices)} onClick={() => { setFilter('upcoming-practices'); setView('list'); }} active={filter === 'upcoming-practices' && view !== 'packets'} />
-              <Metric label="RSVP Needed" mobileLabel="RSVP" value={String(counts.rsvpNeeded)} onClick={() => { setFilter('availability'); setView('list'); }} active={filter === 'availability' && view !== 'packets'} />
+              <Metric label="RSVP · this view" mobileLabel="RSVP" value={rsvpHydrationPending ? '…' : String(counts.rsvpNeeded)} onClick={() => { setFilter('availability'); setView('list'); }} active={filter === 'availability' && view !== 'packets'} />
               <Metric label="Packets" value={String(counts.packetsReady)} onClick={() => setView('packets')} active={view === 'packets'} />
             </div>
 
@@ -1431,7 +1437,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
           {exportError ? <Status tone="error" message={exportError} /> : null}
           {bulkRsvpResult ? <Status tone={bulkRsvpResult.tone} message={bulkRsvpResult.message} /> : null}
-          {!rsvpHydrationPending && unavailableBulkRsvpCount > 0 ? (
+          {!rsvpHydrationPending && bulkRsvpFullScopeAttemptedKey === bulkRsvpScopeKey && unavailableBulkRsvpCount > 0 ? (
             <Status tone="error" message={`${unavailableBulkRsvpCount} ${unavailableBulkRsvpCount === 1 ? 'RSVP is' : 'RSVPs are'} waiting for private note data. Refresh before updating ${unavailableBulkRsvpCount === 1 ? 'it' : 'them'}.`} />
           ) : null}
           {scheduleReadError ? <Status tone="error" message={scheduleLoadError ? getScheduleLoadErrorMessage(scheduleLoadError, hasLoadedSchedule) : scheduleReadError} /> : null}
@@ -1723,7 +1729,7 @@ function BulkRsvpLauncher({ eventCount, neededCount, hydrating, onOpen }: {
           {hydrating
             ? 'Checking your current responses before selecting events.'
             : neededCount
-            ? `${neededCount} ${neededCount === 1 ? 'event needs' : 'events need'} a response. Review up to ${eventCount} upcoming games and practices together.`
+            ? `${neededCount} ${neededCount === 1 ? 'event needs' : 'events need'} a response and ${neededCount === 1 ? 'is' : 'are'} ready to update. Review up to ${eventCount} upcoming games and practices together.`
             : `Review or update ${eventCount} upcoming games and practices together.`}
         </p>
       </div>
