@@ -142,7 +142,7 @@ import {
 } from './scheduleLogic';
 import type { AutoFilledLineupPlayer, GamePlanPublishPayloadInput } from './gameDayLineupPublish';
 import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
-import { getCachedAppData, getParentHomeSecondaryCacheKey, getParentScheduleSummaryCacheKey, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
+import { getCachedAppData, getParentHomeSecondaryCacheKey, getParentScheduleScopeCacheKey, getParentScheduleSummaryCacheKey, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
 import { toAppServiceError } from './appErrors';
 import { createLogger } from './logger';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
@@ -3549,7 +3549,21 @@ export async function loadParentScheduleChildren(user: AuthUser | null, options:
   return result.children;
 }
 
-export async function loadParentScheduleScope(user: AuthUser | null): Promise<ParentScheduleScope> {
+const parentScheduleScopeTtlMs = 5 * 60 * 1000;
+
+/**
+ * The one scope-discovery result shared across Home, Teams, and Schedule
+ * within a session. Scope discovery (profile read + staff-teams callable +
+ * HTTP verification + per-team player validation) used to re-run on every
+ * route, so navigating Home -> Teams -> Schedule paid the full waterfall
+ * three times. The result is cached in memory for 5 minutes; partial
+ * results are never cached, and team creation clears the key (see
+ * teamCreationService), so a new team shows up immediately.
+ */
+export async function loadParentScheduleScope(
+  user: AuthUser | null,
+  options: { force?: boolean } = {}
+): Promise<ParentScheduleScope> {
   if (!user?.uid) {
     return {
       profile: {},
@@ -3557,6 +3571,19 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
       staffTeams: []
     };
   }
+  return loadCachedAppData(
+    getParentScheduleScopeCacheKey(user.uid),
+    () => loadParentScheduleScopeUncached(user),
+    {
+      ttlMs: parentScheduleScopeTtlMs,
+      force: options.force === true,
+      persist: false,
+      shouldCache: (result) => result?.isPartial !== true
+    }
+  );
+}
+
+async function loadParentScheduleScopeUncached(user: AuthUser): Promise<ParentScheduleScope> {
   let profileLoadPartial = false;
   const [profile, initialStaffTeamResult] = await Promise.all([
     loadProfileDocument(user.uid).catch(() => {

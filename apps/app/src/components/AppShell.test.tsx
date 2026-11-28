@@ -737,6 +737,19 @@ describe('AppShell', () => {
     expect(updateAppIconBadgeMock).not.toHaveBeenCalled();
   });
 
+  it('shows a loading identity instead of Public visitor while auth is still bootstrapping', async () => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={{ ...auth, loading: true }}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Loading…')).toBeTruthy();
+    expect(screen.queryByText('Public visitor')).toBeNull();
+  });
+
   it('clears the native app badge after sign-out', async () => {
     const { rerender } = render(
       <MemoryRouter initialEntries={['/home']}>

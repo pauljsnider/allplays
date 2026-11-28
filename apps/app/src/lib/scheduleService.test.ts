@@ -245,7 +245,8 @@ vi.mock('./appDataCache', () => ({
   clearAppDataCache: vi.fn(),
   invalidateCachedAppData: vi.fn(),
   getParentHomeSecondaryCacheKey: (userId: string) => `home-secondary:${userId}`,
-  getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
+  getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`,
+  getParentScheduleScopeCacheKey: (userId: string) => `parent-schedule-scope:${userId}`
 }));
 
 import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getDelegatedTeamContext, getGame, getGames, getLiveEvents, getMyRsvps, getOfficialLinkedTeamIds, getPlayers, getPracticeSession, getPracticeSessionByEvent, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
@@ -932,6 +933,46 @@ describe('parent schedule child scope', () => {
     expect(scope.staffTeamsPartial).toBe(false);
     expect(scope.isPartial).toBe(false);
     expect(getStaffTeams).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares one scope-discovery result across repeated loads within a session', async () => {
+    const coachUser = { uid: 'coach-scope-cache', email: 'coach@example.com', roles: ['coach'], coachOf: ['team-owned'] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'team-owned', name: 'Vipers', active: true }],
+      isPartial: false
+    } as any);
+    // Stand in for the real loadCachedAppData: cache per key, honour force
+    // and shouldCache. The module mock passes loaders straight through, so
+    // without this the test could not observe the sharing.
+    const cache = new Map<string, unknown>();
+    const cachedLoad = vi.mocked(loadCachedAppData);
+    const originalImplementation = cachedLoad.getMockImplementation();
+    cachedLoad.mockImplementation(async (key: string, loader: () => Promise<unknown>, options: any = {}) => {
+      if (options.force !== true && cache.has(key)) return cache.get(key);
+      const value = await loader();
+      if (!options.shouldCache || options.shouldCache(value)) cache.set(key, value);
+      return value;
+    });
+    try {
+      const first = await loadParentScheduleScope(coachUser);
+      const second = await loadParentScheduleScope(coachUser);
+
+      expect(second).toBe(first);
+      expect(loadProfileDocument).toHaveBeenCalledTimes(1);
+      expect(getStaffTeams).toHaveBeenCalledTimes(1);
+      // The scope cache never stores partial results.
+      const scopeCall = cachedLoad.mock.calls.find(([key]) => String(key).startsWith('parent-schedule-scope:'));
+      const shouldCacheScope = scopeCall?.[2]?.shouldCache as ((result: { isPartial?: boolean }) => boolean) | undefined;
+      expect(shouldCacheScope?.({ isPartial: true })).toBe(false);
+      expect(shouldCacheScope?.({ isPartial: false })).toBe(true);
+      // A forced load re-runs discovery.
+      await loadParentScheduleScope(coachUser, { force: true });
+      expect(loadProfileDocument).toHaveBeenCalledTimes(2);
+      expect(getStaffTeams).toHaveBeenCalledTimes(2);
+    } finally {
+      cachedLoad.mockImplementation(originalImplementation as any);
+    }
   });
 
   it('lets a cold managed-team callable finish beyond the shared schedule timeout', async () => {

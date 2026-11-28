@@ -5,7 +5,7 @@ import {
   getDefaultStatConfigForSport,
   getStatConfigPresetOptions
 } from './adapters/legacyTeamCreation';
-import { clearAppDataCache, getTeamsSummaryBootstrapCacheKey } from './appDataCache';
+import { clearAppDataCache, getParentScheduleScopeCacheKey, getTeamsSummaryBootstrapCacheKey } from './appDataCache';
 import {
   configureDiamondTeam,
   type DiamondCaptureMode,
@@ -120,6 +120,9 @@ export async function createTeamForApp(user: AuthUser | null, input: CreateTeamF
   }
 
   clearAppDataCache(getTeamsSummaryBootstrapCacheKey(user.uid));
+  // A new team changes the user's scope; drop the shared scope cache so the
+  // team shows up on the next load instead of after the scope TTL expires.
+  clearAppDataCache(getParentScheduleScopeCacheKey(user.uid));
 
   let defaultStatConfigCreated = false;
   let defaultStatConfigError: string | null = null;

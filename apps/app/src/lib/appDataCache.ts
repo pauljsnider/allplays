@@ -56,6 +56,10 @@ export function getTeamsSummaryBootstrapCacheKey(userId: string) {
   return `teams-summary-bootstrap:${userId}`;
 }
 
+export function getParentScheduleScopeCacheKey(userId: string) {
+  return `parent-schedule-scope:${userId}`;
+}
+
 export function getCachedAppData<T>(key: string, { maxStaleMs = defaultMaxStaleMs }: { maxStaleMs?: number } = {}): T | null {
   const now = Date.now();
   const entry = cache.get(key) as CacheEntry<T> | undefined;
