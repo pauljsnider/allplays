@@ -98,6 +98,10 @@ vi.mock('./adapters/legacyScheduleDb', () => ({
       tournament
     }))),
   clearOccurrenceOverride: vi.fn(),
+  cancelOccurrence: vi.fn(),
+  deleteEvent: vi.fn(),
+  deleteGame: vi.fn(),
+  deleteSeries: vi.fn(),
   createRideOffer: vi.fn(),
   claimAssignmentSlot: vi.fn(),
   respondToOfficiatingAssignment: vi.fn(),
@@ -248,14 +252,14 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getDelegatedTeamContext, getGame, getGames, getLiveEvents, getMyRsvps, getOfficialLinkedTeamIds, getPlayers, getPracticeSession, getPracticeSessionByEvent, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
+import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, deleteEvent, deleteGame, deleteSeries, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getDelegatedTeamContext, getGame, getGames, getLiveEvents, getMyRsvps, getOfficialLinkedTeamIds, getPlayers, getPracticeSession, getPracticeSessionByEvent, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, getCalendarEventTrackingId, isTeamActive, isTrackedCalendarEvent, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventDocument, mapScheduleEventRecord } from './firestore/mappers';
 import { loadManagedTeamsFromNativeCallable, loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, linkGameYouTubeReplayForApp, loadGameDayLiveEventsForApp, loadHomeScoringPlayers, loadOfficialAssignments, loadOfficialAssignmentsAccess, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, removeGameReplayForApp, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, deleteScheduledGameForApp, deleteScheduledPracticeForApp, deleteScheduledPracticeSeriesForApp, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, linkGameYouTubeReplayForApp, loadGameDayLiveEventsForApp, loadHomeScoringPlayers, loadOfficialAssignments, loadOfficialAssignmentsAccess, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, removeGameReplayForApp, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -8037,6 +8041,90 @@ describe('cancelScheduledGameForApp', () => {
       gameId: 'game-1',
       counterpartTeamId: 'team-2'
     }));
+  });
+});
+
+describe('deleteScheduledGameForApp / deleteScheduledPracticeForApp / deleteScheduledPracticeSeriesForApp', () => {
+  const user = { uid: 'coach-1', displayName: 'Coach', email: 'coach@example.com', roles: [] } as any;
+  const game = {
+    teamId: 'team-1',
+    id: 'game-1',
+    type: 'game',
+    isDbGame: true,
+    isCancelled: false,
+    canUpdateScore: true,
+    opponent: 'Wolves',
+    date: new Date('2026-06-04T18:00:00.000Z')
+  } as any;
+  const practice = {
+    teamId: 'team-1',
+    id: 'practice-1',
+    type: 'practice',
+    isDbGame: true,
+    isCancelled: false,
+    isTeamAdmin: true,
+    date: new Date('2026-06-04T18:00:00.000Z')
+  } as any;
+
+  beforeEach(() => {
+    (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
+    vi.clearAllMocks();
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+  });
+
+  it('hard-deletes a game through legacy deleteGame instead of marking it cancelled', async () => {
+    const result = await deleteScheduledGameForApp(game, user);
+
+    expect(result).toEqual({ deleted: true, scope: 'game' });
+    expect(vi.mocked(deleteGame)).toHaveBeenCalledWith('team-1', 'game-1');
+    expect(vi.mocked(updateGame)).not.toHaveBeenCalled();
+  });
+
+  it('rejects a game delete when the caller cannot keep score', async () => {
+    await expect(deleteScheduledGameForApp({ ...game, canUpdateScore: false }, user))
+      .rejects.toThrow('Coach or admin access');
+    expect(vi.mocked(deleteGame)).not.toHaveBeenCalled();
+  });
+
+  it('requires team admin for a Diamond game delete', async () => {
+    await expect(deleteScheduledGameForApp({ ...game, trackingEngine: 'diamond-v2', isTeamAdmin: false }, user))
+      .rejects.toThrow('Team owner or admin access');
+    expect(vi.mocked(deleteGame)).not.toHaveBeenCalled();
+  });
+
+  it('hard-deletes a one-off practice through legacy deleteEvent', async () => {
+    const result = await deleteScheduledPracticeForApp(practice, user);
+
+    expect(result).toEqual({ deleted: true, scope: 'practice' });
+    expect(vi.mocked(deleteEvent)).toHaveBeenCalledWith('team-1', 'practice-1');
+  });
+
+  it('rejects a practice delete when the caller is not a team admin', async () => {
+    await expect(deleteScheduledPracticeForApp({ ...practice, isTeamAdmin: false }, user))
+      .rejects.toThrow('Team owner or admin access');
+    expect(vi.mocked(deleteEvent)).not.toHaveBeenCalled();
+  });
+
+  it('refuses to delete a recurring occurrence as a one-off practice', async () => {
+    await expect(deleteScheduledPracticeForApp({ ...practice, id: 'series-1__2026-06-04' }, user))
+      .rejects.toThrow('recurring practice occurrence');
+    expect(vi.mocked(deleteEvent)).not.toHaveBeenCalled();
+  });
+
+  it('deletes a whole recurring series through legacy deleteSeries using the master id', async () => {
+    const result = await deleteScheduledPracticeSeriesForApp(
+      { ...practice, id: 'series-1__2026-06-04' },
+      user
+    );
+
+    expect(result).toEqual({ deleted: true, scope: 'practice-series' });
+    expect(vi.mocked(deleteSeries)).toHaveBeenCalledWith('team-1', 'series-1');
+  });
+
+  it('deletes a series from an explicit master id when the event is the master document', async () => {
+    await deleteScheduledPracticeSeriesForApp(practice, user, { seriesMasterId: 'series-1' });
+
+    expect(vi.mocked(deleteSeries)).toHaveBeenCalledWith('team-1', 'series-1');
   });
 });
 

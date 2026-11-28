@@ -3,6 +3,9 @@ import {
     addPractice as legacyAddPractice,
     broadcastLiveEvent as legacyBroadcastLiveEvent,
     cancelOccurrence as legacyCancelOccurrence,
+    deleteEvent as legacyDeleteEvent,
+    deleteGame as legacyDeleteGame,
+    deleteSeries as legacyDeleteSeries,
     clearOccurrenceOverride as legacyClearOccurrenceOverride,
     cancelRideRequest as legacyCancelRideRequest,
     claimAssignmentSlot as legacyClaimAssignmentSlot,
@@ -440,6 +443,18 @@ export async function cancelOccurrence(teamId: string, masterId: string, instanc
     return await Promise.resolve(payload === undefined
         ? legacyCancelOccurrence(teamId, masterId, instanceDate)
         : legacyCancelOccurrence(teamId, masterId, instanceDate, payload));
+}
+
+export async function deleteGame(teamId: string, gameId: string) {
+    return await Promise.resolve(legacyDeleteGame(teamId, gameId));
+}
+
+export async function deleteEvent(teamId: string, eventId: string) {
+    return await Promise.resolve(legacyDeleteEvent(teamId, eventId));
+}
+
+export async function deleteSeries(teamId: string, masterId: string) {
+    return await Promise.resolve(legacyDeleteSeries(teamId, masterId));
 }
 
 export async function updateEvent(teamId: string, eventId: string, payload: Record<string, unknown>) {

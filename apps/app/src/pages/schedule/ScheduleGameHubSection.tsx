@@ -9,6 +9,7 @@ import {
   updateScheduledGameForApp,
   updateScheduledPracticeForApp,
   revertScheduledPracticeOccurrenceForApp,
+  type DeleteScheduledEventResult,
   type ScheduleGameFormInput,
   type SchedulePracticeFormInput,
   type PracticeRecurrenceFormInput,
@@ -39,6 +40,7 @@ import {
 } from '../../lib/scheduleHub';
 import { useShellLayout } from '../../lib/useShellLayout';
 import { CompactMeta } from '../../components/schedule/CompactMeta';
+import { EventDeleteControl } from '../../components/schedule/EventDeleteControl';
 import { GameReplayEditor, canManageGameReplay } from '../../components/schedule/GameReplayEditor';
 import {
   buildCoachesOnlyGameNoteScopeKey,
@@ -421,7 +423,7 @@ function buildGameFormResetKey(event: ParentScheduleEvent) {
   ].join('\u001f');
 }
 
-function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+function GameScheduleEditPanel({ auth, event, onDeleted }: { auth: AuthState; event: ParentScheduleEvent; onDeleted?: (result: DeleteScheduledEventResult | { deleted: true; scope: 'practice-occurrence' }) => void }) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<ScheduleGameFormInput>(() => buildGameFormFromEvent(event));
   const [configs, setConfigs] = useState<ScheduleStatTrackerConfigOption[]>([]);
@@ -488,6 +490,7 @@ function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: Parent
             : 'Update opponent, timing, location, home/away, and tracker config without touching score data.'}</p>
         </div>
         <button type="button" className="secondary-button" onClick={() => setOpen((current) => !current)}>{open ? 'Hide editor' : 'Edit game'}</button>
+        <EventDeleteControl event={event} auth={auth} onDeleted={onDeleted} />
       </div>
       {canManageGameReplay(event, auth) ? (
         <button type="button" className="secondary-button mt-3" onClick={() => {
@@ -520,7 +523,7 @@ function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: Parent
   );
 }
 
-function PracticeScheduleEditPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+function PracticeScheduleEditPanel({ auth, event, onDeleted }: { auth: AuthState; event: ParentScheduleEvent; onDeleted?: (result: DeleteScheduledEventResult | { deleted: true; scope: 'practice-occurrence' }) => void }) {
   const [open, setOpen] = useState(false);
   const [scope, setScope] = useState<'occurrence' | 'series'>(event.id.includes('__') ? 'occurrence' : 'series');
   const [form, setForm] = useState<SchedulePracticeFormInput>(() => buildPracticeFormFromEvent(event));
@@ -601,6 +604,7 @@ function PracticeScheduleEditPanel({ auth, event }: { auth: AuthState; event: Pa
           <p className="mt-1 text-sm font-semibold text-gray-500">Update this occurrence or the full recurring series using the same backend semantics as the website.</p>
         </div>
         <button type="button" className="secondary-button" onClick={() => setOpen((current) => !current)}>{open ? 'Hide editor' : 'Edit practice'}</button>
+        <EventDeleteControl event={event} auth={auth} onDeleted={onDeleted} />
       </div>
       {open ? (
         <form className="mt-3 space-y-3" onSubmit={savePractice}>
@@ -1289,7 +1293,7 @@ function DiamondActivationCard({ event, canUpdateScore, diamondScorebookUiEnable
   );
 }
 
-export function ScheduleGameHubSection({ auth, event, childEvents, requestedPanel, onPanelChange, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished, onReplayVideoUpdated, onEventRefresh }: {
+export function ScheduleGameHubSection({ auth, event, childEvents, requestedPanel, onPanelChange, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished, onReplayVideoUpdated, onEventRefresh, onEventDeleted }: {
   auth: AuthState;
   event: ParentScheduleEvent;
   childEvents: ParentScheduleEvent[];
@@ -1304,6 +1308,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
   onGamePlanPublished: (gamePlan: Record<string, any>) => void;
   onReplayVideoUpdated: (replayVideo: YouTubeReplayVideo | null, replayState: ReplayArchiveState) => void;
   onEventRefresh: () => Promise<void> | void;
+  onEventDeleted?: (result: DeleteScheduledEventResult | { deleted: true; scope: 'practice-occurrence' }) => void;
 }) {
   const { isDesktopWeb } = useShellLayout();
   const [shareStatus, setShareStatus] = useState<string | null>(null);
@@ -1481,9 +1486,9 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
     <section className={`space-y-3 ${canUseLegacyScoring && !isDesktopWeb ? 'mobile-live-score-tray-offset' : ''}`}>
       {showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       {showAdminPracticeTimeline ? <PracticeTimelineSection auth={auth} event={event} /> : null}
-      {!isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <GameScheduleEditPanel auth={auth} event={event} /> : null}
+      {!isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <GameScheduleEditPanel auth={auth} event={event} onDeleted={onEventDeleted} /> : null}
       {!isPractice ? <GameReplayEditor auth={auth} event={event} onReplayVideoUpdated={onReplayVideoUpdated} /> : null}
-      {isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <PracticeScheduleEditPanel auth={auth} event={event} /> : null}
+      {isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <PracticeScheduleEditPanel auth={auth} event={event} onDeleted={onEventDeleted} /> : null}
       {isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <StaffPracticePacketEditor auth={auth} event={event} childEvents={childEvents} /> : null}
       {isPractice && !showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       <div className="app-card overflow-hidden p-0">

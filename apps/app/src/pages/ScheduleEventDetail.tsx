@@ -21,6 +21,7 @@ import { EventDetailPageSkeleton } from '../components/PageSkeletons';
 import { AssignmentsSection } from '../components/schedule/AssignmentsSection';
 import { CompactMeta } from '../components/schedule/CompactMeta';
 import { EventDetailsPanel } from '../components/schedule/EventDetailsPanel';
+import { EventDeleteControl } from '../components/schedule/EventDeleteControl';
 import { ScheduleEventHeader } from '../components/schedule/ScheduleEventHeader';
 import { EventSectionNav } from '../components/schedule/EventSectionNav';
 import { PlayerSwitcher } from '../components/schedule/PlayerSwitcher';
@@ -522,6 +523,10 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     )));
   }, [decodedEventId, decodedTeamId]);
 
+  const handleEventDeleted = useCallback(() => {
+    navigate('/schedule');
+  }, [navigate]);
+
   const handleGamePlanPublished = useCallback((gamePlan: Record<string, any>) => {
     setEvents((current) => current.map((event) => (
       event.teamId === decodedTeamId && event.id === decodedEventId
@@ -680,6 +685,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
                 Details
                 <ChevronDown className={`h-3.5 w-3.5 transition ${detailsOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
               </button>
+              <EventDeleteControl event={selectedEvent} auth={auth} onDeleted={handleEventDeleted} buttonClassName="inline-flex min-h-8 flex-none items-center gap-1 rounded-full border border-rose-200 bg-white px-3 text-xs font-black text-rose-700 shadow-sm transition hover:bg-rose-50" />
             </div>
 
             <ScheduleEventHeader
@@ -808,6 +814,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
                 onStatsheetImported={handleStatsheetImported}
                 onGameCancelled={handleGameCancelled}
                 onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled}
+                onEventDeleted={handleEventDeleted}
                 onGamePlanPublished={handleGamePlanPublished}
                 onReplayVideoUpdated={handleReplayVideoUpdated}
                 onEventRefresh={loadEvent}
