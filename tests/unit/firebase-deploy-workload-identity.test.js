@@ -4,6 +4,8 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 
+import { verifyFirebaseFunctionsDeployLog } from '../../scripts/verify-firebase-functions-deploy-log.mjs';
+
 function read(path) {
     return readFileSync(resolve(process.cwd(), path), 'utf8');
 }
@@ -18,9 +20,25 @@ const productionExtractorSha256 = createHash('sha256')
 const productionNativeWebAuthIamVerifierSha256 = createHash('sha256')
     .update(read('scripts/verify-native-web-auth-iam.mjs'))
     .digest('hex');
+const productionFirebaseApplicationVerifierSha256 = createHash('sha256')
+    .update(read('scripts/verify-firebase-application-deployment.mjs'))
+    .digest('hex');
+const productionFirebaseFunctionsDeployLogVerifierSha256 = createHash('sha256')
+    .update(read('scripts/verify-firebase-functions-deploy-log.mjs'))
+    .digest('hex');
 const previewVerifierSha256 = createHash('sha256')
     .update(read('scripts/verify-preview-deploy-trigger.mjs'))
     .digest('hex');
+const artifactSha = '1234567890abcdef1234567890abcdef12345678';
+
+function verifyFunctionsDeployLog(deployLog) {
+    return verifyFirebaseFunctionsDeployLog({
+        deployLog,
+        targets: 'functions:createTeam,functions:sendInvite',
+        artifactSha,
+        projectId: 'game-flow-c6311'
+    });
+}
 
 function workflowJobs(source) {
     return Object.values(parseYaml(source).jobs);
@@ -217,6 +235,107 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(production.indexOf('"retry-enabled-functions"')).toBeLessThan(
             production.lastIndexOf('retry_firebase_deploy "hosting,functions" "application"')
         );
+    });
+
+    it('gates production progress on targeted Functions deployment evidence', () => {
+        const targetedDeploy = production.indexOf(
+            'retry_firebase_deploy \\\n            "$retry_enabled_function_targets"'
+        );
+        const verification = production.indexOf(
+            'verify_targeted_function_deployment \\\n            "$firebase_deploy_log" \\\n            "$retry_enabled_function_targets"'
+        );
+        const migration = production.indexOf(
+            'if [[ "$TEAM_FEE_CHECKOUT_BACKFILL_NEEDED" == "true"',
+            targetedDeploy
+        );
+        const applicationDeploy = production.lastIndexOf(
+            'retry_firebase_deploy "hosting,functions" "application"'
+        );
+        const componentMarkers = production.indexOf(
+            'name: Record Firebase component deployment markers'
+        );
+
+        expect(targetedDeploy).toBeGreaterThan(-1);
+        expect(verification).toBeGreaterThan(targetedDeploy);
+        expect(migration).toBeGreaterThan(verification);
+        expect(applicationDeploy).toBeGreaterThan(verification);
+        expect(componentMarkers).toBeGreaterThan(verification);
+        expect(production).toContain(
+            `expected_firebase_application_verifier_sha256='${productionFirebaseApplicationVerifierSha256}'`
+        );
+        expect(production).toContain(
+            `expected_firebase_functions_deploy_log_verifier_sha256='${productionFirebaseFunctionsDeployLogVerifierSha256}'`
+        );
+        expect(production).toContain(
+            'cp scripts/verify-firebase-application-deployment.mjs "$FIREBASE_PRODUCTION_BUNDLE/context/"'
+        );
+        expect(production).toContain(
+            'cp scripts/verify-firebase-functions-deploy-log.mjs "$FIREBASE_PRODUCTION_BUNDLE/context/"'
+        );
+        expect(production.slice(targetedDeploy, verification)).not.toContain('|| true');
+        expect(production.slice(verification, migration)).not.toContain('continue-on-error');
+    });
+
+    it('maps successful and unchanged Firebase CLI results for every intended Function', () => {
+        const verified = verifyFunctionsDeployLog([
+            '\u001b[32m✔\u001b[0m  functions[createTeam(us-central1)] Successful update operation.',
+            '✔  functions[sendInvite(us-central1)] Skipped (No changes detected)'
+        ].join('\n'));
+
+        expect(verified).toEqual([
+            {
+                status: 'updated',
+                targetType: 'firebase-function',
+                projectId: 'game-flow-c6311',
+                functionTarget: 'createTeam',
+                artifactSha,
+                deploymentId: 'firebase-cli-result:createTeam'
+            },
+            {
+                status: 'unchanged',
+                targetType: 'firebase-function',
+                projectId: 'game-flow-c6311',
+                functionTarget: 'sendInvite',
+                artifactSha,
+                deploymentId: 'firebase-cli-result:sendInvite'
+            }
+        ]);
+    });
+
+    it.each([
+        {
+            label: 'missing target evidence',
+            deployLog: '✔  functions[createTeam(us-central1)] Successful update operation.',
+            error: 'incomplete intended function targets: sendInvite'
+        },
+        {
+            label: 'duplicate target evidence',
+            deployLog: [
+                '✔  functions[createTeam(us-central1)] Successful update operation.',
+                '✔  functions[createTeam(us-central1)] Skipped (No changes detected)',
+                '✔  functions[sendInvite(us-central1)] Successful create operation.'
+            ].join('\n'),
+            error: 'duplicate evidence for function target createTeam'
+        },
+        {
+            label: 'malformed terminal evidence',
+            deployLog: [
+                '✔  functions[createTeam(us-central1)] Successful update operation',
+                '✔  functions[sendInvite(us-central1)] Skipped (No changes detected)'
+            ].join('\n'),
+            error: 'incomplete intended function targets: createTeam'
+        },
+        {
+            label: 'unintended target evidence',
+            deployLog: [
+                '✔  functions[createTeam(us-central1)] Successful update operation.',
+                '✔  functions[sendInvite(us-central1)] Skipped (No changes detected)',
+                '✔  functions[deleteLeague(us-central1)] Successful create operation.'
+            ].join('\n'),
+            error: 'deploy log references unexpected function target deleteLeague'
+        }
+    ])('fails closed for $label', ({ deployLog, error }) => {
+        expect(() => verifyFunctionsDeployLog(deployLog)).toThrow(error);
     });
 
     it('keeps rule-changing releases rules-first and skips unchanged rule writes', () => {
