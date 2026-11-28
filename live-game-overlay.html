@@ -2229,7 +2229,7 @@
       <div id="video-fallback" class="video-fallback">
         <div>
           <div class="video-fallback-mark" aria-hidden="true">AP</div>
-          <strong>Waiting for the game feed</strong>
+          <strong id="video-fallback-title">Waiting for the game feed</strong>
           <p id="video-fallback-copy">The scoreboard and live context stay ready while video connects.</p>
         </div>
       </div>
@@ -2457,14 +2457,14 @@
             <span class="team-side">Home</span>
           </div>
         </div>
-        <span id="home-score" class="team-score">0</span>
+        <span id="home-score" class="team-score">–</span>
       </div>
       <div class="clock-block">
-        <span id="period" class="period-label">H1</span>
-        <time id="game-clock" class="game-clock" datetime="PT0M0S">0:00</time>
+        <span id="period" class="period-label">–</span>
+        <time id="game-clock" class="game-clock" datetime="PT0M0S">--:--</time>
       </div>
       <div class="score-team" data-side="away">
-        <span id="away-score" class="team-score">0</span>
+        <span id="away-score" class="team-score">–</span>
         <div class="team-identity">
           <img id="away-team-photo" class="team-photo" alt="" hidden>
           <div>
@@ -2509,6 +2509,6 @@
   </main>
 
   <span id="screen-reader-update" class="visually-hidden" aria-live="polite"></span>
-    <script type="module" src="js/live-game-overlay.js?v=81"></script>
+    <script type="module" src="js/live-game-overlay.js?v=82"></script>
 </body>
 </html>

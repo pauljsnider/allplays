@@ -208,7 +208,32 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
         expect(html).toMatch(/\.panel-tab\s*\{[^}]*min-width:\s*44px;/);
-        expect(html).toContain('js/live-game-overlay.js?v=81');
+        expect(html).toContain('js/live-game-overlay.js?v=82');
+    });
+
+    it('does not present placeholder score or waiting copy as the loaded game state', () => {
+        expect(html).toContain('<span id="home-score" class="team-score">–</span>');
+        expect(html).toContain('<span id="away-score" class="team-score">–</span>');
+        expect(html).toContain('<span id="period" class="period-label">–</span>');
+        expect(html).toContain('id="game-clock" class="game-clock" datetime="PT0M0S">--:--</time>');
+        expect(html).toContain('<strong id="video-fallback-title">Waiting for the game feed</strong>');
+
+        const elements = {
+            videoFallback: { hidden: true },
+            videoFallbackTitle: { textContent: 'Waiting for the game feed' },
+            videoFallbackCopy: { textContent: '' }
+        };
+        const showVideoFallback = new Function('elements', 'resetVideoElements', 'refreshReplayClip', `
+            ${extractFunction(source, 'showVideoFallback')}
+            return showVideoFallback;
+        `)(elements, () => {}, () => {});
+
+        showVideoFallback('The scoreboard, plays, and chat stay live here.', 'No stream for this game yet');
+        expect(elements.videoFallback.hidden).toBe(false);
+        expect(elements.videoFallbackTitle.textContent).toBe('No stream for this game yet');
+        expect(elements.videoFallbackCopy.textContent).toBe('The scoreboard, plays, and chat stay live here.');
+        expect(source).toContain("'No stream for this game yet'");
+        expect(source).toContain('check back at game time');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
