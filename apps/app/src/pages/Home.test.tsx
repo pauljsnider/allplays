@@ -2045,6 +2045,22 @@ describe('Home', () => {
     expect(await screen.findByText('No requests right now')).toBeTruthy();
   });
 
+  it('shows every listed upcoming event and a +N more link when more exist', async () => {
+    const largeHome = { ...buildLargeHomeModel(), upcomingEventCount: 8 };
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: largeHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(largeHome);
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Your day' })).toBeTruthy();
+    const upcomingSection = screen.getByText('Upcoming').closest('section');
+    expect(upcomingSection).not.toBeNull();
+    const eventLinks = within(upcomingSection!).getAllByRole('link')
+      .filter((link) => (link.getAttribute('href') || '').startsWith('/schedule/team-'));
+    expect(eventLinks).toHaveLength(6);
+    expect(within(upcomingSection!).getByRole('link', { name: /\+2 more upcoming/ })).toHaveAttribute('href', '/schedule');
+  });
+
   it('renders Today content from larger Home payloads and keeps it visible after refresh', async () => {
     const largeHome = buildLargeHomeModel();
     homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: largeHome, schedule: [] });

@@ -140,6 +140,7 @@ const emptyHome = (): ParentHomeModel => ({
   players: [],
   teams: [],
   upcomingEvents: [],
+  upcomingEventCount: 0,
   feedGames: [],
   actionItems: [],
   fees: [],
@@ -819,7 +820,11 @@ function TodaySection({
     .sort((a, b) => Number(b.unreadCount || 0) - Number(a.unreadCount || 0));
   const packetAction = home.actionItems.find((action) => action.kind === 'packet') || null;
   const rsvpAction = home.actionItems.find((action) => action.kind === 'rsvp') || null;
-  const nextEvents = home.upcomingEvents.slice(0, 3);
+  const nextEvents = home.upcomingEvents;
+  const hiddenUpcomingCount = Math.max(
+    0,
+    (home.upcomingEventCount ?? home.upcomingEvents.length) - nextEvents.length
+  );
   const topAction = home.actionItems[0] || null;
   const firstUnreadTeam = unreadTeams[0] || null;
   const nextEvent = nextEvents[0] || null;
@@ -903,9 +908,22 @@ function TodaySection({
             View all
           </Link>
         </div>
-        {home.upcomingEvents.length ? nextEvents.map((event) => (
-          <HomeEventCard key={`${event.teamId}-${event.id}-${event.date.toISOString()}`} event={event} />
-        )) : !hasLoadedHomeDetails ? (
+        {home.upcomingEvents.length ? (
+          <>
+            {nextEvents.map((event) => (
+              <HomeEventCard key={`${event.teamId}-${event.id}-${event.date.toISOString()}`} event={event} />
+            ))}
+            {hiddenUpcomingCount > 0 ? (
+              <Link
+                to="/schedule"
+                className="block rounded-xl border border-gray-200 bg-gray-50 p-3 text-center text-sm font-black text-primary-700"
+                onClick={(event) => handleParentCoreDrillInClick(event, '/schedule', { trigger: 'upcoming_show_more' })}
+              >
+                +{hiddenUpcomingCount} more upcoming · View schedule
+              </Link>
+            ) : null}
+          </>
+        ) : !hasLoadedHomeDetails ? (
           <HomeDetailsLoadingState message="Checking upcoming events…" />
         ) : (
           <EmptyCard icon={CalendarDays} title="No upcoming events" detail="Your schedule is clear for the current filters." />

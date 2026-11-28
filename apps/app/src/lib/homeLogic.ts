@@ -84,6 +84,12 @@ export type ParentHomeModel = {
   players: ParentHomePlayer[];
   teams: ParentHomeTeam[];
   upcomingEvents: ParentScheduleEvent[];
+  /**
+   * Total upcoming events before the `upcomingEvents` list is capped for
+   * display, so the UI can say how many more exist instead of silently
+   * hiding them. Falls back to `upcomingEvents.length` when unknown.
+   */
+  upcomingEventCount?: number;
   feedGames?: ParentScheduleEvent[];
   actionItems: ParentHomeAction[];
   fees: ParentHomeFee[];
@@ -189,6 +195,7 @@ export function buildParentHomeModel({
     players,
     teams,
     upcomingEvents,
+    upcomingEventCount: eventIndex.upcomingEvents.length,
     feedGames: eventIndex.feedGames,
     actionItems,
     fees: openFees,
