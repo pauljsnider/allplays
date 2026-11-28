@@ -99,19 +99,43 @@ describe('marketing pages integration', () => {
 });
 
 describe('TV marketing availability boundaries', () => {
-    it('keeps the concept separate from install availability and links real existing destinations', () => {
+    it('distinguishes Roku replay access from public store availability and links existing destinations', () => {
         const home = read('index.html');
         const app = read('app.html');
-        expect(home).toContain('Roku experience · In development');
-        expect(home).toContain('Concept preview · Illustrative game imagery');
+        expect(home).toContain('Game replays on Roku');
+        expect(home).toContain('Illustrative game imagery.');
+        expect(home + app).not.toMatch(/In development|Concept preview|Private prototype|We’re developing/);
+        expect(home).toContain('Roku access is through private sideloading; not listed in the Roku Channel Store.');
         expect(home).toContain('href="app.html#platforms"');
         expect(app).toContain('id="platforms"');
         const roku = app.match(/<article id="roku-availability"[\s\S]*?<\/article>/)[0];
-        expect(roku).toContain('Not yet publicly available');
+        expect(roku).toContain('Watch YouTube game replays on your TV with Roku.');
+        expect(roku).toContain('private sideloading; not listed in the Roku Channel Store.');
+        expect(roku).not.toMatch(/live games|live streaming/i);
         expect(roku).not.toMatch(/<a\b/);
         expect(home + app).not.toMatch(/channelstore\.roku\.com|my\.roku\.com/);
         expect(app).toContain('iPhone or Android browser.');
         expect(app).not.toMatch(/App Store|Google Play|Free to download/);
         expect((app.match(/href="\/app\/#\/auth\?mode=signup"/g) || [])).toHaveLength(3);
+    });
+});
+
+describe('Outcome-led vendor comparison', () => {
+    it('supports the Allplays value story without false competitor gaps or install claims', () => {
+        const html = read('compare.html');
+        expect(html).toContain('One place for the team.');
+        expect(html).toContain('Less work for you.');
+        for (const vendor of ['TeamSnap', 'GameChanger', 'SportsEngine', 'Spond', 'Hudl']) {
+            expect(html).toContain(`ALL PLAYS vs. ${vendor}`);
+        }
+        expect(html).toContain('private sideloading; not listed in the Roku Channel Store.');
+        expect(html).toContain('Hudl Fan supports Roku');
+        expect(html).toContain('most sports use human analysts');
+        expect(html).toContain('remain proposed');
+        expect(html).toContain('https://www.gc.com/app-features/team-management');
+        expect(html).toContain('https://www.hudl.com/products/assist/faq');
+        expect(html).toContain('Request team access');
+        expect(html).not.toMatch(/Not verified|In development|Concept preview|only platform|only AI-native|GameChanger doesn.t cover|min-w-\[1100px\]/);
+        expect(html).toContain('it doesn’t change your team’s records');
     });
 });
