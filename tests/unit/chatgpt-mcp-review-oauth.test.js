@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { createOAuthBroker, requestedReviewScope, s256Challenge } from '../../services/chatgpt-mcp/src/oauth.js';
 import { createFirestoreOAuthGrantStore, createMemoryOAuthGrantStore } from '../../services/chatgpt-mcp/src/oauthStore.js';
+import { getWriteActionCatalog } from '../../services/chatgpt-mcp/src/core.js';
 const redirectUri = 'https://chatgpt.com/connector_platform_oauth_redirect';
 const verifier = 'synthetic-verifier-with-more-than-forty-three-characters';
 async function issue(broker, extra = {}) {
@@ -116,4 +117,39 @@ describe('explicit review-only OAuth capability', () => {
             if (previous[1] === undefined) delete process.env.FIREBASE_WEB_API_KEY; else process.env.FIREBASE_WEB_API_KEY = previous[1];
         }
     });
+    it('discovers every canonical write action once with its catalog metadata', async () => {
+        const previous = [process.env.FIREBASE_PROJECT_ID, process.env.FIREBASE_WEB_API_KEY];
+        process.env.FIREBASE_PROJECT_ID = 'demo-allplays'; process.env.FIREBASE_WEB_API_KEY = 'synthetic';
+        const { app } = await import('../../services/chatgpt-mcp/src/server.js');
+        const server = createServer(app);
+        await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+        const origin = `http://127.0.0.1:${server.address().port}`;
+        const jwt = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: 'synthetic', email: 'synthetic@example.test', exp: Math.floor(Date.now() / 1000) + 60 })).toString('base64url')}.synthetic`;
+        try {
+            const response = await fetch(`${origin}/mcp`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+                body: JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/list', params: {} })
+            });
+            const event = (await response.text()).split('\n').find((line) => line.startsWith('data: '));
+            const tools = JSON.parse(event.slice('data: '.length)).result.tools;
+            const catalog = getWriteActionCatalog();
+            const discovered = tools.filter(({ name }) => catalog.some((entry) => entry.name === name));
+            expect(discovered.map(({ name }) => name)).toEqual(catalog.map(({ name }) => name));
+            expect(new Set(discovered.map(({ name }) => name)).size).toBe(catalog.length);
+            for (const definition of catalog) {
+                const tool = discovered.find(({ name }) => name === definition.name);
+                expect(tool).toMatchObject({
+                    name: definition.name,
+                    title: `Review ${definition.name.replaceAll('_', ' ')}`,
+                    description: expect.stringContaining(definition.description)
+                });
+            }
+        } finally {
+            await new Promise((resolve) => server.close(resolve));
+            if (previous[0] === undefined) delete process.env.FIREBASE_PROJECT_ID; else process.env.FIREBASE_PROJECT_ID = previous[0];
+            if (previous[1] === undefined) delete process.env.FIREBASE_WEB_API_KEY; else process.env.FIREBASE_WEB_API_KEY = previous[1];
+        }
+    });
+
 });
