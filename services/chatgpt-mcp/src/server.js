@@ -286,7 +286,7 @@ function buildServer(identity, { reviewRequests = false } = {}) {
         }, runReview((context, args) => {
             validateWriteActionArguments(definition, args.arguments);
             return prepareWriteReview(db, context, { ...args, action: definition.name });
-        })));
+        }));
     }
     server.registerTool('get_action_status', {
         title: 'Get action review status',
