@@ -23,7 +23,7 @@ describe('React app schedule event detail cancellation action', () => {
         expect(source).toContain('!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && (!isDiamondOwned || event.isTeamAdmin) && auth.user');
         expect(source).toContain('Cancel game');
         expect(source).toContain("const notifiesCounterpartTeam = Boolean(event.sharedScheduleOpponentTeamId);");
-        expect(source).toContain("This marks the game cancelled and notifies ${notifiesCounterpartTeam ? 'both team chats' : 'the team in chat'}.`);");
+        expect(source).toContain("This marks the game cancelled and notifies ${notifiesCounterpartTeam ? 'both team chats' : 'the team in chat'}.`");
         expect(routeSource).toContain("{ ...event, status: 'cancelled', isCancelled: true, availabilityLocked: true }");
         expect(source).toContain('Game cancelled, but team chat notification failed:');
         expect(source).toContain('Game cancelled and both team chats notified.');
@@ -36,7 +36,7 @@ describe('React app schedule event detail cancellation action', () => {
         expect(source).toContain('cancelPracticeOccurrenceForApp');
         expect(source).toContain("const isRecurringPracticeOccurrence = Boolean(isPractice && event.id.includes('__'));");
         expect(source).toContain("const canCancelPracticeOccurrence = Boolean(isRecurringPracticeOccurrence && event.isDbGame && !event.isCancelled && event.isTeamAdmin && auth.user);");
-        expect(source).toContain("Cancel only ${practiceLabel} on ${formatEventDateLabel(event.date)}? This cancels just this occurrence, not the full recurring series.`);");
+        expect(source).toContain("Cancel only ${event.title || 'this practice'} on ${formatEventDateLabel(event.date)}? This cancels just this occurrence, not the full recurring series.`");
         expect(source).toContain('Practice occurrence cancelled for this date only.');
         expect(source).toContain('Cancel this occurrence');
         expect(source).toContain('Cancel only this recurring practice occurrence.');
