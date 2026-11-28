@@ -938,7 +938,7 @@ describe('TeamDetail', () => {
 
     expect(await screen.findByText('Checking schedule…')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Bears' })).toBeTruthy();
-    expect(teamDetailServiceMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledWith('team-1', auth.user, { includeOverviewSchedule: false });
+    expect(teamDetailServiceMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledWith('team-1', auth.user);
     expect(screen.queryByText('Schedule is clear for now')).toBeNull();
     expect(screen.getByRole('link', { name: /Upcoming/ })).toHaveTextContent('—');
 
@@ -1086,15 +1086,15 @@ describe('TeamDetail', () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByText('The complete team schedule could not be loaded. Retry to avoid showing missing events.')).toBeTruthy();
+    expect(await screen.findByText('Some schedule sources could not be loaded, so this list may be incomplete.')).toBeTruthy();
     await waitFor(() => expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2));
-    expect(screen.queryByText('No team events found.')).toBeNull();
+    expect(screen.getByText('No team events found.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Retry schedule' })).toBeTruthy();
     expect(screen.getByRole('link', { name: /Upcoming/ })).toHaveTextContent('—');
 
     fireEvent.click(within(screen.getByRole('navigation', { name: 'Team detail sections' })).getByRole('button', { name: /overview/i }));
-    expect(screen.getByText('Schedule unavailable')).toBeTruthy();
-    expect(screen.getByText('Open the schedule to retry.')).toBeTruthy();
+    expect(screen.getByText('Schedule incomplete')).toBeTruthy();
+    expect(screen.getByText('Some schedule sources could not be loaded. Open the schedule to retry.')).toBeTruthy();
     expect(screen.queryByText('Schedule is clear for now')).toBeNull();
   });
 
@@ -1137,7 +1137,7 @@ describe('TeamDetail', () => {
     expect(screen.getByRole('link', { name: /Next event/i })).toHaveTextContent('Known complete game');
 
     fireEvent.click(tabNavigation.getByRole('button', { name: /schedule/i }));
-    expect(await screen.findByText('The complete team schedule could not be loaded. Retry to avoid showing missing events.')).toBeTruthy();
+    expect(await screen.findByText('Some schedule sources could not be loaded, so this list may be incomplete.')).toBeTruthy();
     await waitFor(() => expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(3));
     expect(screen.getByText('Known complete game')).toBeTruthy();
     expect(screen.getByRole('link', { name: /1\s+Upcoming/ })).toBeTruthy();
@@ -1456,19 +1456,25 @@ describe('TeamDetail', () => {
     expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
   });
 
-  it('rejects partial authoritative schedule results instead of showing missing team events', async () => {
+  it('shows loaded events with a partial-data notice when the authoritative schedule stays partial (#5318)', async () => {
     teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
       ...model,
       upcomingEvents: [],
       recentResults: [],
       statTrackerConfigs: []
     });
-    scheduleServiceMocks.loadParentSchedule.mockResolvedValue({
-      children: [],
-      events: [],
-      staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
-      isPartial: true
-    });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValue(
+      createScheduleLoadResult(
+        [
+          createParentScheduleEvent({
+            id: 'game-next',
+            title: 'Bears vs Tigers',
+            date: new Date(Date.now() + 24 * 60 * 60 * 1000)
+          })
+        ],
+        true
+      )
+    );
 
     render(
       <MemoryRouter initialEntries={['/teams/team-1?tab=schedule']}>
@@ -1478,15 +1484,46 @@ describe('TeamDetail', () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByText('The complete team schedule could not be loaded. Retry to avoid showing missing events.')).toBeTruthy();
+    expect(await screen.findByText('Bears vs Tigers')).toBeTruthy();
+    expect(screen.getByText('Some schedule sources could not be loaded, so this list may be incomplete.')).toBeTruthy();
+    expect(screen.queryByText('Team schedule unavailable')).toBeNull();
     expect(screen.queryByText('No team events found.')).toBeNull();
     expect(screen.getByRole('button', { name: 'Retry schedule' })).toBeTruthy();
+    expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
     expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledWith(auth.user, {
       hydrateDetails: false,
       expandStaffPlayers: false,
       targetTeamId: 'team-1',
       includePastGames: true
     });
+  });
+
+  it('shows the bootstrap overview events on the schedule tab while the targeted load is still pending (#5318)', async () => {
+    const modelEvent = createTeamDetailEvent({
+      id: 'game-next',
+      title: 'Bears vs Tigers',
+      date: new Date(Date.now() + 24 * 60 * 60 * 1000)
+    });
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
+      ...model,
+      upcomingEvents: [modelEvent],
+      recentResults: [],
+      statTrackerConfigs: []
+    });
+    const scheduleLoad = createDeferred<ParentScheduleLoadResult>();
+    scheduleServiceMocks.loadParentSchedule.mockReturnValue(scheduleLoad.promise);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=schedule']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Bears vs Tigers')).toBeTruthy();
+    expect(screen.getByText('Loading the complete team schedule…')).toBeTruthy();
+    expect(screen.queryByText('No team events found.')).toBeNull();
   });
 
   it('retries a retryable RSVP reminder preview failure from the shared error state', async () => {
