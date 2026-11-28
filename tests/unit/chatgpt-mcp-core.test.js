@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import publicTeamApiCore from '../../functions/public-team-api-core.cjs';
 import {
     DomainError,
+    getWriteActionCatalog,
     loadManagedTeamsFromCallable,
     loadPublicTeamCalendarProjection,
     resolveUserContext,
@@ -82,6 +83,36 @@ function fakeDb({ docs = {}, queries = {} } = {}) {
 }
 
 const parentIdentity = { uid: 'parent-1', email: 'Parent@Example.com' };
+
+describe('chatgpt-mcp write-action catalog', () => {
+    it('contains every canonical action exactly once with discovery metadata', () => {
+        const expectedNames = [
+            'apply_roster_import', 'apply_schedule_import', 'cancel_ride_request', 'cancel_schedule_event',
+            'claim_assignment', 'complete_game_wrapup', 'create_family_share_link', 'create_household_invite',
+            'create_ride_offer', 'create_schedule_event', 'create_team', 'create_team_fee', 'invite_roster_parent',
+            'invite_team_admin', 'manage_schedule_assignment', 'mark_player_incentive_paid',
+            'mark_practice_packet_complete', 'prepare_resource_packet', 'release_assignment', 'request_ride_spot',
+            'resend_roster_parent_invite', 'retire_player_incentive_rule', 'review_registration',
+            'revoke_family_share_link', 'save_player_incentive_rule', 'save_practice_attendance',
+            'save_practice_packet', 'save_practice_timeline', 'save_stat_configuration', 'save_team_tracking_item',
+            'send_rsvp_reminder', 'send_team_email', 'send_team_message', 'set_player_incentive_cap',
+            'set_player_tracking_status', 'set_ride_offer_status', 'set_team_drill_favorite',
+            'submit_access_request', 'toggle_player_incentive_rule', 'update_family_share_calendars',
+            'update_game_score', 'update_player_profile', 'update_rsvp', 'update_rsvps_for_children',
+            'update_schedule_event', 'update_team_settings'
+        ];
+        const catalog = getWriteActionCatalog();
+
+        expect(catalog.map(({ name }) => name)).toEqual(expectedNames);
+        expect(new Set(catalog.map(({ name }) => name)).size).toBe(expectedNames.length);
+        for (const entry of catalog) {
+            expect(entry.name).toEqual(expect.any(String));
+            expect(entry.teamScoped).toEqual(expect.any(Boolean));
+            expect(entry.description).toEqual(expect.any(String));
+            expect(entry.description.trim()).not.toBe('');
+        }
+    });
+});
 
 function parentDb(extra = {}) {
     return fakeDb({
