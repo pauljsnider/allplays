@@ -215,6 +215,7 @@ import {
   loadParentTeamDetail,
   loadParentTeamDetailBootstrap,
   loadTeamDetailInsights,
+  loadTeamStreamUrl,
   loadTeamTrackingAdmin,
   revokeTeamAdminAccessForApp,
   saveTeamTrackingItemForApp,
@@ -3811,5 +3812,69 @@ describe('admin invitation delivery through the shared helper', () => {
     expect(result.reason).toBe('rate_limited');
     expect(result.code).toBe('ABC12345');
     expect(result.acceptInviteUrl).toBe('https://allplays.ai/app/#/accept-invite');
+  });
+});
+
+describe('loadTeamStreamUrl', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetTeamDetailBaseSnapshotCacheForTests();
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1' });
+  });
+
+  it('returns the YouTube channel URL derived from a stored live-stream channel embed', async () => {
+    dbMocks.getTeam.mockResolvedValue({
+      id: 'team-1',
+      ownerId: 'owner-1',
+      streamEmbedUrl: 'https://www.youtube.com/embed/live_stream?channel=UC1234567890123456789012&autoplay=1&mute=1'
+    });
+
+    await expect(loadTeamStreamUrl('team-1')).resolves.toBe('https://www.youtube.com/channel/UC1234567890123456789012');
+    expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1', { includeInactive: true });
+  });
+
+  it('returns the YouTube watch URL derived from a stored stream video embed', async () => {
+    dbMocks.getTeam.mockResolvedValue({
+      id: 'team-1',
+      ownerId: 'owner-1',
+      streamEmbedUrl: 'https://www.youtube.com/embed/LJNfHqRRhBI?autoplay=1&mute=1'
+    });
+
+    await expect(loadTeamStreamUrl('team-1')).resolves.toBe('https://www.youtube.com/watch?v=LJNfHqRRhBI');
+  });
+
+  it('returns the Twitch channel URL when a Twitch channel is configured', async () => {
+    dbMocks.getTeam.mockResolvedValue({
+      id: 'team-1',
+      ownerId: 'owner-1',
+      twitchChannel: 'SunDevilsLive'
+    });
+
+    await expect(loadTeamStreamUrl('team-1')).resolves.toBe('https://twitch.tv/SunDevilsLive');
+  });
+
+  it('falls back to the raw livestream URL when no embed URL is stored', async () => {
+    dbMocks.getTeam.mockResolvedValue({
+      id: 'team-1',
+      ownerId: 'owner-1',
+      livestreamUrl: 'https://stream.example.test/bears'
+    });
+
+    await expect(loadTeamStreamUrl('team-1')).resolves.toBe('https://stream.example.test/bears');
+  });
+
+  it('returns null when the team has no stream configured', async () => {
+    await expect(loadTeamStreamUrl('team-1')).resolves.toBeNull();
+  });
+
+  it('returns null instead of throwing when the team read fails', async () => {
+    dbMocks.getTeam.mockRejectedValue(new Error('Team read unavailable'));
+
+    await expect(loadTeamStreamUrl('team-1')).resolves.toBeNull();
+  });
+
+  it('returns null without reading for a blank team id', async () => {
+    await expect(loadTeamStreamUrl('  ')).resolves.toBeNull();
+    expect(dbMocks.getTeam).not.toHaveBeenCalled();
   });
 });

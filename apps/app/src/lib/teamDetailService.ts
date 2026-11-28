@@ -901,6 +901,31 @@ async function loadTeamDocument(teamId: string) {
   );
 }
 
+/**
+ * Returns the watchable URL for a team's configured live stream (YouTube or
+ * Twitch), or null when no stream is configured. Reads only the team
+ * document, reusing the team-detail base-snapshot cache when the team page
+ * already loaded it, so the game detail page can surface the stream without
+ * loading the full team detail model (#5248). Failures resolve to null so a
+ * stream read can never block the event page.
+ */
+export async function loadTeamStreamUrl(teamId: string): Promise<string | null> {
+  const normalizedTeamId = cleanString(teamId);
+  if (!normalizedTeamId) return null;
+  try {
+    const cachedTeam = teamDetailBaseSnapshotCache.get(normalizedTeamId)?.team;
+    const team = cachedTeam || (await loadTeamDocument(normalizedTeamId));
+    return getStreamUrl(team);
+  } catch (error) {
+    logger.warn('Unable to load team stream URL.', {
+      operation: 'team-stream-url-load',
+      teamId: normalizedTeamId,
+      error
+    });
+    return null;
+  }
+}
+
 async function recoverAuthoritativeManagedTeam(teamId: string, user: AuthUser | null, team: Record<string, any> | null) {
   if (!user?.uid || hasFullTeamAccess(user, team)) return team;
   if (isNativeRuntime()) return team;

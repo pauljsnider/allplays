@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { CalendarDays, ChevronDown, ChevronLeft, ClipboardCheck, Users } from 'lucide-react';
+import { CalendarDays, ChevronDown, ChevronLeft, ClipboardCheck, Radio, Users } from 'lucide-react';
 import {
   loadParentScheduleEventDetail,
   hydrateParentScheduleEventOptionalDetails,
@@ -11,6 +11,7 @@ import {
   type ParentScheduleLoadResult,
 } from '../lib/scheduleService';
 import { consumeScheduleEventDetailHandoff, peekScheduleEventDetailHandoff } from '../lib/scheduleEventDetailHandoff';
+import { loadTeamStreamUrl } from '../lib/teamDetailService';
 import { exportCalendarIcsFile } from '../lib/publicActions';
 import { buildParentScheduleEventIcs } from '../lib/parentToolsService';
 import { type AppServiceError, toAppServiceError } from '../lib/appErrors';
@@ -230,6 +231,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   ));
   const activeSectionIntentRef = useRef<EventDetailSectionId | null>(activeSection);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [teamStreamUrl, setTeamStreamUrl] = useState<string | null>(null);
   const [availabilityNote, setAvailabilityNote] = useState('');
   // RSVP persistence retains the originating Availability callback, so the
   // continuation must read current navigation and event identity from refs.
@@ -432,6 +434,21 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
       setSelectedChildId(routeChildId);
     }
   }, [searchParams]);
+
+  // The configured team stream lives on the team document, not on the event,
+  // so load it separately. It resolves to null (no button) when the team has
+  // no stream configured or the read fails, and never blocks the event (#5248).
+  useEffect(() => {
+    let cancelled = false;
+    setTeamStreamUrl(null);
+    if (!decodedTeamId) return;
+    void loadTeamStreamUrl(decodedTeamId).then((streamUrl) => {
+      if (!cancelled) setTeamStreamUrl(streamUrl);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [decodedTeamId]);
 
   const selectedEvent = useMemo(() => {
     if (!events.length) return null;
@@ -710,6 +727,17 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
               <CalendarDays className="h-4 w-4" aria-hidden="true" />
               Add to Calendar
             </button>
+            {teamStreamUrl && !selectedEvent.isCancelled ? (
+              <a
+                href={teamStreamUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="secondary-button event-stream-button mt-1.5 w-full justify-center sm:mt-2"
+              >
+                <Radio className="h-4 w-4" aria-hidden="true" />
+                Watch live
+              </a>
+            ) : null}
             {hasPracticePacket ? <PracticePacketPrompt event={selectedEvent} onOpen={() => selectSection('game')} /> : null}
             <EventSectionNav
               className="event-workflow-nav event-nav-desktop mt-3"
