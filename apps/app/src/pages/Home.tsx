@@ -672,7 +672,7 @@ export function Home({ auth }: { auth: AuthState }) {
       {error ? <Status tone="error" message={error} /> : null}
       {socialStatus ? <Status tone={socialStatus.tone} message={socialStatus.message} /> : null}
 
-      {resourcePacketsAvailable() && auth.user && <div hidden={activeSection !== 'today'}><HomeAssignments uid={auth.user.uid} onCount={setResourceOpenCount} /></div>}
+      {resourcePacketsAvailable() && auth.user && <div hidden={activeSection !== 'today'}><HomeAssignments uid={auth.user.uid} onCount={setResourceOpenCount} linkedPlayersFallback={auth.user.parentOf} /></div>}
       {showInitialHomeSkeleton ? <HomePageSkeleton /> : null}
 
       {showBlockingErrorState || showIncompleteHomeError ? <HomeLoadErrorState error={homeLoadError} onRetry={() => refreshHome({ force: true })} retrying={loading} /> : null}

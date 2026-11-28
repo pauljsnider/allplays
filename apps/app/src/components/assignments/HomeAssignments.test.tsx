@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { HomeAssignments } from './HomeAssignments';
+import { __resetHomeAssignmentLoadFailuresForTests, HomeAssignments } from './HomeAssignments';
 const mocks = vi.hoisted(() => ({ family: vi.fn(), players: vi.fn() }));
 vi.mock('../../lib/resourcePacketsService', () => ({
   loadResourcePacketLinkedPlayers: mocks.players,
@@ -9,6 +9,7 @@ vi.mock('../../lib/resourcePacketsService', () => ({
 }));
 beforeEach(() => {
   vi.resetAllMocks();
+  __resetHomeAssignmentLoadFailuresForTests();
   mocks.players.mockResolvedValue({ players: [{ teamId: 'team', playerId: 'child' }] });
 });
 
@@ -101,4 +102,61 @@ it('does not continue the previous account load after switching users', async ()
     old.resolve({ players: [{ teamId: 'old-team', playerId: 'old-child' }] });
   });
   expect(mocks.family).not.toHaveBeenCalled();
+});
+
+it('surfaces the callable error code and message instead of a generic message (#5307)', async () => {
+  mocks.players.mockRejectedValue(
+    Object.assign(new Error('The packet could not be loaded or saved. Retry with the same request.'), {
+      cause: { code: 'functions/unavailable' }
+    })
+  );
+  render(
+    <MemoryRouter>
+      <HomeAssignments uid="failing-parent" />
+    </MemoryRouter>
+  );
+  await screen.findByRole('alert');
+  expect(screen.getByText(/\(unavailable\)/)).toBeTruthy();
+  expect(screen.getByText('The packet could not be loaded or saved. Retry with the same request.')).toBeTruthy();
+});
+
+it('retries with the profile parentOf fallback when linked players fail (#5307)', async () => {
+  const task = {
+    teamId: 'team',
+    playerId: 'child',
+    playerName: 'Child',
+    assignmentId: 'a',
+    title: 'Balance',
+    items: [{ resourceId: 'r' }],
+    signals: {}
+  };
+  mocks.players.mockRejectedValue(new Error('linked players unavailable'));
+  mocks.family.mockResolvedValue({ tasks: [task], cursors: { tasks: null } });
+  render(
+    <MemoryRouter>
+      <HomeAssignments uid="fallback-parent" linkedPlayersFallback={[{ teamId: 'team', playerId: 'child' }]} />
+    </MemoryRouter>
+  );
+  await screen.findByText('Video assignments (1 to do)');
+  expect(mocks.players).toHaveBeenCalledTimes(1);
+  expect(mocks.family).toHaveBeenCalledWith('team', 'child', undefined);
+});
+
+it('does not re-fire the callable on remount while an error is shown (#5307)', async () => {
+  mocks.players.mockRejectedValue(new Error('still failing'));
+  const view = render(
+    <MemoryRouter>
+      <HomeAssignments uid="remount-parent" />
+    </MemoryRouter>
+  );
+  await screen.findByRole('alert');
+  expect(mocks.players).toHaveBeenCalledTimes(1);
+  view.unmount();
+  render(
+    <MemoryRouter>
+      <HomeAssignments uid="remount-parent" />
+    </MemoryRouter>
+  );
+  await screen.findByRole('alert');
+  expect(mocks.players).toHaveBeenCalledTimes(1);
 });

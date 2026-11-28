@@ -3,19 +3,89 @@ import { Link } from 'react-router-dom';
 import { loadResourcePacketFamily, loadResourcePacketLinkedPlayers, type PacketTask } from '../../lib/resourcePacketsService';
 import { assignmentPath, assignmentProgress } from '../../lib/resourceAssignmentPresentation';
 
-export function HomeAssignments({ uid, onCount }: { uid: string; onCount?: (count: number | null) => void }) {
-  return <FamilyAssignments key={uid} onCount={onCount} />;
+export type HomeAssignmentLinkedPlayer = { teamId: string; playerId: string };
+
+type AssignmentLoadError = { code: string | null; message: string };
+
+// A failed load is remembered per account so a Home remount — the panel lives
+// in a hidden div and remounts with the page — does not silently re-fire the
+// same failing callable while the error is already shown. Retry is the
+// explicit way back in (#5307).
+const LOAD_FAILURE_TTL_MS = 5 * 60 * 1000;
+const recentLoadFailures = new Map<string, { error: AssignmentLoadError; at: number }>();
+export function __resetHomeAssignmentLoadFailuresForTests() {
+  recentLoadFailures.clear();
 }
-function FamilyAssignments({ onCount }: { onCount?: (count: number | null) => void }) {
+function readRecentLoadFailure(uid: string): AssignmentLoadError | null {
+  const entry = recentLoadFailures.get(uid);
+  if (!entry) return null;
+  if (Date.now() - entry.at > LOAD_FAILURE_TTL_MS) {
+    recentLoadFailures.delete(uid);
+    return null;
+  }
+  return entry.error;
+}
+
+function describeAssignmentLoadError(error: unknown): AssignmentLoadError {
+  const cause = (error as { cause?: unknown } | null)?.cause;
+  const codeRaw = (cause as { code?: unknown } | null)?.code ?? (error as { code?: unknown } | null)?.code;
+  const code = typeof codeRaw === 'string' ? codeRaw.replace(/^functions\//, '') : null;
+  const message = error instanceof Error && error.message ? error.message : 'Video assignments could not load.';
+  return { code, message };
+}
+
+function normalizeFallbackPlayers(value: unknown): HomeAssignmentLinkedPlayer[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const teamId = typeof (entry as { teamId?: unknown } | null)?.teamId === 'string' ? (entry as { teamId: string }).teamId.trim() : '';
+    const playerId =
+      typeof (entry as { playerId?: unknown } | null)?.playerId === 'string' ? (entry as { playerId: string }).playerId.trim() : '';
+    return teamId && playerId ? [{ teamId, playerId }] : [];
+  });
+}
+
+export function HomeAssignments({
+  uid,
+  onCount,
+  linkedPlayersFallback
+}: {
+  uid: string;
+  onCount?: (count: number | null) => void;
+  linkedPlayersFallback?: unknown;
+}) {
+  return <FamilyAssignments key={uid} uid={uid} onCount={onCount} linkedPlayersFallback={linkedPlayersFallback} />;
+}
+function FamilyAssignments({
+  uid,
+  onCount,
+  linkedPlayersFallback
+}: {
+  uid: string;
+  onCount?: (count: number | null) => void;
+  linkedPlayersFallback?: unknown;
+}) {
   const [tasks, setTasks] = useState<PacketTask[] | null>(null);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<AssignmentLoadError | null>(() => readRecentLoadFailure(uid));
   const [reload, setReload] = useState(0);
+  const [retryingWithFallback, setRetryingWithFallback] = useState(false);
+  const fallbackPlayers = normalizeFallbackPlayers(linkedPlayersFallback);
   useEffect(() => {
+    // While an error is already shown, do not re-fire the load on remount.
+    if (error) return;
     let cancelled = false;
-    setError('');
     onCount?.(null);
     void (async () => {
-      const { players } = await loadResourcePacketLinkedPlayers();
+      // Bounded retry with a different path: if the linkedPlayers callable
+      // fails, fall back once to the profile parentOf list instead of
+      // replaying the identical failing call.
+      let players: HomeAssignmentLinkedPlayer[];
+      try {
+        ({ players } = await loadResourcePacketLinkedPlayers());
+      } catch (linkedError) {
+        if (cancelled || !fallbackPlayers.length) throw linkedError;
+        setRetryingWithFallback(true);
+        players = fallbackPlayers;
+      }
       if (cancelled) return;
       const result: PacketTask[] = [];
       // Bounded concurrency keeps a household refresh from fanning out requests.
@@ -33,14 +103,22 @@ function FamilyAssignments({ onCount }: { onCount?: (count: number | null) => vo
       }
       if (!cancelled) {
         setTasks(result);
+        setRetryingWithFallback(false);
         onCount?.(result.filter((task) => !assignmentProgress(task).complete).length);
       }
-    })().catch(() => {
-      if (!cancelled) setError('Video assignments could not load.');
+    })().catch((caught: unknown) => {
+      if (cancelled) return;
+      const described = describeAssignmentLoadError(caught);
+      recentLoadFailures.set(uid, { error: described, at: Date.now() });
+      setRetryingWithFallback(false);
+      setError(described);
     });
     return () => {
       cancelled = true;
     };
+    // The error state is intentionally not a dependency: a shown error stops
+    // re-firing, and Retry clears it before bumping `reload`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reload, onCount]);
   const outstanding = tasks?.filter((task) => !assignmentProgress(task).complete);
   return (
@@ -53,13 +131,23 @@ function FamilyAssignments({ onCount }: { onCount?: (count: number | null) => vo
       </div>
       {error ? (
         <p role="alert">
-          {error}{' '}
-          <button className="min-h-12 underline" onClick={() => setReload((value) => value + 1)}>
+          Video assignments could not load.{error.code ? ` (${error.code})` : ''}{' '}
+          <button
+            className="min-h-12 underline"
+            onClick={() => {
+              recentLoadFailures.delete(uid);
+              setError(null);
+              setReload((value) => value + 1);
+            }}
+          >
             Retry
           </button>
+          {error.message && error.message !== 'Video assignments could not load.' ? (
+            <span className="mt-1 block text-sm text-gray-600">{error.message}</span>
+          ) : null}
         </p>
       ) : !tasks ? (
-        <p role="status">Checking assignments…</p>
+        <p role="status">{retryingWithFallback ? 'Retrying with your linked players…' : 'Checking assignments…'}</p>
       ) : !outstanding?.length ? (
         <p className="text-gray-600">No videos to open. You’re up to date.</p>
       ) : (
