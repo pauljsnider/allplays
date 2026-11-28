@@ -170,12 +170,13 @@ export function Teams({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     // My Teams is a chooser, even when a partial/fast load temporarily contains
-    // only one team. Only explicit workflow links may skip the chooser.
-    if (loading || selectedTeamId || !hasLoadedTeamSummary || !requestedWorkflow) return;
+    // only one team. Only explicit workflow links may skip the chooser, and only
+    // once the completed enrichment load has confirmed the team list.
+    if (loading || selectedTeamId || !hasLoadedTeamDetails || !requestedWorkflow) return;
     if (shouldOpenSingleTeamDirectly(home.teams)) {
       navigate(getSingleTeamDestination(home.teams[0].teamId, requestedWorkflow), { replace: true });
     }
-  }, [hasLoadedTeamSummary, home.teams, loading, navigate, requestedWorkflow, selectedTeamId]);
+  }, [hasLoadedTeamDetails, home.teams, loading, navigate, requestedWorkflow, selectedTeamId]);
 
   useEffect(() => {
     if (loading || !hasLoadedTeamSummary) return;

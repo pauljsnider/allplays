@@ -41,7 +41,7 @@ import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
 import { updateAppIconBadge } from '../lib/badgeService';
 import type { NotificationInboxItem } from '../lib/notificationInboxService';
 import { loadNotificationInboxService } from '../lib/notificationInboxServiceLoader';
-import type { AuthState, AuthUser, NavItem } from '../lib/types';
+import type { AuthState, NavItem } from '../lib/types';
 import { RoleBadge } from './Badges';
 import { Modal } from './Modal';
 import { hasFamilyScheduleAccess, ScheduleRoleSubmenu } from './ScheduleRoleSubmenu';
@@ -369,7 +369,6 @@ export function AppShell({ auth, children }: AppShellProps) {
     : hasSignedInSession
       ? 'Signed in'
       : 'Explore ALL PLAYS';
-  const teamNavPath = getSingleTeamNavPath(auth.user);
   const hasFamilyNavigation = hasFamilyScheduleAccess(auth)
     || activeReportedScheduleAccess?.hasFamily === true;
   const roleFilteredDesktopNavItems = hasFamilyNavigation
@@ -379,10 +378,10 @@ export function AppShell({ auth, children }: AppShellProps) {
     ? mobileMoreNavItems
     : mobileMoreNavItems.filter((item) => item.path !== familyNavItem.path);
   const activeNavItems = hasSignedInSession
-    ? withTeamContextSchedulePath(withTeamNavPath(mobilePrimaryNavItems, teamNavPath), location.pathname)
+    ? withTeamContextSchedulePath(mobilePrimaryNavItems, location.pathname)
     : publicNavItems;
   const activeDesktopNavItems = hasSignedInSession
-    ? withTeamContextSchedulePath(withTeamNavPath(roleFilteredDesktopNavItems, teamNavPath), location.pathname)
+    ? withTeamContextSchedulePath(roleFilteredDesktopNavItems, location.pathname)
     : publicNavItems;
   const moreNavActive = hasSignedInSession && roleFilteredMobileMoreNavItems.some((item) => isRouteActive(location.pathname, item.path));
   const commonAddWorkflows = commonAddWorkflowIds
@@ -1016,11 +1015,6 @@ function legacyUrl(path: string) {
   return new URL(path, 'https://allplays.ai').toString();
 }
 
-function withTeamNavPath(items: NavItem[], teamNavPath: string): NavItem[] {
-  if (!teamNavPath) return items;
-  return items.map((item) => item.path === '/teams' ? { ...item, path: teamNavPath } : item);
-}
-
 function withTeamContextSchedulePath(items: NavItem[], pathname: string): NavItem[] {
   const match = String(pathname || '').match(/^\/teams\/([^/]+)(?:\/|$)/);
   const teamId = match?.[1] || '';
@@ -1028,37 +1022,6 @@ function withTeamContextSchedulePath(items: NavItem[], pathname: string): NavIte
   return items.map((item) => item.path === '/schedule'
     ? { ...item, path: `/schedule?teamId=${teamId}` }
     : item);
-}
-
-function getSingleTeamNavPath(user: AuthUser | null) {
-  const teamId = getSingleAccessibleTeamId(user);
-  return teamId ? `/teams/${encodeURIComponent(teamId)}` : '';
-}
-
-function getSingleAccessibleTeamId(user: AuthUser | null) {
-  if (!user) return '';
-  const teamIds = new Set<string>();
-  addTeamIds(teamIds, user.parentTeamIds);
-  addTeamIds(teamIds, user.coachOf);
-  if (Array.isArray(user.parentOf)) {
-    user.parentOf.forEach((entry) => {
-      addTeamIds(teamIds, [
-        entry?.teamId,
-        entry?.teamID,
-        entry?.team_id,
-        entry?.team
-      ]);
-    });
-  }
-  return teamIds.size === 1 ? [...teamIds][0] : '';
-}
-
-function addTeamIds(teamIds: Set<string>, values: unknown) {
-  if (!Array.isArray(values)) return;
-  values.forEach((value) => {
-    const teamId = String(value || '').trim();
-    if (teamId) teamIds.add(teamId);
-  });
 }
 
 function isTypingTarget(target: EventTarget | null) {

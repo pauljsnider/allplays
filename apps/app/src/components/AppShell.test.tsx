@@ -364,7 +364,7 @@ describe('AppShell', () => {
     expect(familyLink.className).toContain('bg-primary-50');
   });
 
-  it('routes the desktop My Teams nav directly to the team page when the user has one team', async () => {
+  it('keeps the desktop My Teams nav on the team list when the user has one team', async () => {
     const oneTeamAuth: AuthState = {
       ...signedInAuth,
       user: signedInAuth.user ? { ...signedInAuth.user, parentTeamIds: ['team-1'] } : null,
@@ -374,19 +374,19 @@ describe('AppShell', () => {
       <MemoryRouter initialEntries={['/home']}>
         <Routes>
           <Route path="/home" element={<AppShell auth={oneTeamAuth}><div>Home</div></AppShell>} />
-          <Route path="/teams/:teamId" element={<AppShell auth={oneTeamAuth}><div>Team detail</div></AppShell>} />
+          <Route path="/teams" element={<AppShell auth={oneTeamAuth}><div>Team list</div></AppShell>} />
         </Routes>
       </MemoryRouter>
     );
 
     const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' });
     const teamsLink = within(primaryNav).getByRole('link', { name: 'My Teams' });
-    expect(teamsLink.getAttribute('href')).toBe('/teams/team-1');
+    expect(teamsLink.getAttribute('href')).toBe('/teams');
 
     fireEvent.click(teamsLink);
 
     await waitFor(() => {
-      expect(screen.getByText('Team detail')).toBeTruthy();
+      expect(screen.getByText('Team list')).toBeTruthy();
     });
   });
 
@@ -488,7 +488,7 @@ describe('AppShell', () => {
     );
   });
 
-  it('routes the mobile My Teams nav directly to the team page when the user has one team', () => {
+  it('keeps the mobile My Teams nav on the team list when the user has one team', () => {
     useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
     const oneTeamAuth: AuthState = {
       ...signedInAuth,
@@ -507,7 +507,7 @@ describe('AppShell', () => {
     );
 
     const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' });
-    expect(within(primaryNav).getByRole('link', { name: 'My Teams' }).getAttribute('href')).toBe('/teams/team-1');
+    expect(within(primaryNav).getByRole('link', { name: 'My Teams' }).getAttribute('href')).toBe('/teams');
   });
 
   it('marks More current for a nested destination and dismisses it with native back', () => {
