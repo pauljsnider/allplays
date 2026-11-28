@@ -447,6 +447,8 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
         await updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', {
             status: 'partial',
             amountDueCents: 9000,
+            amountPaidCents: 4000,
+            paidAmountCents: 5000,
             remainingBalanceCents: 8000,
             adjustment: {
                 amountCents: 1000,
@@ -477,6 +479,8 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
             expect.objectContaining({
                 status: 'partial',
                 amountDueCents: 7000,
+                amountPaidCents: 1000,
+                paidAmountCents: 1000,
                 remainingBalanceCents: 6000,
                 adjustment: {
                     amountCents: 1000,
@@ -509,7 +513,7 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
         const auditCall = transactionSet.mock.calls.find(([ref]) => ref.path.includes('/audit/'));
         expect(auditCall[1]).toEqual(expect.objectContaining({
             actorId: 'coach-1',
-            changedFields: ['amountDueCents', 'remainingBalanceCents'],
+            changedFields: ['amountDueCents', 'remainingBalanceCents', 'paidAmountCents'],
             mutationType: 'balance_adjustment'
         }));
     });

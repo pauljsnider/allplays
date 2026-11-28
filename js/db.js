@@ -6597,6 +6597,11 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
                 transactionUpdatePayload.status = status;
                 transactionUpdatePayload.amountDueCents = updatedAmountDueCents;
                 transactionUpdatePayload.remainingBalanceCents = updatedRemainingBalanceCents;
+                ['amountPaidCents', 'paidAmountCents'].forEach((field) => {
+                    if (Object.prototype.hasOwnProperty.call(transactionUpdatePayload, field)) {
+                        transactionUpdatePayload[field] = priorPaidCents;
+                    }
+                });
                 transactionUpdatePayload.adjustment = {
                     ...(recipientUpdates.adjustment || {}),
                     amountCents: adjustmentCents,
