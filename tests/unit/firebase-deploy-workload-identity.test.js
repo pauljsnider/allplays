@@ -242,7 +242,7 @@ describe('Firebase deploy Workload Identity boundary', () => {
             'retry_firebase_deploy \\\n            "$retry_enabled_function_targets"'
         );
         const verification = production.indexOf(
-            'verify_targeted_function_deployment \\\n            "$firebase_deploy_log" \\\n            "$retry_enabled_function_targets"'
+            'verify_targeted_function_deployment \\\n            "$firebase_deploy_log" \\\n            "$retry_enabled_function_targets" \\\n            "$firebase_deploy_status"'
         );
         const migration = production.indexOf(
             'if [[ "$TEAM_FEE_CHECKOUT_BACKFILL_NEEDED" == "true"',
@@ -274,6 +274,7 @@ describe('Firebase deploy Workload Identity boundary', () => {
         );
         expect(production.slice(targetedDeploy, verification)).not.toContain('|| true');
         expect(production.slice(verification, migration)).not.toContain('continue-on-error');
+        expect(production).toContain('--exit-code \"$deploy_status\"');
     });
 
     it('maps successful and unchanged Firebase CLI results for every intended Function', () => {
