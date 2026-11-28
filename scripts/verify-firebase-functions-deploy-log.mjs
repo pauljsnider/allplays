@@ -67,7 +67,7 @@ export function verifyFirebaseFunctionsDeployLog({
         const functionTarget = match[1];
         const expected = expectedByTarget.get(functionTarget);
         if (!expected) {
-            continue;
+            fail(`deploy log references unexpected function target ${functionTarget}.`);
         }
         evidence.push({
             schemaVersion: FIREBASE_APPLICATION_EVIDENCE_SCHEMA_VERSION,

@@ -1189,7 +1189,7 @@ jobs:
             "$expected_firebase_application_verifier_sha256" \
             "$bundle/context/verify-firebase-application-deployment.mjs" \
             | sha256sum --check --strict -
-          expected_firebase_functions_deploy_log_verifier_sha256='9e8e147df2b1106cf533aa49a9f218612c3bf09b57f5aaa2a7d259dc2fba04dd'
+          expected_firebase_functions_deploy_log_verifier_sha256='cefee1277df0fd4ebdb2a18d6ac46deea2e908c06ea295b037a4e178c507ab08'
           printf '%s  %s\n' \
             "$expected_firebase_functions_deploy_log_verifier_sha256" \
             "$bundle/context/verify-firebase-functions-deploy-log.mjs" \
