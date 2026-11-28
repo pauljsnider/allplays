@@ -1189,7 +1189,7 @@ jobs:
             "$expected_firebase_application_verifier_sha256" \
             "$bundle/context/verify-firebase-application-deployment.mjs" \
             | sha256sum --check --strict -
-          expected_firebase_functions_deploy_log_verifier_sha256='cefee1277df0fd4ebdb2a18d6ac46deea2e908c06ea295b037a4e178c507ab08'
+          expected_firebase_functions_deploy_log_verifier_sha256='cb446c3af697d408319840a2c27e686b5939abb669dd07c8dedb50ff232dd745'
           printf '%s  %s\n' \
             "$expected_firebase_functions_deploy_log_verifier_sha256" \
             "$bundle/context/verify-firebase-functions-deploy-log.mjs" \
@@ -1920,7 +1920,9 @@ jobs:
           verify_targeted_function_deployment() {
             local deploy_log="$1"
             local function_targets="$2"
+            local deploy_status="$3"
             node "$FIREBASE_PRODUCTION_BUNDLE/context/verify-firebase-functions-deploy-log.mjs" \
+              --exit-code "$deploy_status" \
               --deploy-log "$deploy_log" \
               --targets "$function_targets" \
               --artifact-sha "$GITHUB_SHA" \
@@ -1975,6 +1977,7 @@ jobs:
 
               if (( deploy_status == 0 )); then
                 firebase_deploy_log="$deploy_log"
+                firebase_deploy_status="$deploy_status"
                 return 0
               fi
 
@@ -2242,7 +2245,8 @@ jobs:
             true
           verify_targeted_function_deployment \
             "$firebase_deploy_log" \
-            "$retry_enabled_function_targets"
+            "$retry_enabled_function_targets" \
+            "$firebase_deploy_status"
           if [[ "$TEAM_FEE_CHECKOUT_BACKFILL_NEEDED" == "true" || "$REGISTRATION_CHECKOUT_BACKFILL_NEEDED" == "true" ]]; then
             # Publish every producer/consumer of the private attempt state first,
             # then atomically move and scrub historical bearer data before the

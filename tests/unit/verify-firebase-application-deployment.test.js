@@ -9,6 +9,9 @@ import {
     FIREBASE_HOSTING_TARGET_TYPE,
     verifyFirebaseApplicationDeployment
 } from '../../scripts/verify-firebase-application-deployment.mjs';
+import {
+    verifyFirebaseFunctionsDeployResult
+} from '../../scripts/verify-firebase-functions-deploy-log.mjs';
 
 const artifactSha = 'a'.repeat(40);
 const expectedDeployment = Object.freeze({
@@ -462,18 +465,19 @@ describe('aggregate Firebase function deployment evidence', () => {
     });
 
     it('rejects an exit-zero partial Functions deployment as production success', () => {
-        const deployResult = {
-            exitCode: 0,
-            evidence: [
-                validFunctionUpdatedEvidence(expectedDeployments[0]),
-                validFunctionUnchangedEvidence(expectedDeployments[2])
-            ]
-        };
-
-        expect(deployResult.exitCode).toBe(0);
-
         const error = captureVerificationError(
-            () => verifyFunctions(deployResult.evidence, expectedDeployments)
+            () => verifyFirebaseFunctionsDeployResult({
+                exitCode: 0,
+                deployLog: [
+                    '✔  functions[sendNotification(us-central1)] Successful update operation.',
+                    '✔  functions[syncTeamNotificationTargets(us-central1)] Skipped (No changes detected)'
+                ].join('\n'),
+                targets: expectedDeployments
+                    .map(({ functionTarget }) => `functions:${functionTarget}`)
+                    .join(','),
+                artifactSha,
+                projectId: expectedFunctionDeployment.projectId
+            })
         );
 
         expect(error).toMatchObject({
