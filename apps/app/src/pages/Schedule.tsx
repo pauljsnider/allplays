@@ -850,10 +850,28 @@ export function Schedule({ auth }: { auth: AuthState }) {
       const staffTeamIds = new Set(staffTeams.map((team) => team.teamId));
       return events.filter((event) => event.isTeamStaff === true || staffTeamIds.has(event.teamId));
     }
+    // Product decision (#5316): the family agenda is the combined "All my
+    // teams" agenda — it includes events of teams the user coaches, not just
+    // events of parent-linked children. A Parent+Coach user lands here by
+    // default, and staff-team events were invisible until now even though
+    // they were already loaded. This is reversible: the alternative (keep the
+    // split and show a "N events on teams you coach" notice) is still open.
+    // The inclusion is deliberately narrow: only the synthetic team-scope
+    // rows (childId "staff-team-<teamId>", stamped isLinkedParentChild false
+    // at both ends) and unmarked legacy rows on coached teams come in —
+    // another player's explicitly non-linked row on a coached team stays out
+    // of the family view (see "keeps explicitly non-linked same-team rows
+    // out of family views"). RSVP/child semantics are unchanged: the player
+    // filter still selects a real child (staff-team rows are excluded when a
+    // player is picked), and bulk RSVP already excludes staff-team children
+    // (bulkRsvp.ts).
     const familyTeamIds = new Set(children.map((child) => child.teamId));
+    const staffTeamIds = new Set(staffTeams.map((team) => team.teamId));
     return events.filter((event) => (
       event.isLinkedParentChild === true
       || (event.isLinkedParentChild == null && familyTeamIds.has(event.teamId))
+      || (event.isLinkedParentChild == null && staffTeamIds.has(event.teamId))
+      || String(event.childId || '').startsWith('staff-team-')
     ));
   }, [children, events, scheduleScope, staffTeams]);
   const scopeChildren = useMemo(
@@ -1054,7 +1072,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     () => getParentScheduleTeamOptions(
       scopedEvents,
       scopeChildren,
-      scheduleScope === 'staff' ? staffTeams : []
+      staffTeams
     ),
     [scheduleScope, scopeChildren, scopedEvents, staffTeams]
   );
