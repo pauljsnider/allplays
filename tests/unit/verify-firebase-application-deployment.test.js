@@ -9,6 +9,9 @@ import {
     FIREBASE_HOSTING_TARGET_TYPE,
     verifyFirebaseApplicationDeployment
 } from '../../scripts/verify-firebase-application-deployment.mjs';
+import {
+    verifyFirebaseFunctionsDeployResult
+} from '../../scripts/verify-firebase-functions-deploy-log.mjs';
 
 const artifactSha = 'a'.repeat(40);
 const expectedDeployment = Object.freeze({
@@ -459,6 +462,30 @@ describe('aggregate Firebase function deployment evidence', () => {
                 deploymentId: expectedDeployments[2].deploymentId
             }
         ]);
+    });
+
+    it('rejects an exit-zero partial Functions deployment as production success', () => {
+        const error = captureVerificationError(
+            () => verifyFirebaseFunctionsDeployResult({
+                exitCode: 0,
+                deployLog: [
+                    '✔  functions[sendNotification(us-central1)] Successful update operation.',
+                    '✔  functions[syncTeamNotificationTargets(us-central1)] Skipped (No changes detected)'
+                ].join('\n'),
+                targets: expectedDeployments
+                    .map(({ functionTarget }) => `functions:${functionTarget}`)
+                    .join(','),
+                artifactSha,
+                projectId: expectedFunctionDeployment.projectId
+            })
+        );
+
+        expect(error).toMatchObject({
+            code: 'firebase-functions-incomplete-targets',
+            metadata: {
+                incompleteTargets: ['sendTeamEmail']
+            }
+        });
     });
 
     it('identifies every intended target when no deployment evidence is present', () => {
