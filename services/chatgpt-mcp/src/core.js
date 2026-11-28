@@ -14,6 +14,44 @@ export function getWriteActionCatalog() {
     return writeCatalog.map((definition) => ({ ...definition }));
 }
 
+function isPlainObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+        && Object.getPrototypeOf(value) === Object.prototype;
+}
+
+/** Validate write arguments before they reach review persistence or mutation code. */
+export function validateWriteActionArguments(definition, input) {
+    const schema = definition?.inputSchema;
+    const failures = [];
+    if (!isPlainObject(input)) failures.push({ path: [], message: 'Arguments must be an object.' });
+    if (failures.length) throw new DomainError('invalid_argument', 'Invalid action arguments.', failures);
+    for (const key of schema.required || []) {
+        if (!(key in input) || input[key] === undefined || input[key] === null || input[key] === '') {
+            failures.push({ path: [key], message: 'Required input is missing.' });
+        }
+    }
+    for (const alternatives of schema.anyOf || []) {
+        if (!alternatives.some((key) => input[key] !== undefined && input[key] !== null && input[key] !== '')) {
+            failures.push({ path: alternatives, message: `One of ${alternatives.join(', ')} is required.` });
+        }
+    }
+    for (const [key, property] of Object.entries(schema.properties || {})) {
+        const value = input[key];
+        if (value === undefined || value === null) continue;
+        const types = Array.isArray(property.type) ? property.type : [property.type];
+        const valid = types.some((type) => (
+            (type === 'string' && typeof value === 'string')
+            || (type === 'number' && typeof value === 'number' && Number.isFinite(value))
+            || (type === 'boolean' && typeof value === 'boolean')
+            || (type === 'array' && Array.isArray(value))
+            || (type === 'object' && isPlainObject(value))
+        ));
+        if (!valid) failures.push({ path: [key], message: `Expected ${types.join(' or ')}.` });
+    }
+    if (failures.length) throw new DomainError('invalid_argument', 'Invalid action arguments.', failures);
+    return input;
+}
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MAX_EVENTS_PER_TEAM = 50;
 const MAX_TRACKED_CALENDAR_EVENTS_PER_TEAM = 5000;
@@ -52,8 +90,9 @@ const GENERIC_CALENDAR_DISCRIMINATORS = new Set([
 ]);
 
 export class DomainError extends Error {
-    constructor(code, message) {
+    constructor(code, message, details = undefined) {
         super(message);
+        if (details) this.details = details;
         this.name = 'DomainError';
         this.code = code;
     }
