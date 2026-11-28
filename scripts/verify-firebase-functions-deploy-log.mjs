@@ -83,6 +83,28 @@ export function verifyFirebaseFunctionsDeployLog({
     });
 }
 
+export function verifyFirebaseFunctionsDeployResult({
+    exitCode,
+    deployLog,
+    targets,
+    artifactSha,
+    projectId
+}) {
+    if (!Number.isInteger(exitCode) || exitCode < 0 || exitCode > 255) {
+        fail('exitCode must be an integer between 0 and 255.');
+    }
+    if (exitCode !== 0) {
+        fail(`deployment command exited with status ${exitCode}.`);
+    }
+
+    return verifyFirebaseFunctionsDeployLog({
+        deployLog,
+        targets,
+        artifactSha,
+        projectId
+    });
+}
+
 function parseArguments(argv) {
     const values = {};
     for (let index = 0; index < argv.length; index += 2) {
@@ -98,7 +120,8 @@ function parseArguments(argv) {
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     const args = parseArguments(process.argv.slice(2));
-    const verified = verifyFirebaseFunctionsDeployLog({
+    const verified = verifyFirebaseFunctionsDeployResult({
+        exitCode: Number(args['exit-code']),
         deployLog: readFileSync(args['deploy-log'], 'utf8'),
         targets: args.targets,
         artifactSha: args['artifact-sha'],
