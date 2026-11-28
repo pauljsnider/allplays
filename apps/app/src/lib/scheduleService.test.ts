@@ -1463,6 +1463,21 @@ describe('scheduled tournament writes', () => {
     });
   });
 
+  it('rejects a possessive personal name as a game location (#5317)', async () => {
+    await expect(createScheduledGameForApp('team-1', {
+      opponent: 'Tigers',
+      startDate: new Date('2026-06-24T18:30:00.000Z'),
+      endDate: new Date('2026-06-24T20:00:00.000Z'),
+      location: "Dad's",
+      arrivalTime: new Date('2026-06-24T18:00:00.000Z'),
+      isHome: true,
+      notes: '',
+      statTrackerConfigId: 'basketball-varsity',
+      countsTowardSeasonRecord: true
+    }, coachUser)).rejects.toThrow(/venue or address/);
+    expect(addGame).not.toHaveBeenCalled();
+  });
+
   it('adapts one completed tournament row into a normalized legacy game payload', () => {
     const startDate = new Date('2026-06-24T18:30:00.000Z');
     const endDate = new Date('2026-06-24T20:00:00.000Z');
@@ -1837,8 +1852,8 @@ describe('scheduled practice writes', () => {
       notes: 'Bring pinnies',
       scheduleNotifications: {},
       status: 'scheduled',
-      homeScore: 0,
-      awayScore: 0,
+      homeScore: null,
+      awayScore: null,
       statTrackerConfigId: null,
       createdBy: 'coach-1'
     };
@@ -1862,6 +1877,43 @@ describe('scheduled practice writes', () => {
     });
 
     expect(addPractice).toHaveBeenCalledWith('team-1', expectedPayload);
+  });
+
+  it('derives a dated title and stores null scores for an untitled practice (#5317)', async () => {
+    vi.mocked(addPractice).mockResolvedValue('practice-1' as any);
+
+    await createScheduledPracticeForApp('team-1', {
+      title: '',
+      startDate: new Date('2026-06-24T18:00:00.000Z'),
+      endDate: new Date('2026-06-24T19:30:00.000Z'),
+      timeZone: 'America/Chicago',
+      location: 'Field 3',
+      notes: '',
+      recurrence: { isRecurring: false, freq: 'weekly', interval: 1, byDays: [], endType: 'never', untilValue: '', countValue: 10 }
+    }, coachUser);
+
+    expect(addPractice).toHaveBeenCalledTimes(1);
+    const payload = vi.mocked(addPractice).mock.calls[0][1] as Record<string, unknown>;
+    expect(payload.type).toBe('practice');
+    expect(payload.title).toMatch(/^Practice · /);
+    expect(payload.title).not.toBe('Practice');
+    expect(payload.homeScore).toBeNull();
+    expect(payload.awayScore).toBeNull();
+  });
+
+  it('rejects a possessive personal name as a practice location (#5317)', async () => {
+    vi.mocked(addPractice).mockResolvedValue('practice-1' as any);
+
+    await expect(createScheduledPracticeForApp('team-1', {
+      title: 'Skills',
+      startDate: new Date('2026-06-24T18:00:00.000Z'),
+      endDate: new Date('2026-06-24T19:30:00.000Z'),
+      timeZone: 'America/Chicago',
+      location: "Dad's",
+      notes: '',
+      recurrence: { isRecurring: false, freq: 'weekly', interval: 1, byDays: [], endType: 'never', untilValue: '', countValue: 10 }
+    }, coachUser)).rejects.toThrow(/venue or address/);
+    expect(addPractice).not.toHaveBeenCalled();
   });
 
   it('writes single-occurrence practice edits as overrides', async () => {

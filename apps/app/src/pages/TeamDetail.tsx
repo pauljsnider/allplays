@@ -35,6 +35,7 @@ import { useAppAsyncOperation } from '../lib/useAsyncOperation';
 import { getEventDetailPath } from '../lib/homeLogic';
 import { createStaffRsvpReminderPreviewLoader, loadParentSchedule, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
+import { getScheduleTitle } from '../lib/scheduleLogic';
 import { loadParentTeamDetail, loadParentTeamDetailBootstrap, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, loadTeamTrackingAdmin, type TeamDetailEvent, type TeamDetailModel, type TeamRosterParentInviteSummary, type TeamTrackingAdminItem } from '../lib/teamDetailService';
 import { useViewLoadTimer } from '../lib/viewLoadTiming';
 import { buildTeamDetailNavigation, type TeamNavigationItem, type TeamNavigationSection } from '../lib/teamNavigation';
@@ -1075,7 +1076,9 @@ export function buildTeamSchedulePreviewEvents(
       id: scheduleEvent.id,
       isDbGame: scheduleEvent.isDbGame,
       type: scheduleEvent.type,
-      title: scheduleEvent.title?.trim() || (scheduleEvent.type === 'practice' ? 'Practice' : `vs. ${scheduleEvent.opponent?.trim() || 'TBD'}`),
+      title: scheduleEvent.type === 'practice'
+        ? getScheduleTitle(scheduleEvent)
+        : scheduleEvent.title?.trim() || getScheduleTitle(scheduleEvent),
       date: scheduleEvent.date,
       location: scheduleEvent.location?.trim() || 'TBD',
       locationDetail: scheduleEvent.locationDetail?.trim() || existingEvent?.locationDetail || null,
@@ -1112,7 +1115,7 @@ export function buildTeamSchedulePreviewEvents(
     .sort((a, b) => a.date.getTime() - b.date.getTime())
     .slice(0, 8);
   const recent = events
-    .filter((event) => event.status.toLowerCase() === 'completed' || (event.homeScore !== null && event.awayScore !== null && event.date.getTime() < now))
+    .filter((event) => event.status.toLowerCase() === 'completed' || (event.type === 'game' && event.homeScore !== null && event.awayScore !== null && event.date.getTime() < now))
     .sort((a, b) => b.date.getTime() - a.date.getTime())
     .slice(0, 3);
 
@@ -1305,7 +1308,7 @@ function TeamEventRow({ event, model, auth, reminderPreviewLoader, onOpenStatTra
             ) : null}
             {model.canManageTeam && event.type === 'game' ? <TeamEventStatConfigSummary event={event} onOpenStatTrackerConfigs={onOpenStatTrackerConfigs} /> : null}
           </div>
-          {event.homeScore !== null && event.awayScore !== null ? <div className="text-sm font-black text-gray-950">{event.homeScore}-{event.awayScore}</div> : null}
+          {event.type === 'game' && event.homeScore !== null && event.awayScore !== null ? <div className="text-sm font-black text-gray-950">{event.homeScore}-{event.awayScore}</div> : null}
           <ChevronRight className="h-4 w-4 flex-none text-gray-300" aria-hidden="true" />
         </Link>
       </div>

@@ -113,6 +113,8 @@ import {
   getScheduleRideshareSummary,
   getScheduleLocationLabel,
   getScheduleTitle,
+  getPracticeTitleFallback,
+  normalizePracticeTitle,
   normalizeScheduleAssignment,
   normalizeRideOfferDirection,
   normalizeRideOfferStatus,
@@ -2218,6 +2220,18 @@ function parseScheduleGameFormDate(value: Date | string | number | null | undefi
   return date;
 }
 
+/**
+ * Location validation for game/practice creation (#5317). A lone possessive
+ * such as "Dad's" is a person's name, not a venue — reject it so it can never
+ * be stored and linked as a place. Only this narrow shape is rejected; real
+ * single-word venues (e.g. "Fieldhouse") still pass.
+ */
+function assertScheduleLocationIsVenue(location: string) {
+  if (/^[\p{L}]+['’]s$/u.test(location)) {
+    throw new Error('Enter a venue or address for the location, not a person\'s name (for example, "Dad\'s").');
+  }
+}
+
 function buildScheduledGamePayload(input: ScheduleGameFormInput, user: AuthUser) {
   const opponent = compactString(input.opponent);
   if (!opponent) throw new Error('Games require an opponent.');
@@ -2227,13 +2241,15 @@ function buildScheduledGamePayload(input: ScheduleGameFormInput, user: AuthUser)
   if (endDate && endDate.getTime() <= startDate.getTime()) {
     throw new Error('Game end time must be after the start time.');
   }
+  const location = compactString(input.location);
+  assertScheduleLocationIsVenue(location);
   return {
     type: 'game',
     date: startDate,
     end: endDate,
     opponent,
     title: null,
-    location: compactString(input.location),
+    location,
     isHome: input.isHome === null || input.isHome === undefined ? null : input.isHome === true,
     arrivalTime,
     notes: compactString(input.notes),
@@ -2306,7 +2322,7 @@ function buildScheduleImportPracticePayload(row: ScheduleImportNormalizedRow, us
   const importBatch = normalizeScheduleImportBatch(row.importBatch);
   return {
     type: 'practice',
-    title: compactString(row.title) || 'Practice',
+    title: normalizePracticeTitle(row.title, startDate),
     date: startDate,
     end: row.endsAt ? parseScheduleImportDate(row.endsAt, 'End time') : null,
     opponent: null,
@@ -2314,8 +2330,8 @@ function buildScheduleImportPracticePayload(row: ScheduleImportNormalizedRow, us
     arrivalTime: row.arrivalTime ? parseScheduleImportDate(row.arrivalTime, 'Arrival time') : null,
     notes: compactString(row.notes),
     status: 'scheduled',
-    homeScore: 0,
-    awayScore: 0,
+    homeScore: null,
+    awayScore: null,
     statTrackerConfigId: null,
     createdBy: user.uid,
     ...(importBatch ? { importBatch } : {})
@@ -2773,12 +2789,14 @@ function buildScheduledPracticePayload(input: SchedulePracticeFormInput, user: A
   editingPracticeId?: string | null;
   editingSeriesId?: string | null;
 }) {
-  const title = compactString(input.title) || 'Practice';
   const startDate = new Date(input.startDate);
   const endDate = new Date(input.endDate);
   if (Number.isNaN(startDate.getTime())) throw new Error('Practice start time is invalid.');
   if (Number.isNaN(endDate.getTime())) throw new Error('Practice end time is invalid.');
   if (endDate.getTime() <= startDate.getTime()) throw new Error('Practice end time must be after the start time.');
+  const title = normalizePracticeTitle(input.title, startDate);
+  const location = compactString(input.location);
+  assertScheduleLocationIsVenue(location);
 
   const practiceData: Record<string, unknown> = {
     type: 'practice',
@@ -2786,12 +2804,12 @@ function buildScheduledPracticePayload(input: SchedulePracticeFormInput, user: A
     date: startDate,
     end: endDate,
     opponent: null,
-    location: compactString(input.location),
+    location,
     notes: compactString(input.notes),
     scheduleNotifications: input.scheduleNotifications || {},
     status: 'scheduled',
-    homeScore: 0,
-    awayScore: 0,
+    homeScore: null,
+    awayScore: null,
     statTrackerConfigId: null,
     createdBy: user.uid
   };
@@ -2827,12 +2845,12 @@ function buildNativePracticePatchPayload(input: SchedulePracticeFormInput, user:
 }
 
 function buildOccurrenceOverridePayload(input: SchedulePracticeFormInput) {
-  const title = compactString(input.title) || 'Practice';
   const startDate = new Date(input.startDate);
   const endDate = new Date(input.endDate);
   if (Number.isNaN(startDate.getTime())) throw new Error('Practice start time is invalid.');
   if (Number.isNaN(endDate.getTime())) throw new Error('Practice end time is invalid.');
   if (endDate.getTime() <= startDate.getTime()) throw new Error('Practice end time must be after the start time.');
+  const title = normalizePracticeTitle(input.title, startDate);
   const startDay = new Date(startDate);
   const endDay = new Date(endDate);
   startDay.setHours(0, 0, 0, 0);
@@ -2977,7 +2995,7 @@ export async function loadScheduledPracticeSeriesForEdit(teamId: string, eventId
     eventId: sourceEventId,
     seriesId: compactString(game.seriesId) || null,
     input: {
-      title: compactString(game.title) || 'Practice',
+      title: normalizePracticeTitle(game.title, startDate),
       startDate,
       endDate,
       location: compactString(game.location),
@@ -3141,7 +3159,7 @@ export async function enableRsvpForImportedCalendarEvent(event: ParentScheduleEv
     throw new Error('The imported calendar event has an invalid start time.');
   }
   const opponent = compactString(event.opponent);
-  const title = compactString(event.title) || 'Practice';
+  const title = event.type === 'practice' ? normalizePracticeTitle(event.title, event.date) : compactString(event.title);
   if (event.type === 'game' && !opponent) throw new Error('The imported game needs an opponent before RSVP can be enabled.');
 
   await requireScheduleMaterializationManager(teamId, user);
@@ -3170,8 +3188,8 @@ export async function enableRsvpForImportedCalendarEvent(event: ParentScheduleEv
     notes: compactString(event.notes),
     assignments: [],
     status: 'scheduled',
-    homeScore: 0,
-    awayScore: 0,
+    homeScore: event.type === 'game' ? 0 : null,
+    awayScore: event.type === 'game' ? 0 : null,
     competitionType: event.type === 'game' ? (compactString(event.competitionType) || 'league') : null,
     countsTowardSeasonRecord: event.type === 'game' ? (event.countsTowardSeasonRecord ?? true) : null,
     statTrackerConfigId: null,
@@ -4677,7 +4695,7 @@ async function buildTeamSchedule(
           location: calendarEvent.location || 'TBD',
           locationDetail: getCalendarLocationDetail(calendarEvent.description),
           opponent: extractOpponent(cleanSummary, teamName),
-          title: isPractice ? cleanSummary || 'Practice' : null,
+          title: isPractice ? normalizePracticeTitle(cleanSummary, date) : null,
           isDbGame: false,
           isCancelled: calendarEvent.status?.toUpperCase?.() === 'CANCELLED' || calendarEvent.summary?.includes('[CANCELED]'),
           sourceType: 'calendar',
@@ -4711,7 +4729,7 @@ async function buildTeamSchedule(
           endDate: session.endDate || session.end || null,
           location: session.location || 'TBD',
           opponent: null,
-          title: session.title || 'Practice',
+          title: normalizePracticeTitle(session.title, session._parsedDate),
           isDbGame: false,
           sourceType: 'practice-session',
           sourceLabel: 'Practice packet',

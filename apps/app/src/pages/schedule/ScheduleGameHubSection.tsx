@@ -1523,7 +1523,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
           <LiveGameClockTickerProvider event={event}>
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-sm font-black text-gray-950">{isPractice ? event.title || 'Practice' : getScheduleTitle(event)}</div>
+                <div className="text-sm font-black text-gray-950">{getScheduleTitle(event)}</div>
                 <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-xs font-semibold text-gray-500">
                   <span>{formatEventDateLabel(event.date)} · {formatEventTimeLabel(event.date)}</span>
                   <span className="min-w-0 truncate">{getScheduleLocationLabel(event, 'Location TBD')}</span>
