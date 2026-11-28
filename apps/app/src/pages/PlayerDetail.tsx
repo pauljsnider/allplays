@@ -917,6 +917,18 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
 
 function OverviewSection({ data, showParentActions = true }: { data: ParentPlayerDetailData; showParentActions?: boolean }) {
   const nextAction = showParentActions ? getPlayerAction(data) : null;
+  // Show the next few upcoming events, not just the single next one: a
+  // practice at 6:00 PM used to hide the game at 6:30 PM entirely (#5319).
+  const upcomingEvents = useMemo(
+    () =>
+      data.events
+        .filter((event) => !event.isCancelled && event.date.getTime() >= startOfDay(new Date()).getTime())
+        .slice()
+        .sort((a, b) => a.date.getTime() - b.date.getTime())
+        .slice(0, 3),
+    [data.events]
+  );
+  const liveStatCount = data.statRows.filter((row) => row.isLive).length;
   return (
     <div className="player-section-content space-y-3">
       {nextAction ? (
@@ -939,8 +951,12 @@ function OverviewSection({ data, showParentActions = true }: { data: ParentPlaye
         </div>
       )}
 
-      {data.nextEvent ? (
-        <PlayerEventCard event={data.nextEvent} featured />
+      {upcomingEvents.length ? (
+        <div className="space-y-3">
+          {upcomingEvents.map((event, index) => (
+            <PlayerEventCard key={event.eventKey} event={event} featured={index === 0} />
+          ))}
+        </div>
       ) : (
         <EmptyCard icon={CalendarDays} title="No upcoming events" detail="This player's schedule is clear." />
       )}
@@ -950,7 +966,7 @@ function OverviewSection({ data, showParentActions = true }: { data: ParentPlaye
         <InfoCard
           icon={BarChart3}
           title="Reports"
-          detail={`${data.statRows.length} recent games`}
+          detail={liveStatCount ? `${data.statRows.length} recent games · ${liveStatCount} live` : `${data.statRows.length} recent games`}
           to={getPlayerSectionRoute('performance')}
         />
         <InfoCard icon={ImagePlus} title="Clips" detail={`${data.clips.length} clips`} to={getPlayerSectionRoute('performance', 'clips')} />
@@ -4072,6 +4088,9 @@ function PlayerEventCard({ event, featured = false }: { event: ParentScheduleEve
             >
               {event.type}
             </span>
+            {String(event.liveStatus || '').toLowerCase() === 'live' || String(event.status || '').toLowerCase() === 'live' ? (
+              <span className="flex-none rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-black text-rose-700 uppercase">Live</span>
+            ) : null}
           </div>
           <h3 className="mt-1 truncate text-base font-black text-gray-950">{getScheduleTitle(event)}</h3>
           <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">
@@ -4123,7 +4142,10 @@ function StatRow({ row }: { row: ParentPlayerStatRow }) {
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate text-sm font-black text-gray-950">{getScheduleTitle(row.event)}</div>
-          <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{formatEventDateLabel(row.event.date)}</div>
+          <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">
+            {formatEventDateLabel(row.event.date)}
+            {row.isLive ? ' · Live now' : ''}
+          </div>
           {diamond ? (
             <div className="mt-0.5 text-[10px] font-bold text-sky-700">
               {row.statVisibility === 'manager-internal' ? 'Manager-internal' : 'Public'} Diamond stats rev{' '}
