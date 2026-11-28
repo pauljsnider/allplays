@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEv
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Camera, Loader2, RefreshCw, Save } from 'lucide-react';
 import { AvatarImage } from '../components/AvatarImage';
-import { loadParentTeamDetailBootstrap, updateTeamSettingsForApp } from '../lib/teamDetailService';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { deleteTeamForApp, loadParentTeamDetailBootstrap, updateTeamSettingsForApp } from '../lib/teamDetailService';
 import { normalizeOptionalHttpUrl, parseTeamLivestreamInput } from '../lib/teamLinks';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useShellLayout } from '../lib/useShellLayout';
@@ -54,6 +55,10 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
   const [leagueUrlError, setLeagueUrlError] = useState('');
   const [streamUrlError, setStreamUrlError] = useState('');
   const [canManageTeam, setCanManageTeam] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const [hasResolvedInitialLoad, setHasResolvedInitialLoad] = useState(false);
   const [teamName, setTeamName] = useState('Team');
   const [form, setForm] = useState<TeamSettingsDraft>(emptyDraft);
@@ -80,6 +85,7 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
         onSuccess: (model) => {
           if (loadId !== activeLoadIdRef.current) return;
           setCanManageTeam(model.canManageTeam);
+          setIsOwner(Boolean(auth.user?.uid) && model.team.ownerId === auth.user?.uid);
           setTeamName(model.team.name || 'Team');
           const loadedDraft = {
             name: model.team.name || '',
@@ -98,6 +104,7 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
         onError: () => {
           if (loadId !== activeLoadIdRef.current) return;
           setCanManageTeam(false);
+          setIsOwner(false);
           setTeamName('Team');
           setForm(emptyDraft);
           setLoadedSnapshot(null);
@@ -131,6 +138,20 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
       URL.revokeObjectURL(photoPreviewUrl);
     }
     setPhotoPreviewUrl(file ? URL.createObjectURL(file) : form.photoUrl || '');
+  }
+
+  async function handleDeleteTeam() {
+    setDeleteConfirmOpen(false);
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await deleteTeamForApp(teamId, auth.user);
+      navigate('/teams', { replace: true });
+    } catch (deleteFailure: any) {
+      setDeleteError(deleteFailure?.message || 'Unable to delete this team.');
+    } finally {
+      setDeleting(false);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -373,6 +394,38 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
           ) : null}
         </form>
       </section>
+
+      {isOwner ? (
+        <section className="app-card border-rose-200 p-4 sm:p-5" aria-label="Danger zone">
+          <h2 className="text-lg font-black text-gray-950">Danger zone</h2>
+          <p className="mt-2 text-sm font-semibold text-gray-600">
+            Deleting this team removes it from the app for everyone. Only the team owner can delete it.
+          </p>
+          {deleteError ? (
+            <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">
+              {deleteError}
+            </div>
+          ) : null}
+          <button
+            type="button"
+            className="secondary-button mt-3 !border-rose-200 !bg-rose-50 !text-rose-700"
+            onClick={() => setDeleteConfirmOpen(true)}
+            disabled={deleting}
+          >
+            {deleting ? 'Deleting…' : 'Delete team'}
+          </button>
+        </section>
+      ) : null}
+      {deleteConfirmOpen ? (
+        <ConfirmDialog
+          title={`Delete ${teamName}?`}
+          message="This deactivates the team for everyone. Players, schedule history, and messages stay in the database, but the team will no longer appear in the app."
+          confirmLabel="Delete team"
+          destructive
+          onConfirm={() => void handleDeleteTeam()}
+          onClose={() => setDeleteConfirmOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

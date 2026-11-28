@@ -60,6 +60,7 @@ export const revokeVideographerAccess = (...args: any[]) => callLegacyDb('revoke
 export const deactivatePlayer = (...args: any[]) => callLegacyDb('deactivatePlayer', args);
 export const reactivatePlayer = (...args: any[]) => callLegacyDb('reactivatePlayer', args);
 export const deleteLegacyImageUpload = (...args: any[]) => callLegacyDb('deleteLegacyImageUpload', args);
+export const deleteTeam = (...args: any[]) => callLegacyDb('deleteTeam', args);
 export const setPlayerPrivateRosterProfileFields = (...args: any[]) => callLegacyDb('setPlayerPrivateRosterProfileFields', args);
 export const updateConfig = (...args: any[]) => callLegacyDb('updateConfig', args);
 export const uploadPlayerPhoto = (file: File, options: Record<string, unknown> = {}): Promise<{ url: string; path: string }> => (
