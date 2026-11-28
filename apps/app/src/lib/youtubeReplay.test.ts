@@ -356,4 +356,23 @@ describe('isActiveGameForLive', () => {
       rawReplayLifecycle: { type: 'game', status: 'scheduled', liveStatus: 'live' }
     })).toBe(true);
   });
+
+  it('does not treat a future game stamped live as live (#5321)', () => {
+    const now = new Date('2026-11-23T18:00:00.000Z');
+    expect(isActiveGameForLive({
+      status: 'scheduled',
+      liveStatus: 'live',
+      date: new Date('2026-11-24T18:30:00.000Z')
+    }, now)).toBe(false);
+    expect(isActiveGameForLive({
+      status: 'scheduled',
+      liveStatus: 'live',
+      date: new Date('2026-11-23T18:30:00.000Z')
+    }, now)).toBe(true);
+    expect(isActiveGameForLive({
+      status: 'scheduled',
+      liveStatus: 'live',
+      date: new Date('2026-11-19T18:30:00.000Z')
+    }, now)).toBe(false);
+  });
 });

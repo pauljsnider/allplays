@@ -6446,6 +6446,16 @@ export async function updateLiveGameClockState(teamId: string, gameId: string, c
   const periods = buildLiveGameClockPeriods({ ...(clock.currentGame || {}), liveClockPeriod: clock.liveClockPeriod });
   const requestedPeriod = compactString(clock.liveClockPeriod) || compactString(clock.currentGame?.liveClockPeriod) || compactString(clock.currentGame?.period) || periods[0] || 'H1';
   const period = periods.includes(requestedPeriod) ? requestedPeriod : periods[0] || requestedPeriod;
+  // The flip decision sees the incoming clock state (#5321): starting the
+  // clock is the clock-started signal, so a start inside the pre-start grace
+  // window flips the game live, while a start well before the game only
+  // persists the clock state.
+  const effectiveGameForLiveFlip = {
+    ...(clock.currentGame || {}),
+    ...(clock.liveClockMs !== undefined ? { liveClockMs: clock.liveClockMs } : {}),
+    ...(clock.liveClockRunning !== undefined ? { liveClockRunning: clock.liveClockRunning } : {}),
+    ...(clock.liveClockPeriod !== undefined && clock.liveClockPeriod !== null ? { liveClockPeriod: clock.liveClockPeriod } : {})
+  };
   const payload: Record<string, unknown> = {
     liveClockMs: normalizeClockMs(clock.liveClockMs),
     liveClockRunning: clock.liveClockRunning === true,
@@ -6453,7 +6463,7 @@ export async function updateLiveGameClockState(teamId: string, gameId: string, c
     liveClockUpdatedAt: now,
     liveClockUpdatedBy: user.uid,
     period,
-    ...buildLiveTrackingGamePatch(clock.currentGame, user, now)
+    ...buildLiveTrackingGamePatch(effectiveGameForLiveFlip, user, now)
   };
 
   try {
@@ -6499,11 +6509,52 @@ function assertGameAllowsLivePublishing(game: Record<string, any> | null | undef
   }
 }
 
-function buildLiveTrackingGamePatch(game: Record<string, any> | null | undefined, _user: AuthUser, now: Date) {
-  const payload: Record<string, unknown> = {};
-  if (game?.liveStatus !== 'live') {
-    payload.liveStatus = 'live';
+/**
+ * The game clock counts as started once it has ever run, has elapsed time,
+ * or the game was stamped live with a start time (#5321). A score/stat write
+ * alone is not a clock start.
+ */
+export function isLiveClockStarted(game: Record<string, any> | null | undefined): boolean {
+  if (!game) return false;
+  if (game.liveClockRunning === true) return true;
+  if (normalizeClockMs(game.liveClockMs ?? game.gameClockMs) > 0) return true;
+  return Boolean(game.liveStartedAt);
+}
+
+// A score/stat/clock write may flip a game live only once the game is near
+// its scheduled start (60-minute grace window) and the clock has started
+// (#5321). Before that, scores and stats still persist — just without the
+// live stamp, so a future game never displays as live before it starts.
+const liveTrackingPreStartGraceMs = 60 * 60 * 1000;
+
+export function gameAllowsLiveFlip(game: Record<string, any> | null | undefined, now: Date = new Date()): boolean {
+  if (!game) return false;
+  if (isFinalLiveTrackingStatus(game.status) || isFinalLiveTrackingStatus(game.liveStatus)) return false;
+  if (game.date) {
+    const scheduledDate = toEventDate(game.date);
+    if (!Number.isNaN(scheduledDate.getTime()) && now.getTime() < scheduledDate.getTime() - liveTrackingPreStartGraceMs) {
+      return false;
+    }
   }
+  return isLiveClockStarted(game);
+}
+
+function buildLiveTrackingGamePatch(game: Record<string, any> | null | undefined, _user: AuthUser, now: Date) {
+  const storedLive = String(game?.liveStatus || '').trim().toLowerCase() === 'live';
+  if (storedLive) {
+    // Already live: only canonicalize a padded/cased stored status, without
+    // re-stamping liveStartedAt (#5321).
+    const payload: Record<string, unknown> = {};
+    if (game?.liveStatus !== 'live') {
+      payload.liveStatus = 'live';
+    }
+    if (game?.liveHasData !== true) {
+      payload.liveHasData = true;
+    }
+    return payload;
+  }
+  if (!gameAllowsLiveFlip(game, now)) return {};
+  const payload: Record<string, unknown> = { liveStatus: 'live' };
   if (game?.liveHasData !== true) {
     payload.liveHasData = true;
   }
@@ -6511,6 +6562,65 @@ function buildLiveTrackingGamePatch(game: Record<string, any> | null | undefined
     payload.liveStartedAt = now;
   }
   return payload;
+}
+
+/**
+ * The live status a publish actually committed (#5321): 'live' when the game
+ * was already live or this publish flipped it, otherwise null so callers do
+ * not treat a deferred flip as a live game.
+ */
+function resolveCommittedLiveStatus(game: Record<string, any> | null | undefined, liveGamePatch: Record<string, unknown>): { liveStatus: 'live' } | null {
+  if (liveGamePatch.liveStatus === 'live') return { liveStatus: 'live' };
+  if (String(game?.liveStatus || '').trim().toLowerCase() === 'live') return { liveStatus: 'live' };
+  return null;
+}
+
+/**
+ * A game is stuck live when it is stamped live but has not started: either
+ * its scheduled start is still ahead (outside the pre-start grace window)
+ * or it is long past its start with the clock never started (#5321). A live
+ * game inside its window with no clock signal yet is not stuck — the coach
+ * may start the clock at any moment.
+ */
+export function isGameLiveStatusStuck(game: Record<string, any> | null | undefined, now: Date = new Date()): boolean {
+  if (String(game?.liveStatus || '').trim().toLowerCase() !== 'live') return false;
+  if (game?.date) {
+    const scheduledDate = toEventDate(game.date);
+    if (!Number.isNaN(scheduledDate.getTime())) {
+      if (now.getTime() < scheduledDate.getTime() - liveTrackingPreStartGraceMs) return true;
+      if (!isLiveClockStarted(game) && now.getTime() - scheduledDate.getTime() > liveTrackingMaxStalenessMs) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Repair path for games stuck live by early score/stat writes (#5321):
+ * resets a not-yet-started game from liveStatus 'live' back to 'scheduled'
+ * and clears the premature liveStartedAt. Scores and stats are untouched.
+ * Returns false when the game is not stuck (nothing to repair).
+ */
+export async function repairStuckLiveGameStatusForApp(teamId: string, gameId: string, game: Record<string, any> | null | undefined, user: AuthUser): Promise<boolean> {
+  if (!teamId || !gameId) {
+    throw new Error('A scheduled game is required before repairing its live status.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before repairing the live status.');
+  }
+  if (!isGameLiveStatusStuck(game)) return false;
+  // Diamond games go through the canonical scorebook command, not direct
+  // document writes — leave their live status to the Diamond flow.
+  if (game?.trackingEngine === 'diamond-v2') return false;
+
+  try {
+    await withTimeout(Promise.resolve(updateGame(teamId, gameId, { liveStatus: 'scheduled', liveStartedAt: null })), 'Live status repair');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST live status repair.', 'live-status-repair', error, { fallback: 'rest', teamId, gameId });
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, { liveStatus: 'scheduled', liveStartedAt: null });
+  }
+
+  return true;
 }
 
 async function runNativeScoreUpdatePublish(
@@ -6576,7 +6686,7 @@ async function runNativeScoreUpdatePublish(
       }));
       return {
         ...payload,
-        committedLifecycle: { liveStatus: 'live' as const }
+        committedLifecycle: resolveCommittedLiveStatus(currentGame, liveGamePatch)
       };
     } catch (error) {
       if (isNativeConflictError(error) && attempt < 2) continue;
@@ -6663,7 +6773,7 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
       }
 
       const gamePath = `teams/${teamId}/games/${gameId}`;
-      const payload = await withTimeout(runTransaction(db, async (transaction: any) => {
+      const { payload, committedLifecycle } = await withTimeout(runTransaction(db, async (transaction: any) => {
         const gameRef = doc(db, gamePath);
         const gameSnap = await transaction.get(gameRef);
         const gameData = (gameSnap.exists?.() ? gameSnap.data() || {} : {}) as Record<string, unknown>;
@@ -6691,8 +6801,8 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
           ...liveGamePatch
         }, { merge: true });
         transaction.set(doc(db, `${gamePath}/liveEvents/${nextPayload.eventId}`), nextPayload);
-        return nextPayload;
-      }) as Promise<LiveScoreEventPayload>, 'Live score event');
+        return { payload: nextPayload, committedLifecycle: resolveCommittedLiveStatus(gameData, liveGamePatch) };
+      }) as Promise<{ payload: LiveScoreEventPayload; committedLifecycle: { liveStatus: 'live' } | null }>, 'Live score event');
       updateLocalLiveGameSnapshot(teamId, gameId, (local) => ({
         ...local,
         homeScore: payload.homeScore,
@@ -6700,7 +6810,7 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
       }));
       return {
         ...payload,
-        committedLifecycle: { liveStatus: 'live' as const }
+        committedLifecycle
       };
     } catch (error) {
       if (!isNativeRuntime()) throw error;
@@ -7089,7 +7199,7 @@ async function runNativePlayerGameStatWrite(
           eventId: liveEventId,
           createdAt: scoreUpdatedAt
         },
-        committedLifecycle: { liveStatus: 'live' }
+        committedLifecycle: resolveCommittedLiveStatus(gameDoc, liveGamePatch)
       };
     } catch (error) {
       if (isNativeConflictError(error) && attempt < 2) continue;
@@ -7202,7 +7312,7 @@ export async function recordPlayerGameStat(teamId: string, gameId: string, playe
         trackerEventId,
         liveEventId,
         liveEvent,
-        committedLifecycle: { liveStatus: 'live' }
+        committedLifecycle: resolveCommittedLiveStatus(gameData, liveGamePatch)
       };
     }) as Promise<PlayerGameStatResult>, 'Player game stat');
 

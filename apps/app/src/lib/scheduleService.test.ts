@@ -255,7 +255,7 @@ import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './
 import { mapScheduleEventDocument, mapScheduleEventRecord } from './firestore/mappers';
 import { loadManagedTeamsFromNativeCallable, loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, linkGameYouTubeReplayForApp, loadGameDayLiveEventsForApp, loadHomeScoringPlayers, loadOfficialAssignments, loadOfficialAssignmentsAccess, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, removeGameReplayForApp, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, linkGameYouTubeReplayForApp, loadGameDayLiveEventsForApp, loadHomeScoringPlayers, loadOfficialAssignments, loadOfficialAssignmentsAccess, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, removeGameReplayForApp, repairStuckLiveGameStatusForApp, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -3691,6 +3691,147 @@ describe('live score publishing', () => {
 
     await expect(publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 5, awayScore: 3 }, user)).resolves.toBeDefined();
     expect(mocks.transactionSet).toHaveBeenCalled();
+  });
+});
+
+describe('live status flip gate (#5321)', () => {
+  const user = { uid: 'coach-1', displayName: 'Coach', email: 'coach@example.com', roles: [] } as any;
+  const now = new Date('2026-06-12T16:00:00.000Z');
+
+  function mockGameDoc(game: Record<string, unknown>) {
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => game
+    });
+  }
+
+  function getGameDocWrite() {
+    const call = mocks.transactionSet.mock.calls.find(([ref]: any[]) => ref?.path === 'teams/team-1/games/game-1');
+    return call?.[1] as Record<string, unknown> | undefined;
+  }
+
+  beforeEach(() => {
+    (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
+    vi.clearAllMocks();
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('persists a score for a future game without stamping it live when the clock never started', async () => {
+    mockGameDoc({
+      id: 'game-1', status: 'scheduled', liveStatus: 'scheduled', liveHasData: false, period: 'Q1',
+      date: new Date('2026-06-13T18:30:00.000Z')
+    });
+
+    const result = await publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 3, awayScore: 0 }, user);
+
+    const write = getGameDocWrite();
+    expect(write).toMatchObject({ homeScore: 3, awayScore: 0 });
+    expect(write).not.toHaveProperty('liveStatus');
+    expect(write).not.toHaveProperty('liveStartedAt');
+    expect(result.committedLifecycle).toBeNull();
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: expect.stringContaining('liveEvents/') }),
+      expect.objectContaining({ homeScore: 3, awayScore: 0 })
+    );
+  });
+
+  it('does not flip a future game live even when its clock was started early', async () => {
+    mockGameDoc({
+      id: 'game-1', status: 'scheduled', liveStatus: 'scheduled', liveHasData: false, period: 'Q1',
+      date: new Date('2026-06-13T18:30:00.000Z'), liveClockMs: 321000, liveClockRunning: false
+    });
+
+    const result = await publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 3, awayScore: 0 }, user);
+
+    expect(getGameDocWrite()).not.toHaveProperty('liveStatus');
+    expect(result.committedLifecycle).toBeNull();
+  });
+
+  it('flips a game live once it is inside the pre-start grace window and the clock started', async () => {
+    mockGameDoc({
+      id: 'game-1', status: 'scheduled', liveStatus: 'scheduled', liveHasData: false, period: 'Q1',
+      date: new Date('2026-06-12T16:30:00.000Z'), liveClockMs: 120000, liveClockRunning: true
+    });
+
+    const result = await publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 3, awayScore: 0 }, user);
+
+    expect(getGameDocWrite()).toMatchObject({ liveStatus: 'live', liveHasData: true, liveStartedAt: expect.any(Date) });
+    expect(result.committedLifecycle).toEqual({ liveStatus: 'live' });
+  });
+
+  it('persists a score inside the grace window without the live stamp when the clock never started', async () => {
+    mockGameDoc({
+      id: 'game-1', status: 'scheduled', liveStatus: 'scheduled', liveHasData: false, period: 'Q1',
+      date: new Date('2026-06-12T16:30:00.000Z')
+    });
+
+    const result = await publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 3, awayScore: 0 }, user);
+
+    expect(getGameDocWrite()).not.toHaveProperty('liveStatus');
+    expect(result.committedLifecycle).toBeNull();
+  });
+
+  it('persists a clock start for a future game without stamping it live', async () => {
+    vi.mocked(updateGame).mockResolvedValue(undefined as any);
+
+    const payload = await updateLiveGameClockState('team-1', 'game-1', {
+      liveClockMs: 0,
+      liveClockRunning: true,
+      liveClockPeriod: 'Q1',
+      currentGame: { liveStatus: 'scheduled', date: new Date('2026-06-13T18:30:00.000Z') }
+    }, user);
+
+    expect(payload).toMatchObject({ liveClockMs: 0, liveClockRunning: true, liveClockPeriod: 'Q1' });
+    expect(payload).not.toHaveProperty('liveStatus');
+    expect(vi.mocked(updateGame)).toHaveBeenCalledWith('team-1', 'game-1', expect.not.objectContaining({ liveStatus: 'live' }));
+  });
+
+  it('flips a game live when the clock is started inside the pre-start grace window', async () => {
+    vi.mocked(updateGame).mockResolvedValue(undefined as any);
+
+    const payload = await updateLiveGameClockState('team-1', 'game-1', {
+      liveClockMs: 0,
+      liveClockRunning: true,
+      liveClockPeriod: 'Q1',
+      currentGame: { liveStatus: 'scheduled', date: new Date('2026-06-12T16:30:00.000Z') }
+    }, user);
+
+    expect(payload).toMatchObject({ liveStatus: 'live', liveHasData: true, liveStartedAt: expect.any(Date) });
+  });
+
+  it('repairs a future game stuck live back to scheduled', async () => {
+    vi.mocked(updateGame).mockResolvedValue(undefined as any);
+
+    const repaired = await repairStuckLiveGameStatusForApp('team-1', 'game-1', {
+      liveStatus: 'live',
+      liveStartedAt: new Date('2026-06-11T16:00:00.000Z'),
+      date: new Date('2026-06-13T18:30:00.000Z')
+    }, user);
+
+    expect(repaired).toBe(true);
+    expect(vi.mocked(updateGame)).toHaveBeenCalledWith('team-1', 'game-1', { liveStatus: 'scheduled', liveStartedAt: null });
+  });
+
+  it('leaves a genuinely live game alone when asked to repair', async () => {
+    vi.mocked(updateGame).mockResolvedValue(undefined as any);
+
+    const repaired = await repairStuckLiveGameStatusForApp('team-1', 'game-1', {
+      liveStatus: 'live',
+      liveStartedAt: new Date('2026-06-12T15:55:00.000Z'),
+      liveClockMs: 300000,
+      liveClockRunning: true,
+      date: new Date('2026-06-12T16:00:00.000Z')
+    }, user);
+
+    expect(repaired).toBe(false);
+    expect(vi.mocked(updateGame)).not.toHaveBeenCalled();
   });
 });
 
