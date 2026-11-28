@@ -593,6 +593,83 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
         );
     });
 
+    it('rejects a balance adjustment combined with an offline payment', async () => {
+        const runTransaction = vi.fn();
+        const updateDoc = vi.fn();
+        const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            updateDoc,
+            setDoc: vi.fn(),
+            runTransaction,
+            serverTimestamp: vi.fn(() => 'server-ts'),
+            arrayUnion: vi.fn((...entries) => entries),
+            deleteField: vi.fn(() => 'deleted')
+        });
+
+        await expect(updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', {
+            adjustment: { amountCents: 500 },
+            manualPayment: { amountPaidCents: 500 },
+            ledgerEntries: [
+                { type: 'balance_adjustment', amountCents: 500 },
+                { type: 'offline_payment', amountCents: 500 }
+            ]
+        })).rejects.toThrow('Only one financial mutation type can be applied at a time.');
+
+        expect(runTransaction).not.toHaveBeenCalled();
+        expect(updateDoc).not.toHaveBeenCalled();
+    });
+
+    it('rejects a balance adjustment combined with cancellation', async () => {
+        const runTransaction = vi.fn();
+        const updateDoc = vi.fn();
+        const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            updateDoc,
+            setDoc: vi.fn(),
+            runTransaction,
+            serverTimestamp: vi.fn(() => 'server-ts'),
+            arrayUnion: vi.fn((...entries) => entries),
+            deleteField: vi.fn(() => 'deleted')
+        });
+
+        await expect(updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', {
+            status: 'canceled',
+            adjustment: { amountCents: 500 },
+            ledgerEntries: [
+                { type: 'balance_adjustment', amountCents: 500 },
+                { type: 'cancellation' }
+            ]
+        })).rejects.toThrow('Only one financial mutation type can be applied at a time.');
+
+        expect(runTransaction).not.toHaveBeenCalled();
+        expect(updateDoc).not.toHaveBeenCalled();
+    });
+
+    it('rejects duplicate balance adjustment ledger entries', async () => {
+        const runTransaction = vi.fn();
+        const updateDoc = vi.fn();
+        const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            updateDoc,
+            setDoc: vi.fn(),
+            runTransaction,
+            serverTimestamp: vi.fn(() => 'server-ts'),
+            arrayUnion: vi.fn((...entries) => entries),
+            deleteField: vi.fn(() => 'deleted')
+        });
+
+        await expect(updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', {
+            adjustment: { amountCents: 500 },
+            ledgerEntries: [
+                { type: 'balance_adjustment', amountCents: 500 },
+                { type: 'balance_adjustment', amountCents: 500 }
+            ]
+        })).rejects.toThrow('Only one balance adjustment entry can be applied at a time.');
+
+        expect(runTransaction).not.toHaveBeenCalled();
+        expect(updateDoc).not.toHaveBeenCalled();
+    });
+
     it('recomputes manual payment totals from the latest recipient state', async () => {
         const transactionUpdate = vi.fn();
         const runTransaction = vi.fn(async (_db, handler) => handler({

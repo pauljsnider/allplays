@@ -6461,6 +6461,17 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
         || safeLedgerEntries.some((entry) => entry?.type === 'balance_adjustment');
     const isCancellationUpdate = recipientUpdates.status === 'canceled'
         || safeLedgerEntries.some((entry) => entry?.type === 'cancellation');
+    const financialMutationTypeCount = [
+        isManualPaymentUpdate,
+        isBalanceAdjustmentUpdate,
+        isCancellationUpdate
+    ].filter(Boolean).length;
+    if (financialMutationTypeCount > 1) {
+        throw new Error('Only one financial mutation type can be applied at a time.');
+    }
+    if (safeLedgerEntries.filter((entry) => entry?.type === 'balance_adjustment').length > 1) {
+        throw new Error('Only one balance adjustment entry can be applied at a time.');
+    }
     const explicitAdminBilling = adminBilling && typeof adminBilling === 'object' && !Array.isArray(adminBilling)
         ? adminBilling
         : null;
