@@ -158,7 +158,7 @@ describe('Firestore recovery delivery contract', () => {
 
     it('uses a six-hour cadence, immutable action revisions, and an exact Cloud SDK', () => {
         expect(workflow).toContain("cron: '17 */6 * * *'");
-        expect(workflow).toContain('actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd');
+        expect(workflow).toContain('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1');
         expect(workflow).toContain('actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444');
         expect(workflow).toContain('google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093');
         expect(workflow).toContain('google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db');
