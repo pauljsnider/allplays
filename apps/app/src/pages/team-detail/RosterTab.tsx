@@ -2,8 +2,9 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ChevronRight, LinkIcon, Loader2, MessageCircle, Save, Sparkles, UserPlus } from 'lucide-react';
 import { AvatarImage } from '../../components/AvatarImage';
+import { resendVerificationEmail } from '../../lib/authService';
 import { buildPrivateAiLaunchPath } from '../../lib/privateAiLaunch';
-import { addRosterPlayerForApp, archiveTeamTrackingItemForApp, createRosterParentInviteForApp, deactivateRosterPlayerForApp, loadRosterFieldDefinitionsForApp, reactivateRosterPlayerForApp, saveTeamTrackingItemForApp, setPlayerTrackingStatusForApp, type CreateRosterParentInviteForAppResult, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamTrackingAdminItem } from '../../lib/teamDetailService';
+import { addRosterPlayerForApp, archiveTeamTrackingItemForApp, createRosterParentInviteForApp, deactivateRosterPlayerForApp, isParentInviteEmailVerificationError, loadRosterFieldDefinitionsForApp, reactivateRosterPlayerForApp, saveTeamTrackingItemForApp, setPlayerTrackingStatusForApp, type CreateRosterParentInviteForAppResult, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamTrackingAdminItem } from '../../lib/teamDetailService';
 import type { AuthState } from '../../lib/types';
 import { InviteResultCard } from '../parent-tools/shared';
 
@@ -610,6 +611,9 @@ function PlayerRow({
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [inviteResult, setInviteResult] = useState<CreateRosterParentInviteForAppResult | null>(null);
   const [inviteStatus, setInviteStatus] = useState<{ success: boolean; message: string } | null>(null);
+  const [inviteVerificationRequired, setInviteVerificationRequired] = useState(false);
+  const [resendingVerification, setResendingVerification] = useState(false);
+  const [resendVerificationStatus, setResendVerificationStatus] = useState<string | null>(null);
   const [parentEmail, setParentEmail] = useState('');
   const [parentRelation, setParentRelation] = useState('Parent');
 
@@ -626,6 +630,8 @@ function PlayerRow({
     if (creatingInvite) return;
     setCreatingInvite(true);
     setInviteStatus(null);
+    setInviteVerificationRequired(false);
+    setResendVerificationStatus(null);
     try {
       const normalizedEmail = parentEmail.trim();
       const result = normalizedEmail
@@ -640,9 +646,24 @@ function PlayerRow({
       });
       await onInviteCreated();
     } catch (error: any) {
+      if (isParentInviteEmailVerificationError(error)) setInviteVerificationRequired(true);
       setInviteStatus({ success: false, message: error?.message || 'Unable to create a parent invite.' });
     } finally {
       setCreatingInvite(false);
+    }
+  }
+
+  async function resendInviteVerificationEmail() {
+    if (resendingVerification) return;
+    setResendingVerification(true);
+    setResendVerificationStatus(null);
+    try {
+      await resendVerificationEmail('/verify-pending');
+      setResendVerificationStatus('Verification email sent. Check your inbox, then try creating the invite again.');
+    } catch (error: any) {
+      setResendVerificationStatus(error?.message || 'Unable to resend the verification email.');
+    } finally {
+      setResendingVerification(false);
     }
   }
 
@@ -740,7 +761,7 @@ function PlayerRow({
                   <option value="Other">Other</option>
                 </select>
               </label>
-              <div className="text-[11px] font-semibold text-gray-500 sm:col-span-2">Enter an email to send the invite, or leave it blank for a shareable link and code.</div>
+              <div className="text-[11px] font-semibold text-gray-500 sm:col-span-2">Enter an email to send the invite, or leave it blank for a shareable link and code. Emailed invites need a verified email address.</div>
               </div>
               <button type="button" className="primary-button !min-h-11 w-full text-xs sm:w-auto" disabled={creatingInvite} onClick={createInvite}>
                 {creatingInvite ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <LinkIcon className="h-3.5 w-3.5" aria-hidden="true" />}
@@ -759,6 +780,18 @@ function PlayerRow({
                 />
               ) : null}
               {inviteStatus ? <div className={`text-xs font-black ${inviteStatus.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{inviteStatus.message}</div> : null}
+              {inviteVerificationRequired ? (
+                <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                  <p className="text-xs font-semibold text-gray-700">Verify your email to send invites by email, or leave the email blank to create a shareable link and code instead.</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Link className="secondary-button !min-h-9 px-3 text-xs" to="/verify-pending">Go to email verification</Link>
+                    <button type="button" className="secondary-button !min-h-9 px-3 text-xs" onClick={() => void resendInviteVerificationEmail()} disabled={resendingVerification}>
+                      {resendingVerification ? 'Sending…' : 'Resend verification email'}
+                    </button>
+                  </div>
+                  {resendVerificationStatus ? <p className="text-xs font-semibold text-gray-600" role="status">{resendVerificationStatus}</p> : null}
+                </div>
+              ) : null}
             </div>
           ) : null}
           {inviteSummary?.status === 'accepted' && inviteSummary.acceptedParentCount > 0 ? <div className="mt-2 text-xs font-semibold text-emerald-700">{inviteSummary.acceptedParentCount} linked parent{inviteSummary.acceptedParentCount === 1 ? '' : 's'}.</div> : null}

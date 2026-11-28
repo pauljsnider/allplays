@@ -210,8 +210,10 @@ import {
   addRosterPlayerForApp,
   buildTeamAnalytics,
   buildTeamDetailModel,
+  createRosterParentInviteForApp,
   createStatTrackerConfigForApp,
   isEligiblePrivateCalendarSubscriberForApp,
+  isParentInviteEmailVerificationError,
   loadParentTeamDetail,
   loadParentTeamDetailBootstrap,
   loadTeamDetailInsights,
@@ -3811,5 +3813,53 @@ describe('admin invitation delivery through the shared helper', () => {
     expect(result.reason).toBe('rate_limited');
     expect(result.code).toBe('ABC12345');
     expect(result.acceptInviteUrl).toBe('https://allplays.ai/app/#/accept-invite');
+  });
+});
+
+describe('createRosterParentInviteForApp email-verification gate (#5324)', () => {
+  const unverifiedUser = { uid: 'owner-1', email: 'owner@example.com', emailVerified: false } as any;
+  const verifiedUser = { uid: 'owner-1', email: 'owner@example.com', emailVerified: true } as any;
+  const player = { id: 'player-1', number: '8' };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetTeamDetailBaseSnapshotCacheForTests();
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', name: 'Bears' });
+    dbMocks.getPlayers.mockResolvedValue([]);
+    dbMocks.getGames.mockResolvedValue([]);
+    dbMocks.getConfigs.mockResolvedValue([]);
+    dbMocks.inviteParent.mockResolvedValue({ code: 'PARENT12', teamName: 'Bears', playerName: 'Sam' });
+  });
+
+  it('blocks an emailed invite from an unverified user before calling the callable', async () => {
+    let caught: unknown;
+    await expect(
+      createRosterParentInviteForApp('team-1', unverifiedUser, player, { email: 'parent@example.com' }).catch((error) => {
+        caught = error;
+        throw error;
+      })
+    ).rejects.toThrow('Verify your email before sending a parent invite by email');
+    expect(isParentInviteEmailVerificationError(caught)).toBe(true);
+    expect(dbMocks.inviteParent).not.toHaveBeenCalled();
+  });
+
+  it('lets an unverified user create a blank-email shareable-link invite', async () => {
+    const result = await createRosterParentInviteForApp('team-1', unverifiedUser, player);
+    expect(result.code).toBe('PARENT12');
+    expect(dbMocks.inviteParent).toHaveBeenCalledWith('team-1', 'player-1', '8', '', 'Parent');
+  });
+
+  it('remaps a server failed-precondition verification error into an actionable error', async () => {
+    dbMocks.inviteParent.mockRejectedValue(
+      Object.assign(new Error('Verify your email before creating a parent invite.'), { code: 'functions/failed-precondition' })
+    );
+    let caught: unknown;
+    await expect(
+      createRosterParentInviteForApp('team-1', verifiedUser, player, { email: 'parent@example.com' }).catch((error) => {
+        caught = error;
+        throw error;
+      })
+    ).rejects.toThrow('Verify your email before sending a parent invite by email');
+    expect(isParentInviteEmailVerificationError(caught)).toBe(true);
   });
 });

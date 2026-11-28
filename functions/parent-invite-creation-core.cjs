@@ -110,10 +110,10 @@ function parsePositiveInteger(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function hasVerifiedManagerAccess({ context, team, user }) {
+function hasVerifiedManagerAccess({ context, team, user, requireVerifiedEmail = true }) {
   const uid = String(context.auth?.uid || '').trim();
   const email = normalizeParentInviteRecipient(context.auth?.token?.email);
-  if (!uid || !email || context.auth?.token?.email_verified !== true) return false;
+  if (!uid || !email || (requireVerifiedEmail && context.auth?.token?.email_verified !== true)) return false;
   if (user?.isAdmin === true) return true;
 
   const ownerId = String(team?.ownerId || '').trim();
@@ -149,14 +149,19 @@ function createParentInviteHandler({
     if (!callerUid) {
       throw new HttpsError('unauthenticated', 'Sign in before creating a parent invite.');
     }
-    if (!normalizeParentInviteRecipient(context.auth?.token?.email)
-      || context.auth?.token?.email_verified !== true) {
-      throw new HttpsError('failed-precondition', 'Verify your email before creating a parent invite.');
-    }
-
     const teamId = normalizeDocumentId(data.teamId, 'teamId', HttpsError);
     const playerId = normalizeDocumentId(data.playerId, 'playerId', HttpsError);
     const email = normalizeParentInviteRecipient(data.email);
+    // PRODUCT/SECURITY DECISION (#5324): a blank-email invite creates only a
+    // shareable link/code and sends no outbound email, so it does not require
+    // a verified caller email. An emailed invite still does — the caller must
+    // be verified before AllPlays sends mail on their behalf. If this
+    // exemption is ever reversed, restore the unconditional gate below and
+    // fix the Roster copy instead.
+    if (email && (!normalizeParentInviteRecipient(context.auth?.token?.email)
+      || context.auth?.token?.email_verified !== true)) {
+      throw new HttpsError('failed-precondition', 'Verify your email before creating a parent invite.');
+    }
     if (email && (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
       throw new HttpsError('invalid-argument', 'Enter a valid recipient email address.');
     }
@@ -219,7 +224,7 @@ function createParentInviteHandler({
       }
       const team = teamSnap.data() || {};
       const user = userSnap.exists ? userSnap.data() || {} : {};
-      if (!hasVerifiedManagerAccess({ context, team, user })) {
+      if (!hasVerifiedManagerAccess({ context, team, user, requireVerifiedEmail: Boolean(email) })) {
         throw new HttpsError('permission-denied', 'You no longer manage this team.');
       }
 
