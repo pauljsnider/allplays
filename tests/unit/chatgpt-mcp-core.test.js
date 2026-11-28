@@ -141,6 +141,117 @@ describe('chatgpt-mcp write-action catalog', () => {
             );
         }
     });
+
+    it('accepts every documented alternative input field', () => {
+        const catalog = new Map(getWriteActionCatalog().map((definition) => [definition.name, definition]));
+        const alternativesByAction = {
+            apply_roster_import: [['teamId', 'teamName']],
+            apply_schedule_import: [['teamId', 'teamName']],
+            create_schedule_event: [['teamId', 'teamName']],
+            invite_team_admin: [['teamId', 'teamName']],
+            save_stat_configuration: [['teamId', 'teamName']],
+            save_team_tracking_item: [['teamId', 'teamName']],
+            send_team_email: [['teamId', 'teamName']],
+            set_player_tracking_status: [['teamId', 'teamName'], ['playerId', 'playerName']],
+            update_team_settings: [['teamId', 'teamName']],
+            create_team: [['name', 'teamName']],
+            invite_roster_parent: [['playerId', 'playerName']],
+            resend_roster_parent_invite: [['playerId', 'playerName']],
+            mark_player_incentive_paid: [['playerId', 'playerName'], ['amountCents', 'amount']],
+            save_player_incentive_rule: [['playerId', 'playerName'], ['amountCents', 'amount']],
+            set_player_incentive_cap: [['playerId', 'playerName'], ['maxPerGameCents', 'maxPerGameAmount']],
+            send_team_message: [['teamId', 'teamName'], ['text', 'message']]
+        };
+        const valueFor = (property) => {
+            const types = Array.isArray(property.type) ? property.type : [property.type];
+            return types.includes('array') ? []
+                : types.includes('boolean') ? true
+                    : types.includes('number') ? 1
+                        : types.includes('object') ? {} : 'value';
+        };
+        const validWith = (definition, selectedAlternatives) => {
+            const { inputSchema: schema } = definition;
+            const input = Object.fromEntries(schema.required.map((key) => [key, valueFor(schema.properties[key])]));
+            for (const alternatives of schema.anyOf || []) {
+                const selected = selectedAlternatives.find((key) => alternatives.includes(key)) || alternatives[0];
+                input[selected] = valueFor(schema.properties[selected]);
+            }
+            return input;
+        };
+
+        for (const [action, groups] of Object.entries(alternativesByAction)) {
+            const definition = catalog.get(action);
+            for (const group of groups) {
+                for (const key of group) {
+                    const selected = groups.map((candidate) => candidate === group ? key : candidate[0]);
+                    expect(() => validateWriteActionArguments(definition, validWith(definition, selected)), `${action}.${key}`).not.toThrow();
+                }
+            }
+        }
+    });
+
+    it('rejects malformed alternative identifiers and missing mutation targets', () => {
+        const catalog = new Map(getWriteActionCatalog().map((definition) => [definition.name, definition]));
+        const identifiersByAction = {
+            complete_game_wrapup: ['gameId', 'eventId'],
+            mark_player_incentive_paid: ['playerId', 'playerName'],
+            retire_player_incentive_rule: ['playerId', 'playerName'],
+            save_player_incentive_rule: ['playerId', 'playerName'],
+            set_player_incentive_cap: ['playerId', 'playerName'],
+            set_player_tracking_status: ['playerId', 'playerName'],
+            toggle_player_incentive_rule: ['playerId', 'playerName']
+        };
+        const baseArguments = (definition) => Object.fromEntries(definition.inputSchema.required.map((key) => {
+            const property = definition.inputSchema.properties[key];
+            const types = Array.isArray(property.type) ? property.type : [property.type];
+            const value = types.includes('array') ? []
+                : types.includes('boolean') ? true
+                    : types.includes('number') ? 1
+                        : types.includes('object') ? {} : 'value';
+            return [key, value];
+        }));
+
+        for (const [action, identifiers] of Object.entries(identifiersByAction)) {
+            const definition = catalog.get(action);
+            for (const identifier of identifiers) {
+                for (const malformed of [42, {}]) {
+                    const input = baseArguments(definition);
+                    for (const alternatives of definition.inputSchema.anyOf || []) {
+                        const selected = alternatives.includes(identifier) ? identifier : alternatives[0];
+                        input[selected] = selected === identifier ? malformed : 'value';
+                    }
+                    expect(() => validateWriteActionArguments(definition, input), `${action}.${identifier}`).toThrowError(
+                        expect.objectContaining({ code: 'invalid_argument' })
+                    );
+                }
+            }
+        }
+
+        const householdInvite = catalog.get('create_household_invite');
+        expect(() => validateWriteActionArguments(householdInvite, { email: 'parent@example.com' })).toThrowError(
+            expect.objectContaining({ code: 'invalid_argument' })
+        );
+        expect(() => validateWriteActionArguments(householdInvite, { email: 'parent@example.com', teamId: 'team-1' })).toThrowError(
+            expect.objectContaining({ code: 'invalid_argument' })
+        );
+        expect(() => validateWriteActionArguments(householdInvite, { email: 'parent@example.com', playerId: 'player-1' })).toThrowError(
+            expect.objectContaining({ code: 'invalid_argument' })
+        );
+        expect(() => validateWriteActionArguments(householdInvite, {
+            email: 'parent@example.com', teamId: 'team-1', playerId: 'player-1'
+        })).not.toThrow();
+        expect(() => validateWriteActionArguments(householdInvite, {
+            email: 'parent@example.com', playerKey: 'team-1:player-1'
+        })).not.toThrow();
+
+        const updateScore = catalog.get('update_game_score');
+        const score = { teamId: 'team-1', homeScore: 1, awayScore: 0 };
+        expect(() => validateWriteActionArguments(updateScore, score)).toThrowError(
+            expect.objectContaining({ code: 'invalid_argument' })
+        );
+        expect(() => validateWriteActionArguments(updateScore, { ...score, eventId: 'event-1' })).not.toThrow();
+        expect(() => validateWriteActionArguments(updateScore, { ...score, gameId: 'game-1' })).not.toThrow();
+    });
 });
 
 function parentDb(extra = {}) {

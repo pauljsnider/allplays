@@ -6,7 +6,6 @@
     "inputSchema": {
       "type": "object",
       "required": [
-        "teamId",
         "operations"
       ],
       "additionalProperties": true,
@@ -16,8 +15,17 @@
         },
         "operations": {
           "type": "array"
+        },
+        "teamName": {
+          "type": "string"
         }
-      }
+      },
+      "anyOf": [
+        [
+          "teamId",
+          "teamName"
+        ]
+      ]
     }
   },
   {
@@ -27,7 +35,6 @@
     "inputSchema": {
       "type": "object",
       "required": [
-        "teamId",
         "rows"
       ],
       "additionalProperties": true,
@@ -37,8 +44,17 @@
         },
         "rows": {
           "type": "array"
+        },
+        "teamName": {
+          "type": "string"
         }
-      }
+      },
+      "anyOf": [
+        [
+          "teamId",
+          "teamName"
+        ]
+      ]
     }
   },
   {
@@ -143,6 +159,12 @@
         },
         "payload": {
           "type": "object"
+        },
+        "gameId": {
+          "type": "string"
+        },
+        "eventId": {
+          "type": "string"
         }
       }
     }
@@ -177,8 +199,27 @@
       "properties": {
         "email": {
           "type": "string"
+        },
+        "playerKey": {
+          "type": "string"
+        },
+        "teamId": {
+          "type": "string"
+        },
+        "playerId": {
+          "type": "string"
         }
-      }
+      },
+      "anyOf": [
+        [
+          "playerKey",
+          "teamId"
+        ],
+        [
+          "playerKey",
+          "playerId"
+        ]
+      ]
     }
   },
   {
@@ -217,7 +258,6 @@
     "inputSchema": {
       "type": "object",
       "required": [
-        "teamId",
         "eventType",
         "input"
       ],
@@ -231,8 +271,17 @@
         },
         "input": {
           "type": "object"
+        },
+        "teamName": {
+          "type": "string"
         }
-      }
+      },
+      "anyOf": [
+        [
+          "teamId",
+          "teamName"
+        ]
+      ]
     }
   },
   {
@@ -242,7 +291,6 @@
     "inputSchema": {
       "type": "object",
       "required": [
-        "name",
         "sport"
       ],
       "additionalProperties": true,
@@ -252,8 +300,17 @@
         },
         "sport": {
           "type": "string"
+        },
+        "teamName": {
+          "type": "string"
         }
-      }
+      },
+      "anyOf": [
+        [
+          "name",
+          "teamName"
+        ]
+      ]
     }
   },
   {
@@ -291,7 +348,6 @@
     "inputSchema": {
       "type": "object",
       "required": [
-        "playerId",
         "email",
         "relation"
       ],
@@ -305,8 +361,23 @@
         },
         "relation": {
           "type": "string"
+        },
+        "playerName": {
+          "type": "string"
+        },
+        "teamId": {
+          "type": "string"
+        },
+        "teamName": {
+          "type": "string"
         }
-      }
+      },
+      "anyOf": [
+        [
+          "playerId",
+          "playerName"
+        ]
+      ]
     }
   },
   {
@@ -316,7 +387,6 @@
     "inputSchema": {
       "type": "object",
       "required": [
-        "teamId",
         "email"
       ],
       "additionalProperties": true,
@@ -326,8 +396,17 @@
         },
         "email": {
           "type": "string"
+        },
+        "teamName": {
+          "type": "string"
         }
-      }
+      },
+      "anyOf": [
+        [
+          "teamId",
+          "teamName"
+        ]
+      ]
     }
   },
   {
@@ -367,14 +446,17 @@
       "type": "object",
       "required": [
         "teamId",
-        "gameId",
-        "amount"
+        "gameId"
       ],
       "additionalProperties": true,
       "anyOf": [
         [
           "playerId",
           "playerName"
+        ],
+        [
+          "amountCents",
+          "amount"
         ]
       ],
       "properties": {
@@ -389,6 +471,18 @@
             "number",
             "string"
           ]
+        },
+        "amountCents": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "playerId": {
+          "type": "string"
+        },
+        "playerName": {
+          "type": "string"
         }
       }
     }
@@ -492,7 +586,6 @@
     "inputSchema": {
       "type": "object",
       "required": [
-        "playerId",
         "email"
       ],
       "additionalProperties": true,
@@ -502,8 +595,23 @@
         },
         "email": {
           "type": "string"
+        },
+        "playerName": {
+          "type": "string"
+        },
+        "teamId": {
+          "type": "string"
+        },
+        "teamName": {
+          "type": "string"
         }
-      }
+      },
+      "anyOf": [
+        [
+          "playerId",
+          "playerName"
+        ]
+      ]
     }
   },
   {
@@ -528,6 +636,12 @@
           "type": "string"
         },
         "ruleId": {
+          "type": "string"
+        },
+        "playerId": {
+          "type": "string"
+        },
+        "playerName": {
           "type": "string"
         }
       }
@@ -588,7 +702,6 @@
       "required": [
         "teamId",
         "statKey",
-        "amount",
         "type"
       ],
       "additionalProperties": true,
@@ -596,6 +709,10 @@
         [
           "playerId",
           "playerName"
+        ],
+        [
+          "amountCents",
+          "amount"
         ]
       ],
       "properties": {
@@ -612,6 +729,18 @@
           ]
         },
         "type": {
+          "type": "string"
+        },
+        "amountCents": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "playerId": {
+          "type": "string"
+        },
+        "playerName": {
           "type": "string"
         }
       }
@@ -699,7 +828,6 @@
     "inputSchema": {
       "type": "object",
       "required": [
-        "teamId",
         "config"
       ],
       "additionalProperties": true,
@@ -709,8 +837,17 @@
         },
         "config": {
           "type": "object"
+        },
+        "teamName": {
+          "type": "string"
         }
-      }
+      },
+      "anyOf": [
+        [
+          "teamId",
+          "teamName"
+        ]
+      ]
     }
   },
   {
@@ -720,7 +857,6 @@
     "inputSchema": {
       "type": "object",
       "required": [
-        "teamId",
         "title",
         "type"
       ],
@@ -734,8 +870,17 @@
         },
         "type": {
           "type": "string"
+        },
+        "teamName": {
+          "type": "string"
         }
-      }
+      },
+      "anyOf": [
+        [
+          "teamId",
+          "teamName"
+        ]
+      ]
     }
   },
   {
@@ -766,7 +911,6 @@
     "inputSchema": {
       "type": "object",
       "required": [
-        "teamId",
         "subject",
         "body",
         "targetType"
@@ -784,8 +928,17 @@
         },
         "targetType": {
           "type": "string"
+        },
+        "teamName": {
+          "type": "string"
         }
-      }
+      },
+      "anyOf": [
+        [
+          "teamId",
+          "teamName"
+        ]
+      ]
     }
   },
   {
@@ -795,8 +948,6 @@
     "inputSchema": {
       "type": "object",
       "required": [
-        "teamId",
-        "text",
         "target"
       ],
       "additionalProperties": true,
@@ -809,8 +960,24 @@
         },
         "target": {
           "type": "string"
+        },
+        "teamName": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
         }
-      }
+      },
+      "anyOf": [
+        [
+          "teamId",
+          "teamName"
+        ],
+        [
+          "text",
+          "message"
+        ]
+      ]
     }
   },
   {
@@ -820,14 +987,17 @@
     "inputSchema": {
       "type": "object",
       "required": [
-        "teamId",
-        "maxPerGameAmount"
+        "teamId"
       ],
       "additionalProperties": true,
       "anyOf": [
         [
           "playerId",
           "playerName"
+        ],
+        [
+          "maxPerGameCents",
+          "maxPerGameAmount"
         ]
       ],
       "properties": {
@@ -839,6 +1009,18 @@
             "number",
             "string"
           ]
+        },
+        "maxPerGameCents": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "playerId": {
+          "type": "string"
+        },
+        "playerName": {
+          "type": "string"
         }
       }
     }
@@ -850,7 +1032,6 @@
     "inputSchema": {
       "type": "object",
       "required": [
-        "teamId",
         "itemId",
         "complete"
       ],
@@ -859,6 +1040,10 @@
         [
           "playerId",
           "playerName"
+        ],
+        [
+          "teamId",
+          "teamName"
         ]
       ],
       "properties": {
@@ -870,6 +1055,15 @@
         },
         "complete": {
           "type": "boolean"
+        },
+        "teamName": {
+          "type": "string"
+        },
+        "playerId": {
+          "type": "string"
+        },
+        "playerName": {
+          "type": "string"
         }
       }
     }
@@ -980,6 +1174,12 @@
         },
         "active": {
           "type": "boolean"
+        },
+        "playerId": {
+          "type": "string"
+        },
+        "playerName": {
+          "type": "string"
         }
       }
     }
@@ -1026,8 +1226,20 @@
         },
         "awayScore": {
           "type": "number"
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "gameId": {
+          "type": "string"
         }
-      }
+      },
+      "anyOf": [
+        [
+          "eventId",
+          "gameId"
+        ]
+      ]
     }
   },
   {
@@ -1133,7 +1345,6 @@
     "inputSchema": {
       "type": "object",
       "required": [
-        "teamId",
         "settings"
       ],
       "additionalProperties": true,
@@ -1143,8 +1354,17 @@
         },
         "settings": {
           "type": "object"
+        },
+        "teamName": {
+          "type": "string"
         }
-      }
+      },
+      "anyOf": [
+        [
+          "teamId",
+          "teamName"
+        ]
+      ]
     }
   }
 ]
