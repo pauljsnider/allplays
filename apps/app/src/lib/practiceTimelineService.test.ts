@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
+  createDrill: vi.fn(),
   getDrills: vi.fn(),
   getPracticeSessionByEvent: vi.fn(),
   getTeam: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock('../../../../js/team-access.js', () => ({ hasFullTeamAccess: vi.fn(() =>
 import {
   appendPracticeTimelineLiveNoteForApp,
   createPracticeTimelineBlockFromOption,
+  createTeamDrillForApp,
   getPracticeTimelineTotalMinutes,
   loadPracticeTimelineModel,
   savePracticeTimelineForApp
@@ -30,6 +32,7 @@ describe('practiceTimelineService', () => {
     dbMocks.getTeamDrills.mockResolvedValue([]);
     dbMocks.getPracticeSessionByEvent.mockResolvedValue(null);
     dbMocks.upsertPracticeSessionForEvent.mockResolvedValue('session-1');
+    dbMocks.createDrill.mockResolvedValue('drill-new');
   });
 
   it('loads sorted timeline blocks plus community and team drill options', async () => {
@@ -127,6 +130,55 @@ describe('practiceTimelineService', () => {
         ]
       })
     );
+  });
+
+  it('creates a team drill inline for an empty library (#5320)', async () => {
+    const option = await createTeamDrillForApp({
+      teamId: 'team-1',
+      user,
+      title: '  Three-man weave ',
+      type: 'Game',
+      duration: '15',
+      description: 'Pass and cut.',
+      sport: 'Basketball'
+    });
+
+    expect(dbMocks.createDrill).toHaveBeenCalledWith('team-1', expect.objectContaining({
+      title: 'Three-man weave',
+      sport: 'Basketball',
+      type: 'Game',
+      description: 'Pass and cut.',
+      publishedToCommunity: false,
+      setup: expect.objectContaining({ duration: 15 })
+    }));
+    expect(option).toEqual({
+      id: 'drill-new',
+      title: 'Three-man weave',
+      type: 'Game',
+      duration: 15,
+      description: 'Pass and cut.',
+      source: 'team'
+    });
+    expect(createPracticeTimelineBlockFromOption(option, 0)).toMatchObject({
+      drillId: 'drill-new',
+      drillTitle: 'Three-man weave',
+      duration: 15
+    });
+  });
+
+  it('defaults an inline drill to the team sport with a 10-minute duration (#5320)', async () => {
+    const option = await createTeamDrillForApp({ teamId: 'team-1', user, title: 'Rondo' });
+    expect(dbMocks.createDrill).toHaveBeenCalledWith('team-1', expect.objectContaining({
+      sport: 'Soccer',
+      type: 'Technical',
+      setup: expect.objectContaining({ duration: 10 })
+    }));
+    expect(option).toMatchObject({ id: 'drill-new', title: 'Rondo', duration: 10, source: 'team' });
+  });
+
+  it('rejects a blank inline drill name without creating anything (#5320)', async () => {
+    await expect(createTeamDrillForApp({ teamId: 'team-1', user, title: '   ' })).rejects.toThrow('Enter a drill name.');
+    expect(dbMocks.createDrill).not.toHaveBeenCalled();
   });
 
   it('appends live notes onto the current block before persisting', async () => {

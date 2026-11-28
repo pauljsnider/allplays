@@ -3722,12 +3722,23 @@ function PracticeTimelineSection({ auth, event }: { auth: AuthState; event: Pare
   const [sessionId, setSessionId] = useState<string | null>(event.practiceSessionId || null);
   const [blocks, setBlocks] = useState<PracticeTimelineBlock[]>([]);
   const [drillOptions, setDrillOptions] = useState<PracticeTimelineDrillOption[]>([]);
+  const [teamSport, setTeamSport] = useState('Soccer');
   const [selectedDrillId, setSelectedDrillId] = useState('');
   const [activeDrillIndex, setActiveDrillIndex] = useState(0);
   const [liveNote, setLiveNote] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  // A failed drill-library load is tracked separately from an empty library
+  // (#5320): a load failure keeps the previous options and shows a retry,
+  // while an empty library invites the coach to create a drill inline.
+  const [timelineLoadError, setTimelineLoadError] = useState<string | null>(null);
+  const [showCreateDrill, setShowCreateDrill] = useState(false);
+  const [newDrillTitle, setNewDrillTitle] = useState('');
+  const [newDrillType, setNewDrillType] = useState('Technical');
+  const [newDrillDuration, setNewDrillDuration] = useState('10');
+  const [newDrillDescription, setNewDrillDescription] = useState('');
+  const [creatingDrill, setCreatingDrill] = useState(false);
   const canManageTimeline = Boolean(auth.user && event.isDbGame && event.isTeamAdmin && !event.isCancelled);
   const totalMinutes = timelineModule ? timelineModule.getPracticeTimelineTotalMinutes(blocks) : blocks.reduce((sum, block) => sum + (Number(block.duration) || 0), 0);
   const activeBlock = blocks[activeDrillIndex] || null;
@@ -3746,18 +3757,20 @@ function PracticeTimelineSection({ auth, event }: { auth: AuthState; event: Pare
     }
     setLoading(true);
     setStatus(null);
+    setTimelineLoadError(null);
     try {
       const { loadPracticeTimelineModel } = await loadPracticeTimelineServiceModule();
       const model = await loadPracticeTimelineModel(event.teamId, event.id, auth.user);
       setSessionId(model.sessionId);
       setBlocks(model.blocks);
       setDrillOptions(model.drillOptions);
+      setTeamSport(model.teamSport || 'Soccer');
       setSelectedDrillId((current) => current || model.drillOptions[0]?.id || '');
       setActiveDrillIndex((current) => Math.min(current, Math.max(0, model.blocks.length - 1)));
     } catch (error: any) {
-      setBlocks([]);
-      setDrillOptions([]);
-      setStatus({ tone: 'error', message: error?.message || 'Unable to load the practice timeline.' });
+      // Keep the previous blocks/options: a failed load must not look like
+      // an empty drill library.
+      setTimelineLoadError(error?.message || 'Unable to load the practice timeline.');
     } finally {
       setLoading(false);
     }
@@ -3795,13 +3808,46 @@ function PracticeTimelineSection({ auth, event }: { auth: AuthState; event: Pare
     }
   };
 
-  const addDrill = async () => {
-    const option = drillOptions.find((candidate) => candidate.id === selectedDrillId) || drillOptions[0];
+  const addDrill = async (optionOverride?: PracticeTimelineDrillOption) => {
+    const option = optionOverride || drillOptions.find((candidate) => candidate.id === selectedDrillId) || drillOptions[0];
     if (!option) return;
     const { createPracticeTimelineBlockFromOption } = await loadPracticeTimelineServiceModule();
     const nextBlocks = [...blocks, createPracticeTimelineBlockFromOption(option, blocks.length)];
     setActiveDrillIndex(nextBlocks.length - 1);
     await persistTimeline(nextBlocks, `${option.title} added to the practice timeline.`);
+  };
+
+  const createAndAddDrill = async () => {
+    if (!auth.user || creatingDrill) return;
+    const title = newDrillTitle.trim();
+    if (!title) {
+      setStatus({ tone: 'error', message: 'Enter a drill name.' });
+      return;
+    }
+    setCreatingDrill(true);
+    setStatus(null);
+    try {
+      const { createTeamDrillForApp } = await loadPracticeTimelineServiceModule();
+      const option = await createTeamDrillForApp({
+        teamId: event.teamId,
+        user: auth.user,
+        title,
+        type: newDrillType,
+        duration: newDrillDuration,
+        description: newDrillDescription,
+        sport: teamSport
+      });
+      setDrillOptions((current) => [...current, option]);
+      setSelectedDrillId(option.id);
+      setNewDrillTitle('');
+      setNewDrillDescription('');
+      setShowCreateDrill(false);
+      await addDrill(option);
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to create the drill.' });
+    } finally {
+      setCreatingDrill(false);
+    }
   };
 
   const updateBlock = (index: number, updater: (block: PracticeTimelineBlock) => PracticeTimelineBlock) => {
@@ -3883,6 +3929,14 @@ function PracticeTimelineSection({ auth, event }: { auth: AuthState; event: Pare
         {status ? <Status tone={status.tone} message={status.message} /> : null}
         {canManageTimeline ? (
           <div className="rounded-2xl border border-violet-100 bg-violet-50/70 p-3">
+            {timelineLoadError ? (
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700" role="alert">
+                <span>{timelineLoadError}</span>
+                <button type="button" className="secondary-button !min-h-9 px-3 text-xs" onClick={() => void refreshTimeline()} disabled={loading}>
+                  Retry loading drills
+                </button>
+              </div>
+            ) : null}
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
               <label className="min-w-0 flex-1 text-xs font-black uppercase tracking-[0.04em] text-violet-700">
                 Add drill
@@ -3894,17 +3948,83 @@ function PracticeTimelineSection({ auth, event }: { auth: AuthState; event: Pare
                 >
                   {drillOptions.length ? drillOptions.map((option) => (
                     <option key={option.id} value={option.id}>{option.title} · {option.duration} min</option>
-                  )) : <option value="">No drills available</option>}
+                  )) : <option value="">{timelineLoadError ? 'Drills could not load' : `No ${teamSport} drills yet`}</option>}
                 </select>
               </label>
               <button
                 type="button"
                 className="primary-button min-h-11 px-4 text-sm disabled:opacity-60"
-                onClick={addDrill}
+                onClick={() => void addDrill()}
                 disabled={saving || loading || !drillOptions.length}
               >
                 {saving ? 'Saving drill' : 'Add drill'}
               </button>
+            </div>
+            {!loading && !timelineLoadError && !drillOptions.length ? (
+              <p className="mt-2 text-xs font-semibold text-gray-600">No {teamSport} drills in the library yet — create one for this team below.</p>
+            ) : null}
+            <div className="mt-2">
+              <button type="button" className="ghost-button min-h-9 px-3 text-xs" onClick={() => setShowCreateDrill((current) => !current)} disabled={saving || loading || creatingDrill}>
+                {showCreateDrill ? 'Close new drill form' : 'Create a new drill'}
+              </button>
+              {showCreateDrill ? (
+                <div className="mt-2 space-y-2 rounded-xl border border-violet-200 bg-white p-3">
+                  <label className="block text-xs font-black uppercase tracking-[0.04em] text-violet-700">
+                    Drill name
+                    <input
+                      className="mt-1 min-h-11 w-full rounded-xl border border-violet-200 bg-white px-3 text-sm font-semibold text-gray-900"
+                      value={newDrillTitle}
+                      onChange={(changeEvent) => setNewDrillTitle(changeEvent.target.value)}
+                      placeholder="e.g. Three-man weave"
+                      aria-label="New drill name"
+                    />
+                  </label>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <label className="min-w-0 flex-1 text-xs font-black uppercase tracking-[0.04em] text-violet-700">
+                      Type
+                      <select
+                        className="mt-1 min-h-11 w-full rounded-xl border border-violet-200 bg-white px-3 text-sm font-semibold text-gray-900"
+                        value={newDrillType}
+                        onChange={(changeEvent) => setNewDrillType(changeEvent.target.value)}
+                        aria-label="New drill type"
+                      >
+                        {(timelineModule?.PRACTICE_TIMELINE_DRILL_TYPES ?? ['Technical']).map((type) => (
+                          <option key={type} value={type}>{type}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="w-full text-xs font-black uppercase tracking-[0.04em] text-violet-700 sm:w-28">
+                      Minutes
+                      <input
+                        type="number"
+                        min={1}
+                        className="mt-1 min-h-11 w-full rounded-xl border border-violet-200 bg-white px-3 text-sm font-semibold text-gray-900"
+                        value={newDrillDuration}
+                        onChange={(changeEvent) => setNewDrillDuration(changeEvent.target.value)}
+                        aria-label="New drill duration in minutes"
+                      />
+                    </label>
+                  </div>
+                  <label className="block text-xs font-black uppercase tracking-[0.04em] text-violet-700">
+                    Description <span className="font-semibold normal-case text-gray-500">(optional)</span>
+                    <input
+                      className="mt-1 min-h-11 w-full rounded-xl border border-violet-200 bg-white px-3 text-sm font-semibold text-gray-900"
+                      value={newDrillDescription}
+                      onChange={(changeEvent) => setNewDrillDescription(changeEvent.target.value)}
+                      placeholder="What should players practice?"
+                      aria-label="New drill description"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="primary-button min-h-11 px-4 text-sm disabled:opacity-60"
+                    onClick={() => void createAndAddDrill()}
+                    disabled={saving || loading || creatingDrill || !newDrillTitle.trim()}
+                  >
+                    {creatingDrill ? 'Creating drill…' : 'Create and add drill'}
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
         ) : null}

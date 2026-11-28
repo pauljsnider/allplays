@@ -1,5 +1,8 @@
-import { appendLivePracticeNote, getDrills, getPracticeSessionByEvent, getTeam, getTeamDrills, hasFullTeamAccess, updatePracticeSession, upsertPracticeSessionForEvent } from './adapters/legacyPracticeTimeline';
+import { appendLivePracticeNote, createDrill, getDrills, getPracticeSessionByEvent, getTeam, getTeamDrills, hasFullTeamAccess, updatePracticeSession, upsertPracticeSessionForEvent } from './adapters/legacyPracticeTimeline';
+import { DRILL_TYPES } from './adapters/legacyDrills';
 import type { AuthUser } from './types';
+
+export const PRACTICE_TIMELINE_DRILL_TYPES = DRILL_TYPES;
 
 export type PracticeTimelineNote = {
   type: string;
@@ -169,6 +172,47 @@ export async function loadPracticeTimelineModel(teamId: string, eventId: string,
     blocks,
     drillOptions
   };
+}
+
+export type CreateTeamDrillForAppInput = {
+  teamId: string;
+  user: AuthUser | null;
+  title: string;
+  type?: string;
+  duration?: unknown;
+  description?: string;
+  sport?: string;
+};
+
+/**
+ * Create a team custom drill from the practice timeline panel (#5320). The
+ * panel previously offered no way to create a drill when the library was
+ * empty, so the Add drill button was dead. The drill is stored as a team
+ * custom drill (source 'custom') via the legacy drill library.
+ */
+export async function createTeamDrillForApp(input: CreateTeamDrillForAppInput): Promise<PracticeTimelineDrillOption> {
+  const team = await assertPracticeTimelineAccess(input.teamId, input.user);
+  const title = normalizeString(input.title);
+  if (!title) throw new Error('Enter a drill name.');
+  const teamSport = normalizeString(input.sport) || normalizeString(team?.sport) || 'Soccer';
+  const type = normalizeString(input.type) || 'Technical';
+  const duration = normalizeDuration(input.duration, 10);
+  const description = normalizeString(input.description);
+  const drillId = await Promise.resolve(createDrill(input.teamId, {
+    title,
+    sport: teamSport,
+    type,
+    level: 'All',
+    skills: [],
+    description,
+    instructions: '',
+    publishedToCommunity: false,
+    youtubeUrl: null,
+    setup: { duration, players: '', cones: 0 }
+  }));
+  const id = normalizeString(drillId);
+  if (!id) throw new Error('The drill could not be created.');
+  return { id, title, type, duration, description, source: 'team' };
 }
 
 export async function savePracticeTimelineForApp(input: SavePracticeTimelineInput) {
