@@ -461,6 +461,29 @@ describe('aggregate Firebase function deployment evidence', () => {
         ]);
     });
 
+    it('rejects an exit-zero partial Functions deployment as production success', () => {
+        const deployResult = {
+            exitCode: 0,
+            evidence: [
+                validFunctionUpdatedEvidence(expectedDeployments[0]),
+                validFunctionUnchangedEvidence(expectedDeployments[2])
+            ]
+        };
+
+        expect(deployResult.exitCode).toBe(0);
+
+        const error = captureVerificationError(
+            () => verifyFunctions(deployResult.evidence, expectedDeployments)
+        );
+
+        expect(error).toMatchObject({
+            code: 'firebase-functions-incomplete-targets',
+            metadata: {
+                incompleteTargets: ['sendTeamEmail']
+            }
+        });
+    });
+
     it('identifies every intended target when no deployment evidence is present', () => {
         const error = captureVerificationError(
             () => verifyFunctions([], expectedDeployments)
