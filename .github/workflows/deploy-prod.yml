@@ -1030,6 +1030,8 @@ jobs:
             "$FIREBASE_PRODUCTION_BUNDLE/_migration/firebase-admin-credential.mjs"
           cp scripts/extract-production-functions-handoff.py "$FIREBASE_PRODUCTION_BUNDLE/context/"
           cp scripts/verify-native-web-auth-iam.mjs "$FIREBASE_PRODUCTION_BUNDLE/context/"
+          cp scripts/verify-firebase-application-deployment.mjs "$FIREBASE_PRODUCTION_BUNDLE/context/"
+          cp scripts/verify-firebase-functions-deploy-log.mjs "$FIREBASE_PRODUCTION_BUNDLE/context/"
 
       - name: Install isolated Firebase deploy CLI without OIDC or lifecycle scripts
         run: |
@@ -1139,6 +1141,10 @@ jobs:
           test ! -L "$bundle/context/extract-production-functions-handoff.py"
           test -f "$bundle/context/verify-native-web-auth-iam.mjs"
           test ! -L "$bundle/context/verify-native-web-auth-iam.mjs"
+          test -f "$bundle/context/verify-firebase-application-deployment.mjs"
+          test ! -L "$bundle/context/verify-firebase-application-deployment.mjs"
+          test -f "$bundle/context/verify-firebase-functions-deploy-log.mjs"
+          test ! -L "$bundle/context/verify-firebase-functions-deploy-log.mjs"
           test -f "$bundle/_migration/backfill-admin-user-search-index.mjs"
           test ! -L "$bundle/_migration/backfill-admin-user-search-index.mjs"
           test -f "$bundle/_migration/backfill-legacy-team-owner-ids.mjs"
@@ -1177,6 +1183,16 @@ jobs:
           printf '%s  %s\n' \
             "$expected_native_web_auth_iam_verifier_sha256" \
             "$bundle/context/verify-native-web-auth-iam.mjs" \
+            | sha256sum --check --strict -
+          expected_firebase_application_verifier_sha256='ea31500d2dc84e19c0f144908ca8aea0db915bcf89b0f5e5650da2eb72a1ca08'
+          printf '%s  %s\n' \
+            "$expected_firebase_application_verifier_sha256" \
+            "$bundle/context/verify-firebase-application-deployment.mjs" \
+            | sha256sum --check --strict -
+          expected_firebase_functions_deploy_log_verifier_sha256='9e8e147df2b1106cf533aa49a9f218612c3bf09b57f5aaa2a7d259dc2fba04dd'
+          printf '%s  %s\n' \
+            "$expected_firebase_functions_deploy_log_verifier_sha256" \
+            "$bundle/context/verify-firebase-functions-deploy-log.mjs" \
             | sha256sum --check --strict -
           python3 "$bundle/context/extract-production-functions-handoff.py" \
             "$bundle/functions-runtime.tar" \
@@ -1901,6 +1917,16 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           }
 
+          verify_targeted_function_deployment() {
+            local deploy_log="$1"
+            local function_targets="$2"
+            node "$FIREBASE_PRODUCTION_BUNDLE/context/verify-firebase-functions-deploy-log.mjs" \
+              --deploy-log "$deploy_log" \
+              --targets "$function_targets" \
+              --artifact-sha "$GITHUB_SHA" \
+              --project-id game-flow-c6311
+          }
+
           retry_firebase_deploy() {
             local deploy_targets="$1"
             local deploy_label="$2"
@@ -1948,6 +1974,7 @@ jobs:
               set -e
 
               if (( deploy_status == 0 )); then
+                firebase_deploy_log="$deploy_log"
                 return 0
               fi
 
@@ -2213,6 +2240,9 @@ jobs:
             3 \
             15 \
             true
+          verify_targeted_function_deployment \
+            "$firebase_deploy_log" \
+            "$retry_enabled_function_targets"
           if [[ "$TEAM_FEE_CHECKOUT_BACKFILL_NEEDED" == "true" || "$REGISTRATION_CHECKOUT_BACKFILL_NEEDED" == "true" ]]; then
             # Publish every producer/consumer of the private attempt state first,
             # then atomically move and scrub historical bearer data before the

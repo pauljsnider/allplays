@@ -18,6 +18,12 @@ const productionExtractorSha256 = createHash('sha256')
 const productionNativeWebAuthIamVerifierSha256 = createHash('sha256')
     .update(read('scripts/verify-native-web-auth-iam.mjs'))
     .digest('hex');
+const productionFirebaseApplicationVerifierSha256 = createHash('sha256')
+    .update(read('scripts/verify-firebase-application-deployment.mjs'))
+    .digest('hex');
+const productionFirebaseFunctionsDeployLogVerifierSha256 = createHash('sha256')
+    .update(read('scripts/verify-firebase-functions-deploy-log.mjs'))
+    .digest('hex');
 const previewVerifierSha256 = createHash('sha256')
     .update(read('scripts/verify-preview-deploy-trigger.mjs'))
     .digest('hex');
@@ -217,6 +223,45 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(production.indexOf('"retry-enabled-functions"')).toBeLessThan(
             production.lastIndexOf('retry_firebase_deploy "hosting,functions" "application"')
         );
+    });
+
+    it('gates production progress on targeted Functions deployment evidence', () => {
+        const targetedDeploy = production.indexOf(
+            'retry_firebase_deploy \\\n            "$retry_enabled_function_targets"'
+        );
+        const verification = production.indexOf(
+            'verify_targeted_function_deployment \\\n            "$firebase_deploy_log" \\\n            "$retry_enabled_function_targets"'
+        );
+        const migration = production.indexOf(
+            'if [[ "$TEAM_FEE_CHECKOUT_BACKFILL_NEEDED" == "true"',
+            targetedDeploy
+        );
+        const applicationDeploy = production.lastIndexOf(
+            'retry_firebase_deploy "hosting,functions" "application"'
+        );
+        const componentMarkers = production.indexOf(
+            'name: Record Firebase component deployment markers'
+        );
+
+        expect(targetedDeploy).toBeGreaterThan(-1);
+        expect(verification).toBeGreaterThan(targetedDeploy);
+        expect(migration).toBeGreaterThan(verification);
+        expect(applicationDeploy).toBeGreaterThan(verification);
+        expect(componentMarkers).toBeGreaterThan(verification);
+        expect(production).toContain(
+            `expected_firebase_application_verifier_sha256='${productionFirebaseApplicationVerifierSha256}'`
+        );
+        expect(production).toContain(
+            `expected_firebase_functions_deploy_log_verifier_sha256='${productionFirebaseFunctionsDeployLogVerifierSha256}'`
+        );
+        expect(production).toContain(
+            'cp scripts/verify-firebase-application-deployment.mjs "$FIREBASE_PRODUCTION_BUNDLE/context/"'
+        );
+        expect(production).toContain(
+            'cp scripts/verify-firebase-functions-deploy-log.mjs "$FIREBASE_PRODUCTION_BUNDLE/context/"'
+        );
+        expect(production.slice(targetedDeploy, verification)).not.toContain('|| true');
+        expect(production.slice(verification, migration)).not.toContain('continue-on-error');
     });
 
     it('keeps rule-changing releases rules-first and skips unchanged rule writes', () => {
