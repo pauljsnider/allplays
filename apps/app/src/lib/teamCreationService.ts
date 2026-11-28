@@ -5,7 +5,7 @@ import {
   getDefaultStatConfigForSport,
   getStatConfigPresetOptions
 } from './adapters/legacyTeamCreation';
-import { clearAppDataCache, getTeamsSummaryBootstrapCacheKey } from './appDataCache';
+import { clearAppDataCache, getParentHomeSecondaryCacheKey, getParentScheduleSummaryCacheKey, getTeamsSummaryBootstrapCacheKey } from './appDataCache';
 import {
   configureDiamondTeam,
   type DiamondCaptureMode,
@@ -119,7 +119,13 @@ export async function createTeamForApp(user: AuthUser | null, input: CreateTeamF
     throw new Error('Team could not be created.');
   }
 
+  // A new team changes the schedule scope, so the schedule summary and the
+  // Home secondary model built from it must not keep serving the pre-team
+  // snapshot (stale-while-revalidate would otherwise show zero teams for
+  // up to 5 minutes after creation).
   clearAppDataCache(getTeamsSummaryBootstrapCacheKey(user.uid));
+  clearAppDataCache(getParentScheduleSummaryCacheKey(user.uid));
+  clearAppDataCache(getParentHomeSecondaryCacheKey(user.uid));
 
   let defaultStatConfigCreated = false;
   let defaultStatConfigError: string | null = null;

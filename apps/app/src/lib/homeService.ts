@@ -130,7 +130,8 @@ export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeM
     children: schedule.children,
     events: schedule.events,
     inboxTeams: normalizeInboxTeams(chatInbox.teams || []),
-    fees: (rawFees || []).map((fee: any) => normalizeParentFeeRecord(fee))
+    fees: (rawFees || []).map((fee: any) => normalizeParentFeeRecord(fee)),
+    isPartial: schedule.isPartial === true
   });
 }
 
@@ -185,7 +186,8 @@ export async function loadParentHomeSummaryBootstrap(
       children: schedule.children,
       events: schedule.events,
       inboxTeams: normalizeStaffTeams(schedule),
-      fees: []
+      fees: [],
+      isPartial: schedule.isPartial === true
     }),
     schedule,
     ...(nativeContext ? { nativeContext } : {})
@@ -239,7 +241,8 @@ export async function loadParentTeamsSummaryBootstrap(
               normalizeStaffTeams({ children: [], events: [], staffTeams: availableScheduleScope?.staffTeams }),
               normalizeInboxTeams(availableChatTeams)
             ),
-            fees: []
+            fees: [],
+            isPartial: availableScheduleScope?.isPartial === true
           });
           // A verified nonempty result can unblock the chooser while slower,
           // unrelated family-scope reads finish. Empty or failed slices stay
@@ -290,7 +293,8 @@ export async function loadParentTeamsSummaryBootstrap(
             normalizeStaffTeams({ children: [], events: [], staffTeams: scheduleScope.staffTeams }),
             normalizeInboxTeams(chatInboxResult.chatInbox.teams || [])
           ),
-          fees: []
+          fees: [],
+          isPartial: scheduleScope.isPartial === true
         });
         timer.end({
           children: scheduleScope.children.length,
@@ -344,7 +348,15 @@ export async function loadParentHomeWithSecondaryData(
 
     const emit = (patch: Partial<typeof partialState>) => {
       partialState = { ...partialState, ...patch };
-      onPartial?.(buildParentHomeModel(partialState));
+      // Every streamed slice is partial by definition, and coach-only teams
+      // come from the schedule scope (staffTeams), not the chat inbox, so
+      // merge them in here too — otherwise a coach-only team vanishes until
+      // the final model and reappears with the next load.
+      onPartial?.(buildParentHomeModel({
+        ...partialState,
+        inboxTeams: mergeTeamSummaries(normalizeStaffTeams(schedule), partialState.inboxTeams),
+        isPartial: true
+      }));
     };
 
     // Stream each secondary slice independently so Home renders schedule cards
@@ -400,14 +412,19 @@ export async function loadParentHomeWithSecondaryData(
     return buildParentHomeModel({
       children: scheduleResult.status === 'fulfilled' && scheduleResult.value ? scheduleResult.value.children : partialState.children,
       events: scheduleResult.status === 'fulfilled' && scheduleResult.value ? scheduleResult.value.events : partialState.events,
-      inboxTeams: chatResult.status === 'fulfilled' ? chatResult.value : partialState.inboxTeams,
-      fees: feesResult.status === 'fulfilled' ? feesResult.value : partialState.fees
+      inboxTeams: mergeTeamSummaries(
+        normalizeStaffTeams(schedule),
+        chatResult.status === 'fulfilled' ? chatResult.value : partialState.inboxTeams
+      ),
+      fees: feesResult.status === 'fulfilled' ? feesResult.value : partialState.fees,
+      isPartial: schedule.isPartial === true
     });
   }, {
     ttlMs: homeSecondaryTtlMs,
     force: options.force,
     maxStaleMs: homeMaxStaleMs,
     staleWhileRevalidate: true,
+    shouldCache: (result) => result?.isPartial !== true,
     onRefresh: onPartial || undefined,
     onRefreshError: options.onBackgroundError
   });
