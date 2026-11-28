@@ -825,7 +825,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443392'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443393'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -6457,8 +6457,21 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
         : [];
     const isManualPaymentUpdate = Object.prototype.hasOwnProperty.call(recipientUpdates, 'manualPayment')
         || safeLedgerEntries.some((entry) => entry?.type === 'offline_payment');
+    const isBalanceAdjustmentUpdate = Object.prototype.hasOwnProperty.call(recipientUpdates, 'adjustment')
+        || safeLedgerEntries.some((entry) => entry?.type === 'balance_adjustment');
     const isCancellationUpdate = recipientUpdates.status === 'canceled'
         || safeLedgerEntries.some((entry) => entry?.type === 'cancellation');
+    const financialMutationTypeCount = [
+        isManualPaymentUpdate,
+        isBalanceAdjustmentUpdate,
+        isCancellationUpdate
+    ].filter(Boolean).length;
+    if (financialMutationTypeCount > 1) {
+        throw new Error('Only one financial mutation type can be applied at a time.');
+    }
+    if (safeLedgerEntries.filter((entry) => entry?.type === 'balance_adjustment').length > 1) {
+        throw new Error('Only one balance adjustment entry can be applied at a time.');
+    }
     const explicitAdminBilling = adminBilling && typeof adminBilling === 'object' && !Array.isArray(adminBilling)
         ? adminBilling
         : null;
@@ -6514,11 +6527,11 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
         updatePayload.checkoutAmountCents = deleteField();
     }
 
-    if (safeLedgerEntries.length > 0) {
+    if (safeLedgerEntries.length > 0 && !isBalanceAdjustmentUpdate) {
         updatePayload.paymentLedger = arrayUnion(...safeLedgerEntries);
     }
 
-    if (isManualPaymentUpdate || isCancellationUpdate || requestedAuditFields.length > 0) {
+    if (isManualPaymentUpdate || isBalanceAdjustmentUpdate || isCancellationUpdate || requestedAuditFields.length > 0) {
         await runTransaction(db, async (transaction) => {
             const recipientSnapshot = await transaction.get(recipientRef);
             if (!recipientSnapshot.exists()) {
@@ -6526,6 +6539,7 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
             }
             const recipient = recipientSnapshot.data() || {};
             const transactionUpdatePayload = { ...updatePayload };
+            let transactionAdminBillingPayload = adminBillingPayload;
             const amountDueRaw = recipient.amountDueCents ?? recipient.adjustedAmountCents ?? recipient.amountCents ?? 0;
             const amountDueCents = Number.isFinite(Number(amountDueRaw)) ? Math.max(0, Number(amountDueRaw)) : 0;
             const priorPaidRaw = recipient.amountPaidCents ?? recipient.paidAmountCents ?? 0;
@@ -6554,6 +6568,80 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
                 transactionUpdatePayload.paidAt = status === 'paid'
                     ? (recipientUpdates.manualPayment?.paidAt ?? offlinePaymentEntry?.paymentDate ?? serverTimestamp())
                     : null;
+            }
+
+            if (isBalanceAdjustmentUpdate) {
+                const balanceAdjustmentEntry = safeLedgerEntries.find((entry) => entry?.type === 'balance_adjustment');
+                const nestedAdjustmentAmount = recipientUpdates.adjustment?.amountCents;
+                const ledgerAdjustmentAmount = balanceAdjustmentEntry?.amountCents;
+                const nestedAdjustmentCents = Number(nestedAdjustmentAmount);
+                const ledgerAdjustmentCents = Number(ledgerAdjustmentAmount);
+
+                if (
+                    nestedAdjustmentAmount !== undefined
+                    && ledgerAdjustmentAmount !== undefined
+                    && (
+                        !Number.isFinite(nestedAdjustmentCents)
+                        || !Number.isFinite(ledgerAdjustmentCents)
+                        || nestedAdjustmentCents !== ledgerAdjustmentCents
+                    )
+                ) {
+                    throw new Error('Balance adjustment amounts must match.');
+                }
+
+                const adjustmentCents = Number(
+                    nestedAdjustmentAmount
+                    ?? ledgerAdjustmentAmount
+                );
+                if (!Number.isFinite(adjustmentCents) || adjustmentCents === 0) {
+                    throw new Error('Balance adjustment amount is required.');
+                }
+
+                const updatedAmountDueCents = Math.max(0, amountDueCents - adjustmentCents);
+                const updatedRemainingBalanceCents = Math.max(0, updatedAmountDueCents - priorPaidCents);
+                const status = updatedRemainingBalanceCents === 0
+                    ? 'paid'
+                    : priorPaidCents > 0
+                        ? 'partial'
+                        : 'unpaid';
+
+                transactionUpdatePayload.status = status;
+                transactionUpdatePayload.amountDueCents = updatedAmountDueCents;
+                transactionUpdatePayload.remainingBalanceCents = updatedRemainingBalanceCents;
+                ['amountPaidCents', 'paidAmountCents'].forEach((field) => {
+                    if (Object.prototype.hasOwnProperty.call(transactionUpdatePayload, field)) {
+                        transactionUpdatePayload[field] = priorPaidCents;
+                    }
+                });
+                transactionUpdatePayload.adjustment = {
+                    ...(recipientUpdates.adjustment || {}),
+                    amountCents: adjustmentCents,
+                    previousAmountDueCents: amountDueCents,
+                    amountDueCents: updatedAmountDueCents
+                };
+
+                if (safeLedgerEntries.length > 0) {
+                    const reconciledLedgerEntries = safeLedgerEntries.map((entry) => (
+                        entry?.type === 'balance_adjustment'
+                            ? {
+                                ...entry,
+                                amountCents: adjustmentCents,
+                                previousAmountDueCents: amountDueCents,
+                                amountDueCents: updatedAmountDueCents
+                            }
+                            : entry
+                    ));
+                    transactionUpdatePayload.paymentLedger = arrayUnion(...reconciledLedgerEntries);
+                }
+
+                if (transactionAdminBillingPayload) {
+                    transactionAdminBillingPayload = {
+                        ...transactionAdminBillingPayload,
+                        amountCents: adjustmentCents,
+                        previousAmountDueCents: amountDueCents,
+                        amountDueCents: updatedAmountDueCents
+                    };
+                }
             }
 
             if (isCancellationUpdate && priorPaidCents > 0) {
@@ -6586,8 +6674,8 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
             }
 
             transaction.update(recipientRef, transactionUpdatePayload);
-            if (adminBillingPayload) {
-                transaction.set(adminBillingRef, adminBillingPayload, { merge: true });
+            if (transactionAdminBillingPayload) {
+                transaction.set(adminBillingRef, transactionAdminBillingPayload, { merge: true });
             }
         });
         return;

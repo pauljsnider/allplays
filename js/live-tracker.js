@@ -3,10 +3,10 @@ import { getLiveStatsEpoch, readLiveStatsForWrite } from './live-aggregate-stats
 import { persistLiveAggregateSnapshot, persistLiveEpochWrites, resetLiveTrackerData } from './live-aggregate-persistence.js?v=4';
 import { getTeamScorePair } from './season-record.js';
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, query, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433216';
+import { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, query, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433217';
 import { db } from './firebase.js?v=4433197';
-import { getUrlParams, escapeHtml } from './utils.js?v=443392';
-import { checkAuth } from './auth.js?v=4433221';
+import { getUrlParams, escapeHtml } from './utils.js?v=443393';
+import { checkAuth } from './auth.js?v=4433222';
 import { writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp, runTransaction } from './firebase.js?v=4433197';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './firebase-ai.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
@@ -19,7 +19,7 @@ import { resolveFinalScore } from './live-tracker-email.js?v=2';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { buildVideoTimestampMetadata, hasConfiguredLiveStream } from './live-stream-utils.js?v=3';
-import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=64';
+import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=65';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
 import { resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';
 import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=8';

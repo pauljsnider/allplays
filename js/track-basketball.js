@@ -1,9 +1,9 @@
 import { getTeamScorePair } from './season-record.js';
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getGameDayTeamContext, getGame, getPlayers, getConfigs, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './db.js?v=4433216';
+import { getGameDayTeamContext, getGame, getPlayers, getConfigs, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './db.js?v=4433217';
 import { db } from './firebase.js?v=4433197';
-import { getUrlParams, escapeHtml } from './utils.js?v=443392';
-import { checkAuth } from './auth.js?v=4433221';
+import { getUrlParams, escapeHtml } from './utils.js?v=443393';
+import { checkAuth } from './auth.js?v=4433222';
 import { writeBatch, runTransaction, doc, setDoc, addDoc } from './firebase.js?v=4433197';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './firebase-ai.js?v=1';
 import { getApp } from './vendor/firebase-app.js';

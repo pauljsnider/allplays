@@ -1,4 +1,4 @@
-import { escapeHtml, getUrlParams, renderFooter, renderHeader } from './utils.js?v=443392';
+import { escapeHtml, getUrlParams, renderFooter, renderHeader } from './utils.js?v=443393';
 
 const VISIBILITY_VALUES = ['private', 'public'];
 const STATUS_VALUES = ['active', 'archived'];
@@ -204,8 +204,8 @@ async function initTrackingItemsAdminPage() {
     renderFooter(document.getElementById('footer-container'));
 
     const [dbModule, authModule, firebaseModule] = await Promise.all([
-        import('./db.js?v=4433216'),
-        import('./auth.js?v=4433221'),
+        import('./db.js?v=4433217'),
+        import('./auth.js?v=4433222'),
         import('./firebase.js?v=4433197')
     ]);
     const { getTeam, getUserProfile, canModerateChat } = dbModule;
