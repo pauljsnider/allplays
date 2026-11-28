@@ -21,11 +21,12 @@ import {
     resolveUserContext,
     listMyTeams,
     getFamilySchedule,
-    getGameSummary
+    getGameSummary,
+    getWriteActionCatalog
 } from './core.js';
 import { createIdentityResolver, extractBearerToken } from './identity.js';
 import { createUserDb } from './firestoreRest.js';
-import { writeCatalog, prepareWriteReview, getWriteReviewStatus } from './writeReview.js';
+import { prepareWriteReview, getWriteReviewStatus } from './writeReview.js';
 import { getManagedTeamRoster } from './rosterDiscovery.js';
 import { createOAuthBroker, metadataFor, OAuthError, requestedReviewScope } from './oauth.js';
 import {
@@ -268,7 +269,7 @@ function buildServer(identity, { reviewRequests = false } = {}) {
         annotations: { readOnlyHint: true }
     }, run((context, args) => getGameSummary(db, context, args)));
 
-    for (const definition of writeCatalog) {
+    for (const definition of getWriteActionCatalog()) {
         server.registerTool(definition.name, {
             title: `Review ${definition.name.replaceAll('_', ' ')}`,
             description: `Save a request for review in the signed-in AllPlays app; this tool does NOT execute the action. Open the returned reviewUrl for validation and explicit final confirmation. ${definition.teamScoped ? 'An exact managed teamId is required in arguments. ' : ''}${definition.description}`,
