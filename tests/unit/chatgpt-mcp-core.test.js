@@ -4,6 +4,7 @@ import publicTeamApiCore from '../../functions/public-team-api-core.cjs';
 import {
     DomainError,
     getWriteActionCatalog,
+    validateWriteActionArguments,
     loadManagedTeamsFromCallable,
     loadPublicTeamCalendarProjection,
     resolveUserContext,
@@ -110,6 +111,34 @@ describe('chatgpt-mcp write-action catalog', () => {
             expect(entry.teamScoped).toEqual(expect.any(Boolean));
             expect(entry.description).toEqual(expect.any(String));
             expect(entry.description.trim()).not.toBe('');
+        }
+    });
+
+    it('defines and enforces a validated schema for every canonical action', () => {
+        const catalog = getWriteActionCatalog();
+        for (const definition of catalog) {
+            const schema = definition.inputSchema;
+            expect(schema).toMatchObject({ type: 'object', additionalProperties: true });
+            expect(schema.required.length).toBeGreaterThan(0);
+            const valid = {};
+            for (const [key, property] of Object.entries(schema.properties)) {
+                const types = Array.isArray(property.type) ? property.type : [property.type];
+                valid[key] = types.includes('array') ? []
+                    : types.includes('boolean') ? true
+                        : types.includes('number') ? 1
+                            : types.includes('object') ? {} : 'value';
+            }
+            for (const alternatives of schema.anyOf || []) valid[alternatives[0]] = 'value';
+            expect(() => validateWriteActionArguments(definition, valid)).not.toThrow();
+            const missing = { ...valid };
+            delete missing[schema.required[0]];
+            expect(() => validateWriteActionArguments(definition, missing)).toThrowError(
+                expect.objectContaining({ code: 'invalid_argument', details: expect.any(Array) })
+            );
+            const malformed = { ...valid, [schema.required[0]]: 42 };
+            expect(() => validateWriteActionArguments(definition, malformed)).toThrowError(
+                expect.objectContaining({ code: 'invalid_argument' })
+            );
         }
     });
 });

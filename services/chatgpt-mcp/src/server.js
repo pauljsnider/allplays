@@ -22,7 +22,8 @@ import {
     listMyTeams,
     getFamilySchedule,
     getGameSummary,
-    getWriteActionCatalog
+    getWriteActionCatalog,
+    validateWriteActionArguments
 } from './core.js';
 import { createIdentityResolver, extractBearerToken } from './identity.js';
 import { createUserDb } from './firestoreRest.js';
@@ -188,7 +189,11 @@ function toolError(error) {
     if (!(error instanceof DomainError)) console.error('[chatgpt-mcp] tool failure:', error);
     return {
         isError: true,
-        content: [{ type: 'text', text: JSON.stringify({ error: code, message }) }],
+        content: [{ type: 'text', text: JSON.stringify({
+            error: code,
+            message,
+            ...(error instanceof DomainError && error.details ? { details: error.details } : {})
+        }) }],
         ...(code === 'insufficient_scope' ? { _meta: { 'mcp/www_authenticate': ['Bearer error="insufficient_scope", scope="allplays.review"'] } } : {})
     };
 }
@@ -278,7 +283,10 @@ function buildServer(identity, { reviewRequests = false } = {}) {
                 arguments: z.record(z.string(), z.unknown()).describe('Action arguments described above. Do not include credentials, files, internal confirmation fields, or inferred approvals.')
             },
             annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
-        }, runReview((context, args) => prepareWriteReview(db, context, { ...args, action: definition.name })));
+        }, runReview((context, args) => {
+            validateWriteActionArguments(definition, args.arguments);
+            return prepareWriteReview(db, context, { ...args, action: definition.name });
+        })));
     }
     server.registerTool('get_action_status', {
         title: 'Get action review status',

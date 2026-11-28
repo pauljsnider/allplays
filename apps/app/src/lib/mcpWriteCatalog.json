@@ -2,231 +2,1149 @@
   {
     "name": "apply_roster_import",
     "teamScoped": true,
-    "description": "Prepare a grouped roster import for a managed team. Supports name-only player adds plus update, deactivate/reactivate, all roster fields, address, and optional family contacts. Supplied family-contact emails create invitations; player adds do not require contact details. Args: teamId/teamName and operations."
+    "description": "Prepare a grouped roster import for a managed team. Supports name-only player adds plus update, deactivate/reactivate, all roster fields, address, and optional family contacts. Supplied family-contact emails create invitations; player adds do not require contact details. Args: teamId/teamName and operations.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "operations"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "operations": {
+          "type": "array"
+        }
+      }
+    }
   },
   {
     "name": "apply_schedule_import",
     "teamScoped": true,
-    "description": "Prepare one grouped schedule import from an image, CSV, PDF, or pasted text. Supports reviewed game and practice rows. Args: teamId/teamName and rows."
+    "description": "Prepare one grouped schedule import from an image, CSV, PDF, or pasted text. Supports reviewed game and practice rows. Args: teamId/teamName and rows.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "rows"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "rows": {
+          "type": "array"
+        }
+      }
+    }
   },
   {
     "name": "cancel_ride_request",
     "teamScoped": false,
-    "description": "Cancel a ride request. Args: eventId, teamId, offerId, requestId."
+    "description": "Cancel a ride request. Args: eventId, teamId, offerId, requestId.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "eventId",
+        "teamId",
+        "offerId",
+        "requestId"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "eventId": {
+          "type": "string"
+        },
+        "teamId": {
+          "type": "string"
+        },
+        "offerId": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "cancel_schedule_event",
     "teamScoped": true,
-    "description": "Cancel a managed-team game or practice without deleting history. Args: teamId, eventId, eventType."
+    "description": "Cancel a managed-team game or practice without deleting history. Args: teamId, eventId, eventType.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "eventId",
+        "eventType"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "eventType": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "claim_assignment",
     "teamScoped": false,
-    "description": "Claim a volunteer/task assignment slot. Args: eventId, teamId, role."
+    "description": "Claim a volunteer/task assignment slot. Args: eventId, teamId, role.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "eventId",
+        "teamId",
+        "role"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "eventId": {
+          "type": "string"
+        },
+        "teamId": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "complete_game_wrapup",
     "teamScoped": true,
-    "description": "Complete a managed game wrap-up with final report payload. Args: teamId, gameId/eventId, payload."
+    "description": "Complete a managed game wrap-up with final report payload. Args: teamId, gameId/eventId, payload.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "payload"
+      ],
+      "additionalProperties": true,
+      "anyOf": [
+        [
+          "gameId",
+          "eventId"
+        ]
+      ],
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "payload": {
+          "type": "object"
+        }
+      }
+    }
   },
   {
     "name": "create_family_share_link",
     "teamScoped": false,
-    "description": "Create a family share link. Args: label, extraCalendarUrls."
+    "description": "Create a family share link. Args: label, extraCalendarUrls.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "label"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "label": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "create_household_invite",
     "teamScoped": false,
-    "description": "Invite a household contact for a linked player. Args: playerKey or teamId+playerId, email, displayName, relation."
+    "description": "Invite a household contact for a linked player. Args: playerKey or teamId+playerId, email, displayName, relation.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "email"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "email": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "create_ride_offer",
     "teamScoped": false,
-    "description": "Create a rideshare offer. Args: eventId, teamId, seatCapacity, direction to|from|round-trip, note."
+    "description": "Create a rideshare offer. Args: eventId, teamId, seatCapacity, direction to|from|round-trip, note.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "eventId",
+        "teamId",
+        "seatCapacity",
+        "direction"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "eventId": {
+          "type": "string"
+        },
+        "teamId": {
+          "type": "string"
+        },
+        "seatCapacity": {
+          "type": "number"
+        },
+        "direction": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "create_schedule_event",
     "teamScoped": true,
-    "description": "Create a managed-team game or practice. Args: teamId/teamName, eventType game|practice, and input with startDate as an ISO 8601 date-time including the requested time and UTC offset, location, opponent/title, notifications, recurrence, and tracker config. If date, time, and timeZone are supplied separately, they are combined without dropping the time."
+    "description": "Create a managed-team game or practice. Args: teamId/teamName, eventType game|practice, and input with startDate as an ISO 8601 date-time including the requested time and UTC offset, location, opponent/title, notifications, recurrence, and tracker config. If date, time, and timeZone are supplied separately, they are combined without dropping the time.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "eventType",
+        "input"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "eventType": {
+          "type": "string"
+        },
+        "input": {
+          "type": "object"
+        }
+      }
+    }
   },
   {
     "name": "create_team",
     "teamScoped": false,
-    "description": "Create a new team owned by the signed-in user and add its default sport stat template. Args: name/teamName, sport, zip optional, isPublic optional."
+    "description": "Create a new team owned by the signed-in user and add its default sport stat template. Args: name/teamName, sport, zip optional, isPublic optional.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "name",
+        "sport"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "sport": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "create_team_fee",
     "teamScoped": true,
-    "description": "Create a managed-team fee for the whole roster or selected player IDs. Args: teamId, title, amount, dueDate, recipientIds, applyToWholeRoster, installmentPlan."
+    "description": "Create a managed-team fee for the whole roster or selected player IDs. Args: teamId, title, amount, dueDate, recipientIds, applyToWholeRoster, installmentPlan.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "title",
+        "amount"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "amount": {
+          "type": [
+            "number",
+            "string"
+          ]
+        }
+      }
+    }
   },
   {
     "name": "invite_roster_parent",
     "teamScoped": true,
-    "description": "Invite a parent or guardian to one player on a managed team using the normal acceptance email. Args: playerId/playerName, email, relation, and optional teamId/teamName. A unique managed-roster player match resolves the team automatically."
+    "description": "Invite a parent or guardian to one player on a managed team using the normal acceptance email. Args: playerId/playerName, email, relation, and optional teamId/teamName. A unique managed-roster player match resolves the team automatically.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "playerId",
+        "email",
+        "relation"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "playerId": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "relation": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "invite_team_admin",
     "teamScoped": true,
-    "description": "Invite an administrator to a managed team. Args: teamId/teamName and email."
+    "description": "Invite an administrator to a managed team. Args: teamId/teamName and email.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "email"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "manage_schedule_assignment",
     "teamScoped": true,
-    "description": "Create, update, or remove a managed event assignment. Args: teamId, eventId, action create|update|remove, role/currentRole, assignment."
+    "description": "Create, update, or remove a managed event assignment. Args: teamId, eventId, action create|update|remove, role/currentRole, assignment.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "eventId",
+        "action",
+        "assignment"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "assignment": {
+          "type": "object"
+        }
+      }
+    }
   },
   {
     "name": "mark_player_incentive_paid",
     "teamScoped": false,
-    "description": "Mark player incentive earnings paid for a game. Args: teamId, playerId/playerName, gameId, amountCents or amount."
+    "description": "Mark player incentive earnings paid for a game. Args: teamId, playerId/playerName, gameId, amountCents or amount.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "gameId",
+        "amount"
+      ],
+      "additionalProperties": true,
+      "anyOf": [
+        [
+          "playerId",
+          "playerName"
+        ]
+      ],
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "gameId": {
+          "type": "string"
+        },
+        "amount": {
+          "type": [
+            "number",
+            "string"
+          ]
+        }
+      }
+    }
   },
   {
     "name": "mark_practice_packet_complete",
     "teamScoped": false,
-    "description": "Mark a practice/home packet complete for a linked child. Args: eventId, teamId, childId/playerId optional, playerName optional."
+    "description": "Mark a practice/home packet complete for a linked child. Args: eventId, teamId, childId/playerId optional, playerName optional.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "eventId",
+        "teamId"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "eventId": {
+          "type": "string"
+        },
+        "teamId": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "prepare_resource_packet",
     "teamScoped": true,
-    "description": "Prepare a staff resource, packet draft, or publication for explicit confirmation. Args teamId, action=saveResource|saveDraft|publish. Resources need title,url and optional teachingPoint and optional resourceId/drillId. Drafts need title,resourceIds,playerIds and optional matching resourceVersions,notes,practiceId,dueAt ISO,timeZone,assignmentId. Omit resourceVersions to preserve versions from an existing assignment and select current versions for newly added resources; pass current versions to explicitly adopt updated media. Publish needs assignmentId and explicit notify boolean. Never invent video content or report an open on behalf of someone."
+    "description": "Prepare a staff resource, packet draft, or publication for explicit confirmation. Args teamId, action=saveResource|saveDraft|publish. Resources need title,url and optional teachingPoint and optional resourceId/drillId. Drafts need title,resourceIds,playerIds and optional matching resourceVersions,notes,practiceId,dueAt ISO,timeZone,assignmentId. Omit resourceVersions to preserve versions from an existing assignment and select current versions for newly added resources; pass current versions to explicitly adopt updated media. Publish needs assignmentId and explicit notify boolean. Never invent video content or report an open on behalf of someone.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "action"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "release_assignment",
     "teamScoped": false,
-    "description": "Release a volunteer/task assignment claim. Args: eventId, teamId, role."
+    "description": "Release a volunteer/task assignment claim. Args: eventId, teamId, role.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "eventId",
+        "teamId",
+        "role"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "eventId": {
+          "type": "string"
+        },
+        "teamId": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "request_ride_spot",
     "teamScoped": false,
-    "description": "Request a seat for a linked child. Args: eventId, teamId, offerId, childId/playerId optional."
+    "description": "Request a seat for a linked child. Args: eventId, teamId, offerId, childId/playerId optional.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "eventId",
+        "teamId",
+        "offerId"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "eventId": {
+          "type": "string"
+        },
+        "teamId": {
+          "type": "string"
+        },
+        "offerId": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "resend_roster_parent_invite",
     "teamScoped": true,
-    "description": "Retry the email for an existing pending or auto-linked parent invitation. Args: playerId/playerName, email, and optional teamId/teamName. A unique managed-roster player match resolves the team automatically."
+    "description": "Retry the email for an existing pending or auto-linked parent invitation. Args: playerId/playerName, email, and optional teamId/teamName. A unique managed-roster player match resolves the team automatically.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "playerId",
+        "email"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "playerId": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "retire_player_incentive_rule",
     "teamScoped": false,
-    "description": "Retire/remove a player incentive rule. Args: teamId, playerId/playerName, ruleId."
+    "description": "Retire/remove a player incentive rule. Args: teamId, playerId/playerName, ruleId.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "ruleId"
+      ],
+      "additionalProperties": true,
+      "anyOf": [
+        [
+          "playerId",
+          "playerName"
+        ]
+      ],
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "ruleId": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "review_registration",
     "teamScoped": true,
-    "description": "Approve, reject, extend, or accept a managed-team registration/waitlist offer. Args: teamId, formId, registrationId, action, playerId, decisionNote."
+    "description": "Approve, reject, extend, or accept a managed-team registration/waitlist offer. Args: teamId, formId, registrationId, action, playerId, decisionNote.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "formId",
+        "registrationId",
+        "action"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "formId": {
+          "type": "string"
+        },
+        "registrationId": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "revoke_family_share_link",
     "teamScoped": false,
-    "description": "Revoke a family share link. Args: tokenId."
+    "description": "Revoke a family share link. Args: tokenId.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "tokenId"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "tokenId": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "save_player_incentive_rule",
     "teamScoped": false,
-    "description": "Create or update a parent player incentive rule. Args: teamId, playerId/playerName, statKey, amountCents or amount, type per_unit|threshold, threshold, thresholdOp."
+    "description": "Create or update a parent player incentive rule. Args: teamId, playerId/playerName, statKey, amountCents or amount, type per_unit|threshold, threshold, thresholdOp.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "statKey",
+        "amount",
+        "type"
+      ],
+      "additionalProperties": true,
+      "anyOf": [
+        [
+          "playerId",
+          "playerName"
+        ]
+      ],
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "statKey": {
+          "type": "string"
+        },
+        "amount": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "type": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "save_practice_attendance",
     "teamScoped": true,
-    "description": "Save player attendance for a managed practice. Args: teamId, eventId, attendance with player statuses and notes."
+    "description": "Save player attendance for a managed practice. Args: teamId, eventId, attendance with player statuses and notes.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "eventId",
+        "attendance"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "attendance": {
+          "type": "object"
+        }
+      }
+    }
   },
   {
     "name": "save_practice_packet",
     "teamScoped": true,
-    "description": "Save the home/practice packet for a managed practice. Args: teamId, eventId, packet with title, due date, notes, and blocks."
+    "description": "Save the home/practice packet for a managed practice. Args: teamId, eventId, packet with title, due date, notes, and blocks.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "eventId",
+        "packet"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "packet": {
+          "type": "object"
+        }
+      }
+    }
   },
   {
     "name": "save_practice_timeline",
     "teamScoped": true,
-    "description": "Save a managed practice timeline with ordered drill blocks. Args: teamId, eventId, sessionId optional, title, date, location, blocks."
+    "description": "Save a managed practice timeline with ordered drill blocks. Args: teamId, eventId, sessionId optional, title, date, location, blocks.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "eventId",
+        "blocks"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "blocks": {
+          "type": "array"
+        }
+      }
+    }
   },
   {
     "name": "save_stat_configuration",
     "teamScoped": true,
-    "description": "Create or update a team stat-tracker configuration. Args: teamId/teamName, configId optional, config."
+    "description": "Create or update a team stat-tracker configuration. Args: teamId/teamName, configId optional, config.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "config"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "config": {
+          "type": "object"
+        }
+      }
+    }
   },
   {
     "name": "save_team_tracking_item",
     "teamScoped": true,
-    "description": "Create or update a managed-team tracking requirement. Args: teamId/teamName, itemId optional, title, description, type, dueDate, required."
+    "description": "Create or update a managed-team tracking requirement. Args: teamId/teamName, itemId optional, title, description, type, dueDate, required.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "title",
+        "type"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "send_rsvp_reminder",
     "teamScoped": true,
-    "description": "Send the normal staff RSVP reminder for a managed-team event. Args: teamId, eventId."
+    "description": "Send the normal staff RSVP reminder for a managed-team event. Args: teamId, eventId.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "eventId"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "eventId": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "send_team_email",
     "teamScoped": true,
-    "description": "Send a managed-team email using the normal team email service. Args: teamId/teamName, subject, body, targetType full_team|staff|individuals, recipientIds."
+    "description": "Send a managed-team email using the normal team email service. Args: teamId/teamName, subject, body, targetType full_team|staff|individuals, recipientIds.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "subject",
+        "body",
+        "targetType"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "targetType": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "send_team_message",
     "teamScoped": false,
-    "description": "Send a team chat message. Args: teamId or teamName, text/message, target full_team|staff."
+    "description": "Send a team chat message. Args: teamId or teamName, text/message, target full_team|staff.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "text",
+        "target"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "set_player_incentive_cap",
     "teamScoped": false,
-    "description": "Set or clear a per-game incentive cap. Args: teamId, playerId/playerName, maxPerGameCents or maxPerGameAmount."
+    "description": "Set or clear a per-game incentive cap. Args: teamId, playerId/playerName, maxPerGameCents or maxPerGameAmount.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "maxPerGameAmount"
+      ],
+      "additionalProperties": true,
+      "anyOf": [
+        [
+          "playerId",
+          "playerName"
+        ]
+      ],
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "maxPerGameAmount": {
+          "type": [
+            "number",
+            "string"
+          ]
+        }
+      }
+    }
   },
   {
     "name": "set_player_tracking_status",
     "teamScoped": true,
-    "description": "Mark a team tracking item complete or incomplete for a roster player. Args: teamId/teamName, playerId/playerName, itemId, complete."
+    "description": "Mark a team tracking item complete or incomplete for a roster player. Args: teamId/teamName, playerId/playerName, itemId, complete.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "itemId",
+        "complete"
+      ],
+      "additionalProperties": true,
+      "anyOf": [
+        [
+          "playerId",
+          "playerName"
+        ]
+      ],
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "complete": {
+          "type": "boolean"
+        }
+      }
+    }
   },
   {
     "name": "set_ride_offer_status",
     "teamScoped": false,
-    "description": "Close or reopen a ride offer. Args: eventId, teamId, offerId, status open|closed|cancelled."
+    "description": "Close or reopen a ride offer. Args: eventId, teamId, offerId, status open|closed|cancelled.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "eventId",
+        "teamId",
+        "offerId",
+        "status"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "eventId": {
+          "type": "string"
+        },
+        "teamId": {
+          "type": "string"
+        },
+        "offerId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "set_team_drill_favorite",
     "teamScoped": true,
-    "description": "Add or remove a drill from a managed team\u2019s favorites. Args: teamId, drillId, favorite."
+    "description": "Add or remove a drill from a managed team’s favorites. Args: teamId, drillId, favorite.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "drillId",
+        "favorite"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "drillId": {
+          "type": "string"
+        },
+        "favorite": {
+          "type": "boolean"
+        }
+      }
+    }
   },
   {
     "name": "submit_access_request",
     "teamScoped": false,
-    "description": "Request parent access to a team/player. Args: teamId, playerId, relation."
+    "description": "Request parent access to a team/player. Args: teamId, playerId, relation.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "playerId",
+        "relation"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "playerId": {
+          "type": "string"
+        },
+        "relation": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "toggle_player_incentive_rule",
     "teamScoped": false,
-    "description": "Activate or deactivate a player incentive rule. Args: teamId, playerId/playerName, ruleId, active true|false."
+    "description": "Activate or deactivate a player incentive rule. Args: teamId, playerId/playerName, ruleId, active true|false.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "ruleId",
+        "active"
+      ],
+      "additionalProperties": true,
+      "anyOf": [
+        [
+          "playerId",
+          "playerName"
+        ]
+      ],
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "ruleId": {
+          "type": "string"
+        },
+        "active": {
+          "type": "boolean"
+        }
+      }
+    }
   },
   {
     "name": "update_family_share_calendars",
     "teamScoped": false,
-    "description": "Update extra calendar URLs attached to a family share link. Args: tokenId, extraCalendarUrls."
+    "description": "Update extra calendar URLs attached to a family share link. Args: tokenId, extraCalendarUrls.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "tokenId",
+        "extraCalendarUrls"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "tokenId": {
+          "type": "string"
+        },
+        "extraCalendarUrls": {
+          "type": "array"
+        }
+      }
+    }
   },
   {
     "name": "update_game_score",
     "teamScoped": true,
-    "description": "Update the score for a managed game. Args: teamId, eventId/gameId, homeScore, awayScore."
+    "description": "Update the score for a managed game. Args: teamId, eventId/gameId, homeScore, awayScore.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "homeScore",
+        "awayScore"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "homeScore": {
+          "type": "number"
+        },
+        "awayScore": {
+          "type": "number"
+        }
+      }
+    }
   },
   {
     "name": "update_player_profile",
     "teamScoped": false,
-    "description": "Update parent-editable private player profile fields. Args: teamId, playerId, emergencyContactName, emergencyContactPhone, medicalInfo."
+    "description": "Update parent-editable private player profile fields. Args: teamId, playerId, emergencyContactName, emergencyContactPhone, medicalInfo.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "playerId"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "playerId": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "update_rsvp",
     "teamScoped": false,
-    "description": "Update one linked child RSVP. Args: eventId, teamId, childId/playerId optional, response going|maybe|not_going, note."
+    "description": "Update one linked child RSVP. Args: eventId, teamId, childId/playerId optional, response going|maybe|not_going, note.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "eventId",
+        "teamId",
+        "response"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "eventId": {
+          "type": "string"
+        },
+        "teamId": {
+          "type": "string"
+        },
+        "response": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "update_rsvps_for_children",
     "teamScoped": false,
-    "description": "Update multiple linked children on the same event. Args: eventId, teamId, response going|maybe|not_going, note."
+    "description": "Update multiple linked children on the same event. Args: eventId, teamId, response going|maybe|not_going, note.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "eventId",
+        "teamId",
+        "response"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "eventId": {
+          "type": "string"
+        },
+        "teamId": {
+          "type": "string"
+        },
+        "response": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "update_schedule_event",
     "teamScoped": true,
-    "description": "Update a managed-team game or practice. Args: teamId, eventId, eventType, partial input fields to change, and practice scope occurrence|series. After Diamond activation, home/away, tracker config, and linked opponent fields are locked."
+    "description": "Update a managed-team game or practice. Args: teamId, eventId, eventType, partial input fields to change, and practice scope occurrence|series. After Diamond activation, home/away, tracker config, and linked opponent fields are locked.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "eventId",
+        "eventType"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "eventType": {
+          "type": "string"
+        }
+      }
+    }
   },
   {
     "name": "update_team_settings",
     "teamScoped": true,
-    "description": "Update managed team name, sport, ZIP, public visibility, league URL, or livestream URL. Args: teamId/teamName and settings."
+    "description": "Update managed team name, sport, ZIP, public visibility, league URL, or livestream URL. Args: teamId/teamName and settings.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "teamId",
+        "settings"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "settings": {
+          "type": "object"
+        }
+      }
+    }
   }
 ]
