@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sendStaffRsvpReminder } from '../../lib/scheduleService';
 import { ScheduleEventDetailProvider } from '../../pages/schedule/ScheduleEventDetailContext';
@@ -117,7 +117,6 @@ describe('StaffRsvpReminderPanel', () => {
             ...preview,
             emailSentCount: 3
         });
-        vi.spyOn(window, 'confirm').mockReturnValue(true);
 
         renderPanel({}, staffRsvpLoader);
 
@@ -129,6 +128,13 @@ describe('StaffRsvpReminderPanel', () => {
         expect(screen.queryByRole('button', { name: 'Review players without email' })).toBeNull();
 
         fireEvent.click(screen.getByRole('button', { name: 'Send reminder' }));
+
+        // #5312: confirmation is the in-app dialog, never window.confirm().
+        const dialog = await screen.findByRole('dialog', { name: 'Send RSVP reminder?' });
+        expect(
+            within(dialog).getByText('Send an RSVP reminder to 2 no-response players? 3 eligible parent/guardian emails will be targeted.')
+        ).toBeTruthy();
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Send reminder' }));
 
         await waitFor(() => {
             expect(sendStaffRsvpReminder).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }), auth.user, auth.profile);
@@ -150,7 +156,7 @@ describe('StaffRsvpReminderPanel', () => {
         };
         const staffRsvpLoader = createStaffRsvpLoader();
         staffRsvpLoader.loadReminderPreview.mockResolvedValue(partialPreview);
-        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+        const confirmSpy = vi.spyOn(window, 'confirm');
 
         renderPanel({}, staffRsvpLoader);
 
@@ -164,8 +170,16 @@ describe('StaffRsvpReminderPanel', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Send reminder' }));
 
-        expect(confirmSpy).toHaveBeenCalledWith('Send an RSVP reminder to 2 no-response players? 1 eligible parent/guardian email will be targeted. 1 no-response player has no eligible parent/guardian email. The reminder will also post to team chat.');
+        // #5312: cancelling the in-app dialog sends nothing and never touches window.confirm().
+        const dialog = await screen.findByRole('dialog', { name: 'Send RSVP reminder?' });
+        expect(
+            within(dialog).getByText('Send an RSVP reminder to 2 no-response players? 1 eligible parent/guardian email will be targeted. 1 no-response player has no eligible parent/guardian email. The reminder will also post to team chat.')
+        ).toBeTruthy();
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+        expect(confirmSpy).not.toHaveBeenCalled();
         expect(sendStaffRsvpReminder).not.toHaveBeenCalled();
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     });
 
     it('uses team-chat-only copy and the existing send path when no email is eligible', async () => {
@@ -183,7 +197,6 @@ describe('StaffRsvpReminderPanel', () => {
             ...zeroEmailPreview,
             emailSentCount: 0
         });
-        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
         renderPanel({}, staffRsvpLoader);
 
@@ -191,7 +204,13 @@ describe('StaffRsvpReminderPanel', () => {
         expect(screen.getByRole('button', { name: 'Send reminder' })).toBeVisible();
         fireEvent.click(screen.getByRole('button', { name: 'Send reminder' }));
 
-        expect(confirmSpy).toHaveBeenCalledWith('Send an RSVP reminder to 2 no-response players? No parent/guardian emails will be sent. The reminder will post to team chat only.');
+        // #5312: confirmation is the in-app dialog, never window.confirm().
+        const dialog = await screen.findByRole('dialog', { name: 'Send RSVP reminder?' });
+        expect(
+            within(dialog).getByText('Send an RSVP reminder to 2 no-response players? No parent/guardian emails will be sent. The reminder will post to team chat only.')
+        ).toBeTruthy();
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Send reminder' }));
+
         await waitFor(() => {
             expect(sendStaffRsvpReminder).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }), auth.user, auth.profile);
         });
@@ -205,7 +224,7 @@ describe('StaffRsvpReminderPanel', () => {
             ...preview,
             emailSentCount: 3
         });
-        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValueOnce(true).mockReturnValueOnce(false).mockReturnValueOnce(true);
+        const confirmSpy = vi.spyOn(window, 'confirm');
 
         renderPanel({}, staffRsvpLoader);
 
@@ -215,21 +234,29 @@ describe('StaffRsvpReminderPanel', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Send reminder' }));
 
+        // #5312: confirmation is the in-app dialog, never window.confirm().
+        const firstDialog = await screen.findByRole('dialog', { name: 'Send RSVP reminder?' });
+        fireEvent.click(within(firstDialog).getByRole('button', { name: 'Send reminder' }));
+
         await waitFor(() => {
             expect(screen.getByRole('button', { name: 'Send again' })).toBeTruthy();
         });
         expect(sendStaffRsvpReminder).toHaveBeenCalledTimes(1);
 
         fireEvent.click(screen.getByRole('button', { name: 'Send again' }));
-        expect(confirmSpy).toHaveBeenCalledTimes(2);
+        const cancelDialog = await screen.findByRole('dialog', { name: 'Send RSVP reminder?' });
+        fireEvent.click(within(cancelDialog).getByRole('button', { name: 'Cancel' }));
+        expect(confirmSpy).not.toHaveBeenCalled();
         expect(sendStaffRsvpReminder).toHaveBeenCalledTimes(1);
 
         fireEvent.click(screen.getByRole('button', { name: 'Send again' }));
+        const secondDialog = await screen.findByRole('dialog', { name: 'Send RSVP reminder?' });
+        fireEvent.click(within(secondDialog).getByRole('button', { name: 'Send reminder' }));
 
         await waitFor(() => {
             expect(sendStaffRsvpReminder).toHaveBeenCalledTimes(2);
         });
-        expect(confirmSpy).toHaveBeenCalledTimes(3);
+        expect(confirmSpy).not.toHaveBeenCalled();
     });
 
     it('does not render when there are no missing player RSVPs', async () => {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import {
   sendStaffRsvpReminder,
   type StaffRsvpAvailabilityLoader,
@@ -16,6 +17,7 @@ export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { 
   const [error, setError] = useState<string | null>(null);
   const [hasSentReminder, setHasSentReminder] = useState(false);
   const [showPlayersWithoutEmail, setShowPlayersWithoutEmail] = useState(false);
+  const [confirmSend, setConfirmSend] = useState(false);
 
   const canLoad = Boolean(auth.user && event.isTeamRsvpReminderManager && event.isDbGame && !event.isCancelled);
 
@@ -37,6 +39,7 @@ export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { 
     setStatus(null);
     setHasSentReminder(false);
     setShowPlayersWithoutEmail(false);
+    setConfirmSend(false);
     if (canLoad) {
       refreshPreview();
     } else {
@@ -80,8 +83,7 @@ export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { 
 
   const sendReminder = async () => {
     if (!auth.user || sending) return;
-    const confirmed = window.confirm(`Send an RSVP reminder to ${preview.missingPlayerCount} no-response ${preview.missingPlayerCount === 1 ? 'player' : 'players'}? ${deliveryConfirmation}`);
-    if (!confirmed) return;
+    setConfirmSend(false);
     setSending(true);
     setError(null);
     setStatus(null);
@@ -100,7 +102,8 @@ export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { 
   };
 
   return (
-    <div className="mt-3 rounded-xl border border-primary-200 bg-primary-50 p-3">
+    <>
+      <div className="mt-3 rounded-xl border border-primary-200 bg-primary-50 p-3">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-black text-gray-950">Staff RSVP reminder</div>
@@ -115,7 +118,7 @@ export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { 
               type="button"
               className="text-xs font-bold text-primary-700 underline-offset-2 hover:underline disabled:text-gray-400"
               disabled={sending || loading}
-              onClick={sendReminder}
+              onClick={() => setConfirmSend(true)}
             >
               {sending ? 'Sending…' : 'Send again'}
             </button>
@@ -125,7 +128,7 @@ export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { 
             type="button"
             className="primary-button min-h-9 flex-none px-3 text-xs"
             disabled={sending || loading}
-            onClick={sendReminder}
+            onClick={() => setConfirmSend(true)}
           >
             {sending ? 'Sending…' : 'Send reminder'}
           </button>
@@ -155,6 +158,16 @@ export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { 
       ) : null}
       {status ? <div className="mt-2 text-xs font-bold text-emerald-700">{status}</div> : null}
       {error ? <div className="mt-2 text-xs font-bold text-rose-700">{error}</div> : null}
-    </div>
+      </div>
+      {confirmSend ? (
+        <ConfirmDialog
+          title="Send RSVP reminder?"
+          message={`Send an RSVP reminder to ${preview.missingPlayerCount} no-response ${preview.missingPlayerCount === 1 ? 'player' : 'players'}? ${deliveryConfirmation}`}
+          confirmLabel="Send reminder"
+          onConfirm={() => void sendReminder()}
+          onClose={() => setConfirmSend(false)}
+        />
+      ) : null}
+    </>
   );
 }
