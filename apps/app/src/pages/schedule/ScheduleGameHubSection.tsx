@@ -39,6 +39,7 @@ import {
 } from '../../lib/scheduleHub';
 import { useShellLayout } from '../../lib/useShellLayout';
 import { CompactMeta } from '../../components/schedule/CompactMeta';
+import { Modal } from '../../components/Modal';
 import { GameReplayEditor, canManageGameReplay } from '../../components/schedule/GameReplayEditor';
 import {
   buildCoachesOnlyGameNoteScopeKey,
@@ -1309,6 +1310,10 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'warning' | 'error'; message: string } | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  // In-app confirm (#5325): window.confirm never surfaces in automated
+  // browsers and embedded webviews, so the Cancel button silently did
+  // nothing. The confirm now renders as a Modal in the app itself.
+  const [confirmingCancel, setConfirmingCancel] = useState<'game' | 'practice' | null>(null);
   const [openPanels, setOpenPanels] = useState<Record<string, boolean>>({});
   const [homeScoringPlayers, setHomeScoringPlayers] = useState<ScheduleHomeScoringPlayer[]>([]);
   const [loadingHomeScoringPlayers, setLoadingHomeScoringPlayers] = useState(false);
@@ -1421,10 +1426,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
 
   const cancelGame = async () => {
     if (!auth.user) return;
-    const opponentLabel = event.opponent || event.title || 'this game';
-    const confirmed = window.confirm(`Cancel ${opponentLabel} on ${formatEventDateLabel(event.date)}? This marks the game cancelled and notifies ${notifiesCounterpartTeam ? 'both team chats' : 'the team in chat'}.`);
-    if (!confirmed) return;
-
+    setConfirmingCancel(null);
     setCancelling(true);
     setCancelStatus(null);
     try {
@@ -1442,10 +1444,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
 
   const cancelPracticeOccurrence = async () => {
     if (!auth.user) return;
-    const practiceLabel = event.title || 'this practice';
-    const confirmed = window.confirm(`Cancel only ${practiceLabel} on ${formatEventDateLabel(event.date)}? This cancels just this occurrence, not the full recurring series.`);
-    if (!confirmed) return;
-
+    setConfirmingCancel(null);
     setCancelling(true);
     setCancelStatus(null);
     try {
@@ -1693,7 +1692,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
                 <button
                   type="button"
                   className="min-h-11 rounded-full bg-rose-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-rose-700 disabled:opacity-60"
-                  onClick={cancelGame}
+                  onClick={() => setConfirmingCancel('game')}
                   disabled={cancelling}
                 >
                   {cancelling ? 'Cancelling game' : 'Cancel game'}
@@ -1712,7 +1711,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
                 <button
                   type="button"
                   className="min-h-11 rounded-full bg-rose-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-rose-700 disabled:opacity-60"
-                  onClick={cancelPracticeOccurrence}
+                  onClick={() => setConfirmingCancel('practice')}
                   disabled={cancelling}
                 >
                   {cancelling ? 'Cancelling occurrence' : 'Cancel this occurrence'}
@@ -1740,6 +1739,31 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
 
       {shareStatus ? <Status tone={shareStatus.startsWith('Unable') ? 'error' : 'success'} message={shareStatus} /> : null}
       {cancelStatus ? <Status tone={cancelStatus.tone} message={cancelStatus.message} /> : null}
+      {confirmingCancel ? (
+        <Modal ariaLabel={confirmingCancel === 'game' ? 'Confirm cancel game' : 'Confirm cancel practice occurrence'} onClose={() => { if (!cancelling) setConfirmingCancel(null); }}>
+          <section className="w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl">
+            <h2 className="text-lg font-black text-gray-950">{confirmingCancel === 'game' ? 'Cancel this game?' : 'Cancel this occurrence?'}</h2>
+            <p className="mt-2 text-sm font-semibold text-gray-600">
+              {confirmingCancel === 'game'
+                ? `Cancel ${event.opponent || event.title || 'this game'} on ${formatEventDateLabel(event.date)}? This marks the game cancelled and notifies ${notifiesCounterpartTeam ? 'both team chats' : 'the team in chat'}.`
+                : `Cancel only ${event.title || 'this practice'} on ${formatEventDateLabel(event.date)}? This cancels just this occurrence, not the full recurring series.`}
+            </p>
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button type="button" className="ghost-button min-h-11 px-4 text-sm" onClick={() => setConfirmingCancel(null)} disabled={cancelling}>
+                {confirmingCancel === 'game' ? 'Keep game' : 'Keep practice'}
+              </button>
+              <button
+                type="button"
+                className="min-h-11 rounded-full bg-rose-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-rose-700 disabled:opacity-60"
+                onClick={() => { if (confirmingCancel === 'game') void cancelGame(); else void cancelPracticeOccurrence(); }}
+                disabled={cancelling}
+              >
+                {cancelling ? 'Cancelling…' : confirmingCancel === 'game' ? 'Cancel game' : 'Cancel this occurrence'}
+              </button>
+            </div>
+          </section>
+        </Modal>
+      ) : null}
       {!isPractice ? (
         <LazyGameHubPanel
           panelId="game-hub-report-panel"
