@@ -5,8 +5,15 @@
 // Firestore Admin handle is injected so this module stays testable without
 // firebase-admin.
 
+import writeCatalog from './writeCatalog.json' with { type: 'json' };
+
 export const APP_BASE_URL = 'https://allplays.ai';
 export const DEFAULT_SCHEDULE_DAYS = 7;
+
+export function getWriteActionCatalog() {
+    return writeCatalog.map((definition) => ({ ...definition }));
+}
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MAX_EVENTS_PER_TEAM = 50;
 const MAX_TRACKED_CALENDAR_EVENTS_PER_TEAM = 5000;
