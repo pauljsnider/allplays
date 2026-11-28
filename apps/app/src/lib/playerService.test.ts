@@ -138,6 +138,11 @@ const appDataCacheMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('./appDataCache', () => appDataCacheMocks);
+const teamDetailServiceMocks = vi.hoisted(() => ({
+  invalidateTeamDetailBaseSnapshotCache: vi.fn()
+}));
+
+vi.mock('./teamDetailService', () => teamDetailServiceMocks);
 const nativeRuntimeState = vi.hoisted(() => ({ isNative: false }));
 const nativeStorageMocks = vi.hoisted(() => ({
   deleteNativePrimaryStorageFile: vi.fn(),
@@ -858,6 +863,9 @@ describe('saveStaffPlayerRosterDetails', () => {
     });
     expect(legacyPlayerDbMocks.setPlayerPrivateRosterProfileFields).not.toHaveBeenCalled();
     expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledWith();
+    // #5311: the TeamDetail roster reads teamDetailService's module-level
+    // snapshot caches, so the save must invalidate them too.
+    expect(teamDetailServiceMocks.invalidateTeamDetailBaseSnapshotCache).toHaveBeenCalledWith('team-1');
     expect(result).toEqual({
       updatedFields: ['number', 'photoUrl', 'photoPath'],
       payload: {
@@ -1033,6 +1041,7 @@ describe('saveStaffPlayerRosterDetails', () => {
 
     expect(legacyPlayerDbMocks.updatePlayer).not.toHaveBeenCalled();
     expect(appDataCacheMocks.clearAppDataCache).not.toHaveBeenCalled();
+    expect(teamDetailServiceMocks.invalidateTeamDetailBaseSnapshotCache).not.toHaveBeenCalled();
   });
 
   it('rejects roster edits from coachOf-only users without team admin rights', async () => {

@@ -421,7 +421,7 @@ function buildGameFormResetKey(event: ParentScheduleEvent) {
   ].join('\u001f');
 }
 
-function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+function GameScheduleEditPanel({ auth, event, onEventRefresh }: { auth: AuthState; event: ParentScheduleEvent; onEventRefresh?: () => Promise<void> | void }) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<ScheduleGameFormInput>(() => buildGameFormFromEvent(event));
   const [configs, setConfigs] = useState<ScheduleStatTrackerConfigOption[]>([]);
@@ -468,6 +468,15 @@ function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: Parent
         await updateScheduledGameForApp(event.teamId, event.id, form, auth.user, { preservePinnedDiamondFields: true });
       } else {
         await updateScheduledGameForApp(event.teamId, event.id, form, auth.user);
+      }
+      // Refresh the parent's event state before announcing success, so the
+      // game header shows the saved gym/location instead of the stale one
+      // until reload (#5311). A refresh failure must not mask the save.
+      try {
+        await onEventRefresh?.();
+      } catch {
+        // The save landed; the event-details cache was invalidated, so the
+        // next load still shows the saved values.
       }
       setStatus({ tone: 'success', message: 'Game schedule was updated.' });
     } catch (error: any) {
@@ -1481,7 +1490,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
     <section className={`space-y-3 ${canUseLegacyScoring && !isDesktopWeb ? 'mobile-live-score-tray-offset' : ''}`}>
       {showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       {showAdminPracticeTimeline ? <PracticeTimelineSection auth={auth} event={event} /> : null}
-      {!isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <GameScheduleEditPanel auth={auth} event={event} /> : null}
+      {!isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <GameScheduleEditPanel auth={auth} event={event} onEventRefresh={onEventRefresh} /> : null}
       {!isPractice ? <GameReplayEditor auth={auth} event={event} onReplayVideoUpdated={onReplayVideoUpdated} /> : null}
       {isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <PracticeScheduleEditPanel auth={auth} event={event} /> : null}
       {isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <StaffPracticePacketEditor auth={auth} event={event} childEvents={childEvents} /> : null}

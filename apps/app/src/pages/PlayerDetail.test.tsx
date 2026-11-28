@@ -2302,6 +2302,56 @@ describe('PlayerDetail staff roster editing', () => {
     });
   });
 
+  it('announces the roster save only after the player refresh resolves (#5311)', async () => {
+    const refreshDeferred = createDeferred<ReturnType<typeof buildDetailData>>();
+    // The first load resolves immediately; the post-save refresh stays
+    // pending until the test releases it.
+    playerServiceMocks.loadParentPlayerDetail
+      .mockImplementationOnce(() =>
+        Promise.resolve(
+          buildDetailData({
+            access: {
+              isLinkedParent: false,
+              isTeamStaff: true,
+              canEditRosterDetails: true,
+              canEditCustomRosterFields: false
+            }
+          })
+        )
+      )
+      .mockImplementationOnce(() => refreshDeferred.promise);
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+
+    expect(await screen.findByText('Roster Details')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Player name'), { target: { value: 'Samuel Player' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Roster Details' }));
+
+    await waitFor(() => expect(playerServiceMocks.saveStaffPlayerRosterDetails).toHaveBeenCalled());
+    // The write landed but the refresh is still pending: no success toast yet,
+    // and the save button is already usable again.
+    expect(screen.queryByText('Roster details saved.')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Save Roster Details' }) as HTMLButtonElement).disabled).toBe(false);
+
+    await act(async () => {
+      refreshDeferred.resolve(
+        buildDetailData({
+          access: {
+            isLinkedParent: false,
+            isTeamStaff: true,
+            canEditRosterDetails: true,
+            canEditCustomRosterFields: false
+          }
+        })
+      );
+    });
+
+    expect(await screen.findByText('Roster details saved.')).toBeTruthy();
+  });
+
   it('keeps coachOf-only staff out of the roster editor', async () => {
     playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(
       buildDetailData({

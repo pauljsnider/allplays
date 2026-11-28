@@ -602,7 +602,7 @@ export function __resetTeamDetailBaseSnapshotCacheForTests() {
   relevantTeamMembersCache.clear();
 }
 
-function invalidateTeamDetailBaseSnapshotCache(teamId: string) {
+export function invalidateTeamDetailBaseSnapshotCache(teamId: string) {
   const normalizedTeamId = cleanString(teamId);
   teamDetailBaseSnapshotCache.delete(normalizedTeamId);
   for (const cacheKey of teamDetailInsightsCache.keys()) {
